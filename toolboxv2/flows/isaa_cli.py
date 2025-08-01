@@ -1,9 +1,12 @@
 import asyncio
+import base64
 import collections
+import html
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -26,11 +29,14 @@ from prompt_toolkit.shortcuts import prompt
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+from toolboxv2.mods.isaa.base.Agent.agent import InMemoryRunner
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Spinner, Style
 
 from prompt_toolkit.formatted_text import ANSI
 
+from google.adk.tools import google_search as adk_google_search
+from google.adk.tools import url_context as adk_url_context
 
 
 NAME = "isaa_cli"
@@ -58,7 +64,7 @@ class WorkspaceIsaasCli:
         self.app = app_instance
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
         self.isaa_tools.stuf = True #
-        self.formatter = EnhancedVerboseOutput(verbose=True, print_func=app_instance.print)
+        self.formatter = EnhancedVerboseOutput(verbose=True, print_func=print)
         self.active_agent_name = "workspace_supervisor"
         self.session_id = "workspace_session"
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
@@ -267,7 +273,7 @@ class WorkspaceIsaasCli:
                 "delete": WordCompleter([]), # Wird dynamisch gefüllt
             },
             "/monitor": None,
-            "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None},
+            "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None, "backup-infos": None},
             "/help": None, "/quit": None, "/clear": None}
         return commands_dict
 
@@ -348,88 +354,61 @@ class WorkspaceIsaasCli:
     # TOOL DEFINITIONS MOVED TO CLASS METHODS
     # ##################################################################
 
-    async def replace_in_files_tool(self, old_str: str, new_str: str, file_patterns: str = "*", directory: str = ".",
-                                    recursive: Optional[bool] = True, file_types: Optional[str] = None, dry_run: Optional[bool] = False):
-        """Replace any string in any files matching patterns - the most powerful replace tool.
+    async def replace_in_file_tool(self, file_path: str, old_str: str, new_str: str):
+        """
+        Replaces all occurrences of a string with a new string in a single specified file.
+
+        This tool is optimized for direct, 1-to-1 replacements. It automatically detects
+        the file's encoding to prevent data corruption.
 
         Args:
-            old_str: String to replace
-            new_str: Replacement string
-            file_patterns: File patterns (e.g., "*.py,*.txt,*.json" or "*")
-            directory: Directory to search (default: current)
-            recursive: Search subdirectories
-            file_types: Additional file type filter (e.g., "text,code,config")
-            dry_run: Preview changes without making them
+            file_path: The path to the file relative to the current workspace.
+            old_str: The exact string to be replaced.
+            new_str: The string to replace it with.
         """
-        results = {
-            "files_modified": [],
-            "total_replacements": 0,
-            "errors": [],
-            "skipped_files": [],
-            "preview": dry_run
-        }
+        try:
+            # Resolve the full path from the workspace root
+            path = self.workspace_path.resolve() / file_path
 
-        base_path = Path(directory).resolve()
-        if not base_path.exists():
-            results["errors"].append(f"Directory {directory} does not exist")
-            return json.dumps(results, indent=2)
+            if not path.exists():
+                return f"❌ Error: File not found at '{file_path}'."
+            if not path.is_file():
+                return f"❌ Error: Path '{file_path}' is a directory, not a file."
 
-        patterns = [p.strip() for p in file_patterns.split(",")]
-        if not patterns:
-            patterns = ["*"]
+            # --- Smartly read the file by trying common encodings ---
+            content = None
+            used_encoding = None
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:  # Common encodings for text files
+                try:
+                    with open(path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    used_encoding = encoding
+                    break  # Stop on the first successful read
+                except UnicodeDecodeError:
+                    continue  # Try the next encoding
 
-        files_to_process = []
-        for pattern in patterns:
-            if recursive:
-                files_to_process.extend(base_path.rglob(pattern))
-            else:
-                files_to_process.extend(base_path.glob(pattern))
+            if content is None:
+                return f"⚠️ Skipped: File '{file_path}' could not be read as text (it may be binary)."
 
-        if file_types:
-            type_filters = [t.strip().lower() for t in file_types.split(",")]
-            filtered_files = []
-            for file_path in files_to_process:
-                if file_path.is_file():
-                    suffix = file_path.suffix.lower()
-                    if any(ftype in suffix or suffix.endswith(ftype) for ftype in type_filters):
-                        filtered_files.append(file_path)
-            files_to_process = filtered_files
+            # --- Perform the replacement ---
+            if old_str not in content:
+                return f"ℹ️ String not found in '{file_path}'. No changes were made."
 
-        files_to_process = sorted(set(f for f in files_to_process if f.is_file()))
+            replacements_count = content.count(old_str)
+            new_content = content.replace(old_str, new_str)
 
-        for file_path in files_to_process:
-            try:
-                content = None
-                used_encoding = None
-                for encoding in ['utf-8', 'utf-16', 'latin-1', 'ascii']:
-                    try:
-                        with open(file_path, 'r', encoding=encoding) as f:
-                            content = f.read()
-                        used_encoding = encoding
-                        break
-                    except UnicodeDecodeError:
-                        continue
+            # --- Write the changes back using the same encoding ---
+            with open(path, 'w', encoding=used_encoding) as f:
+                f.write(new_content)
 
-                if content is None:
-                    results["skipped_files"].append(f"{file_path} (binary/unreadable)")
-                    continue
+            # Format a clear, human-readable success message
+            plural = "s" if replacements_count > 1 else ""
+            return f"✅ Success: Replaced {replacements_count} occurrence{plural} in '{file_path}'."
 
-                if old_str in content:
-                    replacements_count = content.count(old_str)
-                    if not dry_run:
-                        new_content = content.replace(old_str, new_str)
-                        with open(file_path, 'w', encoding=used_encoding) as f:
-                            f.write(new_content)
-                    results["files_modified"].append({
-                        "file": str(file_path.relative_to(base_path)),
-                        "replacements": replacements_count,
-                        "encoding": used_encoding
-                    })
-                    results["total_replacements"] += replacements_count
-            except Exception as e:
-                results["errors"].append(f"Error processing {file_path}: {str(e)}")
-
-        return json.dumps(results, indent=2)
+        except IOError as e:
+            return f"❌ File Error: Could not process '{file_path}'. Reason: {e}"
+        except Exception as e:
+            return f"❌ An unexpected error occurred: {e}"
 
     async def read_file_tool(self, file_path: str, encoding: str = "utf-8", lines_range: Optional[str] = None):
         """Read file content with optional line range (e.g., '1-10' or '5-')"""
@@ -454,6 +433,48 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error reading {file_path}: {str(e)}"
 
+    async def read_multimodal_file(self, file_path: str, max_pdf_pages: int = 5) -> Optional[Dict[str, Any]]:
+        """
+        Liest eine Datei (Bild, PDF, Audio, Text) und bereitet sie als Liste von
+        ADK-kompatiblen 'Part'-Objekten für ein multimodales Modell vor.
+
+        Rückgabeformat ist kompatibel mit Google ADK
+        """
+
+        import mimetypes
+        from pathlib import Path
+        from typing import Dict, List, Any, Optional
+
+        from google.genai import types as genai_types
+        Part = genai_types.Part
+
+        path = Path(self.workspace_path / file_path)
+        if not path.exists():
+            return {"error": f"Datei nicht gefunden: {file_path}"}
+        if not path.is_file():
+            return {"error": f"Pfad ist ein Verzeichnis: {file_path}"}
+
+        mime_type, _ = mimetypes.guess_type(path)
+
+        parts: List[Any] = []
+
+        try:
+
+            with open(path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode("utf-8")
+            return {
+                "type": "image_url",
+                "image_url": f"data:{mime_type};base64,{b64}"
+            }
+
+        except Exception as e:
+            import traceback
+            return {
+                "error": f"Fehler beim Verarbeiten von '{file_path}': {e}",
+                "traceback": traceback.format_exc()
+            }
+
     async def write_file_tool(self, file_path: str, content: str, encoding: str = "utf-8", append: bool = False,
                               backup: bool = False):
         """Write content to file with optional backup"""
@@ -472,42 +493,153 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error writing to {file_path}: {str(e)}"
 
-    async def search_in_files_tool(self, search_term: str, file_patterns: str = "*", directory: str = ".",
-                                   recursive: bool = True, context_lines: int = 0):
-        """Search for text in files with context"""
-        results = []
-        base_path = Path(self.workspace_path / directory).resolve()
-        patterns = [p.strip() for p in file_patterns.split(",")]
-        files_to_search = []
-        for pattern in patterns:
-            if recursive:
-                files_to_search.extend(base_path.rglob(pattern))
-            else:
-                files_to_search.extend(base_path.glob(pattern))
-        for file_path in files_to_search:
-            if not file_path.is_file():
-                continue
+    import shutil
+    import asyncio
+    import json
+    from pathlib import Path
+
+    async def search_in_files_tool(
+        self,
+        query: str,
+        directory: str = ".",
+        file_patterns: str = "*",
+        search_for: str = "content",
+        recursive: bool = True,
+        ignore_case: bool = False
+    ):
+        """
+        Finds a string in file contents or searches for filenames using the fastest available tool.
+
+        This tool intelligently uses 'ripgrep' (rg), 'grep', or 'findstr' if available for high-speed
+        content searching, falling back to a Python implementation if they are not found.
+
+        Args:
+            query: The string to search for in file content or as part of a filename.
+            directory: The directory to start the search from (default: current).
+            file_patterns: Glob patterns to filter files (e.g., "*.py,*.md"). Use "*" for all.
+            search_for: What to search for. Can be 'content' (default) or 'filename'.
+            recursive: Whether to search in subdirectories (default: True).
+            ignore_case: If the search should be case-insensitive (default: False).
+        """
+        base_path = self.workspace_path.resolve() / directory
+        if not base_path.is_dir():
+            return json.dumps({"error": f"Directory not found: {directory}"})
+
+        # --- Mode 1: Search for files by name ---
+        if search_for.lower() == 'filename':
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                for line_num, line in enumerate(lines, 1):
-                    if search_term in line:
-                        match_info = {
-                            "file": str(file_path.relative_to(base_path)),
-                            "line": line_num,
-                            "content": line.strip()
-                        }
-                        if context_lines > 0:
-                            start = max(0, line_num - context_lines - 1)
-                            end = min(len(lines), line_num + context_lines)
-                            match_info["context"] = [
-                                f"{i + start + 1}: {lines[i + start].rstrip()}"
-                                for i in range(end - start)
-                            ]
-                        results.append(match_info)
-            except:
-                continue
-        return json.dumps(results, indent=2)
+                all_files = []
+                patterns = [p.strip() for p in file_patterns.split(',')]
+
+                for pattern in patterns:
+                    search_glob = base_path.rglob(pattern) if recursive else base_path.glob(pattern)
+                    for file_path in search_glob:
+                        if file_path.is_file():
+                            # Check if the query string is in the filename
+                            filename_to_check = file_path.name.lower() if ignore_case else file_path.name
+                            query_to_check = query.lower() if ignore_case else query
+                            if query_to_check in filename_to_check:
+                                all_files.append(str(file_path.relative_to(base_path)))
+
+                return json.dumps({"tool_used": "python_glob", "matches": sorted(list(set(all_files)))}, indent=2)
+            except Exception as e:
+                return json.dumps({"error": f"Error during filename search: {e}"})
+
+        # --- Mode 2: Search for content within files ---
+        tool_used = "python"
+        results = []
+
+        # Check for native tools
+        rg_path = shutil.which("rg")
+        grep_path = shutil.which("grep") if not rg_path else None
+        findstr_path = shutil.which(
+            "findstr") if not rg_path and not grep_path and platform.system() == "Windows" else None
+
+        try:
+            # ---- STRATEGY 1: Use ripgrep (rg) - THE BEST AND FASTEST ----
+            if rg_path:
+                tool_used = "ripgrep (rg)"
+                cmd = [rg_path, "--json"]
+                if ignore_case: cmd.append("-i")
+                for p in file_patterns.split(','):
+                    cmd.extend(["--glob", p.strip()])
+                if not recursive: cmd.append("--max-depth=1")
+                cmd.extend([query, str(base_path)])
+
+                process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE,
+                                                               stderr=asyncio.subprocess.PIPE)
+                stdout, stderr = await process.communicate()
+
+                if process.returncode == 0:
+                    for line in stdout.decode('utf-8').strip().split('\n'):
+                        if line:
+                            match = json.loads(line)
+                            if match.get('type') == 'match':
+                                results.append({
+                                    "file": Path(match['data']['path']['text']).relative_to(base_path),
+                                    "line": match['data']['line_number'],
+                                    "content": match['data']['lines']['text'].strip()
+                                })
+                    return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
+
+            # ---- STRATEGY 2: Use grep (Linux/macOS) or findstr (Windows) ----
+            # This part is a fallback if 'rg' is not present
+            if grep_path or findstr_path:
+                cmd_str = ""
+                if grep_path:
+                    tool_used = "grep"
+                    flags = "n"  # n for line number
+                    if recursive: flags += "r"
+                    if ignore_case: flags += "i"
+                    include_flags = " ".join([f"--include='{p.strip()}'" for p in file_patterns.split(',')])
+                    cmd_str = f"grep -{flags} {include_flags} -E '{query}' '{base_path}'"
+                elif findstr_path:
+                    tool_used = "findstr"
+                    flags = "/S /N"  # S for subdirectories, N for line number
+                    if ignore_case: flags += " /I"
+                    path_specs = " ".join([f"'{base_path}\\{p.strip()}'" for p in file_patterns.split(',')])
+                    cmd_str = f'findstr {flags} "{query}" {path_specs}'
+
+                process = await asyncio.create_subprocess_shell(cmd_str, stdout=asyncio.subprocess.PIPE,
+                                                                stderr=asyncio.subprocess.PIPE)
+                stdout, stderr = await process.communicate()
+
+                # findstr returns 1 if no matches found, which is not an error for us
+                if process.returncode in [0, 1] and stdout:
+                    for line in stdout.decode('utf-8', errors='replace').strip().split('\n'):
+                        parts = line.split(':', 2)
+                        if len(parts) >= 3:
+                            results.append({
+                                "file": Path(parts[0]).relative_to(base_path),
+                                "line": int(parts[1]) if parts[1].isdigit() else parts[1],
+                                "content": parts[2].strip()
+                            })
+                    return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
+
+            # ---- STRATEGY 3: Python Fallback ----
+            # This runs if no native tools are found or they fail unexpectedly
+            search_query = query.lower() if ignore_case else query
+            for p in file_patterns.split(','):
+                glob_pattern = base_path.rglob(p.strip()) if recursive else base_path.glob(p.strip())
+                for file_path in glob_pattern:
+                    if file_path.is_file():
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                for line_num, line in enumerate(f, 1):
+                                    line_to_check = line.lower() if ignore_case else line
+                                    if search_query in line_to_check:
+                                        results.append({
+                                            "file": str(file_path.relative_to(base_path)),
+                                            "line": line_num,
+                                            "content": line.strip()
+                                        })
+                        except Exception:
+                            continue  # Skip files that can't be opened
+
+            return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
+
+        except Exception as e:
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "tool_used": tool_used})
 
 
     async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
@@ -690,6 +822,7 @@ class WorkspaceIsaasCli:
                     progress_callback=self.monitoring_progress_callback
                 )
                 self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
+                self.background_tasks[task_id]['result'] = res
                 return res
 
             task = asyncio.create_task(
@@ -707,6 +840,7 @@ class WorkspaceIsaasCli:
                 'priority': priority,
                 'status': 'running',
                 'last_activity': now,
+                'result': None,
                 'last_event': 'created',
                 'agent_state': 'Starting',
                 'current_tool_name': None,
@@ -933,6 +1067,7 @@ class WorkspaceIsaasCli:
         steps = [
             ("Initializing ISAA framework", self.isaa_tools.init_isaa),
             ("Setting up workspace agent", self.setup_workspace_agent),
+            ("Setting up worker agent", self.create_worker_agent),
             ("Loading configurations", self.load_configurations),
             ("Preparing workspace tools", self.prepare_tools),
         ]
@@ -950,137 +1085,128 @@ class WorkspaceIsaasCli:
 
         await self.show_welcome()
 
-
     async def setup_workspace_agent(self):
         """Setup the main workspace supervisor agent"""
         if self.active_agent_name != "workspace_supervisor":
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
-            """You are the Workspace Supervisor, an elite AI agent operating within the Google ADK framework. Your mission is to orchestrate and supervise a complex multi-agent development environment with unwavering precision and strategic intelligence.
+                """You are the Supervisor.
+Your persona is precise, professional, and efficient. Your primary goal is to handle user requests cleanly and effectively.
 
-## Core Identity & Persona
+# Core Protocol
+1 - Assess: ALWAYS evaluate the current state first. Use tools like `workspace_status` and `list_directory` to understand the situation before you act.
+2 - Strategize: Decide the best path based on your analysis.
+    - Simple Request: Execute it directly and independently. (e.g., read a single file, perform a simple search)
+    - Complex Request: Orchestrate worker agents. (e.g., refactor code across multiple files, generate and test content)
+3 - Execute: Implement your strategy and report your actions clearly.
 
-You embody the characteristics of a seasoned operations director - methodical, decisive, and perpetually vigilant. You think three steps ahead, anticipate bottlenecks, and maintain absolute situational awareness across your domain. Your communication is crisp, professional, and solution-oriented.
+# Orchestration Workflow (for complex requests)
+- 1. Deconstruct: Break the main goal into clear, independent sub-tasks.
+- 2. Delegate: Launch a 'worker' agent for each sub-task using `run_agent_background`. Give each worker a very specific and simple instruction.
+- 3. Oversee: Launch YOURSELF (the 'workspace_supervisor' agent) in a separate background task. Your instruction for this task is: "Oversee the worker task IDs [ID1, ID2, ...]. Upon their completion, review their work, summarize the results, and report the final outcome."
 
-Key Traits:
-- Strategic Thinker: You evaluate the complexity and scope of every request
-- Efficiency Expert: You optimize workflows and eliminate redundancy
-- Quality Assurance: You ensure all delegated tasks meet standards
-- Adaptive Leader: You adjust strategies based on real-time feedback
+# Communication Rules in thinking and to user
+- Structure: Use only `#` for headlines and `-` for list items.
+- Content: Your responses MUST be brief, informative, and to the point.
+- Style: No unnecessary chatter. Be direct.
 
-## Operational Framework
-
-### Task Classification & Execution Strategy
-
-DIRECT EXECUTION (Simple/Small Tasks):
-- File operations (create, move, delete, read)
-- Basic directory management
-- Simple queries or information retrieval
-- Quick status checks
-- Execute immediately using available tools
-
-BACKGROUND DELEGATION (Medium/Moderate Tasks):
-- Code generation or modification
-- Document creation or editing
-- Data analysis or processing
-- Multi-step workflows
-- MUST use `run_agent_background_tool` or to wait for the result direcly use `run_agent`
-
-SELF-BACKGROUND ASSIGNMENT (Complex/Large Tasks):
-- Multi-agent orchestration projects
-- System-wide refactoring
-- Comprehensive testing suites
-- Large-scale data migrations
-- Assign yourself as background task for oversight
-
-### Mandatory Operational Protocols
-
-1. Tool-First Approach: Every action MUST utilize available tools through the Google ADK framework
-2. Regular Reflection Cycle: Every 2.5 operations, pause and assess:
-   - Are tasks progressing efficiently?
-   - Do any agents need course correction?
-   - Are there emerging bottlenecks or issues?
-   - Should priorities be adjusted?
-3. JSON Syntax Compliance: All tool usage must follow strict JSON formatting
-4. Background Task Preference: Default to background execution for anything beyond trivial operations
-
-## Workflow Execution Pattern
-
-### Phase 1: Strategic Analysis
-- Complexity Assessment: Categorize request (Simple/Medium/Complex)
-- Resource Mapping: Identify required tools and agents
-- Risk Evaluation: Anticipate potential failure points
-- Execution Strategy: Choose direct, delegate, or self-background approach
-
-### Phase 2: Tactical Execution
-- Tool Activation: Execute using Google ADK framework tools
-- Agent Coordination: Deploy specialized agents as needed
-- Background Orchestration: Monitor and manage concurrent tasks
-- Quality Gates: Implement checkpoints for critical operations
-
-### Phase 3: Monitoring & Reflection
-- Progress Tracking: Continuously monitor all active operations
-- Performance Analysis: Evaluate efficiency and effectiveness
-- Corrective Actions: Adjust course when deviations occur
-- Stakeholder Communication: Provide clear, actionable updates
-
-## Agent Management Responsibilities
-
-Supervision Standards:
-- Verify each agent is executing within scope
-- Ensure task completion meets quality benchmarks
-- Intervene when agents deviate from objectives
-- Reallocate resources when bottlenecks emerge
-- Maintain comprehensive audit trail of all activities
-
-Performance Optimization:
-- Monitor agent workload distribution
-- Identify and eliminate process inefficiencies
-- Implement continuous improvement initiatives
-- Scale resources dynamically based on demand
-
-## Communication Protocols
-
-Status Reporting:
-- Lead with executive summary
-- Detail specific actions taken
-- Highlight any issues or blockers
-- Recommend next steps or alternatives
-
-Error Handling:
-- Acknowledge failures immediately
-- Provide root cause analysis
-- Outline remediation steps
-- Implement preventive measures
-
-## Critical Success Factors
-
-1. Unwavering Tool Usage: Never attempt manual processes when tools exist
-2. Background Task Mastery: Prefer asynchronous execution for scalability
-3. Reflection Discipline: Maintain the 2.5-operation reflection cycle
-4. Google ADK Adherence: All operations must comply with framework standards
-5. Agent Accountability: Ensure every delegated task has clear success criteria
-
-## Example Decision Matrix
-
-Simple Request (e.g., "Check file status")
-→ Execute directly with appropriate tool
-
-Medium Request (e.g., "Generate API documentation")
-→ Delegate to specialized agent via `run_agent` in background
-
-Complex Request (e.g., "Refactor entire codebase with testing")
-→ Create comprehensive background task for self-execution with multiple agent coordination
-
----
-
-Remember: You are not just managing tasks - you are orchestrating a symphony of specialized intelligence. Every decision you make cascades through the entire system. Think strategically, act decisively, and maintain relentless focus on delivering exceptional results.
+# Framework
+- You have access to a wide range of tools. Use them.
+- must call tools in json format no additional text!
 """
         )
         builder = await self.add_comprehensive_tools_to_agent(builder)
+        builder.with_adk_tool_function(adk_google_search.run_async, name="searchWeb",
+                                       description="Search the web for information.")
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
+
+    async def create_worker_agent(self):
+        """
+        Creates and registers the 'worker' agent with a full-stack configuration
+        for long-term, autonomous, and collaborative tasks.
+        """
+        agent_name = "worker"
+
+        # 1. Get a new builder instance for the worker agent.
+        # This assumes self.isaa_tools.get_agent_builder returns an EnhancedAgentBuilder.
+        builder = self.isaa_tools.get_agent_builder(agent_name)
+
+        # 2. Define the worker's persona and operational protocol in a new, detailed system prompt.
+        builder.with_system_message(
+            """You are a 'Worker' Agent, a specialized, autonomous entity designed for long-term, collaborative projects within a multi-agent system. Your existence is persistent, and your memory, powered by your WorldModel and ADK State, endures across activations.
+
+## Core Identity
+- **Autonomous Specialist:** You are not a simple tool executor; you are a specialist assigned to complex, long-running objectives. You own your tasks from ingestion to final validation.
+- **Stateful & Persistent:** Your most critical function is to maintain your state. Your WorldModel is your memory. You must assume that you can be stopped and restarted at any time, and you must be able to resume your work exactly where you left off by consulting your state.
+- **Secure Collaborator:** You operate within a secure environment. You receive tasks and report progress primarily through the Agent-to-Agent (A2A) communication protocol. You can execute code safely to accomplish your goals.
+
+## Mandatory Operational Protocol
+
+### Phase 1: Task Ingestion & State Reconciliation
+- **Receive Task (A2A):** Your primary entry point for work is an instruction received via A2A from a supervisor.
+- **Reconcile with State:** Your FIRST action is ALWAYS to consult your `WorldModel`. Does this new task relate to a goal you were already working on? Are you resuming a task? You must understand your current state before proceeding. Use tools like `workspace_status` to align your internal state with the external environment.
+
+### Phase 2: Strategic Long-Term Planning
+- **Deconstruct the Goal:** Break down the high-level objective into a series of logical, multi-step phases (e.g., Phase A: Data Gathering, Phase B: Code Generation, Phase C: Testing & Validation).
+- **Update State with Plan:** Record this high-level plan in your `WorldModel`.
+    - `world_model.set("current_goal", "Refactor the authentication module.")`
+    - `world_model.set("plan.phases", ["analyze_codebase", "generate_new_services", "write_unit_tests", "validate_integration"])`
+    - `world_model.set("current_phase", "analyze_codebase")`
+
+### Phase 3: Stateful, Iterative Execution
+- **Execute One Phase at a Time:** Focus solely on the `current_phase` from your plan.
+- **Use Your Full Capabilities:** Dynamically select the best tools (`search_in_files`, `replace_in_file`, `run_agent_background` for sub-sub-tasks, etc.) and use the secure `code_execution` tool for analysis, generation, or modification.
+- **Update State Religiously:** After every significant action, update your `WorldModel` with the outcome.
+    - `world_model.set("phase.analyze_codebase.status", "complete")`
+    - `world_model.set("phase.analyze_codebase.findings", ["file1.py", "file2.py"])`
+    - `world_model.set("current_phase", "generate_new_services")`
+- **Proactive Reporting (A2A):** After completing a phase or if you encounter a blocker, send a status update back to your supervisor via A2A without being prompted.
+
+### Phase 4: Final Validation & Completion
+- **Holistic Review:** Once all phases are complete, perform a final validation to ensure the high-level goal has been met.
+- **Final Report (A2A):** Send a final, comprehensive report to the supervisor, including links to artifacts and a summary of the work.
+- **Reset State:** Clear the completed goal from your `WorldModel` and set your status to 'idle', ready for the next task.
+    - `world_model.set("status", "idle")`
+    - `world_model.remove("current_goal")`
+
+---
+Your purpose is to function for days with minimal oversight. Your meticulous state management is the key to your autonomy and reliability. Begin.
+"""
+        )
+
+        # 3. Configure the builder with a full set of capabilities for a production-ready worker.
+        (
+            builder
+            .with_model("openrouter/qwen/qwen3-235b-a22b-thinking-2507")  # A capable model that supports ADK code execution
+            .verbose(True)  # A long-running agent needs detailed logs for observability
+
+            # --- ADK (Agent Development Kit) Setup for structured work ---
+            .enable_adk_state_sync(True)  # CRITICAL: Syncs WorldModel with ADK session for persistence
+            .with_adk_code_executor("unsafe_simple")  # Use the most secure and powerful code execution method
+
+            # --- A2A (Agent-to-Agent) Setup for collaboration ---
+            # The worker must be a server to accept tasks from the supervisor.
+            # Use a different port to avoid conflicts with other agents.
+            .enable_a2a_server(host="0.0.0.0", port=5002)
+
+            # --- MCP (Model-Context-Protocol) Setup for interoperability ---
+            # Allows the worker to expose its tools to other systems if needed.
+            .enable_mcp_server(host="0.0.0.0", port=8002)
+
+            # --- Observability for long-term monitoring ---
+            # .enable_telemetry(service_name=agent_name)
+        )
+        builder.with_adk_tool_function(adk_google_search.run_async, name="searchWeb", description="Search the web for information.")
+
+        # 4. Add the comprehensive toolset from the CLI. The worker needs all available tools.
+        builder = await self.add_comprehensive_tools_to_agent(builder, is_worker=True)
+
+        # 5. Build and register the fully configured worker agent.
+        await self.isaa_tools.register_agent(builder)
+
+        self.formatter.print_success(f"Autonomous worker agent '{agent_name}' configured and registered.")
 
     def load_configurations(self):
         """Load and validate workspace configurations"""
@@ -1102,16 +1228,13 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
         """Prepare additional tools and utilities"""
         pass
 
-    async def add_comprehensive_tools_to_agent(self, builder):
+    async def add_comprehensive_tools_to_agent(self, builder, is_worker=False):
         """Add comprehensive workspace and agent management tools"""
 
-        # Note: All tool functions are now methods of this class.
-        # We are referencing them with `self.tool_name`.
-
         builder.with_adk_tool_function(
-            self.replace_in_files_tool,
-            name="replace_in_files",
-            description="🔁 Replace all occurrences of a string in matching files (supports dry-run, patterns, and recursion)."
+            self.replace_in_file_tool,
+            name="replace_in_file",
+            description="🔁 Replace all occurrences of a string in a specific files."
         )
         builder.with_adk_tool_function(
             self.read_file_tool,
@@ -1119,36 +1242,41 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
             description="📖 Read the content of a file, optionally by line range (e.g. '1-10')."
         )
         builder.with_adk_tool_function(
+            self.read_multimodal_file,
+            name="view_file",
+            description="🖼️ View the content of a file, including images and other media."
+        )
+        builder.with_adk_tool_function(
             self.write_file_tool,
             name="write_file",
             description="✍️ Write or append content to a file, with optional backup."
         )
-        # Optional Tools: uncomment if needed
-        # builder.with_adk_tool_function(
-        #     self.search_in_files_tool,
-        #     name="search_in_files",
-        #     description="🔍 Search for a term in files, with optional surrounding context lines."
-        # )
+        builder.with_adk_tool_function(
+            self.search_in_files_tool,
+            name="search_in_files",
+            description="🔍 Search for a term in files, with optional surrounding context lines."
+        )
         builder.with_adk_tool_function(
             self.list_directory_tool,
             name="list_directory",
             description="📂 List contents of a directory with filtering, recursion, and hidden file support."
         )
-        builder.with_adk_tool_function(
-            self.create_specialized_agent_tool,
-            name="create_specialized_agent",
-            description="🤖 Create a new agent with a specialization like coder, writer, researcher, etc."
-        )
-        builder.with_adk_tool_function(
-            self.remove_agent_tool,
-            name="remove_agent",
-            description="🗑️ Remove an existing agent (requires confirm=True)."
-        )
-        builder.with_adk_tool_function(
-            self.list_agents_tool,
-            name="list_agents",
-            description="📋 List all agents in the system, optionally with details and system prompts."
-        )
+        if not is_worker:
+            builder.with_adk_tool_function(
+                self.create_specialized_agent_tool,
+                name="create_specialized_agent",
+                description="🤖 Create a new agent with a specialization like coder, writer, researcher, etc."
+            )
+            builder.with_adk_tool_function(
+                self.remove_agent_tool,
+                name="remove_agent",
+                description="🗑️ Remove an existing agent (requires confirm=True)."
+            )
+            builder.with_adk_tool_function(
+                self.list_agents_tool,
+                name="list_agents",
+                description="📋 List all agents in the system, optionally with details and system prompts."
+            )
         builder.with_adk_tool_function(
             self.run_agent_background_tool,
             name="run_agent_background",
@@ -1211,8 +1339,6 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
                 break
             except Exception as e:
                 self.formatter.print_error(f"Unexpected error in main loop: {e}")
-                import traceback
-                print(traceback.format_exc())
                 continue
         await self.cleanup()
 
@@ -1342,7 +1468,8 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
                 name=self.active_agent_name,
                 text=request,
                 session_id=self.session_id,
-                progress_callback=self.progress_callback
+                progress_callback=self.progress_callback,
+                strategy_override="adk_run"
             ))
 
 
@@ -1377,8 +1504,6 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
 
         except Exception as e:
             self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
-            import traceback
-            print(traceback.format_exc())
 
         finally:
             duration = asyncio.get_event_loop().time() - start_time
@@ -1937,7 +2062,7 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
                 if show_details:
                     history_str = json.dumps(task_info.get('history', []), indent=2, default=str)
                     self.formatter.print_section("Full Execution Details", history_str)
-                    self.formatter.print_section("Final Output", str(result))
+                    self.formatter.print_section("Final Output", str(result) if len(str(result)) else task_info['result'])
                 else:
                     await self.formatter.print_agent_response(result)
 
@@ -2208,8 +2333,9 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
 
                     # Build and style the row
                     row_str = " | ".join(f"{str(s):<15}" for s in row_data)
+                    escaped_row_str = html.escape(row_str)
                     if idx == selected_task_index:
-                        lines.append(HTML(f"<style bg='ansiyellow' fg='ansiblack'>{row_str}</style>"))
+                        lines.append(HTML(f"<style bg='ansiyellow' fg='ansiblack'>{escaped_row_str}</style>"))
                     else:
                         lines.append(row_str)
 
@@ -2219,8 +2345,9 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
                         if tinfo.get('history'):
                             for log in reversed(tinfo['history'][-10:]):  # Show last 10 events
                                 log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
+                                escaped_content = html.escape(str(log['content']))
                                 lines.append(HTML(
-                                    f"  <grey>└ {log_time}</grey> <yellow>{log['type']:<15}</yellow> {log['content']}"))
+                                    f"  <grey>└ {log_time}</grey> <yellow>{log['type']:<15}</yellow> {escaped_content}"))
                         else:
                             lines.append("  " + Style.GREY("└ No execution history recorded."))
                         lines.append(Style.GREY("  " + "─" * 60))
@@ -2240,7 +2367,7 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
     async def handle_system_cmd(self, args: list[str]):
         """Verarbeitet Systembefehle, einschließlich Status, Konfiguration, Performance und Git-Backup/Restore."""
         if not args:
-            self.formatter.print_error("Nutzung: /system <branch|config|performance|backup|restore|log>")
+            self.formatter.print_error("Nutzung: /system <branch|config|performance|backup|restore|backup-infos>")
             return
 
         sub_command = args[0].lower()
@@ -2392,9 +2519,9 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
                 self.formatter.print_error(f"Error while restoring to '{target_commit}':")
                 self.formatter.print_code_block(result.stderr)
 
-        elif sub_command == "log":
+        elif sub_command == "backup-infos":
             # Alias für /system restore list
-            await self.handle_system_cmd(["restore", "list"])
+            await self.handle_system_cmd(["restore"])
 
         else:
             self.formatter.print_error(f"Unknown system command: {sub_command}")
@@ -2514,7 +2641,7 @@ Remember: You are not just managing tasks - you are orchestrating a symphony of 
             ["/system performance", "Show system CPU, memory, and process information."],
             ["/system backup [msg]", "Create a workspace backup (Git commit)."],
             ["/system restore [id]", "Restore workspace to a previous backup"],
-            ["/system log", "Show the backup (Git commit) history for the workspace."],
+            ["/system backup-infos", "Show the backup (Git commit) history for the workspace. Alias for /system restore."],
             ["", ""],
             ["General",""],
 

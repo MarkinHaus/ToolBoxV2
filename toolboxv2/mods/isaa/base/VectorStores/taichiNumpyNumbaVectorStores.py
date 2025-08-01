@@ -7,6 +7,7 @@ except ImportError:
         return None
     numba.jit =lambda **_:lambda x:x
     numba.njit =lambda **_:lambda x:x
+    print("numba not found, using fallback")
 import contextlib
 import json
 import os
@@ -921,7 +922,7 @@ class FastVectorStore1(AbstractVectorStore):
         query_embedding = query_embedding.astype(np.float32)
 
         # Pre-compute normalized embeddings if not cached
-        if self.normalized_embeddings is None and len(self.chunks) > 1:
+        if self.normalized_embeddings is None:
             self._precompute_normalized_embeddings()
 
         # Normalize query

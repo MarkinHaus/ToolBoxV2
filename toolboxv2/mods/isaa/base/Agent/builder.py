@@ -119,7 +119,7 @@ except ImportError:
 # Assume EnhancedAgent and supporting classes (WorldModel, AgentModelData, etc.)
 # are in the same directory or properly importable
 from toolboxv2.mods.isaa.base.Agent.agent import (
-    A2A_AVAILABLE as AGENT_A2A_AVAILABLE, adk_built_in_code_execution,  # Check agent's view
+    A2A_AVAILABLE as AGENT_A2A_AVAILABLE, adk_BuiltInCodeExecutor,  # Check agent's view
 )
 from toolboxv2.mods.isaa.base.Agent.agent import (
     MCP_AVAILABLE as AGENT_MCP_AVAILABLE,  # Check agent's view
@@ -465,6 +465,7 @@ class EnhancedAgentBuilder:
         return self
 
     def with_api_key_from_env(self, env_var_name: str) -> 'EnhancedAgentBuilder':
+        self._config.api_key_env_var = env_var_name
         self._config.api_key_env_var = env_var_name
         # Quick check if env var exists
         if not os.getenv(env_var_name):
@@ -903,7 +904,7 @@ class EnhancedAgentBuilder:
                     logger.warning("SecureCodeExecutorPlaceholder instance created.")
                 elif executor_config == "adk_builtin":
                     # This type uses the TOOL, not an executor instance passed to LlmAgent init
-                    adk_code_executor = adk_built_in_code_execution
+                    adk_code_executor = adk_BuiltInCodeExecutor()
                     #if not any(getattr(t, 'func', None) == tool_func for t in processed_adk_tools if isinstance(t, FunctionTool)):
                     #     tool_func.__name__ = "code_execution"
                     # processed_adk_tools.append(tool_func)

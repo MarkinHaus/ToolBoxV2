@@ -160,8 +160,11 @@ async def litellm_complete(
         elif isinstance(kwargs["response_format"], str):
             pass
         else:
-            kwargs["response_format"] =enforce_no_additional_properties(kwargs["response_format"].model_json_schema())  # oder .schema() in v1
+            kwargs["response_format"] = enforce_no_additional_properties(kwargs["response_format"].model_json_schema())  # oder .schema() in v1
      # kwargs["hashing_kv"].global_config["llm_model_name"]
+
+    if any(x in model_name for x in ["mistral", "mixtral"]):
+        kwargs.pop("response_format", None)
 
     return await litellm_complete_if_cache(
         model_name,

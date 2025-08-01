@@ -331,7 +331,7 @@ class DynamicVerboseFormatter:
         else:
             display_message = message
 
-        with Spinner(f"{self.style.CYAN('●')} {display_message}", spinner_symbols):
+        with Spinner(f"{self.style.CYAN('●')} {display_message}", symbols=spinner_symbols):
             return await coroutine
 
     def print_git_info(self) -> Optional[str]:
@@ -1415,24 +1415,24 @@ class MockIPython:
                     }
                     self.output_history[self._execution_count] = output
 
-                    if not result:
-                        result = ""
-                    if output['stdout']:
-                        result = f"{result}\nstdout:{output['stdout']}"
-                    if output['stderr']:
-                        result = f"{result}\nstderr:{output['stderr']}"
-
-                    if self.auto_remove and original_file is None:
-                        # Only remove temp files, not user-specified files
-                        self.vfs.delete_file(temp_file)
-
-                    return result
-
         except Exception as e:
             error_msg = f"Error executing code: {str(e)}\n{traceback.format_exc()}"
             if live_output:
                 sys.__stderr__.write(error_msg)
             return error_msg
+
+        if not result:
+            result = ""
+        if output['stdout']:
+            result = f"{result}\nstdout:{output['stdout']}"
+        if output['stderr']:
+            result = f"{result}\nstderr:{output['stderr']}"
+
+        if self.auto_remove and original_file is None:
+            # Only remove temp files, not user-specified files
+            self.vfs.delete_file(temp_file)
+
+        return result
 
     async def modify_code(self, code: str = None, object_name: str = None, file: str = None) -> str:
         '''
@@ -2506,10 +2506,9 @@ class Pipeline:
             >>> agent = get_free_agent("demo", "anthropic/claude-3-haiku-20240307")
             >>> pipeline = Pipeline(
             ...     agent=agent,
-            ...     task="Calculate fibonacci sequence",
             ...     variables={"n": 10}
             ... )
-            >>> result = pipeline.run("...")
+            >>> result = pipeline.run("Calculate fibonacci sequence")
             >>> print(result.result)
 
         Notes:
@@ -3023,7 +3022,7 @@ class Pipeline:
 
         elif think_result.action == 'guide':
             details = await self.process_memory.get_reference(think_result.content, to_str=True)
-            plan = await self.agent.a_mini_task(f"""You are an AI guidance system designed to help determine the next step in a task and provide instructions on how to proceed. Your role is to analyze the given information and offer clear, actionable guidance for the next steps.
+            plan = await self.agent.a_run(f"""You are an AI guidance system designed to help determine the next step in a task and provide instructions on how to proceed. Your role is to analyze the given information and offer clear, actionable guidance for the next steps.
 
 First, carefully read and understand the main task:
 <main_task>
@@ -3078,7 +3077,7 @@ Format your response using the following sections:
 (Briefly state how this step contributes to overall progress)
 </conclusion>
 
-Remember to be clear, concise, and specific in your guidance. Avoid vague or ambiguous instructions, and provide concrete examples or explanations where necessary.""")
+Remember to be clear, concise, and specific in your guidance. Avoid vague or ambiguous instructions, and provide concrete examples or explanations where necessary.""",persist_history=False, strategy_override="direct_llm")
             return ThinkState.ACTION, plan
 
         return ThinkState.ACTION, None
@@ -3112,7 +3111,7 @@ Remember to be clear, concise, and specific in your guidance. Avoid vague or amb
         result = None
         original_task = task
         if not do_continue:
-            task = self.agent.mini_task(task, "user", f"""You are an AI assistant tasked with refactoring a user-provided task description into a more structured format with context learning and examples. Your goal is to create a comprehensive and well-organized task description that incorporates model flows and potential code fixes.
+            task = await self.agent.a_run(f"""You are an AI assistant tasked with refactoring a user-provided task description into a more structured format with context learning and examples. Your goal is to create a comprehensive and well-organized task description that incorporates model flows and potential code fixes.
 
 First, I will provide you with a task description and some example tasks. Please read them carefully:
 
@@ -3179,7 +3178,7 @@ Additional tips:
 - Mention any prerequisites or assumed knowledge
 - Suggest potential extensions or variations of the task for further learning
 
-Remember to maintain the original intent and complexity of the task while improving its structure and clarity.""")
+Remember to maintain the original intent and complexity of the task while improving its structure and clarity. the task is: {task}""", persist_history=False, strategy_override="direct_llm")
             if '<refactored_task>' in task:
                 task = task.split('<refactored_task>')[1]
             if '</refactored_task>' in task:
@@ -3387,7 +3386,7 @@ Next Action Required:
             prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', '')
             prompt = prompt.replace('#LOCALS#', f'{self._generate_variable_descriptions()}')
             self.verbose_output.log_state(state.name, {})
-            self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)
+            self.verbose_output.print(Style.GREY(f"{iter_i}/{self.max_iter}"))
             if state == ThinkState.ACTION:
                 iter_tat +=1
                 if iter_tat > self.max_think_after_think:
@@ -3400,14 +3399,14 @@ Next Action Required:
                 think_dicts = await self.verbose_output.process(state.name, self.agent.a_format_class(
                     ThinkResults,
                     prompt,
-                    message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
+                    message_context=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
                 ))
                 think_dicts = think_dicts.get("actions")
                 if think_dicts is None:
                     think_dicts = [await self.verbose_output.process(state.name, self.agent.a_format_class(
                         ThinkResult,
                         prompt,
-                        message=self.chat_session.get_past_x(self.max_iter * 2, last_u=not do_continue).copy() + (
+                        message_context=self.chat_session.get_past_x(self.max_iter * 2, last_u=not do_continue).copy() + (
                             [self.process_memory.history[-1]] if self.process_memory.history else []),
                     ))]
                 if len(think_dicts) == 1:
@@ -3429,7 +3428,7 @@ Next Action Required:
                                 {'role': 'system', 'content': 'Evaluation: ' + str(result)})
                             await self.verbose_output.log_message('system', str(result))
                     think_dict = think_dicts[-1]
-                await self.verbose_output.log_think_result(think_dict)
+                self.verbose_output.formatter.print_code_block(think_dict.get("content"), 'python' if think_dict.get("context", {'lang': 'py'}).get('lang') == 'py' else 'javascript')
                 if think_dict.get('context') is None:
                     think_dict['context'] = {'context': 'N/A'}
                 if not isinstance(think_dict.get('context'), dict):
@@ -3465,7 +3464,7 @@ Next Action Required:
                 next_dict = await self.verbose_output.process(state.name, _agent.a_format_class(
                     Next,
                     code_follow_up_prompt_[0],
-                    message=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy(),
+                    message_context=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy(),
                 ))
                 next_infos = json.dumps(next_dict)
                 await self.verbose_output.log_process_result(next_dict)
@@ -3488,9 +3487,10 @@ Next Action Required:
                 break
 
             if iter_i < self.max_iter:
-                if time.perf_counter() -t0 < self.timeout_timer*2.5:
-                    with Spinner(f"Prevent rate limit posing for {self.timeout_timer}s", symbols='+', time_in_s=self.timeout_timer, count_down=True):
-                        await asyncio.sleep(self.timeout_timer)
+                await asyncio.sleep(1)
+                # if time.perf_counter() -t0 < self.timeout_timer*2.5:
+                #     with Spinner(f"Prevent rate limit posing for {self.timeout_timer}s", symbols='+', time_in_s=self.timeout_timer, count_down=True):
+                #         await asyncio.sleep(self.timeout_timer)
             else:
                 state = ThinkState.BRAKE
                 if isinstance(result, ExecutionRecord):
@@ -3583,14 +3583,14 @@ Next Action Required:
 
         while state != ThinkState.DONE:
             iter_i += 1
-            self.verbose_output.formatter.print_iteration(iter_i, self.max_iter)
+            self.verbose_output.print(Style.GREY(f"{iter_i}/{self.max_iter}"))
             if iter_i>self.max_iter:
                 break
             if state == ThinkState.ACTION:
                 think_result = await self.agent.a_format_class(
                     ProjectThinkResult,
                     project_prompt.replace('#files#', vfs.print_file_structure()),
-                    message=execution_history
+                    message_context=execution_history
                 )
                 self.verbose_output.log_state(state.name, think_result)
                 think_result = ProjectThinkResult(**think_result)
@@ -3632,7 +3632,7 @@ Next Action Required:
                     evaluation = await self.agent.a_format_class(
                         ProjectThinkResult,
                         evaluation_prompt,
-                        message=execution_history
+                        message_context=execution_history
                     )
                     self.verbose_output.log_state(state.name, evaluation)
                     evaluation = ProjectThinkResult(**evaluation)
@@ -3858,12 +3858,22 @@ if __name__ == '__main__':
     #print(cleaned_result)
 
 if __name__ == "__main__":
-    pass
+    async def main():
+        agent = get_app("demo").get_mod("isaa").get_agent("self")
+        agent = await agent
+        pipeline = Pipeline(
+        agent = agent,
+        variables = {"n": 10})
+        result = await pipeline.run(task = "Calculate fibonacci sequence to n")
+        print(result.result)
+
+
+    asyncio.run(main())
     # print(asyncio.run(BrowserWrapper().run("Finde eine Lösung für mein Problem. ich habe ine rust aplikation die beim ausführen der exe zurückgibt : returned non-zero exit status 3221225781. oder spezifischer : (exit code: 0xc0000135, STATUS_DLL_NOT_FOUND) ich nutze pyo3 damit rust python verwenden kann in einer venv so wiet habe ich nur das gefunde : https://github.com/PyO3/pyo3/issues/3589 wie fixe ich mein probelm?")))
 
 
 # Example usage and testing
-if __name__ == "__main__":
+if __name__ == "__main__2":
     async def demo():
         # Create formatter instance
         formatter = EnhancedVerboseOutput(verbose=True)

@@ -501,7 +501,7 @@ class Tools(MainTool, FileHandler):
         memory_instance = self.get_memory()  # Assuming this returns AISemanticMemory
         if hasattr(memory_instance, 'load_all_memories'):  # Hypothetical method
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
-        self.print("Memory saving process initiated")
+        self.print("Memory loading process initiated")
 
     def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
         if name == 'None': name = "self"  # Default name
@@ -603,8 +603,8 @@ class Tools(MainTool, FileHandler):
                 return 'Data added to memory.'
             raise ValueError('Error adding data to memory.')
 
-        agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
-                                             description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
+        # agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
+        #                                      description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
         agent_builder.with_adk_tool_function(memory_search_tool, name="memorySearch",
                                              description="Search ISAA's semantic memory.")
         agent_builder.with_adk_tool_function(save_to_memory_tool, name="saveDataToMemory",

@@ -62,13 +62,14 @@ try:
     )
     try:
         from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-        from google.adk.tools import (
-            built_in_code_execution as adk_built_in_code_execution,  # Secure option
+        from google.adk.code_executors.built_in_code_executor import (
+            BuiltInCodeExecutor as adk_BuiltInCodeExecutor,  # Secure option
         )
         from google.adk.tools import google_search as adk_google_search
+        from google.adk.tools import url_context as adk_url_context
     except ImportError:
         print("WARN: google.adk.tools.google_search not found. Google Search tool not available.")
-        def adk_built_in_code_execution():
+        def adk_url_context():
             return None  # Dummy
         def adk_google_search():
             return None  # Dummy
@@ -114,7 +115,7 @@ except ImportError as e:
     class Example: pass
     class MCPToolset: pass # Dummy
 
-    def adk_built_in_code_execution(): return None # Dummy
+    def adk_url_context(): return None # Dummy
     def adk_google_search(): return None # Dummy
     class AdkVertexAiSearchTool: pass # Dummy
 
@@ -278,7 +279,6 @@ logger.propagate = False
 logging.getLogger().handlers.clear()
 
 logger.setLevel(get_logger().level) # Default level, builder can override via 'verbose'
-
 
 # --- Helper Classes ---
 
@@ -890,7 +890,7 @@ class EnhancedAgent(*_AgentBaseClass):
             logger.info(f"Setting up A2A client for target: {target_agent_url}")
             try:
                 # python-a2a client likely fetches card on init or first call
-                client = A2AClient(base_url=target_agent_url) # Pass the URL directly
+                client = A2AClient(endpoint_url=target_agent_url) # Pass the URL directly
                 # Verify connection implicitly by getting card (optional, client might do lazy loading)
                 # agent_card = await client.get_agent_card() # If method exists
                 # logger.info(f"Successfully connected A2A client to agent: {agent_card.name}")
@@ -1014,6 +1014,8 @@ class EnhancedAgent(*_AgentBaseClass):
                 # 3. Determine Processing Strategy
                 if strategy_override:
                     strategy = strategy_override
+                    if isinstance(strategy_override, str):
+                        strategy = ProcessingStrategy[strategy_override.upper()]
                     strategy_reasoning = "Strategy overridden by caller."
                     logger.info(f"Strategy forced by override: {strategy.value}")
                 else:
@@ -1047,7 +1049,7 @@ class EnhancedAgent(*_AgentBaseClass):
                         response = await self._execute_a2a_call(**exec_kwargs)
                     else:
                         logger.warning("A2A_CALL strategy selected, but A2A not available. Falling back.")
-                        strategy = ProcessingStrategy.DIRECT_LLM
+                        strategy = ProcessingStrategy.ADK_RUN
                         response = await self._execute_direct_llm(**exec_kwargs)
 
                 else: # Default: DIRECT_LLM
@@ -1112,7 +1114,7 @@ class EnhancedAgent(*_AgentBaseClass):
                  span.record_exception(e)
         finally:
             self.internal_state = InternalAgentState.IDLE
-            if span: span.end() # Ensure span is closed
+            # if span: span.end() # Ensure span is closed
             logger.info(f"--- Agent Run End (Session: {session_id}) ---")
 
         return str(response) # Ensure string output
@@ -1315,7 +1317,7 @@ class EnhancedAgent(*_AgentBaseClass):
                          final_response_text = f"Error: ADK processing failed: {event.error_message}"
                     else:
                          final_response_text = "ADK processing finished without a clear textual response."
-                    break # Stop processing events
+                    # Stop processing events
 
             # 4. Update World Model from final ADK state (if syncing)
             # This happens *after* the run completes, the sync in a_run updates the persisted state.
@@ -1840,7 +1842,7 @@ class EnhancedAgent(*_AgentBaseClass):
         current_keys = list(self.world_model.to_dict().keys())
         class WorldModelAdaption(BaseModel):
             action: Literal['add', 'update', 'remove', 'none'] = Field(..., description="Action on the world model.")
-            key: str | None = Field(None, description=f"Key to modify/add/remove (e.g., 'user_location', 'task_status'). Existing keys: {current_keys}")
+            key: str | None = Field(None, description=f"Key to add/remove/modify (e.g., 'user_location', 'task_status'). Existing keys: {current_keys}")
             value: Any | None = Field(None, description="New value (for 'add'/'update'). Should be JSON serializable.")
             reasoning: str = Field(..., description="Why this change (or no change) is needed based on the input.")
 
@@ -1861,7 +1863,7 @@ class EnhancedAgent(*_AgentBaseClass):
                 if adaption.key and adaption.value is not None:
                     self.world_model.set(adaption.key, adaption.value)
                 else:
-                    logger.warning("World model 'add'/'update' ignored: missing key or value.")
+                    logger.warning(f"World model 'add'/'update' ignored: missing '{adaption.key=}' or value.")
             elif adaption.action == 'remove':
                 if adaption.key:
                     self.world_model.remove(adaption.key)
