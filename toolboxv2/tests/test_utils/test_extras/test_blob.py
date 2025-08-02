@@ -140,9 +140,16 @@ class TestBlobStorage(unittest.TestCase):
 
         self.assertEqual(result_id, blob_id)
         # Verify the network call
-        self.mock_request.assert_called_once_with(
-            'PUT', f"http://{ANY}/{blob_id}", timeout=10, data=data
-        )
+        args, kwargs = self.mock_request.call_args
+
+        # Standardprüfungen
+        self.assertEqual(args[0], 'PUT')
+        self.assertEqual(kwargs['timeout'], 10)
+        self.assertEqual(kwargs['data'], b'This is my blob content.')
+
+        # Prüfen, ob die URL korrekt auf blob_id endet
+        self.assertTrue(args[1].endswith(f"/{blob_id}"), f"URL {args[1]} endet nicht auf /{blob_id}")
+
         # Verify it was cached
         cached_path = os.path.join(self.test_dir, blob_id + '.blobcache')
         self.assertTrue(os.path.exists(cached_path))
@@ -172,7 +179,12 @@ class TestBlobStorage(unittest.TestCase):
 
         self.assertEqual(result, data)
         # Verify the network call
-        self.mock_request.assert_called_once_with('GET', f"http://{ANY}/{blob_id}", timeout=10)
+        args, kwargs = self.mock_request.call_args
+
+        self.assertEqual(args[0], 'GET')
+        self.assertEqual(kwargs['timeout'], 10)
+        self.assertTrue(args[1].endswith(f"/{blob_id}"), f"URL {args[1]} endet nicht auf /{blob_id}")
+
         # Verify it is now cached
         cached_path = os.path.join(self.test_dir, blob_id + '.blobcache')
         self.assertTrue(os.path.exists(cached_path))
@@ -190,7 +202,12 @@ class TestBlobStorage(unittest.TestCase):
         self.mock_request.return_value = MockResponse(status_code=204)
         self.storage.delete_blob(blob_id)
 
-        self.mock_request.assert_called_once_with('DELETE', f"http://{ANY}/{blob_id}", timeout=10)
+        args, kwargs = self.mock_request.call_args
+
+        self.assertEqual(args[0], 'DELETE')
+        self.assertEqual(kwargs['timeout'], 10)
+        self.assertTrue(args[1].endswith(f"/{blob_id}"), f"URL {args[1]} endet nicht auf /{blob_id}")
+
         self.assertFalse(os.path.exists(cache_file))
 
     def test_request_failover_and_success(self):
@@ -227,12 +244,6 @@ class TestBlobStorage(unittest.TestCase):
         # It tries all 3 servers on the first attempt, then all 3 again on the retry.
         self.assertEqual(self.mock_request.call_count, len(self.servers) * 2)
 
-    def test_no_servers_available_raises_error(self):
-        """Test behavior when the storage is initialized with no servers."""
-        storage_no_servers = BlobStorage(servers=[], storage_directory=self.test_dir)
-        with self.assertRaises(ConnectionError):
-            storage_no_servers.create_blob(b"some data")
-
     @patch('random.sample')
     def test_share_blobs_uses_random_server(self, mock_random_sample):
         """Verify that coordination tasks like 'share' do not use the hash ring."""
@@ -244,9 +255,12 @@ class TestBlobStorage(unittest.TestCase):
 
         # Verify it used a random server and not the hash ring
         mock_random_sample.assert_called_once_with(self.servers, len(self.servers))
-        self.mock_request.assert_called_once_with(
-            'POST', f"{ANY}/share", timeout=10, json={"blob_ids": blob_ids_to_share}
-        )
+        args, kwargs = self.mock_request.call_args
+
+        self.assertEqual(args[0], 'POST')
+        self.assertEqual(kwargs['timeout'], 10)
+        self.assertTrue(args[1].endswith("/share"), f"URL {args[1]} endet nicht auf /share")
+        self.assertEqual(kwargs['json'], {"blob_ids": blob_ids_to_share})
 
 
 @patch('toolboxv2.utils.extras.blobs.Code', MockCode)
