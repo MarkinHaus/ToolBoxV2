@@ -1882,7 +1882,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             # Create concurrent tasks to read stdout and stderr.
             # This ensures we see output as it happens, regardless of which stream it's on.
             stdout_task = asyncio.create_task(stream_reader(process.stdout, self.formatter.print))
-            stderr_task = asyncio.create_task(stream_reader(process.stderr,  lambda x: self.formatter.print_section("Shell Error", Style.RED(x))))
+            stderr_task = asyncio.create_task(stream_reader(process.stderr,  self.formatter.print))
 
             # Wait for both stream readers to finish.
             await asyncio.gather(stdout_task, stderr_task)

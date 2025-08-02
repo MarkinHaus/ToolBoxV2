@@ -855,6 +855,8 @@ class Tools(MainTool, FileHandler):
 
     async def run_pipe(self, agent_name_or_instance: str | EnhancedAgent, task: str, do_continue=False):
         pipe = await self.get_pipe(agent_name_or_instance)
+        if not hasattr(pipe, 'run'):
+            return pipe
         return await pipe.run(task, do_continue=do_continue)  # pipeline.run is async
 
     async def run_agent(self, name: str | EnhancedAgent,
