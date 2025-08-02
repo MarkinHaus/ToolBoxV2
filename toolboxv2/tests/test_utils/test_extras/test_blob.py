@@ -107,8 +107,8 @@ class TestConsistentHashRing(unittest.TestCase):
         self.assertTrue(all(count > 100 for count in counts.values()))
 
 
-@patch('blobs.get_logger', MagicMock())
-@patch('time.sleep', MagicMock()) # Prevent tests from actually sleeping
+@patch('toolboxv2.utils.extras.blobs.get_logger', MagicMock())
+@patch('time.sleep', MagicMock())
 class TestBlobStorage(unittest.TestCase):
     """Tests the BlobStorage client for network, cache, and failover logic."""
 
@@ -249,7 +249,7 @@ class TestBlobStorage(unittest.TestCase):
         )
 
 
-@patch('blobs.Code', MockCode) # Use the mock Code class for all BlobFile tests
+@patch('toolboxv2.utils.extras.blobs.Code', MockCode)
 class TestBlobFile(unittest.TestCase):
     """Tests the BlobFile interface which acts upon a BlobStorage instance."""
 

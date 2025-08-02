@@ -47,7 +47,7 @@ import subprocess
 import sys
 from typing import Any, Optional, Awaitable
 
-from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
+from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles
 
 # Updated imports for EnhancedAgent
 from .base.Agent.agent import (
@@ -269,19 +269,19 @@ class Tools(MainTool, FileHandler):
     def list_task(self):
         return str(self.agent_chain)
 
-    def remove_task(self, name):
+    def remove_task(self, name:str):
         return self.agent_chain.remove(name)
 
-    def save_task(self, name=None):
+    def save_task(self, name:Optional[str]=None):
         self.agent_chain.save_to_file(name)
 
-    def load_task(self, name=None):
+    def load_task(self, name:Optional[str]=None):
         self.agent_chain.load_from_file(name)
 
-    def get_task(self, name=None):
+    def get_task(self, name:Optional[str]=None):
         return self.agent_chain.get(name)
 
-    async def run_task(self, task_input: str, chain_name: str, sum_up=True, agent_name=None):
+    async def run_task(self, task_input: str, chain_name: str, sum_up:bool=True, agent_name:Optional[str]=None):
         self.agent_chain_executor.reset()
         if agent_name is None:
             agent_name = "self"
@@ -292,7 +292,7 @@ class Tools(MainTool, FileHandler):
         return await self.agent_chain_executor.a_execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)
 
-    async def create_task_chain(self, prompt):
+    async def create_task_chain(self, prompt: str):
         agents_list = self.config.get('agents-name-list', ['self', 'isaa'])
         # Tools list needs to be adapted for EnhancedAgent/ADK
         self_agent = await self.get_agent("self")
@@ -998,8 +998,8 @@ def shell_tool_function(command: str) -> str:
             check=False
         )
 
-        stdout = safe_decode(process.stdout)
-        stderr = safe_decode(process.stderr)
+        stdout = remove_styles(safe_decode(process.stdout))
+        stderr = remove_styles(safe_decode(process.stderr))
 
         if process.returncode == 0:
             result.update({"success": True, "output": stdout, "error": stderr if stderr else ""})
