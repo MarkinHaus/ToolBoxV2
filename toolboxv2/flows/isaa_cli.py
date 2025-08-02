@@ -1431,7 +1431,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         # 3. Configure the builder with a full set of capabilities for a production-ready worker.
         (
             builder
-            .with_model("openrouter/google/gemini-2.5-pro")  # A capable model that supports ADK code execution
+            .with_model("openrouter/google/gemini-2.5-flash-lite")  # A capable model that supports ADK code execution
             .verbose(True)  # A long-running agent needs detailed logs for observability
 
             # --- ADK (Agent Development Kit) Setup for structured work ---

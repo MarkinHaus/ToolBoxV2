@@ -414,6 +414,13 @@ class EnhancedVerboseOutput:
 
         color_func, icon = role_formats.get(role.lower(), (self.formatter.style.WHITE, "•"))
 
+        if content.startswith("```"):
+            self.formatter.print_code_block(content)
+            return
+
+        if content.startswith("{") or content.startswith("[") and content.endswith("}") or content.endswith("]"):
+            content = json.dumps(json.loads(content), indent=2)
+
         # Adapt formatting based on screen size
         if self.formatter._terminal_width < 60:
             self.print(f"\n{icon} [{role.upper()}]")

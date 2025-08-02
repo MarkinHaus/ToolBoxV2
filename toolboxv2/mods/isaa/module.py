@@ -293,6 +293,9 @@ class Tools(MainTool, FileHandler):
                                           self.agent_chain.get(chain_name), sum_up)
 
     async def create_task_chain(self, prompt: str):
+        if prompt is None:
+            return None
+        if prompt == "": return None
         agents_list = self.config.get('agents-name-list', ['self', 'isaa'])
         # Tools list needs to be adapted for EnhancedAgent/ADK
         self_agent = await self.get_agent("self")
@@ -728,6 +731,7 @@ class Tools(MainTool, FileHandler):
                                    max_tokens_override: int | None = None, task_from="system",
                                    stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion"):
         if mini_task is None: return None
+        if agent_name is None: return None
         if mini_task == "test": return "test"
         self.print(f"Running mini task, volume {len(mini_task)}")
 
@@ -854,6 +858,10 @@ class Tools(MainTool, FileHandler):
             return self.pipes[agent_name_str]
 
     async def run_pipe(self, agent_name_or_instance: str | EnhancedAgent, task: str, do_continue=False):
+        if task is None: return ""
+        if task == "test": return "test"
+        if agent_name_or_instance is None: return ""
+
         pipe = await self.get_pipe(agent_name_or_instance)
         if not hasattr(pipe, 'run'):
             return pipe
@@ -868,6 +876,7 @@ class Tools(MainTool, FileHandler):
                         progress_callback: Callable[[Any], None | Awaitable[None]] | None = None,
                         **kwargs):  # Other kwargs for a_run
         if text is None: return ""
+        if name is None: return ""
         if text == "test": return ""
 
         agent_instance = None

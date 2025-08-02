@@ -930,7 +930,7 @@ async def create_share_link(self, request: RequestData, file_path: Optional[str]
     # Determine file_path from query_params (GET) or JSON body (POST)
     # The function signature allows direct passing too, useful for internal calls.
     if request.method == 'POST':
-        json_body = request.data or {}
+        json_body = request.form_data or {}
         file_path = file_path or json_body.get('file_path')
         share_type = share_type or json_body.get('share_type', 'public')
     elif request.method == 'GET':
