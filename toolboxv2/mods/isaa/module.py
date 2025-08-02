@@ -264,7 +264,7 @@ class Tools(MainTool, FileHandler):
         return await self.run_agent(name, task, **kwargs)
 
     def add_task(self, name, task):
-        self.agent_chain.add_task(name, task)
+        return self.agent_chain.add_task(name, task)
 
     def list_task(self):
         return str(self.agent_chain)
@@ -281,8 +281,12 @@ class Tools(MainTool, FileHandler):
     def get_task(self, name=None):
         return self.agent_chain.get(name)
 
-    async def run_task(self, task_input: str, chain_name: str, sum_up=True):
+    async def run_task(self, task_input: str, chain_name: str, sum_up=True, agent_name=None):
         self.agent_chain_executor.reset()
+        if agent_name:
+            agent_instance = await self.get_agent(agent_name)
+            self.agent_chain_executor.agent_runner = lambda name, task, **kwargs: agent_instance.run(task, **kwargs)
+            self.agent_chain_executor.function_runner = lambda name, **kwargs: agent_instance.run_tool(name, **kwargs)
 
         return self.agent_chain_executor.execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)

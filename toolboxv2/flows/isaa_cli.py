@@ -347,6 +347,17 @@ class WorkspaceIsaasCli:
 
         return HTML(''.join(components))
 
+    def _ensure_agent_stats_initialized(self, agent_name: str):
+        """Ensures the statistics dictionary for an agent exists."""
+        if agent_name not in self.session_stats["agents"]:
+            self.session_stats["agents"][agent_name] = {
+                "cost": 0.0,
+                "tokens": {"prompt": 0, "completion": 0},
+                "tool_calls": 0,
+                "successful_runs": 0,
+                "failed_runs": 0,
+            }
+
     # ##################################################################
     # TOOL DEFINITIONS MOVED TO CLASS METHODS
     # ##################################################################
@@ -842,7 +853,7 @@ class WorkspaceIsaasCli:
         for name in agents:
             output_lines.append("\n" + "─" * 60)
             marker = "🟢" if name == self.active_agent_name else "⚪"
-
+            self._ensure_agent_stats_initialized(name)
             try:
                 agent = await self.isaa_tools.get_agent(name)
                 status = Style.GREEN("✅ Active") if agent else Style.YELLOW("❌ Inactive")
@@ -851,6 +862,10 @@ class WorkspaceIsaasCli:
                 if not agent:
                     output_lines.append(Style.GREY("   (Agent could not be loaded)"))
                     continue
+
+                # Model Name
+                model_name = getattr(agent.amd, 'model', 'default')
+                output_lines.append(f"   {Style.Underlined('Model')}: {Style.CYAN(model_name)}")
 
                 # System Message
                 if hasattr(agent.amd, 'system_message') and agent.amd.system_message:
@@ -877,11 +892,15 @@ class WorkspaceIsaasCli:
                     prompt_tokens = stats.get('tokens', {}).get('prompt', 0)
                     completion_tokens = stats.get('tokens', {}).get('completion', 0)
                     tool_calls = stats.get('tool_calls', 0)
+                    successful_runs = stats.get('successful_runs', 0)
+                    failed_runs = stats.get('failed_runs', 0)
 
                     stats_table = [
                         f"     - Est. Cost   : {Style.YELLOW(f'${cost:.5f}')}",
                         f"     - Tokens (P/C): {Style.BLUE(f'{prompt_tokens} / {completion_tokens}')}",
-                        f"     - Tool Calls  : {Style.MAGENTA(str(tool_calls))}"
+                        f"     - Tool Calls  : {Style.MAGENTA(str(tool_calls))}",
+                        f"     - Successful Runs: {Style.GREEN(str(successful_runs))}",
+                        f"     - Failed Runs    : {Style.RED(str(failed_runs))}",
                     ]
                     output_lines.extend(stats_table)
                 else:
@@ -904,21 +923,30 @@ class WorkspaceIsaasCli:
                 session_id = f"bg_{len(self.background_tasks)}_{agent_name}"
 
             now = asyncio.get_event_loop().time()
+            self._ensure_agent_stats_initialized(agent_name)
 
             # Der Callback muss direkt an den Runner übergeben werden.
             task_id = len(self.background_tasks)
 
             async def comp_helper():
-                res = await self.isaa_tools.run_agent(
-                    agent_name if agent_name in self.isaa_tools.config.get("agents-name-list", []) else "worker",
-                    task_prompt,
-                    session_id=session_id,
-                    progress_callback=self.create_monitoring_callback(task_id),
-                    strategy_override="adk_run"
-                )
-                self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
-                self.background_tasks[task_id]['result'] = res
-                return res
+                try:
+                    res = await self.isaa_tools.run_agent(
+                        agent_name if agent_name in self.isaa_tools.config.get("agents-name-list", []) else "worker",
+                        task_prompt,
+                        session_id=session_id,
+                        progress_callback=self.create_monitoring_callback(task_id),
+                        strategy_override="adk_run"
+                    )
+                    self.session_stats["agents"][agent_name]["successful_runs"] += 1
+                    self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
+                    self.background_tasks[task_id]['result'] = res
+                    return res
+                except Exception as e:
+                    self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                    self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
+                    self.background_tasks[task_id]['result'] = f"Agent run failed: {e}"
+                    # Re-raise or handle the exception as needed
+                    raise
 
             task = asyncio.create_task(
                 comp_helper(), name=f"BGTask-{agent_name}-{session_id}-{str(uuid.uuid4())[:8]}"
@@ -1495,13 +1523,31 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                 ])
             self.formatter.print_table(headers, rows)
 
+        # Agenten-spezifische Statistiken
+        if self.session_stats['agents']:
+            self.formatter.print_section("Agent Specifics", "")
+            headers = ["Agent Name", "Success", "Fail", "Cost ($)", "Tokens (P/C)", "Tool Calls"]
+            rows = []
+            for name, data in self.session_stats['agents'].items():
+                rows.append([
+                    name,
+                    data.get('successful_runs', 0),
+                    data.get('failed_runs', 0),
+                    f"{data['cost']:.4f}",
+                    f"{data['tokens']['prompt']}/{data['tokens']['completion']}",
+                    data['tool_calls']
+                ])
+            self.formatter.print_table(headers, rows)
+
     async def handle_agent_request(self, request: str):
         """
         Handles requests to the workspace agent, allowing interruption with Ctrl+C.
         This version uses get_app() to reliably access the application instance for UI suspension.
         """
         agent_task = None
+        agent_name = self.active_agent_name
         start_time = asyncio.get_event_loop().time()
+        self._ensure_agent_stats_initialized(agent_name)
 
         # Use the official prompt_toolkit function to get the active application instance.
         # This is the correct way to access it after a prompt has finished.
@@ -1544,6 +1590,38 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             content_area,
         ])))
 
+        def progress_wrapper(event):
+            # This function will run in the main event loop
+            # allowing it to update the UI components safely.
+            content_area.text = ANSI(self.formatter.format_event(event))
+            main_app.invalidate()  # Force redraw
+
+        async def run_and_wait():
+            nonlocal agent_task
+            response = None
+            try:
+                agent_task = asyncio.create_task(self.isaa_tools.run_agent(
+                    name=agent_name,
+                    text=request,
+                    session_id=self.session_id,
+                    # progress_callback=progress_wrapper, # This can cause cluttered output
+                    strategy_override="adk_run"
+                ))
+                response = await agent_task
+                self.session_stats["agents"][agent_name]["successful_runs"] += 1
+                await self.formatter.print_agent_response(response)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                self.formatter.print_warning("\nOperation interrupted by user.\n")
+            except Exception as e:
+                self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
+            finally:
+                duration = asyncio.get_event_loop().time() - start_time
+                self.session_stats["agent_running_time"] += duration
+                if main_app.is_running:
+                    main_app.exit(result=response)
+
         self.formatter.print_info(Style.GREY("Agent is running... Cancel with Ctrl+C or ESC"))
 
         if not main_app:
@@ -1553,36 +1631,9 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             # As a fallback, we could run the agent directly, but the output would
             # conflict with the prompt. For now, we abort the request.
             return
+
         try:
-            # Prepare the agent task before suspending the UI
-            agent_task = asyncio.create_task(self.isaa_tools.run_agent(
-                name=self.active_agent_name,
-                text=request,
-                session_id=self.session_id,
-                progress_callback=self.progress_callback,
-                strategy_override="adk_run"
-            ))
-
-
-            async def run_task():
-                nonlocal agent_task
-                try:
-                    response = await agent_task
-                    await self.formatter.print_agent_response(response)
-                except asyncio.CancelledError:
-                    main_app.print_text("\nOperation interrupted by user.\n")
-                finally:
-                    try:
-                        main_app.exit()
-                    except Exception as e:
-                        pass
-
-            main_app.create_background_task(run_task())
-
-            # Run the application in asyncio event loop
-            return await main_app.run_async()
-
-
+            await asyncio.gather(main_app.run_async(), run_and_wait())
         except KeyboardInterrupt:
             if agent_task and not agent_task.done():
                 agent_task.cancel()
@@ -1606,6 +1657,8 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
     async def _update_stats_from_event(self, event: Dict[str, Any]):
         """Handles all session statistics updates based on an ADK event."""
         agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
+
+        self._ensure_agent_stats_initialized(agent_name)
 
         if agent_name not in self.session_stats["agents"]:
             self.session_stats["agents"][agent_name] = {

@@ -422,8 +422,9 @@ class AgentChain:
         name = self.format_name(name)
         if name in self.chains:
             self.chains[name].append(task)
+            return f"Task added to chain '{name}'."
         else:
-            print(f"Chain '{name}' not found.")
+            return f"Chain '{name}' not found."
 
     def remove_task(self, name, task_index):
         name = self.format_name(name)
