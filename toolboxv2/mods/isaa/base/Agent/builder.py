@@ -26,7 +26,7 @@ from pydantic import (
     model_validator,
 )
 
-from toolboxv2 import get_logger
+from toolboxv2 import get_logger, get_app
 
 # Framework Imports & Availability Checks (mirrored from agent.py)
 from importlib.metadata import version
@@ -772,17 +772,25 @@ class EnhancedAgentBuilder:
             trace.set_tracer_provider(self._otel_trace_provider_instance)
             logger.info("Global OpenTelemetry TracerProvider set from provided instance.")
         elif self._config.telemetry_config.get('enabled') and self._config.telemetry_config.get('type') != 'custom_instance' and OTEL_AVAILABLE:
-             # Basic provider setup from config (can be expanded)
-             logger.info("Setting up basic OpenTelemetry based on config (ConsoleExporter example).")
-             from opentelemetry.sdk.trace.export import (
-                 BatchSpanProcessor,
-                 ConsoleSpanExporter,
-             )
-             provider = TracerProvider()
-             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-             #: Add OTLP exporter based on self._config.telemetry_config['endpoint']
-             trace.set_tracer_provider(provider)
-             self._otel_trace_provider_instance = provider # Store for potential access?
+            # Basic provider setup from config (can be expanded)
+            logger.info("Setting up basic OpenTelemetry based on config (ConsoleExporter example).")
+            from opentelemetry.sdk.trace.export import (
+             BatchSpanProcessor,
+             ConsoleSpanExporter,
+            )
+            provider = TracerProvider()
+
+            if get_app().debug:
+                # Nur wenn Debug aktiv ist, wird ein ConsoleSpanExporter registriert
+                console_exporter = ConsoleSpanExporter()
+                span_processor = BatchSpanProcessor(console_exporter)
+                provider.add_span_processor(span_processor)
+                logger.info("ConsoleSpanExporter enabled (debug mode).")
+            else:
+                logger.info("OpenTelemetry initialized without ConsoleSpanExporter.")
+
+            trace.set_tracer_provider(provider)
+            self._otel_trace_provider_instance = provider
 
         # 4. Prepare Core Components
         # Agent Model Data

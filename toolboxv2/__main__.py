@@ -678,7 +678,7 @@ async def setup_app(ov_name=None):
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
 
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
-        tb_app.sprint = lambda text, *_args, **kwargs: [time.sleep(0.1), False][-1]
+        tb_app.sprint = lambda text, *_args, **kwargs: False
 
     tb_app.loop = asyncio.get_running_loop()
 

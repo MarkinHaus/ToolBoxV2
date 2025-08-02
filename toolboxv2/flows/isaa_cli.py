@@ -1,11 +1,10 @@
+import datetime
+import re
+
 import asyncio
-import base64
-import collections
-import html
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import time
@@ -13,7 +12,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import glob
 import psutil
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application,in_terminal, get_app_or_none as get_pt_app
@@ -22,21 +20,16 @@ from prompt_toolkit.completion import (FuzzyCompleter, NestedCompleter,
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.shortcuts import prompt
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.base.Agent.agent import InMemoryRunner
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
-from toolboxv2.utils.extras.Style import Spinner, Style
+from toolboxv2.utils.extras.Style import Style, remove_styles
 
 from prompt_toolkit.formatted_text import ANSI
-
-from google.adk.tools import google_search as adk_google_search
-from google.adk.tools import url_context as adk_url_context
 
 
 NAME = "isaa_cli"
@@ -56,6 +49,10 @@ def human_readable_time(seconds: float) -> str:
         return f"{days}d {hours}h"
     weeks, days = divmod(days, 7)
     return f"{weeks}w {days}d"
+
+def strip_ansi(text: str) -> str:
+    """Removes ANSI escape codes from a string to measure its visible length."""
+    return re.sub(r'\x1b\[.*?m', '', str(text))
 
 class WorkspaceIsaasCli:
     """Advanced ISAA CLI with comprehensive agent tools and enhanced formatting"""
@@ -433,47 +430,60 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error reading {file_path}: {str(e)}"
 
-    async def read_multimodal_file(self, file_path: str, max_pdf_pages: int = 5) -> Optional[Dict[str, Any]]:
+    async def read_multimodal_file(self, file_path: str, prompt: str) -> str:
         """
-        Liest eine Datei (Bild, PDF, Audio, Text) und bereitet sie als Liste von
-        ADK-kompatiblen 'Part'-Objekten für ein multimodales Modell vor.
-
-        Rückgabeformat ist kompatibel mit Google ADK
+        Liest eine Datei (Bild oder Text), kombiniert sie mit einem Benutzer-Prompt
+        und verwendet litellm, um Informationen zu extrahieren.
         """
-
         import mimetypes
         from pathlib import Path
-        from typing import Dict, List, Any, Optional
-
-        from google.genai import types as genai_types
-        Part = genai_types.Part
+        import base64
+        import litellm
 
         path = Path(self.workspace_path / file_path)
         if not path.exists():
-            return {"error": f"Datei nicht gefunden: {file_path}"}
+            return f"❌ Error: File not found at '{file_path}'."
         if not path.is_file():
-            return {"error": f"Pfad ist ein Verzeichnis: {file_path}"}
+            return f"❌ Error: Path '{file_path}' is a directory, not a file."
 
         mime_type, _ = mimetypes.guess_type(path)
-
-        parts: List[Any] = []
+        content_parts = [{"type": "text", "text": prompt}]
 
         try:
+            if mime_type and mime_type.startswith("image/"):
+                with open(path, "rb") as f:
+                    data = f.read()
+                b64_data = base64.b64encode(data).decode("utf-8")
+                image_url = f"data:{mime_type};base64,{b64_data}"
+                content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
+            else:
+                # Fallback to reading as text
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        text_content = f.read()
+                    content_parts.append({"type": "text", "text": f"File Content:\n\n{text_content}"})
+                except UnicodeDecodeError:
+                     return f"⚠️ Skipped: File '{file_path}' could not be read as text and is not a recognized image type."
 
-            with open(path, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode("utf-8")
-            return {
-                "type": "image_url",
-                "image_url": f"data:{mime_type};base64,{b64}"
-            }
+            messages = [
+                {
+                    "role": "user",
+                    "content": content_parts
+                }
+            ]
+
+            # Annahme: Ein geeignetes multimodales Modell ist konfiguriert
+            response = await litellm.acompletion(
+                model=os.getenv("DEFAULTMODELEMVISUAL", "anthropic/claude-3-5-sonnet-20241022"),  # oder ein anderes geeignetes multimodales Modell
+                messages=messages,
+                max_tokens=1024,
+            )
+
+            return response.choices[0].message.content
 
         except Exception as e:
             import traceback
-            return {
-                "error": f"Fehler beim Verarbeiten von '{file_path}': {e}",
-                "traceback": traceback.format_exc()
-            }
+            return f"❌ An unexpected error occurred: {e}\n{traceback.format_exc()}"
 
     async def write_file_tool(self, file_path: str, content: str, encoding: str = "utf-8", append: bool = False,
                               backup: bool = False):
@@ -505,7 +515,8 @@ class WorkspaceIsaasCli:
         file_patterns: str = "*",
         search_for: str = "content",
         recursive: bool = True,
-        ignore_case: bool = False
+        ignore_case: bool = False,
+        exclude_dirs: Optional[List[str]] = None
     ):
         """
         Finds a string in file contents or searches for filenames using the fastest available tool.
@@ -520,30 +531,103 @@ class WorkspaceIsaasCli:
             search_for: What to search for. Can be 'content' (default) or 'filename'.
             recursive: Whether to search in subdirectories (default: True).
             ignore_case: If the search should be case-insensitive (default: False).
+            exclude_dirs: List of directories to exclude from the search. (default: ['node_modules', '.git', '__pycache__', 'venv', '.venv'])
         """
         base_path = self.workspace_path.resolve() / directory
         if not base_path.is_dir():
             return json.dumps({"error": f"Directory not found: {directory}"})
 
+        if exclude_dirs is None:
+            exclude_dirs = ['node_modules', '.git', '__pycache__', 'venv', '.venv']
+
+        patterns = [p.strip() for p in file_patterns.split(',')]
+        query_to_check = query.lower() if ignore_case else query
+        all_files = set()
+
         # --- Mode 1: Search for files by name ---
         if search_for.lower() == 'filename':
+            # --- Methode 1: Ripgrep (rg) - Sehr schnell und berücksichtigt .gitignore ---
+            rg_path = shutil.which("rg")
+            if rg_path:
+                try:
+                    command = [rg_path, '--files']
+                    if not recursive:
+                        command.extend(['--depth', '1'])
+
+                    # Glob-Muster für ripgrep hinzufügen
+                    for pattern in patterns:
+                        command.extend(['--glob', pattern])
+
+                    # Zusätzliche Verzeichnisse ausschließen
+                    for directory in exclude_dirs:
+                        command.extend(['--glob', f'!{directory}'])
+
+                    process = subprocess.run(command, cwd=base_path, capture_output=True, text=True, check=True)
+
+                    for line in process.stdout.splitlines():
+                        file_path = Path(line)
+                        filename_to_check = file_path.name.lower() if ignore_case else file_path.name
+                        if query_to_check in filename_to_check:
+                            all_files.add(str(file_path))
+
+                    return '\n- '.join(sorted(list(all_files)))
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    # Bei einem Fehler auf die nächste Methode zurückgreifen
+                    pass
+
+            # --- Methode 2: fd - Eine weitere schnelle Alternative ---
+            fd_path = shutil.which("fd")
+            if fd_path:
+                try:
+                    command = [fd_path, '--type', 'f']
+                    if not recursive:
+                        command.extend(['--max-depth', '1'])
+
+                    # Muster anwenden
+                    for pattern in patterns:
+                        command.extend(['--glob', pattern])
+
+                    # Verzeichnisse ausschließen
+                    for directory in exclude_dirs:
+                        command.extend(['--exclude', directory])
+
+                    process = subprocess.run(command, cwd=base_path, capture_output=True, text=True, check=True)
+
+                    for line in process.stdout.splitlines():
+                        file_path = Path(line)
+                        filename_to_check = file_path.name.lower() if ignore_case else file_path.name
+                        if query_to_check in filename_to_check:
+                            all_files.add(str(file_path))
+
+                    return '\n- '.join(sorted(list(all_files)))
+                except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                    # Bei einem Fehler auf die nächste Methode zurückgreifen
+                    pass
+
+            # --- Methode 3: Fallback auf optimiertes Python os.walk ---
             try:
-                all_files = []
-                patterns = [p.strip() for p in file_patterns.split(',')]
+                for root, dirs, files in os.walk(base_path):
+                    # Unerwünschte Verzeichnisse von der weiteren Durchsuchung ausschließen
+                    dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
-                for pattern in patterns:
-                    search_glob = base_path.rglob(pattern) if recursive else base_path.glob(pattern)
-                    for file_path in search_glob:
-                        if file_path.is_file():
-                            # Check if the query string is in the filename
-                            filename_to_check = file_path.name.lower() if ignore_case else file_path.name
-                            query_to_check = query.lower() if ignore_case else query
-                            if query_to_check in filename_to_check:
-                                all_files.append(str(file_path.relative_to(base_path)))
+                    for filename in files:
+                        file_path = Path(root) / filename
 
-                return json.dumps({"tool_used": "python_glob", "matches": sorted(list(set(all_files)))}, indent=2)
+                        # Dateimuster überprüfen
+                        if not any(file_path.match(p) for p in patterns):
+                            continue
+
+                        filename_to_check = filename.lower() if ignore_case else filename
+                        if query_to_check in filename_to_check:
+                            all_files.add(str(file_path.relative_to(base_path)))
+
+                    if not recursive:
+                        break  # Nur die oberste Ebene durchsuchen
+
+                return '\n- '.join(sorted(list(all_files)))
             except Exception as e:
-                return json.dumps({"error": f"Error during filename search: {e}"})
+                return f"Error during filename search: {e}"
+
 
         # --- Mode 2: Search for content within files ---
         tool_used = "python"
@@ -641,29 +725,37 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "tool_used": tool_used})
 
-
     async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
                                   show_hidden: bool = False, exclude_dirs: Optional[List[str]] = None):
-        """List directory contents with advanced filtering and exclusion."""
+        """List directory contents with advanced filtering, depth, and file type filters."""
+        DEFAULT_FILE_TYPES = [".py", ".js", ".css", ".html", ".json", ".png"]
+        MAX_DEPTH = 3
+
         if exclude_dirs is None:
             exclude_dirs = self.default_exclude_dirs
         else:
             exclude_dirs.extend(self.default_exclude_dirs)
-            # Remove duplicates
-            exclude_dirs = list(set(exclude_dirs))
+            exclude_dirs = list(set(exclude_dirs))  # remove duplicates
 
         try:
-            path = self.workspace_path / directory
-            if not path.exists():
+            base_path = self.workspace_path / directory
+            if not base_path.exists():
                 return f"❌ Directory {directory} does not exist"
-            files, dirs = [], []
 
-            items = path.rglob("*") if recursive else path.iterdir()
+            files = []
+            dirs = []
+
+            def within_max_depth(path: Path) -> bool:
+                rel_parts = path.relative_to(base_path).parts
+                return len(rel_parts) <= MAX_DEPTH
+
+            items = base_path.rglob("*") if recursive else base_path.iterdir()
 
             for item in items:
                 if not show_hidden and item.name.startswith('.'):
                     continue
-
+                if not within_max_depth(item):
+                    continue
                 if item.is_dir():
                     if item.name in exclude_dirs:
                         continue
@@ -672,45 +764,46 @@ class WorkspaceIsaasCli:
                     files.append(item)
 
             if file_types:
-                type_filters = [t.strip() for t in file_types.split(",")]
-                files = [f for f in files if any(t in f.suffix.lower() for t in type_filters)]
+                type_filters = [t.strip().lower() for t in file_types.split(",")]
+            else:
+                type_filters = DEFAULT_FILE_TYPES
+
+            files = [f for f in files if f.suffix.lower() in type_filters]
+
+            def format_indent(p: Path):
+                relative = p.relative_to(base_path)
+                parts = relative.parts
+                indent = "  " * (len(parts) - 1)
+                return f"{indent}{'📁' if p.is_dir() else '📄'} {parts[-1]}"
 
             result = f"📁 Contents of {directory}:\n\n"
             result += f"Directories ({len(dirs)}):\n"
             for d in sorted(dirs):
-                result += f"  📁 {d.relative_to(path) if recursive else d.name}\n"
+                result += format_indent(d) + "\n"
+
             result += f"\nFiles ({len(files)}):\n"
             for f in sorted(files):
                 size = f.stat().st_size
                 size_str = f"{size:,} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
-                result += f"  📄 {f.relative_to(path) if recursive else f.name} ({size_str})\n"
-            return result
+                result += format_indent(f) + f" ({size_str})\n"
+
+            return remove_styles(result)
         except Exception as e:
             return f"❌ Error listing directory: {str(e)}"
 
-    async def create_specialized_agent_tool(self, agent_name: str, specialization: str, system_prompt: Optional[str] = None,
-                                            model: Optional[str] = None, tools: Optional[str] = None):
+    async def create_specialized_agent_tool(self, agent_name: str, system_prompt: str,
+                                            model: Optional[str] = None):
         """Create a specialized agent with predefined or custom capabilities"""
         try:
             new_builder = self.isaa_tools.get_agent_builder(agent_name)
+            new_builder.with_adk_code_executor("unsafe_simple")
             if system_prompt:
                 new_builder.with_system_message(system_prompt)
-            else:
-                specialized_prompts = {
-                    "coder": "You are a specialized coding agent...",
-                    "writer": "You are a specialized writing agent...",
-                    "analyzer": "You are a specialized analysis agent...",
-                    # ... (rest of prompts unchanged)
-                }
-                prompt = specialized_prompts.get(specialization.lower(),
-                                                 f"You are a specialized {specialization} agent.")
-                new_builder.with_system_message(prompt)
+            await self.add_comprehensive_tools_to_agent(new_builder, is_worker=True)
             if model:
                 new_builder.with_model(model)
-            if tools and hasattr(new_builder, 'with_tools'):
-                pass
             await self.isaa_tools.register_agent(new_builder)
-            return f"✅ Specialized agent '{agent_name}' created for {specialization}"
+            return f"✅ Specialized agent '{agent_name}' created for {system_prompt[:25]}"
         except Exception as e:
             return f"❌ Error creating agent: {str(e)}"
 
@@ -799,7 +892,7 @@ class WorkspaceIsaasCli:
                     f"⚪ {Style.Bold(name)}: {Style.RED(f'Error - {str(e)}')}")
 
         output_lines.append("\n" + "─" * 60)
-        return "\n".join(output_lines)
+        return remove_styles("\n".join(output_lines))
 
     async def run_agent_background_tool(self, agent_name: str, task_prompt: str, session_id: Optional[str] = None,
                                         priority: Optional[str] = "normal"):
@@ -813,13 +906,15 @@ class WorkspaceIsaasCli:
             now = asyncio.get_event_loop().time()
 
             # Der Callback muss direkt an den Runner übergeben werden.
+            task_id = len(self.background_tasks)
 
             async def comp_helper():
                 res = await self.isaa_tools.run_agent(
-                    agent_name,
+                    agent_name if agent_name in self.isaa_tools.config.get("agents-name-list", []) else "worker",
                     task_prompt,
                     session_id=session_id,
-                    progress_callback=self.monitoring_progress_callback
+                    progress_callback=self.create_monitoring_callback(task_id),
+                    strategy_override="adk_run"
                 )
                 self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
                 self.background_tasks[task_id]['result'] = res
@@ -828,7 +923,6 @@ class WorkspaceIsaasCli:
             task = asyncio.create_task(
                 comp_helper(), name=f"BGTask-{agent_name}-{session_id}-{str(uuid.uuid4())[:8]}"
             )
-            task_id = len(self.background_tasks)
 
             self.background_tasks[task_id] = {
                 'task': task,
@@ -869,6 +963,7 @@ class WorkspaceIsaasCli:
             status_info += f"  Agent: {tinfo['agent']}\n"
             status_info += f"  Priority: {tinfo.get('priority', 'normal')}\n"
             status_info += f"  Elapsed: {elapsed:.1f}s\n"
+            status_info += f"  Result: {tinfo.get('result', 'n/a')}\n"
             status_info += f"  Prompt: {tinfo['prompt']}\n\n"
         return f"Summary: {running} running, {completed} completed\n\n" + status_info
 
@@ -1007,7 +1102,7 @@ class WorkspaceIsaasCli:
             self.formatter.print_table(["Eigenschaft", "Wert"], status_data)
 
             print()  # Add a final newline for spacing
-            return "\n".join([overview_text] + git_info_lines+ dir_listing_lines + [f"{e}-{w}" for e,w in status_data])
+            return remove_styles("\n".join([overview_text] + git_info_lines+ dir_listing_lines + [f"{e}-{w}" for e,w in status_data]))
         except Exception as e:
             self.formatter.print_error(f"Error generating workspace status: {str(e)}")
 
@@ -1091,34 +1186,32 @@ class WorkspaceIsaasCli:
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
-                """You are the Supervisor.
-Your persona is precise, professional, and efficient. Your primary goal is to handle user requests cleanly and effectively.
+            """You are an autonomous Supervisor agent.
 
-# Core Protocol
-1 - Assess: ALWAYS evaluate the current state first. Use tools like `workspace_status` and `list_directory` to understand the situation before you act.
-2 - Strategize: Decide the best path based on your analysis.
-    - Simple Request: Execute it directly and independently. (e.g., read a single file, perform a simple search)
-    - Complex Request: Orchestrate worker agents. (e.g., refactor code across multiple files, generate and test content)
-3 - Execute: Implement your strategy and report your actions clearly.
+# CORE BEHAVIOR
+You operate independently to complete tasks. When problems arise, you analyze and find solutions without asking for guidance.
 
-# Orchestration Workflow (for complex requests)
-- 1. Deconstruct: Break the main goal into clear, independent sub-tasks.
-- 2. Delegate: Launch a 'worker' agent for each sub-task using `run_agent_background`. Give each worker a very specific and simple instruction.
-- 3. Oversee: Launch YOURSELF (the 'workspace_supervisor' agent) in a separate background task. Your instruction for this task is: "Oversee the worker task IDs [ID1, ID2, ...]. Upon their completion, review their work, summarize the results, and report the final outcome."
+# WORKFLOW
+1. **ASSESS**: Use available tools to understand the current situation
+2. **PLAN**: Break complex tasks into manageable steps
+3. **DELEGATE**: Take action using appropriate tools
+4. **ADAPT**: If issues occur, troubleshoot and adjust your approach automatically
 
-# Communication Rules in thinking and to user
-- Structure: Use only `#` for headlines and `-` for list items.
-- Content: Your responses MUST be brief, informative, and to the point.
-- Style: No unnecessary chatter. Be direct.
+# DELEGATE RULES
+- For simple tasks: Execute directly or delegate to a worker agent
+- For complex tasks:
+  - Decompose into sub-tasks
+  - Use `run_agent_background` for parallel execution
+  - Oversee progress and synthesize results
+- Always use tools in valid JSON format: `{"tool_code": "function_name(params)"}`
+- Provide final results as plain text
 
-# Framework
-- You have access to a wide range of tools. Use them.
-- must call tools in json format no additional text!
+# AUTONOMY PRINCIPLE
+You have full authority to make decisions, retry failed operations, and adapt strategies to achieve the given objective. Complete tasks independently without requesting additional instructions.
 """
         )
+
         builder = await self.add_comprehensive_tools_to_agent(builder)
-        builder.with_adk_tool_function(adk_google_search.run_async, name="searchWeb",
-                                       description="Search the web for information.")
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
 
@@ -1179,7 +1272,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         # 3. Configure the builder with a full set of capabilities for a production-ready worker.
         (
             builder
-            .with_model("openrouter/qwen/qwen3-235b-a22b-thinking-2507")  # A capable model that supports ADK code execution
+            .with_model("openrouter/google/gemini-2.5-pro")  # A capable model that supports ADK code execution
             .verbose(True)  # A long-running agent needs detailed logs for observability
 
             # --- ADK (Agent Development Kit) Setup for structured work ---
@@ -1198,8 +1291,6 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             # --- Observability for long-term monitoring ---
             # .enable_telemetry(service_name=agent_name)
         )
-        builder.with_adk_tool_function(adk_google_search.run_async, name="searchWeb", description="Search the web for information.")
-
         # 4. Add the comprehensive toolset from the CLI. The worker needs all available tools.
         builder = await self.add_comprehensive_tools_to_agent(builder, is_worker=True)
 
@@ -1619,49 +1710,43 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                         self.formatter.print_info(f"Cost update for {agent_name}: +${cost_delta:.6f} (Total: ${new_cost:.6f})")
             except Exception:
                 pass
+    def create_monitoring_callback(self, task_id):
+        async def monitoring_progress_callback(event: Dict[str, Any]):
+            """A dedicated callback for background tasks to update monitor state."""
+            await self._update_stats_from_event(event)
+            task_info = self.background_tasks[task_id]
+            if task_info:
+                now = asyncio.get_event_loop().time()
+                task_info['last_activity'] = now
+                event_log = {"time": now, "type": "unknown", "content": ""}
 
-    async def monitoring_progress_callback(self, event: Dict[str, Any]):
-        """A dedicated callback for background tasks to update monitor state."""
-        await self._update_stats_from_event(event)
+                if event.get("content") and event["content"].get("parts"):
+                    for part in event["content"]["parts"]:
+                        if "text" in part and part["text"]:
+                            task_info['agent_state'] = 'Thinking'
+                            task_info['current_tool_name'] = None
+                            task_info['current_tool_input'] = None
+                            event_log = {"time": now, "type": "Thinking", "content": part["text"][:200]}
 
-        session_id = event.get("invocation_id")
-        task_info = None
-        for tid, tinfo in self.background_tasks.items():
-            if tinfo.get('session_id') == session_id:
-                task_info = tinfo
-                break
+                        if "function_call" in part:
+                            call = part["function_call"]
+                            tool_name = call.get('name')
+                            tool_args = call.get('args', {})
+                            task_info['agent_state'] = 'Using Tool'
+                            task_info['current_tool_name'] = tool_name
+                            task_info['current_tool_input'] = json.dumps(tool_args, ensure_ascii=False)
+                            event_log = {"time": now, "type": "Tool Call", "content": f"{tool_name}({tool_args})"}
 
-        if task_info:
-            now = asyncio.get_event_loop().time()
-            task_info['last_activity'] = now
-            event_log = {"time": now, "type": "unknown", "content": ""}
+                        if "function_response" in part:
+                            task_info['agent_state'] = 'Processing'
+                            # Werkzeugname bleibt für Kontext sichtbar
+                            response = part["function_response"]
+                            event_log = {"time": now, "type": "Tool Response",
+                                         "content": f"Result for {response.get('name')}"}
 
-            if event.get("content") and event["content"].get("parts"):
-                for part in event["content"]["parts"]:
-                    if "text" in part and part["text"]:
-                        task_info['agent_state'] = 'Thinking'
-                        task_info['current_tool_name'] = None
-                        task_info['current_tool_input'] = None
-                        event_log = {"time": now, "type": "Thinking", "content": part["text"][:200]}
-
-                    if "function_call" in part:
-                        call = part["function_call"]
-                        tool_name = call.get('name')
-                        tool_args = call.get('args', {})
-                        task_info['agent_state'] = 'Using Tool'
-                        task_info['current_tool_name'] = tool_name
-                        task_info['current_tool_input'] = json.dumps(tool_args, ensure_ascii=False)
-                        event_log = {"time": now, "type": "Tool Call", "content": f"{tool_name}({tool_args})"}
-
-                    if "function_response" in part:
-                        task_info['agent_state'] = 'Processing'
-                        # Werkzeugname bleibt für Kontext sichtbar
-                        response = part["function_response"]
-                        event_log = {"time": now, "type": "Tool Response",
-                                     "content": f"Result for {response.get('name')}"}
-
-            if event_log["type"] != "unknown":
-                task_info['history'].append(event_log)
+                if event_log["type"] != "unknown":
+                    task_info['history'].append(event_log)
+        return monitoring_progress_callback
 
     async def _handle_shell_command(self, command: str):
         """
@@ -1991,7 +2076,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                         lines.append(Style.GREY("   Waiting for first agent event..."))
                     else:
                         for log in task_info['history']:
-                            log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
+                            log_time = datetime.datetime.fromtimestamp(log['time']).strftime('%H:%M:%S')
                             log_type = log['type']
                             log_content = str(log['content']).replace('\n', ' ')
 
@@ -2219,7 +2304,11 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         return history
 
     async def handle_monitor_cmd(self, args: list[str]):
-        """Enters an interactive monitoring mode for background tasks."""
+        """
+        Enters an interactive, real-time monitoring mode for background tasks.
+        This revised version ensures automatic screen refreshes, adds a 'Last Active'
+        column, and uses robust formatting for a clean, aligned table display.
+        """
         if not self.background_tasks:
             self.formatter.print_info("No background tasks to monitor.")
             return
@@ -2231,31 +2320,34 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         output_control = FormattedTextControl(text=ANSI(""), focusable=False)
         layout = Layout(HSplit([Window(content=output_control, always_hide_cursor=True)]))
         kb = KeyBindings()
+        app = Application(layout=layout, key_bindings=kb, full_screen=True)
 
         @kb.add('q')
         @kb.add('escape')
         @kb.add('c-c')
         def _(event):
+            """Quit the monitor."""
             nonlocal stop_monitoring
             stop_monitoring = True
-            try:
-                event.app.exit()
-            except Exception as e:
-                print(f"Error exiting app: {e}")
+            event.app.exit()
 
         @kb.add('up')
         def _(event):
+            """Move selection up."""
             nonlocal selected_task_index
             selected_task_index = max(0, selected_task_index - 1)
 
         @kb.add('down')
         def _(event):
+            """Move selection down."""
             nonlocal selected_task_index
             num_tasks = len(self.background_tasks)
-            selected_task_index = min(num_tasks - 1, selected_task_index + 1)
+            if num_tasks > 0:
+                selected_task_index = min(num_tasks - 1, selected_task_index + 1)
 
         @kb.add('k')
         async def _(event):
+            """Kill the selected task."""
             nonlocal selected_task_index
             sorted_tasks = sorted(self.background_tasks.items())
             if 0 <= selected_task_index < len(sorted_tasks):
@@ -2265,44 +2357,61 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
 
         @kb.add('d')
         def _(event):
+            """Toggle detail view for the selected task."""
             nonlocal selected_task_index, detail_view_task_id
             sorted_tasks = sorted(self.background_tasks.items())
             if 0 <= selected_task_index < len(sorted_tasks):
                 task_id, _ = sorted_tasks[selected_task_index]
-                # Toggle detail view for the selected task
                 detail_view_task_id = task_id if detail_view_task_id != task_id else None
 
-        app = Application(layout=layout, key_bindings=kb, full_screen=True)
+        def format_cell(content, width):
+            """
+            FIX: Formats content to a fixed width, ignoring non-printable ANSI codes.
+            This ensures columns are always correctly aligned.
+            """
+            visible_text = strip_ansi(str(content))
+            # Truncate visible text if it's too long
+            truncated_visible_text = visible_text[:width]
+
+            # Re-apply color if it was stripped
+            if str(content) != visible_text:
+                # Simple re-application of style for this use case
+                content = str(content).replace(visible_text, truncated_visible_text)
+            else:
+                content = truncated_visible_text
+
+            padding = ' ' * (width - len(truncated_visible_text))
+            return f"{content}{padding}"
 
         async def monitor_loop():
-            nonlocal stop_monitoring, selected_task_index, detail_view_task_id
+            """The main loop to refresh the monitoring display."""
+            nonlocal selected_task_index, detail_view_task_id
             while not stop_monitoring:
                 now = asyncio.get_event_loop().time()
                 lines = []
 
-                # Header
-                lines.append(Style.Bold(f"ISAA Agent Monitor @ {time.strftime('%H:%M:%S')}"))
+                lines.append(Style.Bold(f"ISAA Agent Monitor @ {time.strftime('%Y-%m-%d %H:%M:%S')}"))
                 lines.append(Style.GREY("Use [↑/↓] to select, [k] to kill, [d] for details, [q] to quit.\n"))
 
-                headers = ["ID", "Agent", "Status", "Runtime", "State", "Current Tool"]
-                lines.append(Style.Underlined(" | ".join(f"{h:<15}" for h in headers)))
+                # REVISED: Added 'Last Active' and defined precise column widths for alignment.
+                headers = ["ID", "Agent", "Status", "Runtime", "Last Active", "State", "Current Tool"]
+                col_widths = {'ID': 5, 'Agent': 18, 'Status': 15, 'Runtime': 12, 'Last Active': 12, 'State': 15,
+                              'Current Tool': 25}
+
+                header_line = " | ".join([format_cell(h, col_widths[h]) for h in headers])
+                lines.append(Style.Underlined(header_line))
 
                 sorted_tasks = sorted(self.background_tasks.items())
                 if not sorted_tasks:
                     selected_task_index = 0
                 else:
+                    # Ensure selection index is valid
                     selected_task_index = min(selected_task_index, len(sorted_tasks) - 1)
 
                 for idx, (tid, tinfo) in enumerate(sorted_tasks):
                     task = tinfo['task']
+                    runtime = (tinfo.get('end_time') or now) - tinfo['started']
 
-                    # Correct runtime calculation
-                    if task.done() and tinfo.get('end_time') is None:
-                        tinfo['end_time'] = tinfo.get('last_activity', now)
-
-                    runtime = (tinfo['end_time'] or now) - tinfo['started']
-
-                    # Determine status
                     if task.done():
                         if task.cancelled():
                             status = Style.YELLOW("Cancelled")
@@ -2313,53 +2422,68 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                     else:
                         status = Style.CYAN("Running")
 
-                    # Agent state styling
                     agent_state = tinfo.get('agent_state', 'n/a')
-                    if agent_state == 'Using Tool':
-                        agent_state = Style.BLUE(agent_state)
-                    elif agent_state == 'Thinking':
-                        agent_state = Style.MAGENTA(agent_state)
+                    if status != Style.GREEN("Completed"):
+                        if agent_state == 'Using Tool':
+                            agent_state = Style.BLUE(agent_state)
+                        elif agent_state == 'Thinking':
+                            agent_state = Style.MAGENTA(agent_state)
+                        else:
+                            agent_state = Style.GREY(agent_state)
                     else:
-                        agent_state = Style.GREY(agent_state)
+                        agent_state = Style.GREY("n/a")
 
-                    row_data = [
-                        str(tid),
-                        tinfo['agent'],
-                        status,
-                        human_readable_time(runtime),
-                        agent_state,
-                        tinfo.get('current_tool_name', 'None') or 'None'
-                    ]
+                    # NEW: Get and format the 'last_activity' timestamp.
+                    last_activity_ts = tinfo.get('last_activity')
+                    last_activity_str = time.strftime('%H:%M:%S',
+                                                      time.localtime(last_activity_ts)) if last_activity_ts else "n/a"
 
-                    # Build and style the row
-                    row_str = " | ".join(f"{str(s):<15}" for s in row_data)
-                    escaped_row_str = html.escape(row_str)
+                    row_data = {
+                        "ID": str(tid),
+                        "Agent": tinfo['agent'],
+                        "Status": status,
+                        "Runtime": human_readable_time(runtime),
+                        "Last Active": last_activity_str,
+                        "State": agent_state,
+                        "Current Tool": tinfo.get('current_tool_name', 'None') or 'None'
+                    }
+
+                    # Use the alignment-safe format_cell function for each piece of data.
+                    row_cells = [format_cell(row_data[h], col_widths[h]) for h in headers]
+                    row_str = " | ".join(row_cells)
+
                     if idx == selected_task_index:
-                        lines.append(HTML(f"<style bg='ansiyellow' fg='ansiblack'>{escaped_row_str}</style>"))
+                        lines.append(Style.BLACKBG(Style.Underline(row_str)))
                     else:
                         lines.append(row_str)
 
-                    # Show details if toggled
                     if detail_view_task_id == tid:
-                        lines.append(Style.GREY("  " + "─" * 60))
+                        detail_line_width = sum(col_widths.values()) + (len(col_widths) - 1) * 3
+                        lines.append(Style.GREY("  " + "─" * detail_line_width))
                         if tinfo.get('history'):
-                            for log in reversed(tinfo['history'][-10:]):  # Show last 10 events
+                            for log in reversed(tinfo['history'][-10:]):
                                 log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
-                                escaped_content = html.escape(str(log['content']))
-                                lines.append(HTML(
-                                    f"  <grey>└ {log_time}</grey> <yellow>{log['type']:<15}</yellow> {escaped_content}"))
+                                content = str(log['content'])
+                                lines.append(
+                                    f"   {Style.GREY('└' + log_time)} {Style.YELLOW(log['type']):<15} {content}")
                         else:
                             lines.append("  " + Style.GREY("└ No execution history recorded."))
-                        lines.append(Style.GREY("  " + "─" * 60))
+                        lines.append(Style.GREY("  " + "─" * detail_line_width))
 
                 output_control.text = ANSI("\n".join(lines))
-                await asyncio.sleep(1)  # Refresh rate
+
+                # FIX: Invalidate the app to force an immediate redraw. This makes the UI responsive.
+                app.invalidate()
+
+                await asyncio.sleep(0.5)  # Refresh interval for data polling.
 
         try:
             await asyncio.gather(app.run_async(), monitor_loop())
         except Exception as e:
-            # Exit fullscreen mode before printing error
-            print(f"\x1b[?1049l", end="")  # Exit alternate screen
+            # Gracefully handle crashes
+            print(f"\x1b[?1049l", end="")  # Ensure exiting alternate screen buffer
+            import traceback
+            traceback.print_exc()
             self.formatter.print_error(f"Monitor crashed: {e}")
         finally:
             self.monitoring_active = False

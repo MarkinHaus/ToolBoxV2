@@ -1887,10 +1887,12 @@ class EnhancedAgent(*_AgentBaseClass):
         existing_tool_names = {tool.name for tool in self.tools if isinstance(tool, BaseTool)}
 
         internal_adk_tools = {
-            "get_world_model_key": self.adk_tool_world_model_get,
+            "get_world_model": self.adk_tool_world_model_get,
             "show_world_model": self.adk_tool_world_model_show,
+            "set_world_model": self.adk_tool_world_model_set,
+            "remove_world_model": self.adk_tool_world_model_remove,
         }
-        if A2A_AVAILABLE:
+        if False and A2A_AVAILABLE:
             internal_adk_tools["a2a_send_and_wait"] = self.adk_tool_a2a_send_and_wait
             # Add NEW tools
             internal_adk_tools["a2a_send_no_wait"] = self.adk_tool_a2a_send_no_wait
@@ -1909,15 +1911,25 @@ class EnhancedAgent(*_AgentBaseClass):
     # --- Existing ADK Tools ---
     async def adk_tool_world_model_get(self, tool_context: ToolContext | None, key: str) -> Any | None:
         """ADK Tool: Retrieves a specific value from the agent's world model."""
-        # ... (implementation remains the same) ...
         logger.info(f"[ADK Tool] get_world_model_key called for key: {key}")
         return self.world_model.get(key)
 
     async def adk_tool_world_model_show(self, tool_context: ToolContext | None) -> str:
         """ADK Tool: Returns a string representation of the agent's entire world model."""
-        # ... (implementation remains the same) ...
         logger.info("[ADK Tool] show_world_model called")
         return self.world_model.show()
+
+    async def adk_tool_world_model_set(self, tool_context: ToolContext | None, key: str, value: str) -> str:
+        """ADK Tool: Sets a specific value in the agent's world model."""
+        logger.info(f"[ADK Tool] set_world_model_key called for key: {key} with value: {value}")
+        self.world_model.set(key, value)
+        return f"World model key '{key}' set to '{value}'"
+
+    async def adk_tool_world_model_remove(self, tool_context: ToolContext | None, key: str) -> str:
+        """ADK Tool: Removes a specific key from the agent's world model."""
+        logger.info(f"[ADK Tool] remove_world_model_key called for key: {key}")
+        self.world_model.remove(key)
+        return f"World model key '{key}' removed"
 
     async def adk_tool_a2a_send_and_wait(self,
                                          tool_context: ToolContext | None,

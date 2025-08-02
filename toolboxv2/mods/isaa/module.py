@@ -601,7 +601,9 @@ class Tools(MainTool, FileHandler):
             ist = await mem_instance.add_data(context_name, str(data_to_save), direct=True)
             if ist:
                 return 'Data added to memory.'
-            raise ValueError('Error adding data to memory.')
+            await asyncio.sleep(1)
+            await mem_instance.add_data(context_name, str(data_to_save), direct=True)
+            return 'Error adding data to memory.'
 
         # agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
         #                                      description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
@@ -609,8 +611,8 @@ class Tools(MainTool, FileHandler):
                                              description="Search ISAA's semantic memory.")
         agent_builder.with_adk_tool_function(save_to_memory_tool, name="saveDataToMemory",
                                              description="Save data to ISAA's semantic memory for the current agent's context.")
-        #agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
-        #                                     description="Search the web for information.")
+        agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
+                                             description="Search the web for information.")
         agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description=f"Run a shell command. in {detect_shell()}")
 
         # Add more tools based on agent 'name' or type

@@ -1860,7 +1860,26 @@ from typing import Any
 from browser_use import Agent as BrowserAgent
 from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
-from langchain_community.chat_models import ChatLiteLLM
+from browser_use.llm import (
+    ChatOpenAI,
+    ChatAnthropic,
+    ChatGoogle,
+    ChatAzureOpenAI,
+    ChatAWSBedrock,
+    ChatGroq,
+    ChatOllama,
+)
+
+
+_MODEL_MAP = {
+    "openai": ChatOpenAI,
+    "anthropic": ChatAnthropic,
+    "google": ChatGoogle,  # für Gemini‑Modelle
+    "azure": ChatAzureOpenAI,
+    "bedrock": ChatAWSBedrock,
+    "groq": ChatGroq,
+    "ollama": ChatOllama,
+}
 
 
 class WebContentParser:
@@ -1967,38 +1986,14 @@ class BrowserWrapper:
         self.agent = None
         self.browser = None
         self.context = None
-        import os
 
-        from pydantic import SecretStr
-        def pars(x):
-            return x.split('/')[-1] if '/' in x else x
-        if llm is None:
-            llm = 'google/gemini-2.0-flash-exp'
-        if not isinstance(llm, str):
-            llm = llm
-        elif 'deepseek' in llm:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(base_url='https://api.deepseek.com/v1', model=pars(llm), api_key=SecretStr(api_key or os.getenv('DEEPSEEK_API_KEY')))
-        elif 'google' in llm:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            llm = ChatGoogleGenerativeAI(model=pars(llm), api_key=SecretStr(api_key or os.getenv('GEMINI_API_KEY')))
-        elif 'claude' in llm:
-            from langchain_anthropic import ChatAnthropic
-            llm = ChatAnthropic(
-                model_name=pars(llm),
-                temperature=0.0,
-                timeout=400,  # Increase for complex tasks
-                api_key=SecretStr(api_key or os.getenv('ANTHROPIC_API_KEY')))
-        elif isinstance(llm, str):
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(
-                model=pars(llm),
-                temperature=0.0,api_key=SecretStr(api_key or os.getenv('OPENAI_API_KEY'))
-            )
-
-
-
-        self.llm = ChatLiteLLM(model=llm) if isinstance(llm,str) else llm
+        self.llm = llm
+        model, provider = None, None
+        if isinstance(llm, str):
+            if llm.count('/') == 2:
+                llm = '/'.join(llm.split('/')[1:])
+            provider, model = llm.split('/')
+        self._initialize_llm(model or "claude-3-7-sonnet-latest", provider or "anthropic")
         self.parser = None
 
         browser_config = {
@@ -2049,6 +2044,17 @@ class BrowserWrapper:
         if chrome_path:
             self.config['chrome_instance_path'] = chrome_path
 
+    def _initialize_llm(self, model: str, provider: str):
+        provider_key = provider.lower()
+        cls = _MODEL_MAP.get(provider_key)
+        if cls is None:
+            raise ValueError(f"Unbekannter LLM‑Provider: {provider}")
+        # optionale Parameter wie temperature können Sie ggf. über config reinsteuern
+        self.llm = cls(model=model)
+        # Hinweis: browser-use liest den API-Key standardmäßig via Umgebungsvariablen ein
+        # z.B. OPENAI_API_KEY, ANTHROPIC_API_KEY oder GOOGLE_API_KEY (für Gemini) :contentReference[oaicite:6]{index=6}
+        self.model_name = model
+        self.provider = provider_key
 
     async def initialize(self):
         """Initialize the browser and context"""
@@ -2076,9 +2082,7 @@ class BrowserWrapper:
             browser_state = self.context
             if not browser_state or not browser_state.tabs:
                 # If no tabs exist, create a new page
-                await self.browser.get_playwright_browser()
-                browser_context = await self.context.get_playwright_context()
-                self.page = await browser_context.new_page()
+                self.page = await self.context.new_tab()
             else:
                 # Use the existing active tab
                 self.page = await self.context.get_current_page()
@@ -2122,8 +2126,7 @@ class BrowserWrapper:
         try:
             page = await self.context.get_current_page()
             if not page:
-                browser_context = await self.context.get_playwright_context()
-                page = await browser_context.new_page()
+                page = await self.context.new_page()
 
             # Navigate to the URL
             await page.goto(url)
@@ -3858,18 +3861,18 @@ if __name__ == '__main__':
     #print(cleaned_result)
 
 if __name__ == "__main__":
-    async def main():
-        agent = get_app("demo").get_mod("isaa").get_agent("self")
-        agent = await agent
-        pipeline = Pipeline(
-        agent = agent,
-        variables = {"n": 10})
-        result = await pipeline.run(task = "Calculate fibonacci sequence to n")
-        print(result.result)
-
-
-    asyncio.run(main())
-    # print(asyncio.run(BrowserWrapper().run("Finde eine Lösung für mein Problem. ich habe ine rust aplikation die beim ausführen der exe zurückgibt : returned non-zero exit status 3221225781. oder spezifischer : (exit code: 0xc0000135, STATUS_DLL_NOT_FOUND) ich nutze pyo3 damit rust python verwenden kann in einer venv so wiet habe ich nur das gefunde : https://github.com/PyO3/pyo3/issues/3589 wie fixe ich mein probelm?")))
+    #async def main():
+    #    agent = get_app("demo").get_mod("isaa").get_agent("self")
+    #    agent = await agent
+    #    pipeline = Pipeline(
+    #    agent = agent,
+    #    variables = {"n": 10})
+    #    result = await pipeline.run(task = "Calculate fibonacci sequence to n")
+    #    print(result.result)
+#
+#
+    #asyncio.run(main())
+    print(asyncio.run(BrowserWrapper().run("Finde eine Lösung für mein Problem. ich habe ine rust aplikation die beim ausführen der exe zurückgibt : returned non-zero exit status 3221225781. oder spezifischer : (exit code: 0xc0000135, STATUS_DLL_NOT_FOUND) ich nutze pyo3 damit rust python verwenden kann in einer venv so wiet habe ich nur das gefunde : https://github.com/PyO3/pyo3/issues/3589 wie fixe ich mein probelm?")))
 
 
 # Example usage and testing

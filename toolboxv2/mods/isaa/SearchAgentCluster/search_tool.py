@@ -1027,7 +1027,7 @@ async def main2():
             if 'content' in result:
                 # Print a preview of the content
                 content = result['content']['markdown']
-                preview = content[:200] + "..." if len(content) > 200 else content
+                preview = content[:200] + f"... {len(content) - 200} characters more..." if len(content) > 200 else content
                 print(f"\nContent Preview: {preview}")
 
                 # Check for tables
