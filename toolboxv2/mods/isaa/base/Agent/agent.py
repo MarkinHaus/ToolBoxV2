@@ -348,7 +348,7 @@ class AgentModelData(BaseModel):
     name: str | None = Field(default=None, description="Agent's internal name, often derived from builder.")
     model: str = Field(..., description="Primary LiteLLM model identifier (e.g., 'gemini/gemini-1.5-flash-latest', 'ollama/mistral').")
     provider: str | None = Field(default=None, description="LiteLLM provider override if needed.")
-    system_message: str = Field(default="You are a helpful AI assistant.", description="Base system prompt.")
+    system_message: str = Field(default="You are a Intelligent AI assistant.", description="Base system prompt.")
 
     temperature: float | None = Field(default=None, ge=0.0, le=2.0) # Use LiteLLM defaults if None
     top_k: int | None = Field(default=None, ge=1)
@@ -498,6 +498,7 @@ class EnhancedAgent(*_AgentBaseClass):
     # Exit stack to manage lifecycles of components like MCPToolset connections
     # CRITICAL FIX: Use contextlib.AsyncExitStack type hint
     adk_exit_stack: contextlib.AsyncExitStack | None = Field(default=None, description="AsyncExitStack for managing ADK toolset lifecycles.")
+    processed_adk_tools : list[BaseTool | Callable] = Field(default_factory=list, description="ADK tools (BaseTool or function) after processing.")
 
     # MCP Server (Agent acts AS an MCP Server)
     mcp_server: FastMCP | None = Field(default=None, description="MCP server instance if agent exposes MCP capabilities.")

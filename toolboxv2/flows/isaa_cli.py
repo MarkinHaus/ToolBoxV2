@@ -875,8 +875,8 @@ class WorkspaceIsaasCli:
                         f"\n   {Style.Underlined('System Prompt')}:\n     {Style.GREY(msg.replace('\n', '\n     '))}")
 
                 # Tools
-                if hasattr(agent, '_adk_tools_transient') and agent._adk_tools_transient:
-                    tool_names = [tool.__name__ for tool in agent._adk_tools_transient]
+                if hasattr(agent, 'processed_adk_tools') and agent.processed_adk_tools:
+                    tool_names = [tool.name if hasattr(tool, 'name') else tool.__name__ for tool in agent.processed_adk_tools]
                     output_lines.append(f"\n   {Style.Underlined('Tools')}:")
                     if tool_names:
                         tools_str = ", ".join(tool_names)
@@ -1512,20 +1512,6 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         # Agenten-spezifische Statistiken
         if self.session_stats['agents']:
             self.formatter.print_section("Agent Specifics", "")
-            headers = ["Agent Name", "Cost ($)", "Tokens (P/C)", "Tool Calls"]
-            rows = []
-            for name, data in self.session_stats['agents'].items():
-                rows.append([
-                    name,
-                    f"{data['cost']:.4f}",
-                    f"{data['tokens']['prompt']}/{data['tokens']['completion']}",
-                    data['tool_calls']
-                ])
-            self.formatter.print_table(headers, rows)
-
-        # Agenten-spezifische Statistiken
-        if self.session_stats['agents']:
-            self.formatter.print_section("Agent Specifics", "")
             headers = ["Agent Name", "Success", "Fail", "Cost ($)", "Tokens (P/C)", "Tool Calls"]
             rows = []
             for name, data in self.session_stats['agents'].items():
@@ -1590,38 +1576,6 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             content_area,
         ])))
 
-        def progress_wrapper(event):
-            # This function will run in the main event loop
-            # allowing it to update the UI components safely.
-            content_area.text = ANSI(self.formatter.format_event(event))
-            main_app.invalidate()  # Force redraw
-
-        async def run_and_wait():
-            nonlocal agent_task
-            response = None
-            try:
-                agent_task = asyncio.create_task(self.isaa_tools.run_agent(
-                    name=agent_name,
-                    text=request,
-                    session_id=self.session_id,
-                    # progress_callback=progress_wrapper, # This can cause cluttered output
-                    strategy_override="adk_run"
-                ))
-                response = await agent_task
-                self.session_stats["agents"][agent_name]["successful_runs"] += 1
-                await self.formatter.print_agent_response(response)
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                self.session_stats["agents"][agent_name]["failed_runs"] += 1
-                self.formatter.print_warning("\nOperation interrupted by user.\n")
-            except Exception as e:
-                self.session_stats["agents"][agent_name]["failed_runs"] += 1
-                self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
-            finally:
-                duration = asyncio.get_event_loop().time() - start_time
-                self.session_stats["agent_running_time"] += duration
-                if main_app.is_running:
-                    main_app.exit(result=response)
-
         self.formatter.print_info(Style.GREY("Agent is running... Cancel with Ctrl+C or ESC"))
 
         if not main_app:
@@ -1631,14 +1585,45 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             # As a fallback, we could run the agent directly, but the output would
             # conflict with the prompt. For now, we abort the request.
             return
-
         try:
-            await asyncio.gather(main_app.run_async(), run_and_wait())
-        except KeyboardInterrupt:
-            if agent_task and not agent_task.done():
-                agent_task.cancel()
-            print()
-            self.formatter.print_warning("Operation interrupted by user.\n")
+            # Prepare the agent task before suspending the UI
+            agent_task = asyncio.create_task(self.isaa_tools.run_agent(
+                name=self.active_agent_name,
+                text=request,
+                session_id=self.session_id,
+                progress_callback=self.progress_callback,
+                strategy_override="adk_run"
+            ))
+
+            async def run_task():
+                nonlocal agent_task
+                try:
+                    response = await agent_task
+                    await self.formatter.print_agent_response(response)
+                    self.session_stats["agents"][agent_name]["successful_runs"] += 1
+                except asyncio.CancelledError:
+                    self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                    main_app.print_text("\nOperation interrupted by user.\n")
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                    self.formatter.print_warning("\nOperation interrupted by user.\n")
+                except Exception as e:
+                    self.session_stats["agents"][agent_name]["failed_runs"] += 1
+                    self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
+                finally:
+                    duration = asyncio.get_event_loop().time() - start_time
+                    self.session_stats["agent_running_time"] += duration
+                    try:
+                        if main_app.is_running:
+                            main_app.exit(result=response)
+                    except Exception as e:
+                        pass
+
+            main_app.create_background_task(run_task())
+
+            # Run the application in asyncio event loop
+            return await main_app.run_async()
+
 
         except asyncio.CancelledError:
             # This is expected after a KeyboardInterrupt, so we can pass silently.
@@ -1646,7 +1631,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
 
         except Exception as e:
             self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
-
+            self.session_stats["agents"][agent_name]["failed_runs"] += 1
         finally:
             duration = asyncio.get_event_loop().time() - start_time
             self.session_stats["agent_running_time"] += duration

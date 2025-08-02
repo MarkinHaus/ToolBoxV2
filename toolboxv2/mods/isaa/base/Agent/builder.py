@@ -1047,6 +1047,7 @@ class EnhancedAgentBuilder:
                  if agent.adk_runner and agent.adk_session_service is not agent.adk_runner.session_service:
                       logger.warning("Agent session service differs from deferred runner's service. Updating agent's reference.")
                       agent.adk_session_service = agent.adk_runner.session_service
+                 agent.processed_adk_tools = processed_adk_tools
             elif ADK_AVAILABLE and adk_runner_instance and not agent.adk_runner:
                 # If runner was created earlier but not passed via LlmAgent init (e.g. non-LlmAgent base)
                 # Or if we want to explicitly assign it
