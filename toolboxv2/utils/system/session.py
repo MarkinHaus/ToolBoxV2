@@ -107,7 +107,7 @@ class Session(metaclass=Singleton):
         prv_key = self.get_prv_key()
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
-        challenge = Result.result_from_dict(**challenge)
+        challenge = Result.result_from_dict(**await challenge)
         if challenge.is_error():
             return challenge.lazy_return(-1, data=challenge.error)
 

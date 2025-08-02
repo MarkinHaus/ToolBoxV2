@@ -610,8 +610,7 @@ class Tools(MainTool, FileHandler):
             await mem_instance.add_data(context_name, str(data_to_save), direct=True)
             return 'Error adding data to memory.'
 
-        # agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
-        #                                      description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
+
         agent_builder.with_adk_tool_function(memory_search_tool, name="memorySearch",
                                              description="Search ISAA's semantic memory.")
         agent_builder.with_adk_tool_function(save_to_memory_tool, name="saveDataToMemory",
@@ -633,14 +632,15 @@ class Tools(MainTool, FileHandler):
             # adding tasks tools create_task_chain run_task get_task load_task save_task remove_task list_task
             task_tools = [
                 (self.create_task_chain, "createTaskChain", "Create a task chain from a sequence of steps."),
-                (self.run_task, "runTask", "Run a specific task chain."),
-                (self.get_task, "getTask", "Get information about a task chain."),
-                (self.load_task, "loadTask", "Load a task chain from storage."),
-                (self.save_task, "saveTask", "Save a task chain to persistent storage."),
-                (self.remove_task, "removeTask", "Remove a task chain from the system."),
-                (self.list_task, "listTasks", "List all available tasks chain."),
+                (self.run_task, "runTaskChain", "Run a specific task chain."),
+                (self.get_task, "getTaskChain", "Get information about a task chain."),
+                (self.load_task, "loadTaskChain", "Load a task chain from storage."),
+                (self.save_task, "saveTaskChain", "Save a task chain to persistent storage."),
+                (self.remove_task, "removeTaskChain", "Remove a task chain from the system."),
+                (self.list_task, "listTasksChains", "List all available tasks chain."),
             ]
-
+            agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
+                                                  description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
             for func, tool_name, desc in task_tools:
                 agent_builder.with_adk_tool_function(func, name=tool_name, description=desc)
 

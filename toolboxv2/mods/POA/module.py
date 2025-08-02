@@ -1204,7 +1204,7 @@ async def api_update_item(app: App, request: RequestData, item_id: str, data=Nam
 @export(mod_name=Name, name="set-current-item", api=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_set_current_item(app: App, request: RequestData, item_id: Optional[str] = None, data=None):
     # ... (implementation as before)
-    if not item_id: body = data; item_id = body.get('item_id')
+    if not item_id and data: body = data; item_id = body.get('item_id')
     if not item_id: return Result.default_user_error("item_id is required.", 400)
     manager = await get_manager(app, request)
     item = manager.set_current_item(item_id)
@@ -1255,7 +1255,7 @@ async def api_get_history(app: App, request: RequestData):
 @export(mod_name=Name, name="remove-item", api=True, request_as_kwarg=True, api_methods=['POST'])
 async def api_remove_item(app: App, request: RequestData, item_id: Optional[str] = None, data=None):
     # ... (implementation as before)
-    if not item_id: body = data; item_id = body.get('item_id')
+    if not item_id and data: body = data; item_id = body.get('item_id')
     if not item_id: return Result.default_user_error("item_id is required for removal.", 400)
     manager = await get_manager(app, request)
     if manager.remove_item(item_id): return Result.ok("Item removed successfully.")

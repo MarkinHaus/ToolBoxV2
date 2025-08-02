@@ -730,9 +730,11 @@ async def api_get_counter_stats(app: App, request: RequestData, counter_id: str)
         request_as_kwarg=True)  # Path: /api/CounterTracker/get-counter-entries/{counter_id}
 async def api_get_counter_entries(app: App, request: RequestData, counter_id: str, limit: Optional[int] = 50):
     manager = await get_manager(app, request)
+    if limit is None:
+        limit = 50
     try:
         limit = int(limit)
-    except ValueError:
+    except (ValueError, TypeError):
         limit = 50
 
     counter = manager.get_counter(counter_id)  # Ensures counter exists

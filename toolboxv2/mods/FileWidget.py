@@ -182,7 +182,7 @@ class Tools(MainTool):
         if request and request.session:
             # Assuming session is a dict-like object as populated by Rust via kwargs['request']['session']
             # 'SiID' is often used as a unique session/user identifier in such systems.
-            uid_from_session = request.session.get('SiID') or request.session.get('uid')
+            uid_from_session = request.session.SiID or (request.session.get('uid') if hasattr(request.session, 'get') else None)
             if uid_from_session:
                 self.app.logger.debug(f"Retrieved UID '{uid_from_session}' from request.session as fallback.")
                 return uid_from_session
@@ -980,7 +980,7 @@ async def access_shared_file(self, request: RequestData, share_id: str, filename
     if not share_id:
         return Result.html(data="Share ID is missing in path.", status=302)
 
-    share_info = self.shares.get(share_id)
+    share_info = self.shares.get(share_id) if self.shares is not None else None
     if not share_info:
         return Result.html(data="Share link is invalid or has expired.", status=404)
 

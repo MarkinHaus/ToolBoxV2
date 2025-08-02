@@ -326,16 +326,23 @@ class WorldModel:
 
     def sync_from_adk_state(self, adk_state: State):
         """Updates the WorldModel from an ADK Session State."""
-        if not ADK_AVAILABLE or not isinstance(adk_state, State):
+        dickt_data = None
+        if not ADK_AVAILABLE:
+            return
+        if isinstance(adk_state, State):
+            dickt_data = adk_state.to_dict()
+        if isinstance(adk_state, dict):
+            dickt_data = adk_state
+        if dickt_data is None:
             return
         with self._lock:
             # Simple overwrite strategy, could be more sophisticated (merge, etc.)
-            self.data.update(adk_state.to_dict()) # ADK State is dict-like
+            self.data.update(dickt_data) # ADK State is dict-like
             logger.debug(f"WorldModel synced FROM ADK state. Keys: {list(self.data.keys())}")
 
-    def sync_to_adk_state(self, adk_state: State):
+    def sync_to_adk_state(self, adk_state: State or dict[str, Any]):
         """Updates an ADK Session State from the WorldModel."""
-        if not ADK_AVAILABLE or not isinstance(adk_state, State):
+        if not ADK_AVAILABLE:
             return
         with self._lock:
             # Update the ADK state dictionary directly
@@ -462,11 +469,63 @@ else: # Dummy executors if ADK not available
     class SecureCodeExecutorPlaceholder: pass
     class UnsafeSimplePythonExecutor: pass
 
+import re
+import os
+import mimetypes
+from urllib.parse import urlparse
 
+from google.genai import types
 # --- Main Agent Class ---
 
 _AgentBaseClass = (LlmAgent, BaseModel) if ADK_AVAILABLE else (BaseModel, )
 
+FILE_REF_REGEX = re.compile(r'\[([^\]\r\n]+)\]')
+
+def parse_to_content(user_input: str) -> list[types.Part]:
+    """
+    Parses a user prompt like:
+      "tell me about [./photo.jpg] vs [https://example.com/diagram.pdf]"
+    Into a Content(role="user", parts=[ ... ])
+    inserting text and media parts in order.
+    """
+    parts = []
+    last_end = 0
+
+    for m in FILE_REF_REGEX.finditer(user_input):
+        plain = user_input[last_end : m.start()]
+        if plain.strip():
+            parts.append(types.Part.from_text(text=plain))
+        ref = m.group(1).strip()
+        p = urlparse(ref)
+        mime, _ = mimetypes.guess_type(ref or "")
+        mime = mime or "application/octet-stream"
+
+        if p.scheme in ("http", "https") or ref.startswith("gs://"):
+            # treat as remote file reference — Vertex AI only:
+            parts.append(types.Part.from_uri(
+                file_uri=ref,
+                mime_type=mime
+            ))
+        elif os.path.isfile(ref):
+            # local file — embed inline:
+            with open(ref, "rb") as f:
+                blob = f.read()
+            parts.append(types.Part.from_bytes(
+                data=blob,
+                mime_type=mime
+            ))
+        else:
+            # fallback: treat as plain-label in text:
+            parts.append(types.Part.from_text(text=f"[{ref}]"))
+
+        last_end = m.end()
+
+    # trailing text
+    trailing = user_input[last_end:]
+    if trailing.strip():
+        parts.append(types.Part.from_text(text=trailing))
+
+    return parts
 
 class EnhancedAgent(*_AgentBaseClass):
     """
@@ -1034,7 +1093,15 @@ class EnhancedAgent(*_AgentBaseClass):
                              user_id=self.amd.user_id or "adk_user", # Needs consistent user ID
                              session_id=session_id
                         )
+                        if not adk_session:
+                            adk_session = await self.adk_session_service.create_session(
+                                app_name=self.adk_runner.app_name,  # Assuming runner is set if syncing
+                                user_id=self.amd.user_id or "adk_user",  # Needs consistent user ID
+                                session_id=session_id
+                            )
                         if adk_session:
+                            if asyncio.iscoroutine(adk_session):
+                                adk_session = await adk_session
                             adk_session_state = adk_session.state
                         else:
                             logger.warning(f"ADK Session '{session_id}' not found for state sync.")
@@ -1304,7 +1371,7 @@ class EnhancedAgent(*_AgentBaseClass):
 
             # 2. Prepare ADK input (handle multi-modal later)
             # Assuming user_input is text for now
-            adk_input_content = Content(role='user', parts=[Part(text=user_input)])
+            adk_input_content = Content(role='user', parts=parse_to_content(user_input))
 
             # 3. Execute ADK run_async
             all_events_str = [] # For logging/debugging
@@ -1356,7 +1423,8 @@ class EnhancedAgent(*_AgentBaseClass):
                     elif event.error_message:
                          final_response_text = f"Error: ADK processing failed: {event.error_message}"
                     else:
-                         final_response_text = "ADK processing finished without a clear textual response."
+                        print(event.model_dump())
+                        final_response_text = "ADK processing finished without a clear textual response."
                     # Stop processing events
 
             # 4. Update World Model from final ADK state (if syncing)
@@ -1364,7 +1432,7 @@ class EnhancedAgent(*_AgentBaseClass):
             if self.sync_adk_state and adk_session_state is not None:
                  # Fetch potentially updated state after run completion
                  try:
-                     final_session = await asyncio.to_thread(self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id)
+                     final_session = await self.adk_session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
                      if final_session:
                          self.world_model.sync_from_adk_state(final_session.state)
                      else:
@@ -1803,7 +1871,7 @@ class EnhancedAgent(*_AgentBaseClass):
                        f"```json\n{json.dumps(model_schema, indent=2)}\n```\n"
                        f"Guidelines:\n"
                        f"- Analyze the request carefully.\n"
-                       f"- Output *only* the JSON object, nothing else (no explanations, apologies, or markdown).\n"
+                       f"- Output *only* the JSON object not in additional tags direct the json object wit all given attributes, nothing else (no explanations, apologies, or markdown).\n"
                        f"- Ensure the JSON is valid and conforms exactly to the schema.\n"
                        f"- Omit optional fields if the information is not present in the request."
         })

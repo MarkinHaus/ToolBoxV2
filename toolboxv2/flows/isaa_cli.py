@@ -925,7 +925,7 @@ class WorkspaceIsaasCli:
                     continue
 
                 # Model Name
-                model_name = getattr(agent.amd, 'model', 'default')
+                model_name = getattr(agent.amd, 'model', 'worker')
                 output_lines.append(f"   {Style.Underlined('Model')}: {Style.CYAN(model_name)}")
 
                 # System Message
@@ -974,39 +974,71 @@ class WorkspaceIsaasCli:
         output_lines.append("\n" + "─" * 60)
         return remove_styles("\n".join(output_lines))
 
-    async def run_agent_background_tool(self, agent_name: str, task_prompt: str, session_id: Optional[str] = None,
-                                        priority: Optional[str] = "normal"):
-        """Run a task with specified agent in background with priority"""
-        if priority is None:
-            priority = "normal"
+    async def run_agent_background_tool(
+        self,
+        agent_name: str,
+        task_prompt: str,
+        task_name: Optional[str] = None,
+        depends_on: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        priority: str = "normal",
+    ):
+        """
+        Run a task with a specified agent in the background with support for task names and dependencies.
+
+        Args:
+            agent_name (str): The name of the agent to run.
+            task_prompt (str): The prompt for the task.
+            task_name (str, optional): A unique name for the task. If not provided, a unique ID will be generated.
+            depends_on (Optional[List[str]], optional): A list of task names that this task depends on.
+            session_id (str, optional): The session ID for the task. If not provided, a new one is generated.
+            priority (str, optional): The priority of the task. Defaults to "normal".
+        """
         try:
+            task_id = task_name if task_name else f"bg_task_{uuid.uuid4().hex[:6]}"
+            if task_id in self.background_tasks:
+                return f"❌ Error: Task with name '{task_id}' already exists."
+
             if not session_id:
                 session_id = f"bg_{len(self.background_tasks)}_{agent_name}"
 
             now = asyncio.get_event_loop().time()
             self._ensure_agent_stats_initialized(agent_name)
 
-            # Der Callback muss direkt an den Runner übergeben werden.
-            task_id = len(self.background_tasks)
+            async def wait_for_dependencies():
+                if depends_on:
+                    dependent_tasks = []
+                    for dep_name in depends_on:
+                        if dep_name in self.background_tasks:
+                            dependent_tasks.append(self.background_tasks[dep_name]['task'])
+                    if dependent_tasks:
+                        await asyncio.gather(*dependent_tasks)
 
             async def comp_helper():
                 try:
+                    await wait_for_dependencies()
+                    self.background_tasks[task_id]['status'] = 'running'
                     res = await self.isaa_tools.run_agent(
                         agent_name if agent_name in self.isaa_tools.config.get("agents-name-list", []) else "worker",
                         task_prompt,
                         session_id=session_id,
                         progress_callback=self.create_monitoring_callback(task_id),
-                        strategy_override="adk_run"
+                        strategy_override="adk_run",
                     )
                     self.session_stats["agents"][agent_name]["successful_runs"] += 1
-                    self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
-                    self.background_tasks[task_id]['result'] = res
+                    self.background_tasks[task_id].update({
+                        'end_time': asyncio.get_event_loop().time(),
+                        'result': res,
+                        'status': 'completed'
+                    })
                     return res
                 except Exception as e:
                     self.session_stats["agents"][agent_name]["failed_runs"] += 1
-                    self.background_tasks[task_id]['end_time'] = asyncio.get_event_loop().time()
-                    self.background_tasks[task_id]['result'] = f"Agent run failed: {e}"
-                    # Re-raise or handle the exception as needed
+                    self.background_tasks[task_id].update({
+                        'end_time': asyncio.get_event_loop().time(),
+                        'result': f"Agent run failed: {e}",
+                        'status': 'failed'
+                    })
                     raise
 
             task = asyncio.create_task(
@@ -1021,16 +1053,18 @@ class WorkspaceIsaasCli:
                 'end_time': None,
                 'session_id': session_id,
                 'priority': priority,
-                'status': 'running',
+                'status': 'pending' if depends_on else 'queued',
                 'last_activity': now,
                 'result': None,
                 'last_event': 'created',
-                'agent_state': 'Starting',
+                'agent_state': 'Initializing',
                 'current_tool_name': None,
                 'current_tool_input': None,
-                'history': []
+                'history': [],
+                'depends_on': depends_on or []
             }
-            return f"⧖ Background task {task_id} started with agent '{agent_name}' (priority: {priority})"
+
+            return f"⧖ Background task named: '{task_id}' started with agent '{agent_name}' (priority: {priority})"
         except Exception as e:
             return f"❌ Error starting background task: {str(e)}"
 
@@ -1056,10 +1090,10 @@ class WorkspaceIsaasCli:
             status_info += f"  Prompt: {tinfo['prompt']}\n\n"
         return f"Summary: {running} running, {completed} completed\n\n" + status_info
 
-    async def kill_background_task_tool(self, task_id: int, force: bool = False):
+    async def kill_background_task_tool(self, task_id: str, force: bool = False):
         """Kill a specific background task"""
         try:
-            task_id = int(task_id)
+            task_id = task_id
             if task_id not in self.background_tasks: return f"❌ Task {task_id} not found"
             tinfo = self.background_tasks[task_id]
             if tinfo['task'].done(): return f"ℹ️  Task {task_id} already completed"
@@ -1275,32 +1309,68 @@ class WorkspaceIsaasCli:
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         builder.with_system_message(
-            """You are an autonomous Supervisor agent.
+            """You are an autonomous multi-agent Supervisor.
 
 # CORE BEHAVIOR
-You operate independently to complete tasks. When problems arise, you analyze and find solutions without asking for guidance.
+You orchestrate a network of agents. Delegate frequently, think continuously, adapt constantly. Your job is ensuring all tasks complete through intelligent agent coordination.
 
-# WORKFLOW
-1. **ASSESS**: Use available tools to understand the current situation
-2. **PLAN**: Break complex tasks into manageable steps
-3. **DELEGATE**: Take action using appropriate tools
-4. **ADAPT**: If issues occur, troubleshoot and adjust your approach automatically
+# COGNITIVE CYCLE
+Execute every 2-3 actions:
+1. **THINK**: Analyze current state and agent performance
+2. **PLAN**: Update strategy and resource allocation
+3. **ADJUST**: Modify approach based on results
+4. **UPDATE**: Revise world model of tasks, agents, and constraints
 
-# DELEGATE RULES
-- For simple tasks: Execute directly or delegate to a worker agent
-- For complex tasks:
-  - Decompose into sub-tasks
-  - Use `run_agent_background` for parallel execution
-  - Oversee progress and synthesize results
-- Always use tools in valid JSON format: `{"tool_code": "function_name(params)"}`
-- Provide final results as plain text
+# DELEGATION STRATEGY
+- Default to delegation: If task takes >15 seconds, delegate it
+- Use `run_agent_background` extensively for parallel execution
+- Match tasks to specialized agents (research, analysis, creative, execution)
+- Balance workload across available agents
+- Monitor progress without micromanaging
+
+# WORKFLOW RULES
+1. **ASSESS**: Break complex tasks into sub-components
+2. **ORCHESTRATE**: Launch multiple background agents simultaneously
+3. **COORDINATE**: Manage task dependencies and sequencing
+4. **SYNTHESIZE**: Combine agent outputs into final results
+5. **ADAPT**: Reallocate resources when bottlenecks occur
+
+# WORLD MODEL
+Continuously track:
+- Agent capabilities and current workload
+- Task patterns and solution effectiveness
+- System performance and bottlenecks
+- Success rates by delegation approach
+
+# EXECUTION AUTHORITY
+You have full power to:
+- Reassign tasks between agents in real-time
+- Adjust priorities and strategies dynamically
+- Terminate and restart failed operations
+
+# DELEGATION PATTERNS
+- Simple tasks: Direct execution or single agent
+- Complex tasks: Parallel multi-agent coordination
+- Research: Background research agents + synthesis
+- Analysis: Data processing agents + analytical agents
+- Creative: Creative agents + review agents
+
+# FORMAT RULES
+- Always use tools in valid JSON format: {"tool_call": ...} or {"tool_call": [...]}
+- no additional text or markdown
 
 # AUTONOMY PRINCIPLE
-You have full authority to make decisions, retry failed operations, and adapt strategies to achieve the given objective. Complete tasks independently without requesting additional instructions.
+Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Complete all objectives through optimal agent orchestration without requesting guidance.
+
 """
+            # # FORMAT RULES
+            # - Always use tools in valid JSON format!
+            # - all other responses must be in JSON format and only contain the JSON object, no additional text or markdown!
+            # - the thinking steps must be in JSON format!
         )
 
         builder = await self.add_comprehensive_tools_to_agent(builder)
+        builder.enable_adk_state_sync(True)
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
 
@@ -2106,13 +2176,10 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             if len(args) < 2:
                 self.formatter.print_error("Usage: /tasks attach <task_id>")
                 return
-            try:
-                task_id = int(args[1])
-                if task_id not in self.background_tasks:
-                    self.formatter.print_error(f"Task {task_id} not found")
-                    return
-            except ValueError:
-                self.formatter.print_error("Invalid task ID. Must be a number.")
+
+            task_id = args[1]
+            if task_id not in self.background_tasks:
+                self.formatter.print_error(f"Task {task_id} not found")
                 return
 
             task_info = self.background_tasks[task_id]
@@ -2135,7 +2202,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
             layout = Layout(HSplit([Window(content=output_control, always_hide_cursor=True)]))
             kb = KeyBindings()
 
-            @kb.add('l')
+            @kb.add('c-c')
             @kb.add('q')
             @kb.add('escape')
             def _(event):
@@ -2157,6 +2224,11 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                     event.app.exit()
                 except Exception as e:
                     print(f"Error exiting app: {e}")
+
+            @kb.add('r')
+            def _(event):
+                """Force a redraw of the monitor."""
+                event.app.invalidate()
 
             app = Application(layout=layout, key_bindings=kb, full_screen=True)
 
@@ -2463,6 +2535,11 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                 task_id, _ = sorted_tasks[selected_task_index]
                 detail_view_task_id = task_id if detail_view_task_id != task_id else None
 
+        @kb.add('r')
+        def _(event):
+            """Force a redraw of the monitor."""
+            event.app.invalidate()
+
         def format_cell(content, width):
             """
             FIX: Formats content to a fixed width, ignoring non-printable ANSI codes.
@@ -2493,9 +2570,9 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                 lines.append(Style.GREY("Use [↑/↓] to select, [k] to kill, [d] for details, [q] to quit.\n"))
 
                 # REVISED: Added 'Last Active' and defined precise column widths for alignment.
-                headers = ["ID", "Agent", "Status", "Runtime", "Last Active", "State", "Current Tool"]
-                col_widths = {'ID': 5, 'Agent': 18, 'Status': 15, 'Runtime': 12, 'Last Active': 12, 'State': 15,
-                              'Current Tool': 25}
+                headers = ["Name", "Agent", "Status", "Depends On", "Runtime", "Last Active", "State", "Current Tool"]
+                col_widths = {'Name': 20, 'Agent': 18, 'Status': 15, 'Depends On': 20, 'Runtime': 12, 'Last Active': 12,
+                              'State': 15, 'Current Tool': 25}
 
                 header_line = " | ".join([format_cell(h, col_widths[h]) for h in headers])
                 lines.append(Style.Underlined(header_line))
@@ -2504,13 +2581,13 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                 if not sorted_tasks:
                     selected_task_index = 0
                 else:
-                    # Ensure selection index is valid
                     selected_task_index = min(selected_task_index, len(sorted_tasks) - 1)
 
                 for idx, (tid, tinfo) in enumerate(sorted_tasks):
                     task = tinfo['task']
                     runtime = (tinfo.get('end_time') or now) - tinfo['started']
 
+                    # Status determination logic remains the same
                     if task.done():
                         if task.cancelled():
                             status = Style.YELLOW("Cancelled")
@@ -2518,9 +2595,13 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                             status = Style.RED("Failed")
                         else:
                             status = Style.GREEN("Completed")
+                    # UPDATED: Show 'Pending' status for tasks waiting on dependencies.
+                    elif tinfo.get('status') == 'pending':
+                        status = Style.BLUE("Pending")
                     else:
                         status = Style.CYAN("Running")
 
+                    # Agent state styling logic remains the same
                     agent_state = tinfo.get('agent_state', 'n/a')
                     if status != Style.GREEN("Completed"):
                         if agent_state == 'Using Tool':
@@ -2532,22 +2613,26 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                     else:
                         agent_state = Style.GREY("n/a")
 
-                    # NEW: Get and format the 'last_activity' timestamp.
                     last_activity_ts = tinfo.get('last_activity')
                     last_activity_str = time.strftime('%H:%M:%S',
                                                       time.localtime(last_activity_ts)) if last_activity_ts else "n/a"
 
+                    # NEW: Get dependency information for the table.
+                    depends_on_list = tinfo.get('depends_on', [])
+                    depends_on_str = ", ".join(depends_on_list) if depends_on_list else "None"
+
+                    # REVISED: Assembled row data including the new fields.
                     row_data = {
-                        "ID": str(tid),
+                        "Name": str(tid),
                         "Agent": tinfo['agent'],
                         "Status": status,
+                        "Depends On": depends_on_str,
                         "Runtime": human_readable_time(runtime),
                         "Last Active": last_activity_str,
                         "State": agent_state,
                         "Current Tool": tinfo.get('current_tool_name', 'None') or 'None'
                     }
 
-                    # Use the alignment-safe format_cell function for each piece of data.
                     row_cells = [format_cell(row_data[h], col_widths[h]) for h in headers]
                     row_str = " | ".join(row_cells)
 
@@ -2557,29 +2642,27 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                         lines.append(row_str)
 
                     if detail_view_task_id == tid:
+                        # Detail view width automatically adjusts based on col_widths sum
                         detail_line_width = sum(col_widths.values()) + (len(col_widths) - 1) * 3
                         lines.append(Style.GREY("  " + "─" * detail_line_width))
                         if tinfo.get('history'):
                             for log in reversed(tinfo['history'][-10:]):
                                 log_time = time.strftime('%H:%M:%S', time.localtime(log['time']))
-                                content = str(log['content'])
+                                content = str(log.get('content', ''))
+                                log_type = str(log.get('type', 'event'))
                                 lines.append(
-                                    f"   {Style.GREY('└' + log_time)} {Style.YELLOW(log['type']):<15} {content}")
+                                    f"   {Style.GREY('└' + log_time)} {Style.YELLOW(log_type):<15} {content}")
                         else:
                             lines.append("  " + Style.GREY("└ No execution history recorded."))
                         lines.append(Style.GREY("  " + "─" * detail_line_width))
 
                 output_control.text = ANSI("\n".join(lines))
-
-                # FIX: Invalidate the app to force an immediate redraw. This makes the UI responsive.
                 app.invalidate()
-
-                await asyncio.sleep(0.5)  # Refresh interval for data polling.
+                await asyncio.sleep(0.5)
 
         try:
             await asyncio.gather(app.run_async(), monitor_loop())
         except Exception as e:
-            # Gracefully handle crashes
             print(f"\x1b[?1049l", end="")  # Ensure exiting alternate screen buffer
             import traceback
             traceback.print_exc()
