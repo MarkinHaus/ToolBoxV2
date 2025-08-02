@@ -1755,9 +1755,7 @@ class KnowledgeBase:
             return kb
 
         except Exception as e:
-            print(f"Error loading knowledge base: ({path}) {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+            print(f"Error loading knowledge base: {str(e)}")
             raise
 
     def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):

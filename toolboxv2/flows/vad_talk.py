@@ -1061,7 +1061,7 @@ class TTSModule:
                 "mas_text_summaries": i.mas_text_summaries,
                 "run_agent": i.run_agent,
                 "get_agent": i.get_agent,
-                "crate_task_chain": i.crate_task_chain,
+                "create_task_chain": i.create_task_chain,
                 "crate_and_run_task": i.crun_task,
                 "run_task": i.run_task,
                 "get_task": i.get_task,

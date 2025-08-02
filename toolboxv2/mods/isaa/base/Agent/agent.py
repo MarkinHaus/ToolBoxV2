@@ -945,6 +945,45 @@ class EnhancedAgent(*_AgentBaseClass):
             self.adk_session_service = None
             return None
 
+    def get_tool_by_name(self, name: str) -> Callable | None:
+        """Finds a tool in the processed_adk_tools list by its name."""
+        for tool in self.processed_adk_tools:
+            if hasattr(tool, 'name') and tool.name == name:
+                return tool
+            elif hasattr(tool, '__name__') and tool.__name__ == name:
+                return tool
+        return None
+
+    async def arun_function(self, function_name: str, *args, **kwargs) -> Any:
+        """
+        Asynchronously finds a function by its string name, executes it with
+        the given arguments, and returns the result.
+
+        Args:
+            function_name: The name of the function/tool to execute.
+            *args: Positional arguments to pass to the function.
+            **kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            The result of the executed function.
+
+        Raises:
+            ValueError: If the function with the given name is not found.
+        """
+        print(f"Attempting to run function: {function_name}")
+
+        target_function = self.get_tool_by_name(function_name)
+
+        if not target_function:
+            raise ValueError(f"Function '{function_name}' not found in the agent's registered tools.")
+
+        if asyncio.iscoroutinefunction(target_function):
+            return await target_function(*args, **kwargs)
+        else:
+            # If the function is not async, run it in a thread pool
+            # to avoid blocking the asyncio event loop.
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
 
     # --- Core Agent Logic (`a_run`) ---
 

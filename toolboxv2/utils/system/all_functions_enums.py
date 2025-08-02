@@ -383,7 +383,7 @@ class ISAA(Enum):
     SAVE_TO_MEM = 'save_to_mem' # Input: ([]), Output: <class 'inspect._empty'>
     GET_AGENT = 'get_agent' # Input: (['agent_name', 'model']), Output: <class 'toolboxv2.mods.isaa.base.Agents.Agent'>
     RUN_TASK = 'run_task' # Input: (['task', 'name', 'sum_up']), Output: <class 'inspect._empty'>
-    CRATE_TASK_CHAIN = 'crate_task_chain' # Input: (['prompt']), Output: <class 'inspect._empty'>
+    CREATE_TASK_CHAIN = 'create_task_chain' # Input: (['prompt']), Output: <class 'inspect._empty'>
     FORMAT_CLASS = 'format_class' # Input: (['format_class', 'task', 'agent_name']), Output: <class 'inspect._empty'>
     GET_MEMORY = 'get_memory' # Input: (['name']), Output: <class 'toolboxv2.mods.isaa.base.AgentUtils.AISemanticMemory'>
     GET_PIPE = 'get_pipe' # Input: (['agent_name', 'args', 'kwargs']), Output: <class 'toolboxv2.mods.isaa.CodingAgent.live.Pipeline'>

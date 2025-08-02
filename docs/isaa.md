@@ -201,12 +201,12 @@ Example structure for a task in the list:
 }
 ```
 
-### 6.2. Creating a Task Chain (`async crate_task_chain`)
+### 6.2. Creating a Task Chain (`async create_task_chain`)
 Uses an LLM (typically "TaskChainAgent") to generate a task chain definition from a natural language prompt.
 
 ```python
 async def create_my_chain():
-    chain_name = await isaa.crate_task_chain(
+    chain_name = await isaa.create_task_chain(
         "Create a plan to research a topic: first search the web, then summarize findings."
     )
     if chain_name:

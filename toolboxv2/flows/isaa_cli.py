@@ -460,34 +460,95 @@ class WorkspaceIsaasCli:
         mime_type, _ = mimetypes.guess_type(path)
         content_parts = [{"type": "text", "text": prompt}]
 
-        try:
-            if mime_type and mime_type.startswith("image/"):
-                with open(path, "rb") as f:
-                    data = f.read()
-                b64_data = base64.b64encode(data).decode("utf-8")
-                image_url = f"data:{mime_type};base64,{b64_data}"
-                content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
-            else:
-                # Fallback to reading as text
-                try:
-                    with open(path, 'r', encoding='utf-8') as f:
-                        text_content = f.read()
-                    content_parts.append({"type": "text", "text": f"File Content:\n\n{text_content}"})
-                except UnicodeDecodeError:
-                     return f"⚠️ Skipped: File '{file_path}' could not be read as text and is not a recognized image type."
+        def encode_file_base64(file_path_):
+            with open(file_path_, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
 
+        try:
+            if mime_type:
+                # --- IMAGE ---
+                if mime_type.startswith("image/"):
+                    image_url = f"data:{mime_type};base64,{encode_file_base64(path)}"
+                    content_parts.append({"type": "image_url", "image_url": {"url": image_url}})
+
+                # --- PDF ---
+                elif mime_type == "application/pdf":
+                    pdf_base64 = encode_file_base64(path)
+                    content_parts.append({
+                        "type": "file_data",
+                        "file_data": {
+                            "mime_type": "application/pdf",
+                            "data": pdf_base64,
+                            "name": os.path.basename(path)
+                        }
+                    })
+
+                # --- AUDIO ---
+                elif mime_type.startswith("audio/"):
+                    audio_base64 = encode_file_base64(path)
+                    content_parts.append({
+                        "type": "file_data",
+                        "file_data": {
+                            "mime_type": mime_type,
+                            "data": audio_base64,
+                            "name": os.path.basename(path)
+                        }
+                    })
+
+                # --- VIDEO ---
+                elif mime_type.startswith("video/"):
+                    video_base64 = encode_file_base64(path)
+                    content_parts.append({
+                        "type": "file_data",
+                        "file_data": {
+                            "mime_type": mime_type,
+                            "data": video_base64,
+                            "name": os.path.basename(path)
+                        }
+                    })
+
+                # --- LaTeX (text/plain fallback with .tex extension) ---
+                elif file_path.endswith(".tex"):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        latex_code = f.read()
+                    content_parts.append({
+                        "type": "text",
+                        "text": f"LaTeX Source Code:\n\n{latex_code}"
+                    })
+
+                # --- TEXT or UNKNOWN MIME (fallback) ---
+                else:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            text_content = f.read()
+                        content_parts.append({"type": "text", "text": f"File Content:\n\n{text_content}"})
+                    except UnicodeDecodeError:
+                        return f"⚠️ Skipped: File '{path}' could not be read as text or parsed as known binary format."
+
+            else:
+                return f"⚠️ Skipped: Could not determine MIME type for '{path}'."
+
+            # Build final message
             messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a visual analysis agent. Your only task is to observe the image(s), PDF(s), LaTeX source, audio or video provided by the user "
+                        "and return a perfect, detailed JSON representation of everything visible, audible, or structured based on the user's prompt. "
+                        "Focus on structure, layout, sequence, content, and fine-grained elements. Always respond with a single JSON object. "
+                        "Do not explain your reasoning. Only output JSON."
+                    )
+                },
                 {
                     "role": "user",
                     "content": content_parts
                 }
             ]
 
-            # Annahme: Ein geeignetes multimodales Modell ist konfiguriert
             response = await litellm.acompletion(
-                model=os.getenv("DEFAULTMODELEMVISUAL", "anthropic/claude-3-5-sonnet-20241022"),  # oder ein anderes geeignetes multimodales Modell
+                model=os.getenv("DEFAULTMODELEMVISUAL", "anthropic/claude-3-5-sonnet-20241022"),
                 messages=messages,
-                max_tokens=1024,
+                max_tokens=2048,
             )
 
             return response.choices[0].message.content

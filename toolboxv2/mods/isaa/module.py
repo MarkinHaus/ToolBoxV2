@@ -160,7 +160,7 @@ class Tools(MainTool, FileHandler):
             "save_to_mem": self.save_to_mem_sync,
             "get_agent": self.get_agent,  # Now async
             "run_task": self.run_task,  # Now async
-            "crate_task_chain": self.crate_task_chain,  # Now async
+            "create_task_chain": self.create_task_chain,  # Now async
             "format_class": self.format_class,  # Now async
             "get_memory": self.get_memory,
             "get_pipe": self.get_pipe,  # Now async
@@ -283,15 +283,16 @@ class Tools(MainTool, FileHandler):
 
     async def run_task(self, task_input: str, chain_name: str, sum_up=True, agent_name=None):
         self.agent_chain_executor.reset()
-        if agent_name:
-            agent_instance = await self.get_agent(agent_name)
-            self.agent_chain_executor.agent_runner = lambda name, task, **kwargs: agent_instance.run(task, **kwargs)
-            self.agent_chain_executor.function_runner = lambda name, **kwargs: agent_instance.run_tool(name, **kwargs)
+        if agent_name is None:
+            agent_name = "self"
 
-        return self.agent_chain_executor.execute(task_input,
+        agent_instance = await self.get_agent(agent_name)
+        self.agent_chain_executor.set_runner( agent_instance.arun_function, agent_instance.a_run)
+
+        return await self.agent_chain_executor.a_execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)
 
-    async def crate_task_chain(self, prompt):
+    async def create_task_chain(self, prompt):
         agents_list = self.config.get('agents-name-list', ['self', 'isaa'])
         # Tools list needs to be adapted for EnhancedAgent/ADK
         self_agent = await self.get_agent("self")
@@ -627,6 +628,22 @@ class Tools(MainTool, FileHandler):
 
             agent_builder.with_adk_tool_function(code_pipeline_tool, name="runCodePipeline",
                                                  description="Run a multi-step code generation/execution task.")
+
+        if name == "self" or "task" in name.lower() or "chain" in name.lower() or "supervisor" in name.lower():
+            # adding tasks tools create_task_chain run_task get_task load_task save_task remove_task list_task
+            task_tools = [
+                (self.create_task_chain, "createTaskChain", "Create a task chain from a sequence of steps."),
+                (self.run_task, "runTask", "Run a specific task chain."),
+                (self.get_task, "getTask", "Get information about a task chain."),
+                (self.load_task, "loadTask", "Load a task chain from storage."),
+                (self.save_task, "saveTask", "Save a task chain to persistent storage."),
+                (self.remove_task, "removeTask", "Remove a task chain from the system."),
+                (self.list_task, "listTasks", "List all available tasks chain."),
+            ]
+
+            for func, tool_name, desc in task_tools:
+                agent_builder.with_adk_tool_function(func, name=tool_name, description=desc)
+
 
         # Configure cost tracking persistency if not already set by loaded config
         if agent_builder._config.cost_tracker_config is None or agent_builder._config.cost_tracker_config.get(
