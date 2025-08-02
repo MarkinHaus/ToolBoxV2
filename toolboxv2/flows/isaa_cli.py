@@ -1,4 +1,6 @@
+import base64
 import datetime
+import mimetypes
 import re
 
 import asyncio
@@ -30,6 +32,7 @@ from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Style, remove_styles
 
 from prompt_toolkit.formatted_text import ANSI
+import litellm
 
 
 NAME = "isaa_cli"
@@ -358,16 +361,13 @@ class WorkspaceIsaasCli:
                 "failed_runs": 0,
             }
 
-    # ##################################################################
-    # TOOL DEFINITIONS MOVED TO CLASS METHODS
-    # ##################################################################
 
     async def replace_in_file_tool(self, file_path: str, old_str: str, new_str: str):
         """
         Replaces all occurrences of a string with a new string in a single specified file.
 
         This tool is optimized for direct, 1-to-1 replacements. It automatically detects
-        the file's encoding to prevent data corruption.
+        the file's encoding and normalizes line endings to prevent common replacement failures.
 
         Args:
             file_path: The path to the file relative to the current workspace.
@@ -385,31 +385,40 @@ class WorkspaceIsaasCli:
 
             # --- Smartly read the file by trying common encodings ---
             content = None
-            used_encoding = None
-            for encoding in ['utf-8', 'latin-1', 'cp1252']:  # Common encodings for text files
+            used_encoding = 'utf-8'  # Default encoding
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:
                 try:
                     with open(path, 'r', encoding=encoding) as f:
                         content = f.read()
                     used_encoding = encoding
-                    break  # Stop on the first successful read
+                    break
                 except UnicodeDecodeError:
-                    continue  # Try the next encoding
+                    continue
 
             if content is None:
                 return f"⚠️ Skipped: File '{file_path}' could not be read as text (it may be binary)."
 
-            # --- Perform the replacement ---
-            if old_str not in content:
+            # --- NORMALIZE LINE ENDINGS to prevent matching errors ---
+            # This is the key fix to handle Windows vs. Unix line endings
+            content_normalized = content.replace('\r\n', '\n')
+            old_str_normalized = old_str.replace('\r\n', '\n')
+
+            # --- Perform the replacement on the normalized content ---
+            if old_str_normalized not in content_normalized:
                 return f"ℹ️ String not found in '{file_path}'. No changes were made."
 
-            replacements_count = content.count(old_str)
-            new_content = content.replace(old_str, new_str)
+            # We need to normalize the new_str as well to keep replacements consistent
+            new_str_normalized = new_str.replace('\r\n', '\n')
 
-            # --- Write the changes back using the same encoding ---
+            replacements_count = content_normalized.count(old_str_normalized)
+            new_content = content_normalized.replace(old_str_normalized, new_str_normalized)
+
+            # --- Write the changes back using the original encoding ---
+            # The 'w' mode with a specified encoding will use the system's default
+            # line endings (os.linesep), which is the standard, safe behavior.
             with open(path, 'w', encoding=used_encoding) as f:
                 f.write(new_content)
 
-            # Format a clear, human-readable success message
             plural = "s" if replacements_count > 1 else ""
             return f"✅ Success: Replaced {replacements_count} occurrence{plural} in '{file_path}'."
 
@@ -446,11 +455,6 @@ class WorkspaceIsaasCli:
         Liest eine Datei (Bild oder Text), kombiniert sie mit einem Benutzer-Prompt
         und verwendet litellm, um Informationen zu extrahieren.
         """
-        import mimetypes
-        from pathlib import Path
-        import base64
-        import litellm
-
         path = Path(self.workspace_path / file_path)
         if not path.exists():
             return f"❌ Error: File not found at '{file_path}'."
@@ -575,10 +579,6 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error writing to {file_path}: {str(e)}"
 
-    import shutil
-    import asyncio
-    import json
-    from pathlib import Path
 
     async def search_in_files_tool(
         self,
@@ -732,7 +732,7 @@ class WorkspaceIsaasCli:
                             match = json.loads(line)
                             if match.get('type') == 'match':
                                 results.append({
-                                    "file": Path(match['data']['path']['text']).relative_to(base_path),
+                                    "file": str(Path(match['data']['path']['text']).relative_to(base_path)),
                                     "line": match['data']['line_number'],
                                     "content": match['data']['lines']['text'].strip()
                                 })
@@ -766,7 +766,7 @@ class WorkspaceIsaasCli:
                         parts = line.split(':', 2)
                         if len(parts) >= 3:
                             results.append({
-                                "file": Path(parts[0]).relative_to(base_path),
+                                "file": str(Path(parts[0]).relative_to(base_path)),
                                 "line": int(parts[1]) if parts[1].isdigit() else parts[1],
                                 "content": parts[2].strip()
                             })

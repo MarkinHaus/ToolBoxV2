@@ -23,7 +23,11 @@ Dependencies:
     - Python >= 3.10
 
 Usage:
-    from llm_interfaces.litellm import litellm_complete, litellm_embed
+    from llm_interfaces.litellm import logging
+if not hasattr(logging, 'NONE'):
+    logging.NONE = 100
+
+import litellm_complete, litellm_embed
 """
 
 __version__ = "1.0.0"
@@ -34,6 +38,10 @@ import os
 
 # Ensure AsyncIterator is imported correctly depending on Python version
 from collections.abc import AsyncIterator
+
+import logging
+if not hasattr(logging, 'NONE'):
+    logging.NONE = 100
 
 import litellm
 

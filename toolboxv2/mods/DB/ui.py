@@ -70,7 +70,7 @@ async def api_get_value(self, request: RequestData, key: str):
 @export(mod_name=Name, name="api_set_value", api=True, api_methods=['POST'], request_as_kwarg=True)
 async def api_set_value(self, request: RequestData):
     """Sets a key-value pair from a JSON POST body."""
-    data = request.data
+    data = request.body
     if not data or 'key' not in data or 'value' not in data:
         return Result.default_user_error("Request body must contain 'key' and 'value'.")
     key = data['key']
@@ -83,7 +83,7 @@ async def api_set_value(self, request: RequestData):
 @export(mod_name=Name, name="api_delete_key", api=True, api_methods=['POST'], request_as_kwarg=True)
 async def api_delete_key(self, request: RequestData):
     """Deletes a key from a JSON POST body."""
-    data = request.data
+    data = request.body
     if not data or 'key' not in data:
         return Result.default_user_error("Request body must contain 'key'.")
     key = data['key']
@@ -95,7 +95,7 @@ async def api_delete_key(self, request: RequestData):
 @export(mod_name=Name, name="api_change_mode", api=True, api_methods=['POST'], request_as_kwarg=True)
 async def api_change_mode(self, request: RequestData):
     """Changes the database mode from a JSON POST body."""
-    data = request.data
+    data = request.body
     if not data or "mode" not in data:
         return Result.default_user_error("Request body must contain 'mode'.")
     new_mode = data.get("mode", "LC")

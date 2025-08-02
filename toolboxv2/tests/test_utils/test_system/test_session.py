@@ -71,6 +71,7 @@ class TestSession(unittest.TestCase):
 
         self.assertIn('Session not initialized', str(context.exception))
 
+    @async_test
     async def test_logout(self):
         """Test logout functionality"""
         session = Session('test_user')
@@ -111,7 +112,6 @@ class TestSession(unittest.TestCase):
 
             # Assert private key is returned
             self.assertEqual(prv_key, 'mock_prv_key')
-
 
 if __name__ == '__main__':
     unittest.main()
