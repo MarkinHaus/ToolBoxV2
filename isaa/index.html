@@ -691,9 +691,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#62-creating-a-task-chain-async-crate_task_chain" class="md-nav__link">
+  <a href="#62-creating-a-task-chain-async-create_task_chain" class="md-nav__link">
     <span class="md-ellipsis">
-      6.2. Creating a Task Chain (async crate_task_chain)
+      6.2. Creating a Task Chain (async create_task_chain)
     </span>
   </a>
   
@@ -1097,7 +1097,7 @@ The <code>TaskChain</code> Pydantic model from <code>toolboxv2.mods.isaa.types</
 <span class="w">  </span><span class="nt">&quot;return_key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my_result_variable&quot;</span><span class="w"> </span><span class="c1">// Result stored under this key</span>
 <span class="p">}</span>
 </code></pre></div></td></tr></table></div></p>
-<h3 id="62-creating-a-task-chain-async-crate_task_chain">6.2. Creating a Task Chain (<code>async crate_task_chain</code>)<a class="headerlink" href="#62-creating-a-task-chain-async-crate_task_chain" title="Permanent link">&para;</a></h3>
+<h3 id="62-creating-a-task-chain-async-create_task_chain">6.2. Creating a Task Chain (<code>async create_task_chain</code>)<a class="headerlink" href="#62-creating-a-task-chain-async-create_task_chain" title="Permanent link">&para;</a></h3>
 <p>Uses an LLM (typically "TaskChainAgent") to generate a task chain definition from a natural language prompt.</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
 <span class="normal">2</span>
@@ -1108,7 +1108,7 @@ The <code>TaskChain</code> Pydantic model from <code>toolboxv2.mods.isaa.types</
 <span class="normal">7</span>
 <span class="normal">8</span>
 <span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">create_my_chain</span><span class="p">():</span>
-    <span class="n">chain_name</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">crate_task_chain</span><span class="p">(</span>
+    <span class="n">chain_name</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">create_task_chain</span><span class="p">(</span>
         <span class="s2">&quot;Create a plan to research a topic: first search the web, then summarize findings.&quot;</span>
     <span class="p">)</span>
     <span class="k">if</span> <span class="n">chain_name</span><span class="p">:</span>
