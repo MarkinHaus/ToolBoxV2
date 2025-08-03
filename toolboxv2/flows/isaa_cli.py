@@ -571,6 +571,8 @@ class WorkspaceIsaasCli:
                 path.rename(backup_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = 'a' if append else 'w'
+            if file_path.endswith(".json") and isinstance(content, dict):
+                content = json.dumps(content, indent=2)
             with open(path, mode, encoding=encoding) as f:
                 f.write(content)
             action = "✅ Appended to" if append else "✅ Written to"

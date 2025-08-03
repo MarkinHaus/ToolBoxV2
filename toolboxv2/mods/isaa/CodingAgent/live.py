@@ -1,4 +1,6 @@
 import ast
+import types
+
 import asyncio
 import importlib
 import io
@@ -1875,6 +1877,7 @@ from browser_use.llm import (
     ChatAWSBedrock,
     ChatGroq,
     ChatOllama,
+    ChatOpenRouter,
 )
 
 
@@ -1886,6 +1889,7 @@ _MODEL_MAP = {
     "bedrock": ChatAWSBedrock,
     "groq": ChatGroq,
     "ollama": ChatOllama,
+    'openrouter': ChatOpenRouter,
 }
 
 
@@ -1997,9 +2001,11 @@ class BrowserWrapper:
         self.llm = llm
         model, provider = None, None
         if isinstance(llm, str):
-            if llm.count('/') == 2:
-                llm = '/'.join(llm.split('/')[1:])
-            provider, model = llm.split('/')
+            if llm.count('/') == 2 and llm.startswith('openrouter/'):
+                provider = 'openrouter'
+                model = llm.split('/', 1)[1]
+            else:
+                provider, model = llm.split('/')
         self._initialize_llm(model or "claude-3-7-sonnet-latest", provider or "anthropic")
         self.parser = None
 
@@ -2704,6 +2710,22 @@ class Pipeline:
         if top_n is None:
             top_n = self.top_n
 
+
+        def get_type_name(tp):
+            if hasattr(tp, '__name__'):
+                return tp.__name__
+            elif isinstance(tp, types.UnionType):  # e.g., int | str (Python 3.10+)
+                return ' | '.join(get_type_name(arg) for arg in tp.__args__)
+            elif hasattr(tp, '__origin__'):  # e.g., list[int], Optional[str]
+                origin = get_type_name(tp.__origin__)
+                if hasattr(tp, '__args__'):
+                    args = ', '.join(get_type_name(arg) for arg in tp.__args__)
+                    return f"{origin}[{args}]"
+                return origin
+            elif hasattr(tp, '__class__'):
+                return tp.__class__.__name__
+            return str(tp)
+
         def format_value_preview(var: Any) -> str:
             """Format preview of variable contents"""
             try:
@@ -2715,7 +2737,7 @@ class Pipeline:
                 elif isinstance(var, dict):
                     preview_items = [f"{repr(k)}: {repr(v)}" for k, v in list(var.items())[:3]]
                     return f"{len(var)} pairs: {{{', '.join(preview_items)}, ...}}"
-                return f"<{type(var).__name__}>"
+                return f"<{get_type_name(type(var))}>"
             except:
                 return "<error getting value>"
 
@@ -2742,7 +2764,7 @@ class Pipeline:
 
             # Handle different types
             if isinstance(var, type):  # Class
-                desc_parts.append(f"**Type:** `class '{var.__name__}'`")
+                desc_parts.append(f"**Type:** `class '{get_type_name(var)}'`")
                 if var.__doc__:
                     desc_parts.append(f"**Documentation:**\n{var.__doc__.strip()}")
 
@@ -2765,7 +2787,7 @@ class Pipeline:
             elif isfunction(var) or ismethod(var):  # Function
                 try:
                     sig = signature(var)
-                    desc_parts.append(f"**Signature:** `{var.__name__}{sig}`")
+                    desc_parts.append(f"**Signature:** `{get_type_name(var)}{sig}`")
                     is_a = asyncio.iscoroutinefunction(var)
                     desc_parts.append(f"**IS Async:** `{is_a}`")
                     if var.__doc__:
@@ -2774,20 +2796,20 @@ class Pipeline:
                     if ret_anno != Signature.empty:
                         desc_parts.append(f"**Returns:** `{ret_anno}`")
                 except:
-                    desc_parts.append(f"**Function:** `{var.__name__}()`")
+                    desc_parts.append(f"**Function:** `{get_type_name(var)}()`")
 
             elif isinstance(var, BaseModel):  # Pydantic model
-                desc_parts.append(f"**Type:** Pydantic model '{var.__class__.__name__}'")
+                desc_parts.append(f"**Type:** Pydantic model '{get_type_name(var)}'")
                 fields = []
                 for field_name, field in var.model_fields.items():
                     value = getattr(var, field_name, None)
-                    fields.append(f"- `{field_name}: {field.annotation.__name__}` = {repr(value)}")
+                    fields.append(f"- `{field_name}: {get_type_name(field.annotation)}` = {repr(value)}")
                 if fields:
                     desc_parts.append("**Fields:**\n" + "\n".join(fields))
 
             else:  # Instance
                 class_type = var.__class__
-                desc_parts.append(f"**Type:** `{class_type.__module__}.{class_type.__name__}`")
+                desc_parts.append(f"**Type:** `{class_type.__module__}.{get_type_name(class_type)}`")
 
                 # Instance initialization details
                 try:

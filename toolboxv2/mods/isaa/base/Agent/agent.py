@@ -510,10 +510,13 @@ def parse_to_content(user_input: str) -> list[types.Part]:
             # local file — embed inline:
             with open(ref, "rb") as f:
                 blob = f.read()
-            parts.append(types.Part.from_bytes(
-                data=blob,
-                mime_type=mime
-            ))
+            if ref.endswith(".py") or ref.endswith(".txt") or ref.endswith(".md") or ref.endswith(".csv") or ref.endswith(".tsv") or ref.endswith(".json") or ref.endswith(".html") or ref.endswith(".xml") or ref.endswith(".yaml") or ref.endswith(".yml") or ref.endswith(".toml") or ref.endswith(".js") or ref.endswith(".css") or ref.endswith(".sql") or ref.endswith(".sh") or ref.endswith(".bash") or ref.endswith(".bat") or ref.endswith(".ps1") or ref.endswith(".ps") or ref.endswith(".cmd") or ref.endswith(".exe") or ref.endswith(".com") or ref.endswith(".vbs") or ref.endswith(".vba") or ref.endswith(".vb") or ref.endswith(".pl") or ref.endswith(".perl") or ref.endswith(".py"):
+                parts.append(types.Part.from_text(text=f"[{ref} content {blob.decode()}]"))
+            else:
+                parts.append(types.Part.from_bytes(
+                    data=blob,
+                    mime_type=mime
+                ))
         else:
             # fallback: treat as plain-label in text:
             parts.append(types.Part.from_text(text=f"[{ref}]"))

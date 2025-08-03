@@ -623,13 +623,13 @@ class Tools(MainTool, FileHandler):
         agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description=f"Run a shell command. in {detect_shell()}")
 
         # Add more tools based on agent 'name' or type
-        if name == "self" or "code" in name.lower() or "pipe" in name.lower():  # Example condition
+        if name == "self" or "code" in name.lower() or "pipe" in name.lower() or "worker" in name.lower():  # Example condition
             async def code_pipeline_tool(task: str, do_continue: bool = False):
                 pipe_agent_name = name  # Use current agent's context for the pipe
                 return await self.run_pipe(pipe_agent_name, task, do_continue=do_continue)
 
             agent_builder.with_adk_tool_function(code_pipeline_tool, name="runCodePipeline",
-                                                 description="Run a multi-step code generation/execution task.")
+                                                 description="Run a multi-step code generation/execution task. allows direct interaction with the ToolBox Framework and its Modules.")
 
         if name == "self" or "task" in name.lower() or "chain" in name.lower() or "supervisor" in name.lower():
             # adding tasks tools create_task_chain run_task get_task load_task save_task remove_task list_task
@@ -854,7 +854,15 @@ class Tools(MainTool, FileHandler):
             return self.pipes[agent_name_str]
         else:
             # Pass the already fetched/validated agent_instance to Pipeline
-            self.pipes[agent_name_str] = Pipeline(agent_instance, *args, **kwargs)
+            variables = []
+            if 'variables' in kwargs:
+                variables = kwargs.pop('variables')
+            if isinstance(variables, list):
+                variables += [self.app, agent_instance]
+            if isinstance(variables, dict):
+                variables.update({'app': self.app, 'agent': agent_instance})
+
+            self.pipes[agent_name_str] = Pipeline(agent_instance, *args, **kwargs, variables=variables)
             return self.pipes[agent_name_str]
 
     async def run_pipe(self, agent_name_or_instance: str | EnhancedAgent, task: str, do_continue=False):
