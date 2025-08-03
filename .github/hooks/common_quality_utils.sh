@@ -19,7 +19,7 @@ ruff check .|Ruff|true
 safety check --full-report|Safety|true
 " # Assuming both are critical for commit
 
-VERSIONS_CMD="tb -l -v"
+VERSIONS_CMD="tb -v"
 AUTO_SUMMARY_CMD="tb -c isaa auto_commit_msg"
 
 # Temporary directory for check outputs, typically within .git
@@ -56,8 +56,8 @@ run_single_check_and_store() {
   return $_exit_code
 }
 
-# Function to extract the version summary part from tb -l -v output
-# Args: $1: Raw output from tb -l -v
+# Function to extract the version summary part from tb -v output
+# Args: $1: Raw output from tb -v
 get_versions_summary_part() {
   _raw_output="$1"
 
