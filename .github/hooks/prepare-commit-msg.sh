@@ -148,27 +148,6 @@ else
 fi
 echo "[DEBUG prepare-commit-msg] NEW_MSG_CONTENT after <#> processing: [$NEW_MSG_CONTENT]"
 
-# Replace <sum>
-# Auto-summary is generated only if ALL checks (critical or not) passed.
-# If ANY_CRITICAL_FAILED was true, ALL_CHECKS_OK will be false.
-if [ -n "$AUTO_SUMMARY_CMD" ] && (echo "$NEW_MSG_CONTENT" | grep -qF "$PLACEHOLDER_AUTO_SUMMARY"); then
-  if [ "$ALL_CHECKS_OK" = true ]; then # Use ALL_CHECKS_OK now
-    echo "[DEBUG prepare-commit-msg] All checks passed. Generating auto-summary..."
-    AUTO_GENERATED_SUMMARY_TEXT=$($AUTO_SUMMARY_CMD 2>/dev/null)
-    if [ -n "$AUTO_GENERATED_SUMMARY_TEXT" ]; then
-      ESCAPED_AUTO_SUMMARY=$(escape_for_sed "$AUTO_GENERATED_SUMMARY_TEXT")
-      NEW_MSG_CONTENT=$(echo "$NEW_MSG_CONTENT" | sed "s|$PLACEHOLDER_AUTO_SUMMARY|$ESCAPED_AUTO_SUMMARY|g")
-    else
-      NEW_MSG_CONTENT=$(echo "$NEW_MSG_CONTENT" | sed "s|$PLACEHOLDER_AUTO_SUMMARY|(Auto-summary not generated)|g")
-    fi
-  else
-    NEW_MSG_CONTENT=$(echo "$NEW_MSG_CONTENT" | sed "s|$PLACEHOLDER_AUTO_SUMMARY|(Auto-summary skipped due to check failures)|g")
-  fi
-# elif for appending <sum> if not present - adjust logic as needed
-# ...
-fi
-echo "[DEBUG prepare-commit-msg] NEW_MSG_CONTENT after <sum> processing: [$NEW_MSG_CONTENT]"
-
 if [ "$NEW_MSG_CONTENT" != "$ORIGINAL_MSG_CONTENT" ]; then
   echo "[DEBUG prepare-commit-msg] Modifying commit message in $COMMIT_MSG_FILE."
   printf '%s\n' "$NEW_MSG_CONTENT" > "$COMMIT_MSG_FILE"

@@ -2,6 +2,7 @@ import locale
 import os
 import subprocess
 import sys
+from typing import Optional
 
 from toolboxv2 import Spinner, remove_styles
 from toolboxv2.mods.isaa.base.Agent.agent import EnhancedAgent
@@ -18,13 +19,13 @@ def safe_decode(data: bytes) -> str:
             continue
     return data.decode('utf-8', errors='replace')
 
-async def run(app, args_sto, tags: str = None, summarize: bool = False, **kwargs):
+async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False, **kwargs):
     """
     Automatically create a git commit message based on file changes.
 
     Args:
         app: The application instance.
-        tags (list, optional): A list of tags to add to the commit message. Defaults to None.
+        tags (str, optional): A list of tags to add to the commit message. Defaults to None.
         summarize (bool, optional): Force summarization of file changes. Defaults to False.
     """
     try:
