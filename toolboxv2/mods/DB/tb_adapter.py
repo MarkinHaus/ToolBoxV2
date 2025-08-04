@@ -220,6 +220,7 @@ class Tools(MainTool, FileHandler):
 
         self.app.logger.info(f"Running DB in mode : {self.mode.value}")
         self.print(f"Running DB.{self.spec} in mode : {self.mode.value}")
+        print(self.get('all-k'))
         return Result.ok()
 
     def _autoresize(self):
@@ -252,12 +253,7 @@ class Tools(MainTool, FileHandler):
                 raise ValueError("Could not find DB connection user_name in environment variable DB_USERNAME")
             evaluation = self.data_base.initialize(user_name, input(":Password:"))
         if auth.value == AuthenticationTypes.location.value:
-            local_key = self.app.config_fh.get_file_handler("LocalDbKey")
-            if local_key is None:
-                local_key = Code.generate_symmetric_key()
-                self.app.config_fh.add_to_save_file_handler("LocalDbKey", local_key)
-            if local_key is None:
-                raise ValueError("Could not find DB connection local_key in environment variable LocalDbKey")
+            local_key = Code.DK()() #self.app.config_fh.get_file_handler("LocalDbKey")
             if self.mode.value == DatabaseModes.CB.value:
                 evaluation = self.data_base.initialize(f"BlobDataDB/{self.spec}/database.json", local_key, self.app.root_blob_storage)
             if self.mode.value == DatabaseModes.LC.value:
