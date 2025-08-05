@@ -48,19 +48,35 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
         file_changes_for_prompt = []
         files_to_stage = []
         for line in changed_files_info:
-            if line and line.startswith('M'):  # Only process modified files
-                status, file_path = line.split('\t', 1)
+            if not line:
+                continue
+
+            status, file_path = line.split('\t', 1)
+
+            if status == 'M':  # Modified files
                 files_to_stage.append(file_path)
 
-                # Get the contextual diff for the modified file.
-                # The -U3 option provides 3 lines of context before and after each change.
                 diff_result = subprocess.run(['git', 'diff', '-U3', file_path], cwd=cwd, capture_output=True)
                 diff_content = safe_decode(diff_result.stdout)
 
-                # Add the file path and its diff content to the list for the prompt
                 prompt_entry = f"Changes for file: {file_path}\n---\n```diff\n{diff_content}\n```\n---"
                 file_changes_for_prompt.append(prompt_entry)
 
+            elif status == 'D':  # Deleted files
+                prompt_entry = f"Deleted file: {file_path}\n---\n(This file was deleted and has no content.)\n---"
+                file_changes_for_prompt.append(prompt_entry)
+
+            elif status == 'A':  # Newly added files
+                files_to_stage.append(file_path)
+
+                try:
+                    with open(os.path.join(cwd, file_path), 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+                except Exception as e:
+                    file_content = f"(Could not read file: {e})"
+
+                prompt_entry = f"New file added: {file_path}\n---\n```{file_path.split('.')[-1]}\n{file_content}\n```\n---"
+                file_changes_for_prompt.append(prompt_entry)
 
         if not file_changes_for_prompt:
             print({"success": True, "message": "No modified files to commit."})

@@ -619,12 +619,25 @@ def run_tests(test_path):
     try:
         result = subprocess.run(command, check=True, encoding='cp850')
         # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
     except subprocess.CalledProcessError as e:
         print(f"Fehler beim Ausführen der Unittests: {e}")
         return False
     except Exception as e:
         print(f"Fehler beim Ausführen der Unittests:{e}")
+        return False
+
+    # Führe npm test aus
+    print("Running npm tests...")
+    try:
+        result = subprocess.run(["npm", "test"], check=True, encoding='cp850', cwd=tb_root_dir)
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler beim Ausführen der npm-Tests: {e}")
+        return False
+    except Exception as e:
+        print(f"Fehler beim Ausführen der npm-Tests:{e}")
         return False
 
 

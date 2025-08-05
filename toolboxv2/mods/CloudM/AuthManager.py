@@ -131,6 +131,49 @@ def db_helper_delete_user(app: App, username: str, uid: str, matching=False):
                        get_results=True)
 
 
+@export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
+def delete_user(app: App, username: str):
+    """Deletes a user and all their data."""
+    if not db_helper_test_exist(app, username):
+        return Result.default_user_error(f"User '{username}' not found.")
+
+    # This will delete all entries matching the user
+    result = db_helper_delete_user(app, username, '*', matching=True)
+
+    if result.is_ok():
+        # Also remove the local private key file if it exists
+        app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
+        return Result.ok(f"User '{username}' deleted successfully.")
+    else:
+        return Result.default_sys_error(f"Failed to delete user '{username}'.", data=result)
+
+
+@export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
+def list_users(app: App):
+    """Lists all registered users."""
+    keys_result = app.run_any(TBEF.DB.GET, query="USER::*::*", get_results=True)
+    if keys_result.is_error():
+        return keys_result
+
+    user_keys = keys_result.get()
+    if not user_keys:
+        return Result.ok("No users found.")
+
+    users = []
+    for key in user_keys:
+        if isinstance(key, bytes):
+            key = key.decode()
+        # Extract username from the key USER::username::uid
+        parts = key.split('::')
+        if len(parts) > 1 and parts[1] not in [u['username'] for u in users]:
+            user_res = get_user_by_name(app, parts[1])
+            if user_res.is_ok():
+                user_data = user_res.get()
+                users.append({"username": user_data.name, "email": user_data.email, "level": user_data.level})
+
+    return Result.ok(data=users)
+
+
 # jwt helpers
 
 
