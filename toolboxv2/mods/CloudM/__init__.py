@@ -8,6 +8,7 @@ from .mini import *
 from .AdminDashboard import Name as AdminDashboard
 from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
+from .ModManager_tests import run_mod_manager_tests
 
 tools = Tools
 Name = 'CloudM'
