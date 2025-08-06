@@ -1125,6 +1125,7 @@ struct ServerSettings {
     open_modules: Vec<String>,
     init_modules: Vec<String>,
     watch_modules: Vec<String>,
+    websocket_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
