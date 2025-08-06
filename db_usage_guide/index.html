@@ -1,0 +1,956 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/db_usage_guide/">
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.16">
+    
+    
+      
+        <title>ToolBoxV2 Database (DB) Module Guide - ToolBoxV2 Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.7e37652d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="preference" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#toolboxv2-database-db-module-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ToolBoxV2 Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ToolBoxV2 Database (DB) Module Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ToolBoxV2 Docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.0.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ToolBoxV2
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Installation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Usage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FAQ
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tbjs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    TBjs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../clis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CLIS
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Report Issues
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            API Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolboxv2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    toolboxv2
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Core Concepts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Features:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#database-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Database Modes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Basic Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Basic Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#storing-data-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      Storing Data (set)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retrieving-data-get" class="md-nav__link">
+    <span class="md-ellipsis">
+      Retrieving Data (get)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Retrieving Data (get)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#special-get-queries-all-and-all-k" class="md-nav__link">
+    <span class="md-ellipsis">
+      Special get Queries: all and all-k
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-for-existence-if_exist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checking for Existence (if_exist)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deleting-data-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deleting Data (delete)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appending-to-a-list-append_on_set" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appending to a List (append_on_set)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-configuration-and-mode-switching" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Configuration and Mode Switching
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Configuration and Mode Switching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-via-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration via Environment Variables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#switching-modes-programmatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      Switching Modes Programmatically
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+
+
+
+                  
+
+
+  
+  
+
+
+<h1 id="toolboxv2-database-db-module-guide">ToolBoxV2 Database (DB) Module Guide<a class="headerlink" href="#toolboxv2-database-db-module-guide" title="Permanent link">&para;</a></h1>
+<p>This guide provides a comprehensive overview of how to use the ToolBoxV2 <code>DB</code> module. It is designed for both human developers and AI agents to understand how to perform persistent key-value storage within the framework.</p>
+<h2 id="1-core-concepts">1. Core Concepts<a class="headerlink" href="#1-core-concepts" title="Permanent link">&para;</a></h2>
+<p>The <code>DB</code> module acts as a standardized abstraction layer for various key-value storage backends. This design allows you to write your application logic once, using a consistent API (<code>get</code>, <code>set</code>, <code>delete</code>, etc.), while the underlying storage engine can be swapped out with minimal configuration changes.</p>
+<h3 id="key-features">Key Features:<a class="headerlink" href="#key-features" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Unified API</strong>: A simple, consistent set of functions for all database operations.</li>
+<li><strong>Multiple Backends (Modes)</strong>: Supports different storage mechanisms, from simple local files to distributed blobs and Redis caches.</li>
+<li><strong>Automatic Encoding</strong>: Data is automatically handled, allowing you to work with standard Python types (strings, dicts, lists) without manual serialization.</li>
+<li><strong>Environment-Driven Configuration</strong>: Database modes and credentials can be configured via environment variables, allowing for easy switching between development, testing, and production setups.</li>
+</ul>
+<h3 id="database-modes">Database Modes<a class="headerlink" href="#database-modes" title="Permanent link">&para;</a></h3>
+<p>The module can operate in several modes. The default mode is <strong><code>CLUSTER_BLOB</code></strong>, which is the recommended, most robust option for production environments within the ToolBoxV2 ecosystem.</p>
+<ul>
+<li><strong><code>CLUSTER_BLOB</code> (CB)</strong>: The default and recommended mode. It uses the <code>BlobDB</code> backend, which stores data as encrypted blobs in the configured root storage. This is ideal for user-specific, secure, and distributed data storage.</li>
+<li><strong><code>LOCAL_DICT</code> (LC)</strong>: Uses <code>MiniDictDB</code>. A simple, file-based dictionary stored locally. It's excellent for local development, testing, or storing non-critical application state.</li>
+<li><strong><code>LOCAL_REDIS</code> (LR)</strong>: Connects to a local Redis instance. Use this for high-performance caching or when you need the advanced data structures offered by Redis.</li>
+<li><strong><code>REMOTE_REDIS</code> (RR)</strong>: Connects to a remote Redis server. Suitable for shared state and caching in a distributed environment.</li>
+</ul>
+<h2 id="2-basic-usage">2. Basic Usage<a class="headerlink" href="#2-basic-usage" title="Permanent link">&para;</a></h2>
+<p>To use the DB module, you first need to get a handle to it from the main <code>app</code> instance. All interactions then happen through this instance.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Assuming &#39;app&#39; is your ToolBoxV2 App instance</span>
+<span class="n">db</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">)</span>
+
+<span class="c1"># Or, if you have a specific instance of the DB module</span>
+<span class="n">db_spec</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">,</span> <span class="n">spec</span><span class="o">=</span><span class="s2">&quot;MySpecialDB&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="storing-data-set">Storing Data (<code>set</code>)<a class="headerlink" href="#storing-data-set" title="Permanent link">&para;</a></h3>
+<p>The <code>set</code> function stores a value associated with a key. It overwrites any existing value.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span>
+<span class="normal">6</span>
+<span class="normal">7</span>
+<span class="normal">8</span>
+<span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Store a simple string</span>
+<span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">,</span> <span class="s2">&quot;Alice&quot;</span><span class="p">)</span>
+
+<span class="c1"># Store a dictionary (will be automatically JSON-serialized)</span>
+<span class="n">user_profile</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;alice@example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+<span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user:123:profile&quot;</span><span class="p">,</span> <span class="n">user_profile</span><span class="p">)</span>
+
+<span class="c1"># Store a list</span>
+<span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user:123:roles&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;admin&quot;</span><span class="p">,</span> <span class="s2">&quot;editor&quot;</span><span class="p">])</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="retrieving-data-get">Retrieving Data (<code>get</code>)<a class="headerlink" href="#retrieving-data-get" title="Permanent link">&para;</a></h3>
+<p>The <code>get</code> function retrieves a value by its key. The data is returned as a <code>Result</code> object.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="n">user_name</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span> <span class="c1"># .get() extracts the data from the Result</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;User name: </span><span class="si">{</span><span class="n">user_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># Output: User name: Alice</span>
+
+<span class="n">profile_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:profile&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">profile_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="c1"># The DB module automatically deserializes the JSON string back into a dict</span>
+    <span class="n">profile_data</span> <span class="o">=</span> <span class="n">profile_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;User email: </span><span class="si">{</span><span class="n">profile_data</span><span class="p">[</span><span class="s1">&#39;email&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># Output: User email: alice@example.com</span>
+</code></pre></div></td></tr></table></div>
+<h4 id="special-get-queries-all-and-all-k">Special <code>get</code> Queries: <code>all</code> and <code>all-k</code><a class="headerlink" href="#special-get-queries-all-and-all-k" title="Permanent link">&para;</a></h4>
+<p>The <code>get</code> method supports special query strings to retrieve all keys or all key-value pairs from the database.</p>
+<ul>
+<li><code>get('all-k')</code>: Returns a list of all keys in the database.</li>
+<li><code>get('all')</code>: Returns a list of all key-value pairs (as tuples) in the database.</li>
+</ul>
+<p><strong>Example:</strong></p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Get all keys</span>
+<span class="n">all_keys_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;all-k&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">all_keys_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="n">keys</span> <span class="o">=</span> <span class="n">all_keys_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;All keys in the database: </span><span class="si">{</span><span class="n">keys</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Output: All keys in the database: [\&#39;user:123:name\&#39;, \&#39;user:123:profile\&#39;, \&#39;user:123:logs\&#39;]</span>
+
+<span class="c1"># Get all items (key-value pairs)</span>
+<span class="n">all_items_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;all&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">all_items_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="n">items</span> <span class="o">=</span> <span class="n">all_items_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;All items: </span><span class="si">{</span><span class="n">items</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># Output: All items: [(\&#39;user:123:name\&#39;, \&#39;Alice\&#39;), (\&#39;user:123:profile\&#39;, {\&#39;email\&#39;: \&#39;alice@example.com\&#39;, \&#39;level\&#39;: 10}), ...]</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="checking-for-existence-if_exist">Checking for Existence (<code>if_exist</code>)<a class="headerlink" href="#checking-for-existence-if_exist" title="Permanent link">&para;</a></h3>
+<p>To check if a key exists without retrieving its value, use <code>if_exist</code>.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">if</span> <span class="n">db</span><span class="o">.</span><span class="n">if_exist</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;User 123 exists!&quot;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;User 123 not found.&quot;</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="deleting-data-delete">Deleting Data (<code>delete</code>)<a class="headerlink" href="#deleting-data-delete" title="Permanent link">&para;</a></h3>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span>
+<span class="normal">6</span>
+<span class="normal">7</span>
+<span class="normal">8</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Delete a single key</span>
+<span class="n">delete_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;user:123:roles&quot;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">delete_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Roles deleted.&quot;</span><span class="p">)</span>
+
+<span class="c1"># Delete multiple keys using a matching prefix (supported in Redis/Dict modes)</span>
+<span class="c1"># This would delete all keys starting with &quot;user:123:&quot;</span>
+<span class="n">db</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;user:123:&quot;</span><span class="p">,</span> <span class="n">matching</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="appending-to-a-list-append_on_set">Appending to a List (<code>append_on_set</code>)<a class="headerlink" href="#appending-to-a-list-append_on_set" title="Permanent link">&para;</a></h3>
+<p>This function is useful for adding items to a key that stores a list. If the key doesn't exist, it's created as a new list.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span>
+<span class="normal">3</span>
+<span class="normal">4</span>
+<span class="normal">5</span>
+<span class="normal">6</span>
+<span class="normal">7</span>
+<span class="normal">8</span>
+<span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Assuming &quot;user:123:logs&quot; doesn&#39;t exist yet</span>
+<span class="n">db</span><span class="o">.</span><span class="n">append_on_set</span><span class="p">(</span><span class="s2">&quot;user:123:logs&quot;</span><span class="p">,</span> <span class="s2">&quot;User logged in.&quot;</span><span class="p">)</span>
+
+<span class="c1"># Append another log</span>
+<span class="n">db</span><span class="o">.</span><span class="n">append_on_set</span><span class="p">(</span><span class="s2">&quot;user:123:logs&quot;</span><span class="p">,</span> <span class="s2">&quot;User updated profile.&quot;</span><span class="p">)</span>
+
+<span class="c1"># Retrieve the list</span>
+<span class="n">logs_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:logs&quot;</span><span class="p">)</span>
+<span class="c1"># logs_result.get() will be [&quot;User logged in.&quot;, &quot;User updated profile.&quot;]</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="3-configuration-and-mode-switching">3. Configuration and Mode Switching<a class="headerlink" href="#3-configuration-and-mode-switching" title="Permanent link">&para;</a></h2>
+<p>While the default mode is <code>CLUSTER_BLOB</code>, you can change it for development or other specific needs.</p>
+<h3 id="configuration-via-environment-variables">Configuration via Environment Variables<a class="headerlink" href="#configuration-via-environment-variables" title="Permanent link">&para;</a></h3>
+<p>The easiest way to configure the DB module is through environment variables in your <code>.env</code> file. The module will read these on startup.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th><code>DB_MODE_KEY</code></th>
+<th>Required Environment Variables</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Cluster Blob</strong></td>
+<td><code>CB</code></td>
+<td>(None - Uses application's internal blob storage and encryption)</td>
+</tr>
+<tr>
+<td>Local Dictionary</td>
+<td><code>LC</code></td>
+<td>(None - Uses local file storage)</td>
+</tr>
+<tr>
+<td>Local Redis</td>
+<td><code>LR</code></td>
+<td><code>DB_CONNECTION_URI</code> (e.g., <code>redis://localhost:6379</code>)</td>
+</tr>
+<tr>
+<td>Remote Redis</td>
+<td><code>RR</code></td>
+<td><code>DB_CONNECTION_URI</code> or <code>DB_USERNAME</code> &amp; <code>DB_PASSWORD</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example <code>.env</code> file for using Local Redis:</strong>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code>DB_MODE_KEY=LR
+DB_CONNECTION_URI=redis://localhost:6379
+</code></pre></div></td></tr></table></div></p>
+<h3 id="switching-modes-programmatically">Switching Modes Programmatically<a class="headerlink" href="#switching-modes-programmatically" title="Permanent link">&para;</a></h3>
+<p>You can switch the database mode at runtime, which is useful for testing or dynamic configuration.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.DB.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DatabaseModes</span>
+
+<span class="n">db</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">)</span>
+
+<span class="c1"># Switch to Local Dictionary mode</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">edit_programmable</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="n">DatabaseModes</span><span class="o">.</span><span class="n">LC</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Successfully switched DB mode to LOCAL_DICT&quot;</span><span class="p">)</span>
+
+<span class="c1"># The module will automatically close the old connection </span>
+<span class="c1"># and initialize the new one.</span>
+</code></pre></div></td></tr></table></div>
+<p>This guide covers the primary functionalities of the ToolBoxV2 <code>DB</code> module. By leveraging its abstraction and flexible configuration, you can build robust applications with persistent data storage tailored to your specific needs.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.50899def.min.js"></script>
+      
+    
+  </body>
+</html>
