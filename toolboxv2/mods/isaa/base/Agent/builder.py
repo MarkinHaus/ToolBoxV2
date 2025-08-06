@@ -119,8 +119,11 @@ except ImportError:
 # Assume EnhancedAgent and supporting classes (WorldModel, AgentModelData, etc.)
 # are in the same directory or properly importable
 from toolboxv2.mods.isaa.base.Agent.agent import (
-    A2A_AVAILABLE as AGENT_A2A_AVAILABLE, adk_BuiltInCodeExecutor,  # Check agent's view
+    A2A_AVAILABLE as AGENT_A2A_AVAILABLE,  # Check agent's view
 )
+from google.adk.code_executors.built_in_code_executor import (
+            BuiltInCodeExecutor as adk_BuiltInCodeExecutor,  # Secure option
+        )
 from toolboxv2.mods.isaa.base.Agent.agent import (
     MCP_AVAILABLE as AGENT_MCP_AVAILABLE,  # Check agent's view
 )

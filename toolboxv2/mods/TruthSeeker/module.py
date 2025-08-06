@@ -13,6 +13,7 @@ export = get_app("TruthSeeker.Export").tb
 version = '0.0.1'
 default_test = export(mod_name=Name, test_only=True, version=version)
 
+NAME = "TruthSeeker"
 dot = os.path.dirname(os.path.abspath(__file__))
 content = open(os.path.join(dot,"template.html"), encoding="utf-8").read()
 abut_content = open(os.path.join(dot,"abut.html"), encoding="utf-8").read()

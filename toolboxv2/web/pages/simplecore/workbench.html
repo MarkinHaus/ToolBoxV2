@@ -1,0 +1,164 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Workbench</title>
+    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.1">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script src="/static/tbjs/tb.js"></script>
+    <style>
+        body {
+            background-color: var(--theme-bg);
+            color: var(--theme-text);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+        }
+        .header {
+            padding: 1rem 2rem;
+            background: var(--theme-bg-light);
+            border-bottom: 1px solid var(--theme-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .main-container {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        #canvas-container {
+            flex-grow: 1;
+            position: relative;
+            background-color: var(--theme-bg-light);
+        }
+        .toolbar {
+            width: 250px;
+            padding: 1.5rem;
+            background: var(--theme-bg-light);
+            border-left: 1px solid var(--theme-border);
+            overflow-y: auto;
+        }
+        canvas {
+            border: 1px solid var(--theme-border);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Digital Workbench</h1>
+        <a href="/web/pages/simplecore/index.html" class="btn btn-secondary">Back to Home</a>
+    </div>
+    <div class="main-container">
+        <div id="canvas-container">
+            <canvas id="workbench-canvas"></canvas>
+        </div>
+        <div class="toolbar">
+            <h2>Tools</h2>
+            <button id="add-rect-btn">Add Rectangle</button>
+        </div>
+    </div>
+
+    <script unSave="true">
+        TB.once( () => {
+            TB.init({
+                appRootId: 'canvas-container',
+                baseApiUrl: '/api'
+            });
+
+            const canvas = new fabric.Canvas('workbench-canvas', {
+                width: document.getElementById('canvas-container').clientWidth,
+                height: document.getElementById('canvas-container').clientHeight,
+                backgroundColor: '#f0f0f0'
+            });
+
+            const workspaceId = 'default_workspace'; // In a real app, this would be dynamic
+
+            // Fetch initial elements
+            TB.api.request('SimpleCore', 'get_workspace_elements', { workspace_id: workspaceId }, 'GET')
+                .then(response => {
+                    if (response.error === 'none') {
+                        const elements = response.get();
+                        elements.forEach(element => {
+                            if (element.type === 'rect') {
+                                const rect = new fabric.Rect({
+                                    left: element.position.x,
+                                    top: element.position.y,
+                                    fill: element.content.fill,
+                                    width: 50,
+                                    height: 50,
+                                    originX: 'left',
+                                    originY: 'top',
+                                    id: element.id
+                                });
+                                canvas.add(rect);
+                            }
+                        });
+                    }
+                });
+
+            // Add new rectangle button
+            document.getElementById('add-rect-btn').addEventListener('click', () => {
+                const newElement = {
+                    workspace_id: workspaceId,
+                    type: 'rect',
+                    dimension: '2D',
+                    position: JSON.stringify({ x: 100, y: 100 }),
+                    content: JSON.stringify({ fill: 'red' })
+                };
+
+                TB.api.request('SimpleCore', 'create_element', newElement, 'POST');
+            });
+
+            // SSE Connection
+            const eventSource = new EventSource(`/api/SimpleCore/connect_workspace_sse?workspace_id=${workspaceId}`);
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.event === 'element_created') {
+                    const element = data.element;
+                    if (element.type === 'rect') {
+                        const rect = new fabric.Rect({
+                            left: element.position.x,
+                            top: element.position.y,
+                            fill: element.content.fill,
+                            width: 50,
+                            height: 50,
+                            originX: 'left',
+                            originY: 'top',
+                            id: element.id
+                        });
+                        canvas.add(rect);
+                        canvas.renderAll();
+                    }
+                } else if (data.event === 'element_moved') {
+                    const object = canvas.getObjects().find(obj => obj.id === data.element_id);
+                    if (object) {
+                        object.set({
+                            left: data.position.x,
+                            top: data.position.y
+                        });
+                        canvas.renderAll();
+                    }
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error("EventSource failed:", err);
+            };
+
+            // Handle canvas object modifications
+            canvas.on('object:modified', function(e) {
+                if (e.target) {
+                    const element_id = e.target.id;
+                    const new_position = JSON.stringify({ x: e.target.left, y: e.target.top });
+                    TB.api.request('SimpleCore', 'update_element_position', { element_id, new_position }, 'POST');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

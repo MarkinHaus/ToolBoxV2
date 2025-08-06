@@ -645,25 +645,6 @@ async def get_to_sing_data(app: App, username=None, personal_key: Any = False, d
     if username is None:
         username = data.get("username")
         personal_key = data.get("personal_key")
-        is_remote_instance = True
-    # Check if running on the main remote server
-
-    if not is_remote_instance:
-        # Running locally, call the remote server for the challenge
-        app.print("Performing remote challenge request from local instance.")
-        #return await app.run_http("CloudM.AuthManager", "get_to_sing_data", method="POST", args_=f"username={username}&personal_key={personal_key}")
-        res = await app.run_http("CloudM.AuthManager", "get_to_sing_data", method="POST",
-                                 args_=f"username={username}&personal_key={personal_key}")
-        print(res)  # TODO fix
-        """===== DEBUG =====
-Traceback (most recent call last):
-  File ToolBoxV2\\toolboxv2\\utils\\toolbox.py", line 1857, in executor
-    if result.result.data_to == ToolBoxInterfaces.native.name:
-       ^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'dict' object has no attribute 'data_to'
-
-===== DEBUG ====="""
-        return Result(**res)
 
     user_result = get_user_by_name(app, username)
     if user_result.is_error() or not user_result.is_data():

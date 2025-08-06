@@ -642,8 +642,8 @@ class Tools(MainTool, FileHandler):
                 (self.remove_task, "removeTaskChain", "Remove a task chain from the system."),
                 (self.list_task, "listTasksChains", "List all available tasks chain."),
             ]
-            agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
-                                                  description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
+            agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="askAgent",
+                                                  description=f"Ask any of the agents: {self.config.get('agents-name-list', [])} for its result or task status. (conversational feature)")
             for func, tool_name, desc in task_tools:
                 agent_builder.with_adk_tool_function(func, name=tool_name, description=desc)
 

@@ -1,0 +1,223 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Innovation Graph</title>
+    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.2">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+    <script src="/tbjs/dist/tbjs.js"></script>
+    <style>
+        body {
+            background-color: var(--theme-bg);
+            color: var(--theme-text);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Roboto', sans-serif;
+        }
+        .header {
+            padding: 1rem 2rem;
+            background: var(--theme-bg-light);
+            border-bottom: 1px solid var(--theme-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .main-container {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+        #cy {
+            flex-grow: 1;
+            position: relative;
+            background-color: var(--theme-bg-lighter, #f0f2f5);
+        }
+        .sidebar {
+            width: 320px;
+            padding: 1.5rem;
+            background: var(--theme-bg-light);
+            overflow-y: auto;
+            flex-shrink: 0;
+            border-left: 1px solid var(--theme-border);
+        }
+        .sidebar h2 {
+            margin-top: 0;
+        }
+        .sidebar-content p {
+            margin-bottom: 0.5rem;
+        }
+        .sidebar-content strong {
+            color: var(--theme-primary);
+        }
+        .article {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--theme-border);
+            white-space: pre-wrap; /* Respects newlines in the article */
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Innovation Graph</h1>
+        <a href="/web/pages/simplecore/index.html" class="btn btn-secondary">Back to Workbench</a>
+    </div>
+    <div class="main-container">
+        <div id="cy"></div>
+        <div id="sidebar" class="sidebar">
+            <h2>Details</h2>
+            <div id="sidebar-content" class="sidebar-content">
+                <p>Select a node to see its details and connections.</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" unSave="true">
+        await TB.init();
+
+        const sidebarContent = document.getElementById('sidebar-content');
+
+        const cy = cytoscape({
+            container: document.getElementById('cy'),
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'background-color': 'var(--theme-primary)',
+                        'label': 'data(name)',
+                        'color': 'var(--theme-text)',
+                        'text-valign': 'bottom',
+                        'text-halign': 'center',
+                        'font-size': '12px',
+                        'text-margin-y': '5px'
+                    }
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'width': 3,
+                        'curve-style': 'bezier',
+                        'target-arrow-shape': 'triangle',
+                        'target-arrow-color': '#ccc',
+                        'line-color': '#ccc'
+                    }
+                },
+                {
+                    selector: 'edge[connection_type="DIRECT"]',
+                    style: { 'line-color': '#2ecc71', 'target-arrow-color': '#2ecc71' }
+                },
+                {
+                    selector: 'edge[connection_type="LOGICAL"]',
+                    style: { 'line-style': 'dashed', 'line-color': '#3498db', 'target-arrow-color': '#3498db' }
+                },
+                {
+                    selector: 'edge[connection_type="HYPOTHETICAL"]',
+                     style: { 'line-style': 'dotted', 'line-color': '#f1c40f', 'target-arrow-color': '#f1c40f' }
+                },
+                {
+                    selector: 'edge[connection_type="ABSTRACT"]',
+                    style: { 'line-style': 'dotted', 'line-color': '#9b59b6', 'target-arrow-color': '#9b59b6' }
+                },
+                {
+                    selector: 'node:selected',
+                    style: {
+                        'border-width': 3,
+                        'border-color': 'var(--theme-accent)'
+                    }
+                }
+            ],
+            layout: {
+                name: 'cose',
+                idealEdgeLength: 100,
+                nodeOverlap: 20,
+                refresh: 20,
+                fit: true,
+                padding: 30,
+                randomize: false,
+                componentSpacing: 100,
+                nodeRepulsion: 400000,
+                edgeElasticity: 100,
+                nestingFactor: 5,
+                gravity: 80,
+                numIter: 1000,
+                initialTemp: 200,
+                coolingFactor: 0.95,
+                minTemp: 1.0
+            }
+        });
+
+        async function loadGraphData() {
+            const response = await TB.api.request('InnovationGraphManager', 'get_full_graph');
+            if (response.error !== 'none') {
+                TB.ui.Toast.showError("Failed to load graph data.");
+                return;
+            }
+            const graphData = response.get();
+
+            const elements = [
+                ...graphData.nodes.map(node => ({ data: { id: node.id, name: node.name, ...node } })),
+                ...graphData.edges.map(edge => ({ data: { id: edge.id, source: edge.from_node, target: edge.to_node, ...edge } }))
+            ];
+
+            cy.elements().remove();
+            cy.add(elements);
+            cy.layout({ name: 'cose' }).run();
+        }
+
+        async function showNodeDetails(nodeId) {
+            TB.ui.Loader.show("Fetching details...");
+            const response = await TB.api.request('InnovationGraphManager', 'get_node_details', { id: nodeId }, 'GET');
+            TB.ui.Loader.hide();
+
+            if (response.error !== 'none') {
+                TB.ui.Toast.showError(response.info.help_text || "Could not fetch node details.");
+                return;
+            }
+            const details = response.get();
+            const { node, dependencies, leads_to, article } = details;
+
+            let dependenciesHtml = dependencies.map(d => `<li>${d.from_node} (${d.connection_type})</li>`).join('');
+            let leadsToHtml = leads_to.map(l => `<li>${l.to_node} (${l.connection_type})</li>`).join('');
+
+            sidebarContent.innerHTML = `
+                <h3>${node.name}</h3>
+                <p><strong>Timeframe:</strong> ${node.timeframe}</p>
+                <p><strong>Location:</strong> ${node.location}</p>
+                <p><strong>Categories:</strong> ${node.categories.join(', ')}</p>
+                <p><strong>Importance:</strong> ${node.importance_level * 100}%</p>
+                <p>${node.description}</p>
+
+                <h4>Dependencies (Precursors)</h4>
+                <ul>${dependenciesHtml || '<li>None listed</li>'}</ul>
+
+                <h4>Leads To (Successors)</h4>
+                <ul>${leadsToHtml || '<li>None listed</li>'}</ul>
+
+                <div class="article">
+                    <h4>Summary</h4>
+                    <p>${article.replace(/\n/g, '<br>')}</p>
+                </div>
+            `;
+        }
+
+        cy.on('tap', 'node', function(evt){
+            const node = evt.target;
+            showNodeDetails(node.id());
+        });
+
+        cy.on('tap', function(evt){
+            if(evt.target === cy){
+                 sidebarContent.innerHTML = '<p>Select a node to see its details and connections.</p>';
+            }
+        });
+
+        loadGraphData();
+
+    </script>
+</body>
+</html>
