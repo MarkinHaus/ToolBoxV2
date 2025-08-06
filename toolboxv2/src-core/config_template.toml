@@ -5,6 +5,7 @@ dist_path = "./dist"
 open_modules = ["CloudM.AuthManager", "CloudM",  "CloudM.email_services"]
 init_modules = ["CloudM"]
 watch_modules = ["CloudM", "TruthSeeker", "DoNext"]
+websocket_enabled = true
 
 
 [toolbox]
@@ -19,3 +20,4 @@ duration_minutes = 3600
 
 [env]
 PYO3_PYTHON={value = "python3" , relative = false, force = true }
+
