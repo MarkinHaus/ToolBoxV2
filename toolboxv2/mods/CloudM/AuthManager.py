@@ -145,7 +145,7 @@ def delete_user(app: App, username: str):
         app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
         return Result.ok(f"User '{username}' deleted successfully.")
     else:
-        return Result.default_sys_error(f"Failed to delete user '{username}'.", data=result)
+        return Result.default_internal_error(f"Failed to delete user '{username}'.", data=result)
 
 
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
@@ -634,8 +634,8 @@ async def local_login(app: App, username: str) -> Result:
     return Result.ok(info="Success", data=res.get())
 
 
-@export(mod_name=Name, api=True, test=False)
-async def get_to_sing_data(app: App, username=None, personal_key: Any = False, data=None):  # Use Any for personal_key initially
+@export(mod_name=Name, api=True, test=False, request_as_kwarg=True)
+async def get_to_sing_data(app: App, username=None, personal_key: Any = False, data=None, request=None):  # Use Any for personal_key initially
     t0 = time.time()
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
@@ -651,7 +651,25 @@ async def get_to_sing_data(app: App, username=None, personal_key: Any = False, d
     if not is_remote_instance:
         # Running locally, call the remote server for the challenge
         app.print("Performing remote challenge request from local instance.")
-        return await app.run_http("CloudM.AuthManager", "get_to_sing_data", method="POST", args_=f"username={username}&personal_key={personal_key}")
+        #return await app.run_http("CloudM.AuthManager", "get_to_sing_data", method="POST", args_=f"username={username}&personal_key={personal_key}")
+        res = await app.run_http("CloudM.AuthManager", "get_to_sing_data", method="POST",
+                                 args_=f"username={username}&personal_key={personal_key}")
+        print(res)  # TODO fix
+        """===== DEBUG =====
+Traceback (most recent call last):
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1440, in a_fuction_runner
+    res = await function(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1868, in wrapper
+    return await executor(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1857, in executor
+    if result.result.data_to == ToolBoxInterfaces.native.name:
+       ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'dict' object has no attribute 'data_to'
+
+===== DEBUG ====="""
+        return Result(**res)
 
     user_result = get_user_by_name(app, username)
     if user_result.is_error() or not user_result.is_data():

@@ -1,4 +1,4 @@
-from toolboxv2 import App, get_app, Result
+from toolboxv2 import App, get_app, Result, TBEF
 
 # Define the module name and export function
 Name = 'helper'
@@ -6,7 +6,7 @@ export = get_app(f"{Name}.Export").tb
 version = "0.1.0"
 
 @export(mod_name=Name, name="init_system", test=False)
-def init_system(app: App):
+async def init_system(app: App):
     """
     Initializes the ToolBoxV2 system by creating the first administrative user.
     This is an interactive command.
@@ -27,15 +27,12 @@ def init_system(app: App):
             return Result.default_user_error("Email cannot be empty.")
 
         print(f"\nCreating user '{username}' with email '{email}'...")
-
-        # Get the AuthManager module
-        auth_manager = app.get_mod('CloudM.AuthManager')
-        if not auth_manager:
-            return Result.default_sys_error("Could not load AuthManager module.")
-
         # Call the internal function to create the account
         # The 'create=True' flag likely handles the initial key generation
-        result = auth_manager.crate_local_account(username=username, email=email, create=True)
+        result = await app.a_run_any(TBEF.CLOUDM.REGISTER_INITIAL_LOOT_USER,
+                                     user_name=username,
+                                     email=email,
+                                     get_results=True)
 
         if result.is_ok():
             print("\n✅ Administrator account created successfully!")
@@ -45,7 +42,7 @@ def init_system(app: App):
             return Result.ok("System initialized successfully.")
         else:
             print(f"\n❌ Error creating administrator account:")
-            print(f"   {result.info.get('help_text', 'No details provided.')}")
+            result.print()
             return result
 
     except (KeyboardInterrupt, EOFError):
@@ -53,28 +50,35 @@ def init_system(app: App):
         return Result.default_user_error("Initialization cancelled.")
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
-        return Result.default_sys_error(f"An unexpected error occurred: {e}")
+        return Result.default_internal_error(f"An unexpected error occurred: {e}")
 
 
 @export(mod_name=Name, name="create-user", test=False)
 def create_user(app: App, username: str, email: str):
     """Creates a new user with a generated key pair."""
     print(f"Creating user '{username}' with email '{email}'...")
-    auth_manager = app.get_mod('CloudM.AuthManager')
-    if not auth_manager:
-        return Result.default_sys_error("Could not load AuthManager module.")
 
     # Generate an invitation on the fly
-    invitation_res = auth_manager.get_invitation(username=username)
+    invitation_res = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_INVITATION,
+                                 get_results=True,
+                                 username=username)
     if invitation_res.is_error():
+        print("❌ Error creating invitation:")
+        invitation_res.print()
         return invitation_res
 
-    result = auth_manager.crate_local_account(username=username, email=email, invitation=invitation_res.get(), create=True)
+    result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.CRATE_LOCAL_ACCOUNT,
+                         get_results=True,
+                         username=username,
+                         email=email,
+                         invitation=invitation_res.get(),
+                         create=True)
 
     if result.is_ok():
         print(f"✅ User '{username}' created successfully.")
     else:
-        print(f"❌ Error creating user: {result.info.get('help_text')}")
+        print(f"❌ Error creating user:")
+        result.print()
     return result
 
 
@@ -84,7 +88,7 @@ def delete_user_cli(app: App, username: str):
     print(f"Attempting to delete user '{username}'...")
     auth_manager = app.get_mod('CloudM.AuthManager')
     if not auth_manager:
-        return Result.default_sys_error("Could not load AuthManager module.")
+        return Result.default_internal_error("Could not load AuthManager module.")
 
     result = auth_manager.delete_user(username=username)
 
@@ -101,7 +105,7 @@ def list_users_cli(app: App):
     print("Fetching user list...")
     auth_manager = app.get_mod('CloudM.AuthManager')
     if not auth_manager:
-        return Result.default_sys_error("Could not load AuthManager module.")
+        return Result.default_internal_error("Could not load AuthManager module.")
 
     result = auth_manager.list_users()
 
@@ -127,16 +131,15 @@ def list_users_cli(app: App):
 def create_invitation(app: App, username: str):
     """Creates a one-time invitation code for a user to link a new device."""
     print(f"Creating invitation for user '{username}'...")
-    auth_manager = app.get_mod('CloudM.AuthManager')
-    if not auth_manager:
-        return Result.default_sys_error("Could not load AuthManager module.")
-
-    result = auth_manager.get_invitation(username=username)
+    result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_INVITATION,
+                         get_results=True,
+                         username=username)
 
     if result.is_ok():
         print(f"✅ Invitation code for '{username}': {result.get()}")
     else:
-        print(f"❌ Error creating invitation: {result.info.get('help_text')}")
+        print(f"❌ Error creating invitation:")
+        result.print()
     return result
 
 
@@ -144,14 +147,13 @@ def create_invitation(app: App, username: str):
 def send_magic_link(app: App, username: str):
     """Sends a magic login link to the user's registered email address."""
     print(f"Sending magic link to user '{username}'...")
-    auth_manager = app.get_mod('CloudM.AuthManager')
-    if not auth_manager:
-        return Result.default_sys_error("Could not load AuthManager module.")
-
-    result = auth_manager.get_magic_link_email(username=username)
+    result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_MAGIC_LINK_EMAIL,
+                         get_results=True,
+                         username=username)
 
     if result.is_ok():
         print(f"✅ Magic link sent successfully to the email address associated with '{username}'.")
     else:
-        print(f"❌ Error sending magic link: {result.info.get('help_text')}")
+        print(f"❌ Error sending magic link:")
+        result.print()
     return result

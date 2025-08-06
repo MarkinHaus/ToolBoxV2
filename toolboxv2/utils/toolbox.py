@@ -1506,6 +1506,7 @@ class App(AppType, metaclass=Singleton):
         elif isinstance(mod_function_name, Enum):
             modular_name, function_name = mod_function_name.__class__.NAME.value, mod_function_name.value
 
+        self.logger.info(f"getting function : {modular_name}.{function_name} from http {self.session.base}")
         r = await self.session.fetch(f"/api/{modular_name}/{function_name}{'?' + args_ if args_ is not None else ''}",
                                      data=kwargs, method=method)
         try:

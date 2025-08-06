@@ -675,6 +675,9 @@ class Result:
             return False
         return True
 
+    def is_ok(self):
+        return not self.is_error()
+
     def is_data(self):
         return self.result.data is not None
 

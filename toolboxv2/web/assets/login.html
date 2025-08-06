@@ -1,23 +1,6 @@
 
 <head>
     <script src="https://unpkg.com/htmx.org@2.0.2"></script>
-    <script type="module">
-        import TB from '/tbjs/src/index.js';
-
-        // Initialize the framework
-        window.TB = TB.init({
-            appRootId: 'login', // The main content area for this page
-            baseApiUrl: '/api',      // Your backend API base URL
-            themeSettings: {
-                defaultMode: 'dark', // or 'light'
-                useSystemPreference: true
-            },
-            serviceWorker: {
-                enabled: true,
-                url: '/sw.js'
-            }
-        });
-    </script>
     <script type="module" src="/web/scripts/login.js"></script>
 </head>
 <div class="main-content frosted-glass">

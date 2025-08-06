@@ -390,6 +390,14 @@ def parse_args():
           $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
           $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
 
+        Account Management:
+          $ tb -c helper init_system
+          $ tb -c helper create-user <username> <email>
+          $ tb -c helper delete-user <username>
+          $ tb -c helper list-users
+          $ tb -c helper create-invitation <username>
+          $ tb -c helper send-magic-link <username>
+
         +----------------------------------------------------------------------------+
         """),
         formatter_class=ASCIIHelpFormatter

@@ -116,18 +116,18 @@ class P2PRPCClient:
 
             # Wait for the response with a timeout
             response = await asyncio.wait_for(future, timeout=30.0)
-            
+
             if response.get('error'):
-                return Result.from_dict(response['error'])
+                return Result(**response['error'])
             else:
                 return Result.ok(response.get('result'))
 
         except asyncio.TimeoutError:
             self.futures.pop(call_id, None)
-            return Result.default_sys_error("RPC call timed out.")
+            return Result.default_internal_error("RPC call timed out.")
         except Exception as e:
             self.futures.pop(call_id, None)
-            return Result.default_sys_error(f"RPC call failed: {e}")
+            return Result.default_internal_error(f"RPC call failed: {e}")
 
     async def close(self):
         """Closes the connection."""

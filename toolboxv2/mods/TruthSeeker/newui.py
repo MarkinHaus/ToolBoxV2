@@ -1374,7 +1374,7 @@ async def follow_up_query(app: App, data):
 
         return Result.ok(data={"answer": result['response'] if result and 'response' in result else "No response"})
     except Exception as e:
-        return Result.default_sys_error(info=f"Error processing follow-up query: {str(e)}")
+        return Result.default_internal_error(info=f"Error processing follow-up query: {str(e)}")
 
 
 @export(mod_name=MOD_NAME, api=True, version=version)
@@ -1427,7 +1427,7 @@ async def create_payment(app: App, data):
 
         return Result.ok(data={"url": stripe_session.url})
     except Exception as e:
-        return Result.default_sys_error(info=f"Error creating payment: {str(e)}")
+        return Result.default_internal_error(info=f"Error creating payment: {str(e)}")
 
 
 @export(mod_name=MOD_NAME, api=True, version=version)
