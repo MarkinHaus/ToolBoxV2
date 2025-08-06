@@ -657,13 +657,7 @@ async def get_to_sing_data(app: App, username=None, personal_key: Any = False, d
         print(res)  # TODO fix
         """===== DEBUG =====
 Traceback (most recent call last):
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1440, in a_fuction_runner
-    res = await function(*args, **kwargs)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1868, in wrapper
-    return await executor(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\utils\toolbox.py", line 1857, in executor
+  File "C:Users\Markin\Workspace\ToolBoxV2toolboxv2utilstoolbox.py", line 1857, in executor
     if result.result.data_to == ToolBoxInterfaces.native.name:
        ^^^^^^^^^^^^^^^^^^^^^
 AttributeError: 'dict' object has no attribute 'data_to'
