@@ -301,103 +301,291 @@ class AgentModelData(BaseModel):
 class ContextManagerNode(AsyncNodeT):
     """Advanced context management with intelligent splitting"""
 
-    def __init__(self, max_tokens: int = 8000, **kwargs):
+    def __init__(self, max_tokens: int = 8000, compression_threshold: float = 0.76, **kwargs):
         super().__init__(**kwargs)
         self.max_tokens = max_tokens
+        self.compression_threshold = compression_threshold
+        self.session_managers = {}  # Chat session instances
 
     async def prep_async(self, shared):
+        agent_instance = shared.get("agent_instance")
         session_id = shared.get("session_id", "default")
         current_query = shared.get("current_query", "")
-        history = shared.get("conversation_history", [])
-        world_model = shared.get("world_model", {})
+
+        # Initialize or get chat session
+        session_manager = await self._get_session_manager(agent_instance, session_id)
 
         return {
-            "session_id": session_id,
+            "session_manager": session_manager,
             "current_query": current_query,
-            "history": history,
-            "world_model": world_model,
+            "agent_instance": agent_instance,
             "tasks": shared.get("tasks", {}),
-            "system_context": shared.get("system_context", {})
+            "world_model": shared.get("world_model", {}),
+            "results_store": shared.get("results_store", {}),
+            "conversation_history": shared.get("conversation_history", []),
+            "max_tokens": self.max_tokens,
+            "compression_threshold": self.compression_threshold
         }
+
+    async def _get_session_manager(self, agent_instance, session_id: str):
+        """Get or create ChatSession for this session"""
+        if session_id not in self.session_managers:
+            from toolboxv2 import get_app
+            from toolboxv2.mods.isaa.extras.session import ChatSession
+
+            memory_instance = get_app().get_mod("isaa").get_memory()
+            space_name = f"ContextManager/{agent_instance.amd.name}/{session_id}"
+
+            self.session_managers[session_id] = ChatSession(
+                memory_instance,
+                space_name=space_name,
+                max_length=200  # Keep more history for context
+            )
+
+        return self.session_managers[session_id]
 
     async def exec_async(self, prep_res):
-        # Split context into 3 parts as requested
-        recent_interaction = self._extract_recent_interaction(prep_res)
-        instructions = self._generate_instructions(prep_res)
-        compressed_context = await self._compress_context(prep_res)
+        session_manager = prep_res["session_manager"]
+        current_query = prep_res["current_query"]
 
-        context = {
-            "recent_interaction": recent_interaction,
-            "instructions": instructions,
-            "compressed_context": compressed_context,
-            "total_tokens": self._estimate_tokens(recent_interaction + instructions + compressed_context)
+        # Build comprehensive context parts
+        context_parts = await self._build_three_part_context(prep_res)
+
+        # Calculate token usage
+        total_tokens = self._estimate_total_tokens(context_parts)
+        usage_ratio = total_tokens / prep_res["max_tokens"]
+
+        # Automatic compression if needed
+        if usage_ratio >= prep_res["compression_threshold"]:
+            context_parts = await self._compress_context_intelligently(context_parts, prep_res)
+            total_tokens = self._estimate_total_tokens(context_parts)
+            usage_ratio = total_tokens / prep_res["max_tokens"]
+
+        # Store current interaction for future reference
+        await session_manager.add_message({
+            'role': 'user',
+            'content': current_query
+        })
+
+        return {
+            "recent_interaction": context_parts["recent_interaction"],
+            "session_summary": context_parts["session_summary"],
+            "task_context": context_parts["task_context"],
+            "total_tokens": total_tokens,
+            "usage_ratio": usage_ratio,
+            "compression_applied": usage_ratio >= prep_res["compression_threshold"],
+            "session_manager": session_manager
         }
+
+    async def _build_three_part_context(self, prep_res) -> Dict[str, str]:
+        """Build the 3-part context system"""
+        session_manager = prep_res["session_manager"]
+        current_query = prep_res["current_query"]
+
+        # Part 1: Recent Interaction (latest exchanges)
+        recent_interaction = await self._build_recent_interaction(session_manager, current_query)
+
+        # Part 2: Session Summary (compressed history + logger insights)
+        session_summary = await self._build_session_summary(session_manager, prep_res)
+
+        # Part 3: Task Context (current agent state and tasks)
+        task_context = await self._build_task_context(prep_res)
+
+        return {
+            "recent_interaction": recent_interaction,
+            "session_summary": session_summary,
+            "task_context": task_context
+        }
+
+    async def _build_recent_interaction(self, session_manager, current_query: str) -> str:
+        """Latest conversation context"""
+        # Get last few exchanges from session
+        recent_history = session_manager.get_past_x(6)  # Last 3 exchanges
+
+        formatted_recent = []
+        for entry in recent_history:
+            role = entry.get('role', 'unknown')
+            content = entry.get('content', '')
+            formatted_recent.append(f"{role}: {content}")
+
+        recent_context = "## Recent Interaction\n"
+        if formatted_recent:
+            recent_context += "\n".join(formatted_recent)
+
+        recent_context += f"\nCurrent: user: {current_query}"
+
+        return recent_context
+
+    async def _build_session_summary(self, session_manager, prep_res) -> str:
+        """Compressed session history with insights"""
+        # Get relevant historical context using memory search
+        context_query = prep_res["current_query"]
+        relevant_refs = await session_manager.get_reference(context_query, top_k=5, to_str=True)
+
+        summary = "## Session Summary\n"
+
+        if relevant_refs:
+            summary += f"Relevant previous interactions:\n{relevant_refs}\n"
+
+        # Add world model insights
+        world_model = prep_res.get("world_model", {})
+        if world_model:
+            key_facts = []
+            for key, value in list(world_model.items())[:10]:  # Top 10 facts
+                if self._is_context_relevant(key, context_query):
+                    key_facts.append(f"- {key}: {value}")
+
+            if key_facts:
+                summary += f"\nKnown context:\n" + "\n".join(key_facts)
+
+        return summary
+
+    async def _build_task_context(self, prep_res) -> str:
+        """Current agent task state and capabilities"""
+        tasks = prep_res.get("tasks", {})
+        results_store = prep_res.get("results_store", {})
+        agent_instance = prep_res.get("agent_instance")
+
+        context = "## Current Task Context\n"
+
+        # Active/recent tasks
+        active_tasks = [t for t in tasks.values() if t.status in ["running", "completed"]]
+        if active_tasks:
+            context += "Recent task activity:\n"
+            for task in active_tasks[-5:]:  # Last 5 tasks
+                status_emoji = "✓" if task.status == "completed" else "⚙️"
+                context += f"{status_emoji} {task.description} ({task.status})\n"
+
+        # Key results
+        if results_store:
+            context += "\nKey findings:\n"
+            for task_id, result in list(results_store.items())[-3:]:  # Last 3 results
+                if result.get("metadata", {}).get("success", False):
+                    data_preview = str(result.get("data", ""))[:100] + "..."
+                    context += f"- {task_id}: {data_preview}\n"
+
+        # Agent capabilities
+        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
+            available_tools = list(agent_instance._tool_capabilities.keys())[:5]
+            context += f"\nAvailable tools: {', '.join(available_tools)}"
 
         return context
 
-    def _extract_recent_interaction(self, prep_res):
-        history = prep_res["history"]
-        current_query = prep_res["current_query"]
+    async def _compress_context_intelligently(self, context_parts: Dict[str, str], prep_res) -> Dict[str, str]:
+        """Intelligent context compression using LLM"""
+        if not LITELLM_AVAILABLE:
+            return self._fallback_compression(context_parts)
 
-        # Get last 2-3 exchanges
-        recent = history[-6:] if len(history) > 6 else history
-        if recent == current_query:
-            return "No recent interaction."
-        return f"Recent conversation:\n{self._format_history(recent)}\nCurrent query: {current_query}"
+        # Compress session summary (most compressible)
+        session_summary = context_parts["session_summary"]
+        if len(session_summary) > 1000:  # Only compress if substantial
+            compressed_summary = await self._llm_compress_text(
+                session_summary,
+                "session context",
+                prep_res.get("agent_instance")
+            )
+            context_parts["session_summary"] = compressed_summary
 
-    def _generate_instructions(self, prep_res):
-        tasks = prep_res["tasks"]
-        active_tasks = [t for t in tasks.values() if t.status == "running"]
+        # Compress task context if still too large
+        total_tokens = self._estimate_total_tokens(context_parts)
+        if total_tokens > prep_res["max_tokens"] * 0.9:
+            task_context = context_parts["task_context"]
+            compressed_task = await self._llm_compress_text(
+                task_context,
+                "task context",
+                prep_res.get("agent_instance")
+            )
+            context_parts["task_context"] = compressed_task
 
-        instructions = "## Current Instructions\n"
-        if active_tasks:
-            instructions += "Active tasks:\n"
-            for task in active_tasks:
-                instructions += f"- {task.description} (Priority: {task.priority})\n"
+        return context_parts
 
-        system_context = prep_res["system_context"]
-        if system_context.get("strategy"):
-            instructions += f"\nCurrent strategy: {system_context['strategy']}\n"
+    async def _llm_compress_text(self, text: str, context_type: str, agent_instance) -> str:
+        """Compress text using LLM while preserving key information"""
+        if len(text) < 200:  # Don't compress short texts
+            return text
 
-        return instructions
+        prompt = f"""
+    Compress this {context_type} while preserving ALL key information and relationships.
+    Focus on removing redundancy and verbose explanations, keep facts and data intact.
 
-    async def _compress_context(self, prep_res):
-        world_model = prep_res["world_model"]
-        history = prep_res["history"]
+    Original text:
+    {text}
 
-        # Create compressed summary of relevant context
-        relevant_facts = []
-        for key, value in world_model.items():
-            if self._is_relevant(key, prep_res["current_query"]):
-                relevant_facts.append(f"{key}: {value}")
+    Compressed version (aim for 60% reduction):"""
 
-        compressed = "## Relevant Context\n"
-        compressed += "\n".join(relevant_facts[:10])  # Top 10 most relevant
+        try:
+            model_to_use = agent_instance.amd.fast_llm_model if agent_instance else "openrouter/anthropic/claude-3-haiku"
 
-        return compressed
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,  # Low temperature for consistent compression
+                max_tokens=int(len(text) * 0.4)  # Target 60% reduction
+            )
 
-    def _is_relevant(self, key: str, query: str) -> bool:
-        # Simple relevance check - can be enhanced with embeddings
-        query_words = query.lower().split()
-        key_words = key.lower().split()
-        return any(word in key_words for word in query_words)
+            compressed = response.choices[0].message.content.strip()
+            return compressed if compressed else text
 
-    def _format_history(self, history: List) -> str:
-        formatted = []
-        for entry in history:
-            if isinstance(entry, dict):
-                role = entry.get("role", "unknown")
-                content = entry.get("content", "")
-                formatted.append(f"{role}: {content}")
-        return "\n".join(formatted)
+        except Exception as e:
+            logger.warning(f"LLM compression failed: {e}")
+            return self._simple_text_compression(text)
 
-    def _estimate_tokens(self, text: str) -> int:
-        # Rough estimation: 4 chars per token
-        return len(text) // 4
+    def _fallback_compression(self, context_parts: Dict[str, str]) -> Dict[str, str]:
+        """Simple fallback compression without LLM"""
+        # Compress by truncating less important parts
+        if len(context_parts["session_summary"]) > 800:
+            lines = context_parts["session_summary"].split('\n')
+            context_parts["session_summary"] = '\n'.join(lines[:15]) + "\n[...compressed...]"
+
+        if len(context_parts["task_context"]) > 600:
+            lines = context_parts["task_context"].split('\n')
+            context_parts["task_context"] = '\n'.join(lines[:12]) + "\n[...compressed...]"
+
+        return context_parts
+
+    def _simple_text_compression(self, text: str) -> str:
+        """Simple text compression by removing redundancy"""
+        lines = text.split('\n')
+
+        # Remove empty lines and duplicates
+        compressed_lines = []
+        seen_lines = set()
+
+        for line in lines:
+            line = line.strip()
+            if line and line not in seen_lines:
+                compressed_lines.append(line)
+                seen_lines.add(line)
+
+        # Keep first 75% of unique lines
+        keep_count = int(len(compressed_lines) * 0.75)
+        return '\n'.join(compressed_lines[:keep_count])
+
+    def _is_context_relevant(self, key: str, query: str) -> bool:
+        """Check if world model key is relevant to current query"""
+        query_words = set(query.lower().split())
+        key_words = set(key.lower().split())
+
+        # Simple relevance scoring
+        intersection = query_words.intersection(key_words)
+        relevance_score = len(intersection) / max(len(query_words), 1)
+
+        return relevance_score > 0.1
+
+    def _estimate_total_tokens(self, context_parts: Dict[str, str]) -> int:
+        """Estimate total token count for all context parts"""
+        total_chars = sum(len(part) for part in context_parts.values())
+        return total_chars // 4  # Rough token estimation
 
     async def post_async(self, shared, prep_res, exec_res):
         shared["formatted_context"] = exec_res
         shared["context_tokens"] = exec_res["total_tokens"]
+        shared["context_usage_ratio"] = exec_res["usage_ratio"]
+        shared["context_compression_applied"] = exec_res["compression_applied"]
+
+        # Store session manager for other nodes
+        shared["session_manager"] = exec_res["session_manager"]
+
         return "context_ready"
 
 class YAMLFormatterNode(AsyncNodeT):
@@ -2732,6 +2920,7 @@ class LLMToolNode(AsyncNodeT):
             model = os.getenv("DEFAULTMODEL1", "openrouter/qwen/qwen3-code")
         self.model = model
         self.tools = tools
+        self.call_log = []
 
     async def prep_async(self, shared):
         context = shared.get("formatted_context", {})
@@ -2748,10 +2937,8 @@ class LLMToolNode(AsyncNodeT):
 
         # Base system message from agent
         agent_instance = shared.get("agent_instance")
-        base_system_message = "You are a helpful AI assistant."
-        if agent_instance and hasattr(agent_instance, 'amd'):
-            base_system_message = agent_instance.amd.get_system_message_with_persona()
-
+        base_system_message = self._get_base_system_message(shared)
+        formatted_context = shared.get("formatted_context", {})
         return {
             "context": context,
             "task_description": task_description,
@@ -2763,35 +2950,57 @@ class LLMToolNode(AsyncNodeT):
             "fast_llm_model": shared.get("fast_llm_model"),
             "variable_manager": variable_manager,
             "persona_config": persona_config,
-            "base_system_message": base_system_message
+            "base_system_message": base_system_message,
+
+            "recent_interaction": formatted_context.get("recent_interaction", ""),
+            "session_summary": formatted_context.get("session_summary", ""),
+            "task_context": formatted_context.get("task_context", ""),
+            "context_tokens": formatted_context.get("total_tokens", 0),
+            "context_compressed": formatted_context.get("compression_applied", False)
         }
+
+    def _get_base_system_message(self, shared):
+        """Get base system message from agent"""
+        agent_instance = shared.get("agent_instance")
+        if agent_instance and hasattr(agent_instance, 'amd'):
+            return agent_instance.amd.get_system_message_with_persona()
+        return "You are a helpful AI assistant."
 
     async def exec_async(self, prep_res):
         if not LITELLM_AVAILABLE:
-            return {
-                "success": False,
-                "error": "LiteLLM not available",
-                "fallback_response": "I'm unable to process this request due to missing LLM capabilities."
-            }
+            return await self._fallback_response(prep_res)
 
-        prompt = self._build_enhanced_prompt(prep_res)
+        #prompt = self._build_enhanced_prompt(prep_res)
 
-        # Persona-Integration in System Message
-        persona_config = prep_res.get("persona_config")
-        system_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        ## Persona-Integration in System Message
+        #persona_config = prep_res.get("persona_config")
+        #system_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
 
-        if persona_config and persona_config.apply_method in ["system_prompt", "both"]:
-            persona_addition = persona_config.to_system_prompt_addition()
-            if persona_addition:
-                system_message += f"\n\n{persona_addition}"
+        #if persona_config and persona_config.apply_method in ["system_prompt", "both"]:
+        #    persona_addition = persona_config.to_system_prompt_addition()
+        #    if persona_addition:
+        #        system_message += f"\n\n{persona_addition}"
 
         # Model selection basierend auf task complexity
         task_description = prep_res.get("task_description", "")
-        model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+        # Build context-aware prompt
+        prompt = self._build_context_aware_prompt(prep_res)
+
+        # Build system message with context awareness
+        system_message = self._build_enhanced_system_message(prep_res)
+        model_to_use = self._select_optimal_model(task_description, prep_res)
+        # model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
 
         logger.info(f"Using model {model_to_use} for task {task_description} in LLMToolNode")
-
+        call_info = {
+            "timestamp": datetime.now().isoformat(),
+            "model": model_to_use,
+            "context_tokens": prep_res.get("context_tokens", 0),
+            "context_compressed": prep_res.get("context_compressed", False),
+            "task_type": self._classify_task(task_description)
+        }
         # Messages mit System-Prompt
+
         messages = [
             {"role": "system", "content": system_message},
             {"role": "user", "content": prompt}
@@ -2807,18 +3016,29 @@ class LLMToolNode(AsyncNodeT):
         content = response.choices[0].message.content
         processed_response = await self._process_llm_response(content, prep_res)
 
-        # Post-Process Persona anwenden falls konfiguriert
-        if persona_config and persona_config.should_post_process():
-            processed_response = await self._process_llm_response(content, prep_res)
+        call_info.update({
+            "success": True,
+            "response_tokens": len(content) // 4,
+            "total_tokens": response.usage.total_tokens if response.usage else 0
+        })
+
+        session_manager = prep_res.get("session_manager")
+        if session_manager:
+            await session_manager.add_message({
+                'role': 'assistant',
+                'content': content
+            })
 
         return {
             "success": True,
             "raw_response": content,
             "processed_response": processed_response,
             "model_used": model_to_use,
-            "persona_applied": persona_config is not None,
+            "persona_applied": prep_res.get("persona_config") is not None,
+            "call_info": call_info,
             "usage": response.usage.model_dump() if response.usage else {}
         }
+
 
     async def exec_fallback_async(self, prep_res, exc):
         return {
@@ -2827,57 +3047,128 @@ class LLMToolNode(AsyncNodeT):
             "fallback_response": "I'm unable to process this request due to an error."
         }
 
-    def _build_enhanced_prompt(self, prep_res: Dict) -> str:
-        """Enhanced prompt building mit Variable-System"""
-        context = prep_res["context"]
+    def _build_context_aware_prompt(self, prep_res: Dict) -> str:
+        """Build prompt with integrated context awareness"""
+        prompt_parts = []
+
+        # Add context sections
+        recent_interaction = prep_res.get("recent_interaction", "")
+        session_summary = prep_res.get("session_summary", "")
+        task_context = prep_res.get("task_context", "")
+
+        if recent_interaction:
+            prompt_parts.append(recent_interaction)
+
+        if session_summary:
+            prompt_parts.append(session_summary)
+
+        if task_context:
+            prompt_parts.append(task_context)
+
+        # Add context usage notice
+        if prep_res.get("context_compressed"):
+            prompt_parts.append(
+                "## Context Notice\n*Some historical context has been compressed to fit memory limits.*")
+
+        # Add task-specific content
+        task_description = prep_res.get("task_description", "")
+        if task_description:
+            prompt_parts.append(f"## Current Task\n{task_description}")
+
+        # Add hypothesis and expectations
+        hypothesis = prep_res.get("hypothesis", "")
+        if hypothesis:
+            var_manager = prep_res.get("variable_manager")
+            if var_manager:
+                hypothesis = var_manager.format_text(hypothesis)
+            prompt_parts.append(f"## Hypothesis\n{hypothesis}")
+
+        expectation = prep_res.get("expectation", "")
+        if expectation:
+            var_manager = prep_res.get("variable_manager")
+            if var_manager:
+                expectation = var_manager.format_text(expectation)
+            prompt_parts.append(f"## Expected Outcome\n{expectation}")
+
+        # Add available tools
+        tools_available = prep_res.get("tools_available", [])
+        if tools_available:
+            prompt_parts.append(f"## Available Tools\n{', '.join(tools_available)}")
+
+        prompt_parts.append("## Response\nProvide a comprehensive response considering all context and requirements.")
+
+        # Final variable formatting
+        final_prompt = "\n\n".join(prompt_parts)
         var_manager = prep_res.get("variable_manager")
-
-        # Basis-Prompt erstellen
-        prompt = f"""# Task Processing Request
-    Task Description
-    {prep_res['task_description']}
-    Context Information
-    {context.get('recent_interaction', '')}
-    {context.get('instructions', '')}
-    {context.get('compressed_context', '')}
-    """
-
-        # Variable-Informationen hinzufügen
         if var_manager:
-            available_vars = var_manager.get_available_variables()
-            if available_vars:
-                prompt += f"\n## Available Variables\n"
-                for var_name, preview in list(available_vars.items())[:10]:  # Zeige nur erste 10
-                    prompt += f"- {var_name}: {preview}\n"
+            final_prompt = var_manager.format_text(final_prompt)
 
-        if prep_res["hypothesis"]:
-            hypothesis_text = prep_res['hypothesis']
-            if var_manager:
-                hypothesis_text = var_manager.format_text(hypothesis_text)
-            prompt += f"\n## Hypothesis\n{hypothesis_text}"
+        return final_prompt
 
-        if prep_res["expectation"]:
-            expectation_text = prep_res['expectation']
-            if var_manager:
-                expectation_text = var_manager.format_text(expectation_text)
-            prompt += f"\n## Expected Outcome\n{expectation_text}"
+    def _build_enhanced_system_message(self, prep_res: Dict) -> str:
+        """Build enhanced system message with context awareness"""
+        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
 
-        if prep_res["reasoning"]:
-            reasoning_text = prep_res['reasoning']
-            if var_manager:
-                reasoning_text = var_manager.format_text(reasoning_text)
-            prompt += f"\n## Additional Reasoning Context\n{reasoning_text}"
+        if self.context_aware:
+            context_enhancement = """
+## Context Awareness Instructions
+You have access to three types of context:
+1. **Recent Interaction**: Latest conversation exchanges
+2. **Session Summary**: Compressed historical context and relevant references
+3. **Task Context**: Current agent state, active tasks, and capabilities
 
-        if prep_res["tools_available"]:
-            prompt += f"\n## Available Tools\n{', '.join(prep_res['tools_available'])}"
+Use this context to provide more personalized, informed responses. Reference previous conversations when relevant, and build upon established context."""
 
-        prompt += "\n## Response Requirements\nProvide a comprehensive response that addresses the task while considering the context and any constraints mentioned."
+            base_message += context_enhancement
 
-        # Finale Variable-Formatierung
-        if var_manager:
-            prompt = var_manager.format_text(prompt)
+        # Add persona integration
+        persona_config = prep_res.get("persona_config")
+        if persona_config and persona_config.apply_method in ["system_prompt", "both"]:
+            persona_addition = persona_config.to_system_prompt_addition()
+            if persona_addition:
+                base_message += f"\n\n## Persona Instructions\n{persona_addition}"
 
-        return prompt
+        return base_message
+
+    def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
+        """Select optimal model based on task complexity and context"""
+        context_tokens = prep_res.get("context_tokens", 0)
+
+        # Use complex model for high-context or complex tasks
+        complexity_indicators = ["analyze", "complex", "detailed", "comprehensive", "research"]
+        is_complex = any(indicator in task_description.lower() for indicator in complexity_indicators)
+
+        # Use complex model if context is substantial
+        high_context = context_tokens > 2000
+
+        if is_complex or high_context:
+            return prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+        else:
+            return prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+
+    def _classify_task(self, task_description: str) -> str:
+        """Classify task type for logging"""
+        desc_lower = task_description.lower()
+
+        if any(word in desc_lower for word in ["analyze", "analysis", "examine"]):
+            return "analysis"
+        elif any(word in desc_lower for word in ["create", "generate", "write"]):
+            return "generation"
+        elif any(word in desc_lower for word in ["search", "find", "lookup"]):
+            return "search"
+        elif any(word in desc_lower for word in ["decide", "choose", "select"]):
+            return "decision"
+        else:
+            return "general"
+
+    async def _fallback_response(self, prep_res):
+        """Fallback response when LLM unavailable"""
+        return {
+            "success": False,
+            "error": "LiteLLM not available",
+            "fallback_response": "I'm unable to process this request due to missing LLM capabilities.",
+            "context_aware": False
+        }
 
     async def _process_llm_response(self, response: str, prep_res: Dict) -> Dict:
         """Process and enhance the LLM response based on task requirements"""
@@ -2970,15 +3261,61 @@ class LLMToolNode(AsyncNodeT):
 
         return extracted
 
+    def get_call_statistics(self) -> Dict[str, Any]:
+        """Get LLM call statistics for monitoring"""
+        if not self.call_log:
+            return {"total_calls": 0}
+
+        total_calls = len(self.call_log)
+        successful_calls = sum(1 for call in self.call_log if call.get("success", False))
+
+        # Token statistics
+        total_tokens = sum(call.get("total_tokens", 0) for call in self.call_log)
+        context_tokens = sum(call.get("context_tokens", 0) for call in self.call_log)
+
+        # Model usage
+        model_usage = {}
+        for call in self.call_log:
+            model = call.get("model", "unknown")
+            model_usage[model] = model_usage.get(model, 0) + 1
+
+        # Task type distribution
+        task_types = {}
+        for call in self.call_log:
+            task_type = call.get("task_type", "unknown")
+            task_types[task_type] = task_types.get(task_type, 0) + 1
+
+        return {
+            "total_calls": total_calls,
+            "success_rate": successful_calls / total_calls if total_calls > 0 else 0,
+            "total_tokens_used": total_tokens,
+            "average_tokens_per_call": total_tokens / total_calls if total_calls > 0 else 0,
+            "context_tokens_used": context_tokens,
+            "model_distribution": model_usage,
+            "task_type_distribution": task_types,
+            "context_compression_rate": sum(
+                1 for call in self.call_log if call.get("context_compressed")) / total_calls if total_calls > 0 else 0
+        }
+
     async def post_async(self, shared, prep_res, exec_res):
         shared["last_llm_response"] = exec_res
-
+        shared["llm_call_stats"] = self.get_call_statistics()
+        if "call_info" in exec_res:
+            self.call_log.append(exec_res["call_info"])
+        # Keep only last 50 calls
+        if len(self.call_log) > 50:
+            self.call_log = self.call_log[-50:]
         if exec_res["success"]:
             shared["current_response"] = exec_res["processed_response"]["main_response"]
             shared["response_confidence"] = exec_res["processed_response"]["confidence"]
             return "llm_success"
         else:
             shared["current_response"] = exec_res["fallback_response"]
+            self.call_log[-1].update({
+                "success": False,
+                "error": shared["current_response"]
+            })
+            logger.error(f"Context-aware LLM call failed: {shared["current_response"]}")
             return "llm_failed"
 
 class StateSyncNode(AsyncNodeT):
@@ -3933,6 +4270,126 @@ class FlowAgent:
         finally:
             self.shared["system_status"] = "idle"
             self.is_running = False
+
+    async def initialize_session_context(self, session_id: str = "default", max_history: int = 200) -> bool:
+        """Initialize session-aware context management for infinite scaling"""
+        try:
+            from toolboxv2 import get_app
+            from toolboxv2.mods.isaa.extras.session import ChatSession
+
+            # Initialize memory system
+            memory_instance = get_app().get_mod("isaa").get_memory()
+
+            # Create multiple session managers for different aspects
+            session_managers = {
+                "main_conversation": ChatSession(
+                    memory_instance,
+                    space_name=f"Context/{self.amd.name}/{session_id}/conversation",
+                    max_length=max_history
+                ),
+                "task_history": ChatSession(
+                    memory_instance,
+                    space_name=f"Context/{self.amd.name}/{session_id}/tasks",
+                    max_length=max_history // 2
+                ),
+                "insights": ChatSession(
+                    memory_instance,
+                    space_name=f"Context/{self.amd.name}/{session_id}/insights",
+                    max_length=100
+                )
+            }
+
+            # Store in shared state
+            self.shared["session_managers"] = session_managers
+            self.shared["session_initialized"] = True
+
+            logger.info(f"Session context initialized for {session_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Session context initialization failed: {e}")
+            return False
+
+    async def _initialize_context_awareness(self):
+        """Enhanced context awareness with session management"""
+
+        # Initialize session if not already done
+        session_id = self.shared.get("session_id", "default")
+        if not self.shared.get("session_initialized"):
+            await self.initialize_session_context(session_id)
+
+        # Replace context node in flows with advanced version
+        advanced_context_manager = ContextManagerNode(
+            max_tokens=self.amd.max_input_tokens,
+            compression_threshold=0.76
+        )
+
+        # Update task flow to use advanced context manager
+        if hasattr(self.task_flow, 'strategy_node'):
+            # Insert context manager before strategy
+            self.task_flow.context_manager = advanced_context_manager
+            advanced_context_manager >> self.task_flow.strategy_node
+            self.task_flow.start = advanced_context_manager
+
+        # Ensure tool capabilities are loaded
+        for tool_name in self.shared["available_tools"]:
+            if tool_name not in self._tool_capabilities:
+                tool_info = self._tool_registry.get(tool_name, {})
+                description = tool_info.get("description", "No description")
+                await self._analyze_tool_capabilities(tool_name, description)
+
+        # Set enhanced system context
+        self.shared["system_context"] = {
+            "capabilities_summary": self._build_capabilities_summary(),
+            "tool_count": len(self.shared["available_tools"]),
+            "analysis_loaded": len(self._tool_capabilities),
+            "intelligence_level": "high" if self._tool_capabilities else "basic",
+            "context_management": "advanced_session_aware",
+            "session_managers": len(self.shared.get("session_managers", {}))
+        }
+
+        logger.info(f"Advanced context awareness initialized with session management")
+
+    def get_context_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive context management statistics"""
+        stats = {
+            "context_system": "advanced_session_aware",
+            "compression_threshold": 0.76,
+            "max_tokens": getattr(self, 'max_input_tokens', 8000),
+            "session_managers": {},
+            "context_usage": {},
+            "compression_stats": {}
+        }
+
+        # Session manager statistics
+        session_managers = self.shared.get("session_managers", {})
+        for name, manager in session_managers.items():
+            stats["session_managers"][name] = {
+                "history_length": len(manager.history),
+                "max_length": manager.max_length,
+                "space_name": manager.space_name
+            }
+
+        # Context node statistics if available
+        if hasattr(self.task_flow, 'context_manager'):
+            context_manager = self.task_flow.context_manager
+            stats["compression_stats"] = {
+                "compression_threshold": context_manager.compression_threshold,
+                "max_tokens": context_manager.max_tokens,
+                "active_sessions": len(context_manager.session_managers)
+            }
+
+        # LLM call statistics from enhanced node
+        llm_stats = self.shared.get("llm_call_stats", {})
+        if llm_stats:
+            stats["context_usage"] = {
+                "total_llm_calls": llm_stats.get("total_calls", 0),
+                "context_compression_rate": llm_stats.get("context_compression_rate", 0.0),
+                "average_context_tokens": llm_stats.get("context_tokens_used", 0) / max(llm_stats.get("total_calls", 1),
+                                                                                        1)
+            }
+
+        return stats
 
     def set_persona(self, name: str, style: str = "professional", tone: str = "friendly",
                     personality_traits: List[str] = None, apply_method: str = "system_prompt",
