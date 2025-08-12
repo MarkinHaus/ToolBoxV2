@@ -1,6 +1,7 @@
 import os
 import re
 
+from enum import Enum
 import asyncio
 import yaml
 import json
@@ -19,6 +20,8 @@ import time
 
 # PocketFlow imports
 from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
+
+
 
 # Framework imports with graceful degradation
 try:
@@ -65,6 +68,93 @@ litllm_logger.setLevel(logging.CRITICAL) #(get_logger().level)
 TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
 # ===== CORE DATA STRUCTURES =====
+
+
+class ResponseFormat(Enum):
+    FREI_TEXT = "frei-text"
+    WITH_TABLES = "with-tables"
+    WITH_BULLET_POINTS = "with-bullet-points"
+    WITH_LISTS = "with-lists"
+    TEXT_ONLY = "text-only"
+    MD_TEXT = "md-text"
+    YAML_TEXT = "yaml-text"
+    JSON_TEXT = "json-text"
+    PSEUDO_CODE = "pseudo-code"
+    CODE_STRUCTURE = "code-structure"
+
+
+class TextLength(Enum):
+    MINI_CHAT = "mini-chat"
+    CHAT_CONVERSATION = "chat-conversation"
+    TABLE_CONVERSATION = "table-conversation"
+    DETAILED_INDEPTH = "detailed-indepth"
+    PHD_LEVEL = "phd-level"
+
+
+@dataclass
+class FormatConfig:
+    """Konfiguration für Response-Format und -Länge"""
+    response_format: ResponseFormat = ResponseFormat.FREI_TEXT
+    text_length: TextLength = TextLength.CHAT_CONVERSATION
+    custom_instructions: str = ""
+    strict_format_adherence: bool = True
+    quality_threshold: float = 0.7
+
+    def get_format_instructions(self) -> str:
+        """Generiere Format-spezifische Anweisungen"""
+        format_instructions = {
+            ResponseFormat.FREI_TEXT: "Verwende natürlichen Fließtext ohne spezielle Formatierung.",
+            ResponseFormat.WITH_TABLES: "Integriere Tabellen zur strukturierten Darstellung von Daten. Verwende Markdown-Tabellen.",
+            ResponseFormat.WITH_BULLET_POINTS: "Strukturiere Informationen mit Bullet Points (•, -, *) für bessere Lesbarkeit.",
+            ResponseFormat.WITH_LISTS: "Verwende nummerierte und unnummerierte Listen zur Organisation von Inhalten.",
+            ResponseFormat.TEXT_ONLY: "Nur reiner Text ohne Formatierung, Symbole oder Strukturelemente.",
+            ResponseFormat.MD_TEXT: "Vollständige Markdown-Formatierung mit Headings, Code-Blocks, Links etc.",
+            ResponseFormat.YAML_TEXT: "Strukturiere Antworten als YAML-Format für maschinenlesbare Ausgabe.",
+            ResponseFormat.JSON_TEXT: "Formatiere Antworten als JSON-Struktur für API-Integration.",
+            ResponseFormat.PSEUDO_CODE: "Verwende Pseudocode-Struktur für algorithmische oder logische Erklärungen.",
+            ResponseFormat.CODE_STRUCTURE: "Strukturiere wie Code mit Einrückungen, Kommentaren und logischen Blöcken."
+        }
+        return format_instructions.get(self.response_format, "Standard-Formatierung.")
+
+    def get_length_instructions(self) -> str:
+        """Generiere Längen-spezifische Anweisungen"""
+        length_instructions = {
+            TextLength.MINI_CHAT: "Sehr kurze, prägnante Antworten (1-2 Sätze, max 50 Wörter). Chat-Style.",
+            TextLength.CHAT_CONVERSATION: "Moderate Gesprächslänge (2-4 Sätze, 50-150 Wörter). Natürlicher Unterhaltungsstil.",
+            TextLength.TABLE_CONVERSATION: "Strukturierte, tabellarische Darstellung mit kompakten Erklärungen (100-250 Wörter).",
+            TextLength.DETAILED_INDEPTH: "Ausführliche, detaillierte Erklärungen (300-800 Wörter) mit Tiefe und Kontext.",
+            TextLength.PHD_LEVEL: "Akademische Tiefe mit umfassenden Erklärungen (800+ Wörter), Quellenangaben und Fachterminologie."
+        }
+        return length_instructions.get(self.text_length, "Standard-Länge.")
+
+    def get_combined_instructions(self) -> str:
+        """Kombiniere Format- und Längen-Anweisungen"""
+        instructions = []
+        instructions.append("## Format-Anforderungen:")
+        instructions.append(self.get_format_instructions())
+        instructions.append("\n## Längen-Anforderungen:")
+        instructions.append(self.get_length_instructions())
+
+        if self.custom_instructions:
+            instructions.append(f"\n## Zusätzliche Anweisungen:")
+            instructions.append(self.custom_instructions)
+
+        if self.strict_format_adherence:
+            instructions.append("\n## WICHTIG: Halte dich strikt an diese Format- und Längen-Vorgaben!")
+
+        return "\n".join(instructions)
+
+    def get_expected_word_range(self) -> tuple[int, int]:
+        """Erwartete Wortanzahl für Qualitätsbewertung"""
+        ranges = {
+            TextLength.MINI_CHAT: (10, 50),
+            TextLength.CHAT_CONVERSATION: (50, 150),
+            TextLength.TABLE_CONVERSATION: (100, 250),
+            TextLength.DETAILED_INDEPTH: (300, 800),
+            TextLength.PHD_LEVEL: (800, 2000)
+        }
+        return ranges.get(self.text_length, (50, 200))
+
 class dAsyncFlowT(AsyncFlow):
     """
     Pass through observer class
@@ -271,11 +361,13 @@ class PersonaConfig:
     response_format: str = "direct"
     custom_instructions: str = ""
 
+    format_config: Optional[FormatConfig] = None
+
     apply_method: str = "system_prompt"  # "system_prompt" | "post_process" | "both"
     integration_level: str = "light"  # "light" | "medium" | "heavy"
 
     def to_system_prompt_addition(self) -> str:
-        """Convert persona to system prompt addition"""
+        """Convert persona to system prompt addition with format integration"""
         if self.apply_method in ["system_prompt", "both"]:
             additions = []
             additions.append(f"You are {self.name}.")
@@ -288,8 +380,33 @@ class PersonaConfig:
             if self.custom_instructions:
                 additions.append(self.custom_instructions)
 
+            # Format-spezifische Anweisungen hinzufügen
+            if self.format_config:
+                additions.append("\n" + self.format_config.get_combined_instructions())
+
             return " ".join(additions)
         return ""
+
+    def update_format(self, response_format: ResponseFormat|str, text_length: TextLength|str, custom_instructions: str = ""):
+        """Dynamische Format-Aktualisierung"""
+        try:
+            format_enum = ResponseFormat(response_format) if isinstance(response_format, str) else response_format
+            length_enum = TextLength(text_length) if isinstance(text_length, str) else text_length
+
+            if not self.format_config:
+                self.format_config = FormatConfig()
+
+            self.format_config.response_format = format_enum
+            self.format_config.text_length = length_enum
+
+            if custom_instructions:
+                self.format_config.custom_instructions = custom_instructions
+
+            logger.info(f"Format updated: {response_format}, {text_length}")
+
+        except ValueError as e:
+            logger.error(f"Invalid format/length option: {e}")
+            raise ValueError(f"Invalid format '{response_format}' or length '{text_length}'")
 
     def should_post_process(self) -> bool:
         """Check if post-processing should be applied"""
@@ -322,8 +439,6 @@ class AgentModelData(BaseModel):
         return base_message
 
 # ===== CORE NODE IMPLEMENTATIONS =====
-
-
 
 class ContextManagerNode(AsyncNodeT):
     """Advanced context management with intelligent splitting"""
@@ -361,7 +476,7 @@ class ContextManagerNode(AsyncNodeT):
             from toolboxv2.mods.isaa.extras.session import ChatSession
 
             memory_instance = get_app().get_mod("isaa").get_memory()
-            space_name = f"ContextManager/{agent_instance.amd.name}/{session_id}"
+            space_name = f"ChatSession/ContextManager/{agent_instance.amd.name}/{session_id}"
 
             self.session_managers[session_id] = ChatSession(
                 memory_instance,
@@ -867,8 +982,8 @@ You are a strategic AI agent with advanced variable system and tool capabilities
 
 ## Available Strategies:
 - direct_response: Simple LLM response with optional tool calls
-- simple_planning: Simple multi-step plan with tool calls
-- multi_step_planning: Complex task breakdown with tool orchestration
+- fast_simple_planning: Simple multi-step plan with tool orchestration
+- slow_complex_planning: Complex task breakdown with tool orchestration, use for tasks with mor then 2 'and' words.
 - research_and_analyze: Information gathering with variable integration
 - creative_generation: Content creation with personalization
 - problem_solving: Analysis with tool validation
@@ -879,22 +994,24 @@ You are a strategic AI agent with advanced variable system and tool capabilities
 3. Evaluate complexity and multi-step needs
 4. Look for context dependencies
 
-Respond ONLY with strategy name:"""
+Respond ONLY with strategy name for the current task:"""
 
         try:
             response = await litellm.acompletion(
-                model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 max_tokens=50
             )
-
+            print("response", response.choices[0].message.content, "#")
             strategy = response.choices[0].message.content.strip().lower()
-            return strategy if strategy in self.strategies else "multi_step_planning"
+            return strategy if strategy in self.strategies else "fast_simple_planning"
 
         except Exception as e:
             logger.error(f"Strategy determination failed: {e}")
-            return "multi_step_planning"
+            import traceback
+            print(traceback.format_exc())
+            return "slow_complex_planning"
 
     def _build_tool_awareness_context(self, prep_res: Dict) -> str:
         """Build comprehensive tool context for strategy decisions"""
@@ -947,12 +1064,12 @@ Respond ONLY with strategy name:"""
                 "parallel_capable": False,
                 "resources": {"llm_calls": 1, "complexity": "low"}
             },
-            "simple_planning": {
-                "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
+            "fast_simple_planning": {
+                "phases": ["context_prep", "tool_llm_call", "result_synthesis"],
                 "parallel_capable": True,
                 "resources": {"llm_calls": "multiple", "complexity": "low"}
             },
-            "multi_step_planning": {
+            "slow_complex_planning": {
                 "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
                 "parallel_capable": True,
                 "resources": {"llm_calls": "multiple", "complexity": "high"}
@@ -1013,7 +1130,8 @@ class TaskPlannerNode(AsyncNodeT):
         }
 
     async def exec_async(self, prep_res):
-        if prep_res["strategy"] == "simple_planning":
+        print(f"TaskPlannerNode - strategy: {prep_res["strategy"]}")
+        if prep_res["strategy"] == "fast_simple_planning":
             return self._create_simple_plan(prep_res)
         else:
             return await self._advanced_llm_decomposition(prep_res)
@@ -1125,7 +1243,7 @@ Pick minimal plan type for fastest completion!
 
         try:
             response = litellm.completion(
-                model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=512
@@ -1134,7 +1252,7 @@ Pick minimal plan type for fastest completion!
 
             yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
             plan_data = yaml.safe_load(yaml_content)
-            print("Simple", plan_data)
+            print("Simple", json.dumps(plan_data, indent=2))
             return TaskPlan(
                 id=str(uuid.uuid4()),
                 name=plan_data.get("plan_name", "Generated Plan"),
@@ -1156,7 +1274,7 @@ Pick minimal plan type for fastest completion!
                 description="Direct response only",
                 tasks=[
                     LLMTask(
-                        id="simple_planning",
+                        id="fast_simple_planning",
                         type="LLMTask",
                         description="Generate direct response",
                         priority=1,
@@ -1168,9 +1286,13 @@ Pick minimal plan type for fastest completion!
             )
 
     async def _advanced_llm_decomposition(self, prep_res) -> TaskPlan:
-        """Erweiterte LLM-basierte Dekomposition mit Tool-Integration"""
+        """Erweiterte LLM-basierte Dekomposition mit dynamischer Plan-Anpassung"""
         variable_manager = prep_res.get("variable_manager")
         tool_intelligence = self._build_tool_intelligence(prep_res)
+
+        # Check for replan context from failed DecisionTask
+        replan_context = prep_res.get("replan_context", {})
+        is_replanning = bool(replan_context)
 
         # Get variable context for planning
         var_suggestions = ""
@@ -1179,12 +1301,30 @@ Pick minimal plan type for fastest completion!
             if suggestions:
                 var_suggestions = f"\n## Suggested Variables\n{', '.join(suggestions)}"
 
+        # Build context-aware prompt
+        base_query = prep_res['query']
+        if is_replanning:
+            context_info = f"""
+    ## REPLANNING CONTEXT
+    Original Query: {base_query}
+    Previous Failure: {replan_context.get('failure_reason', 'Unknown')}
+    New Goal: {replan_context.get('new_goal', 'Continue with refined approach')}
+    Failed Approach: {replan_context.get('avoid_approaches', [])}
+
+    Focus on the NEW GOAL and avoid the failed approaches."""
+            effective_query = replan_context.get('new_goal', base_query)
+        else:
+            context_info = ""
+            effective_query = base_query
+
         prompt = f"""
-You are an expert **task planner** and **abstract pattern recognizer** with access to specialized tools and task types.
-Your goal: Create intelligent, structured **execution plans** in YAML format by first recognizing patterns in the query and tool capabilities.
+You are an expert **task planner** with **dynamic adaptation capabilities**.
+Create intelligent, adaptive execution plans that can modify themselves during execution.
 
 ## User Query
-{prep_res['query']}
+{effective_query}
+
+{context_info}
 
 ## Your Available Tools & Intelligence
 {tool_intelligence}
@@ -1192,48 +1332,11 @@ Your goal: Create intelligent, structured **execution plans** in YAML format by 
 {variable_manager.get_llm_variable_context() if variable_manager else ""}
 {var_suggestions}
 
-## VARIABLE INTEGRATION EXAMPLES:
-- LLMTask prompt_template: "Hello {{ user.name }}, here's your {{ results.search.data }}"
-- ToolTask arguments: {{"query": "{{ user.query }}", "user_id": "{{ user.id }}"}}
-- Task descriptions: "Search for {{ user.preferences }} related content"
-
-## Task Types with Variable Support:
-- **LLMTask**: prompt_template, context_keys support variables
-- **ToolTask**: arguments dict supports {{ }} syntax
-- **DecisionTask**: decision_prompt supports variables
-
-## CRITICAL INSTRUCTIONS:
-1. ALWAYS check if tools can directly answer the query
-2. Look for INDIRECT ways tools provide value
-3. Use tools for personalization when available
-4. Create tool_call tasks for any relevant tools
-5. Don't ignore tools - they are your primary capability!
-
-## STAGE 1 — ABSTRACT PATTERN RECOGNITION & REASONING
-Before creating any YAML plan:
-1. Quickly identify the **type of user query** (informational, action-based, decision-based, multi-step, compound).
-2. Recognize **patterns** in task structure: sequential chains, parallel steps, decision-routing, grouped subtasks.
-3. Abstractly map query intent to **tool usage patterns** (direct tool calls, LLM augmentation, routing, compound processing).
-4. Decide optimal **execution strategy** (sequential, parallel, mixed).
-5. Keep reasoning concise but precise — this is for your own internal planning, not for the final YAML output.
-
-**Pattern Recognition Output Format (Internal Only)**:
-```
-
-[Pattern Summary]: Short abstract description of plan type.
-[Reasoning]: How the structure should be organized and why.
-
-```
-
-## STAGE 2 — YAML PLAN GENERATION
-After reasoning, produce **only valid YAML** for the execution plan.
-Follow the dataclass structure below.
 
 ## TASK TYPES (Dataclass-Aligned)
-- **Task**: Generic step in the plan.
 - **LLMTask**: Step that uses a language model.
 - **ToolTask**: Step that calls an available tool.
-- **DecisionTask**: Step that decides routing between tasks.
+- **DecisionTask**: Step that decides routing between tasks. or triggers plan modifications.
 - **CompoundTask**: Step grouping sub-tasks.
 
 ## YAML SCHEMA
@@ -1243,7 +1346,7 @@ description: string
 execution_strategy: "sequential" | "parallel" | "mixed"
 tasks:
   - id: string
-    type: "Task" | "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
+    type: "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
     description: string
     priority: int
     dependencies: [list of task ids]
@@ -1254,124 +1357,235 @@ tasks:
     # CompoundTask: sub_task_ids, execution_strategy, success_criteria
 ```
 
-## EXAMPLES WITH PATTERN RECOGNITION
-## IMPORTANT ALL TOOLS USED IN THE EXAMPLES AR NOT AUTOMATICALLY AVAILABLE! only tools from "Your Available Tools & Intelligence" AR Available!!!
-### Example 1 — Basic ToolTask + LLMTask
+DecisionTasks can now trigger **plan modifications** during execution:
 
-**Pattern Summary**: Simple sequential pipeline — fetch → personalize.
-**Reasoning**: Direct tool call retrieves data, then LLM formats/generates output.
-
+### Routing Map Options:
 ```yaml
-plan_name: "Personalized Greeting"
-description: "Get user's name and greet them"
-execution_strategy: "sequential"
+routing_map:
+  # Classical routing to existing task
+  "success":
+    action: "route_to_task"
+    task_id: "next_task_id"
+
+  # Complete replan from this point
+  "failure":
+    action: "replan_from_here"
+    new_goal: "Specific new objective based on failure"
+    context: "What went wrong and why"
+
+  # Append new tasks to existing plan
+  "partial_success":
+    action: "append_plan"
+    new_goal: "Extended objective requiring additional steps"
+```
+PLANNING STRATEGY
+
+For uncertain outcomes (web searches, API calls, data analysis):
+Use DecisionTask with "replan_from_here" for failure cases
+Include specific new_goal based on potential failure modes
+
+For multi-stage workflows:
+Use "append_plan" when intermediate results may require different next steps
+
+For critical path dependencies:
+Plan alternative routes using DecisionTask routing
+
+ENHANCED EXAMPLES
+Adaptive Web Research Pattern:
+<reasoning>
+The logic ensures that subsequent steps are chosen depending on the sufficiency of the retrieved information.
+It’s a decision-making scaffold for research workflows.
+</reasoning>
+```yaml
 tasks:
-  - id: "get_user_name"
+  - id: "web_search"
     type: "ToolTask"
-    description: "Retrieve user's name"
+    tool_name: "search_web"
+    description: "Get required data"
     priority: 1
     dependencies: []
-    tool_name: "get_user_name"
-    arguments: {{}}
-    hypothesis: "We will obtain the user's name"
-    validation_criteria: "Must return a string"
-  - id: "greet_user"
-    type: "LLMTask"
-    description: "Generate greeting"
+    arguments:
+      query: "{{ user.query }}"
+
+  - id: "evaluate_results"
+    type: "DecisionTask"
     priority: 2
-    dependencies: ["get_user_name"]
-    prompt_template: "Greet the user named {{ results.get_user_name.data }}"
+    dependencies: ["web_search"]
+    description: "Evaluate search results and decide on next steps"
+    decision_prompt: "Are the search results sufficient?\nQuery: {{ user.query }}\nResults:\n{{ results.web_search.data }}\nEnd of Results\n Answer 'good', 'poor', or 'empty'"
+    routing_map:
+      "good":
+        action: "route_to_task"
+        task_id: "analyze_findings"
+      "poor":
+        action: "replan_from_here"
+        new_goal: "Search results were poor quality. Analyze the query '{{ user.query }}' and create a refined, more specific search strategy."
+      "empty":
+        action: "replan_from_here"
+        new_goal: "No search results found for '{{ user.query }}'. Try alternative search terms or different information sources."
+```
+Dynamic Tool Selection Pattern:
+<reasoning>
+By offering multiple branching paths
+(direct search, analysis-first, or multi-source), it maximizes adaptability for
+diverse data retrieval contexts. The routing logic ensures that each branch aligns
+with the complexity and reliability requirements of the query.
+</reasoning>
+```yaml
+tasks:
+...
+  - id: "choose_approach"
+    type: "DecisionTask"
+    priority: 2
+    dependencies: ["xyz"]
+    description: "Evaluate results and decide on next steps"
+    decision_prompt: "For query '{{ results.xyz.data }}', should we use 'direct_search', 'analysis_first', or 'multi_source'?"
+    routing_map:
+      "direct_search":
+        action: "append_plan"
+        new_goal: "Execute direct search approach for: {{ results.xyz.data }}"
+      "analysis_first":
+        action: "append_plan"
+        new_goal: "First analyze the query structure, then plan appropriate search strategy"
+      "multi_source":
+        action: "append_plan"
+        new_goal: "Use multiple information sources and cross-reference results"
+```
+Example 2 — Tool + LLM
+<reasoning>
+The separation of concerns—data acquisition
+first, followed by language model summarization—ensures.
+This is effective for scenarios where raw data must be condensed.
+</reasoning>
+```yaml
+plan_name: "Fetch and Answer"
+description: "Get info from tool and summarize"
+execution_strategy: "sequential"
+tasks:
+  - id: "fetch_info"
+    type: "ToolTask"
+    description: "Get required data"
+    priority: 1
+    dependencies: []
+    tool_name: "info_api"
+    arguments:
+      query: "{{ user.query }}"
+  - id: "summarize"
+    type: "LLMTask"
+    description: "Summarize fetched data"
+    priority: 2
+    dependencies: ["fetch_info"]
+    prompt_template: "Summarize: {{ results.fetch_info.data }}"
     llm_config:
       model_preference: "fast"
-      temperature: 0.7
+      temperature: 0.3
 ```
-
-### Example 2 — DecisionTask + ToolTask + LLMTask
-
-**Pattern Summary**: Branching logic — decision routing to alternate flows.
-**Reasoning**: Decision task checks intent, then either calls weather tool or LLM for smalltalk.
-
+Example: Complex Research with CompoundTask
+<reasoning>
+CompoundTask groups related sub-tasks that should be executed together as a logical unit.
+In this research case, we need to gather information from multiple sources simultaneously,
+then analyze all results together.
+The CompoundTask ensures that all data collection tasks are completed before moving to analysis,
+while allowing parallel execution within the compound task.
+</reasoning>
 ```yaml
-plan_name: "Weather Routing"
-description: "Route based on user weather query"
+plan_name: "Multi-Source Research Analysis"
+description: "Research topic from multiple sources and provide comprehensive analysis"
 execution_strategy: "sequential"
 tasks:
-  - id: "check_weather_intent"
-    type: "DecisionTask"
-    description: "Decide if weather info is needed"
-    priority: 1
-    dependencies: []
-    decision_prompt: "Does the query ask about weather?"
-    routing_map:
-      yes: "get_weather"
-      no: "smalltalk"
-    decision_model: "fast"   # options fast/complx use fastest model for decision making
-  - id: "get_weather"
-    type: "ToolTask"
-    description: "Fetch weather data"
-    priority: 2
-    dependencies: ["check_weather_intent"]
-    tool_name: "weather_api"
-    arguments:
-      location: "{{ user.location }}"
-  - id: "smalltalk"
-    type: "LLMTask"
-    description: "General conversation"
-    priority: 2
-    dependencies: ["check_weather_intent"]
-    prompt_template: "Respond to user casually."
-```
-
-### Example 3 — CompoundTask with Mixed Subtasks
-
-**Pattern Summary**: Multi-stage compound execution — data fetch → process → compile report.
-**Reasoning**: Parallel processing possible for some subtasks; final report requires sequential completion.
-
-```yaml
-plan_name: "Data Report Generation"
-description: "Generate and format report"
-execution_strategy: "mixed"
-tasks:
-  - id: "fetch_data"
-    type: "ToolTask"
-    description: "Retrieve raw data"
-    priority: 1
-    dependencies: []
-    tool_name: "data_fetcher"
-    arguments: {{}}
-  - id: "process_data"
-    type: "LLMTask"
-    description: "Analyze data"
-    priority: 2
-    dependencies: ["fetch_data"]
-    prompt_template: "Summarize dataset: {{ results.fetch_data.data }}"
-  - id: "generate_report"
+  - id: "research_compound"
     type: "CompoundTask"
-    description: "Compile and format report"
-    priority: 3
-    dependencies: ["process_data"]
-    sub_task_ids: ["process_data", "format_report"]
-    execution_strategy: "sequential"
-    success_criteria: "Final report file is ready"
-  - id: "format_report"
+    description: "Gather information from multiple sources"
+    priority: 1
+    dependencies: []
+    sub_task_ids: ["web_search", "academic_search", "news_search"]
+    execution_strategy: "parallel"
+    success_criteria: "At least 2 out of 3 searches return useful data"
+
+  - id: "web_search"
+    type: "ToolTask"
+    description: "Search web for general information"
+    priority: 1
+    dependencies: []
+    tool_name: "search_web"
+    arguments:
+      query: "{{ user.query }}"
+      max_results: 5
+    hypothesis: "Web search will provide current general information"
+    validation_criteria: "Results should contain relevant recent information"
+
+  - id: "academic_search"
+    type: "ToolTask"
+    description: "Search academic sources"
+    priority: 1
+    dependencies: []
+    tool_name: "search_academic"
+    arguments:
+      query: "{{ user.query }}"
+      max_results: 3
+    hypothesis: "Academic search will provide authoritative sources"
+    validation_criteria: "Results should contain peer-reviewed content"
+
+  - id: "news_search"
+    type: "ToolTask"
+    description: "Search recent news"
+    priority: 1
+    dependencies: []
+    tool_name: "search_news"
+    arguments:
+      query: "{{ user.query }}"
+      timeframe: "last_month"
+    hypothesis: "News search will provide latest developments"
+    validation_criteria: "Results should contain recent updates"
+
+  - id: "analyze_all_sources"
     type: "LLMTask"
-    description: "Format into PDF"
-    priority: 4
-    dependencies: ["process_data"]
-    prompt_template: "Format summary into PDF layout"
+    description: "Analyze and synthesize information from all sources"
+    priority: 2
+    dependencies: ["research_compound"]
+    prompt_template: |
+      Analyze and synthesize the following research results for: {{ user.query }}
+
+      Web Results: {{ results.web_search.data }}
+      Academic Results: {{ results.academic_search.data }}
+      News Results: {{ results.news_search.data }}
+
+      Provide a comprehensive analysis covering:
+      1. Key findings from each source type
+      2. Consensus and contradictions
+      3. Most reliable information
+      4. Recent developments
+    llm_config:
+      model_preference: "complex"
+      temperature: 0.3
+
+  - id: "final_report"
+    type: "LLMTask"
+    description: "Create final user-friendly report"
+    priority: 3
+    dependencies: ["analyze_all_sources"]
+    prompt_template: |
+      Create a user-friendly report based on this analysis: {{ results.analyze_all_sources.data }}
+
+      Structure the response with:
+      - Executive summary
+      - Key findings
+      - Sources used
+      - Confidence levels
+    llm_config:
+      model_preference: "fast"
+      temperature: 0.4
 ```
+OUTPUT REQUIREMENTS
 
-## FINAL OUTPUT REQUIREMENTS
+For complex/uncertain queries: Include at least one DecisionTask with replan_from_here
+Use specific, actionable new_goal descriptions
+Include failure context in routing decisions
+Maintain logical task dependencies
+Output ONLY YAML and wrap it in ```yaml``` tags.
+Provide high-level reasoning before in <reasoning> tags, independent from the YAML code.
 
-* Perform **Pattern Recognition** first (internal reasoning phase).
-* Output **only the YAML plan** for the final answer.
-* Combine up to **6 tasks** from any types.
-* Ensure logical dependencies and optimal execution strategy.
-* Include at least one **DecisionTask** or **CompoundTask** in complex plans.
-
-## NOW GENERATE:
-
-Produce a complete YAML plan for the given query using the above reasoning process.
+Generate the adaptive execution plan:
 """
         try:
             model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
@@ -1390,48 +1604,25 @@ Produce a complete YAML plan for the given query using the above reasoning proce
                 yaml_content = content
 
             plan_data = yaml.safe_load(yaml_content)
-            print(f"Advanced Plan:\n{json.dumps(plan_data, indent=2)}")
-            # Tasks mit spezialisierten Klassen erstellen
+            print("Advanced", json.dumps(plan_data, indent=2))
+
+            # Create specialized tasks with enhanced DecisionTask support
             tasks = []
             for task_data in plan_data.get("tasks", []):
                 task_type = task_data.pop("type", "generic")
 
-                # Spezialisierte Task-Erstellung
-                if task_type == "tool_call":
-                    task = ToolTask(
-                        id=task_data.get("id", str(uuid.uuid4())),
-                        type=task_type,
-                        description=task_data.get("description", ""),
-                        priority=task_data.get("priority", 1),
-                        dependencies=task_data.get("dependencies", []),
-                        tool_name=task_data.get("tool_name", ""),
-                        arguments=task_data.get("arguments", {}),
-                        hypothesis=task_data.get("hypothesis", ""),
-                        validation_criteria=task_data.get("validation_criteria", ""),
-                        critical=task_data.get("priority", 1) == 1
-                    )
-                elif task_type == "llm_call":
-                    task = LLMTask(
-                        id=task_data.get("id", str(uuid.uuid4())),
-                        type=task_type,
-                        description=task_data.get("description", ""),
-                        priority=task_data.get("priority", 1),
-                        dependencies=task_data.get("dependencies", []),
-                        prompt_template=task_data.get("prompt_template", task_data.get("description", "")),
-                        context_keys=task_data.get("context_keys", []),
-                        llm_config=task_data.get("llm_config", {}),
-                        critical=task_data.get("priority", 1) == 1
-                    )
-                elif task_type == "decision":
+                if task_type == "DecisionTask" or task_type == "decision":
+                    # Enhanced DecisionTask with dynamic capabilities
                     task = DecisionTask(
                         id=task_data.get("id", str(uuid.uuid4())),
-                        type=task_type,
+                        type="decision",
                         description=task_data.get("description", ""),
                         priority=task_data.get("priority", 1),
                         dependencies=task_data.get("dependencies", []),
                         decision_prompt=task_data.get("decision_prompt", ""),
                         routing_map=task_data.get("routing_map", {}),
-                        critical=True  # Decisions sind immer kritisch
+                        decision_model=task_data.get("decision_model", "fast"),
+                        critical=True
                     )
                 else:
                     task = create_task(task_type, **task_data)
@@ -1440,17 +1631,18 @@ Produce a complete YAML plan for the given query using the above reasoning proce
 
             plan = TaskPlan(
                 id=str(uuid.uuid4()),
-                name=plan_data.get("plan_name", "Generated Plan"),
-                description=plan_data.get("description", f"Plan for: {prep_res['query']}"),
+                name=plan_data.get("plan_name", "Adaptive Plan"),
+                description=plan_data.get("description", f"Adaptive plan for: {effective_query}"),
                 tasks=tasks,
-                execution_strategy=plan_data.get("execution_strategy", "sequential")
+                execution_strategy=plan_data.get("execution_strategy", "sequential"),
+                metadata={"is_replan": is_replanning, "replan_context": replan_context}
             )
 
-            logger.info(f"Created plan with {len(tasks)} specialized tasks")
+            logger.info(f"Created adaptive plan with {len(tasks)} tasks (replanning: {is_replanning})")
             return plan
 
         except Exception as e:
-            logger.error(f"Advanced task decomposition failed: {e}")
+            logger.error(f"Advanced adaptive planning failed: {e}")
             import traceback
             print(traceback.format_exc())
             return self._create_simple_plan(prep_res)
@@ -1530,6 +1722,8 @@ class TaskExecutorNode(AsyncNodeT):
         self.execution_history = []  # Für LLM-basierte Optimierung
         self.agent_instance = None  # Wird gesetzt vom FlowAgent
         self.variable_manager = None
+        self.fast_llm_model = None
+        self.complex_llm_model = None
 
     async def prep_async(self, shared):
         """Enhanced preparation with unified variable system"""
@@ -1564,6 +1758,8 @@ class TaskExecutorNode(AsyncNodeT):
         execution_plan = await self._create_intelligent_execution_plan(
             ready_tasks, blocked_tasks, current_plan, shared
         )
+        self.complex_llm_model = shared.get("complex_llm_model")
+        self.fast_llm_model = shared.get("fast_llm_model")
 
         return {
             "plan": current_plan,
@@ -1571,12 +1767,12 @@ class TaskExecutorNode(AsyncNodeT):
             "blocked_tasks": blocked_tasks,
             "all_tasks": tasks,
             "execution_plan": execution_plan,
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
+            "fast_llm_model": self.fast_llm_model,
+            "complex_llm_model": self.complex_llm_model,
             "available_tools": shared.get("available_tools", []),
             "world_model": shared.get("world_model", {}),
             "results_store": self.results_store,
-            "variable_manager": self.variable_manager
+            "variable_manager": self.variable_manager,
         }
 
     def _find_ready_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
@@ -2259,22 +2455,26 @@ confidence: 0.85
                 logger.warning(f"LLM output for task {task.id} is not valid JSON")
 
         return result
+
     async def _execute_decision_task(self, task: DecisionTask) -> str:
-        """Führe Decision Task aus und gib Routing-Entscheidung zurück"""
+        """Erweiterte Decision Task Execution mit dynamischer Plan-Anpassung"""
 
         if not LITELLM_AVAILABLE:
             raise Exception("LiteLLM not available for decision tasks")
 
-        # Fast model für Entscheidungen
-        model_to_use = task.metadata.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+        # Model selection
+        model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
 
-        # Decision prompt mit Context erweitern
+        # Enhanced decision prompt with context
         enhanced_prompt = f"""
-{task.decision_prompt}
+    {task.decision_prompt}
 
-Available routing options: {', '.join(task.routing_map.keys())}
+    Available routing options: {', '.join(task.routing_map.keys())}
 
-Respond with EXACTLY one of these options - nothing else:"""
+    IMPORTANT: Respond with EXACTLY one of these options - nothing else:
+    {chr(10).join(f'- {option}' for option in task.routing_map.keys())}
+
+    Your response:"""
 
         response = await litellm.acompletion(
             model=model_to_use,
@@ -2283,19 +2483,79 @@ Respond with EXACTLY one of these options - nothing else:"""
             max_tokens=50
         )
 
-        decision = response.choices[0].message.content.strip().upper()
+        decision = response.choices[0].message.content.strip().lower()
 
-        # Validiere Decision gegen routing_map
-        if decision not in task.routing_map:
+        # Find matching key (case-insensitive)
+        matched_key = None
+        for key in task.routing_map.keys():
+            if key.lower() == decision:
+                matched_key = key
+                break
+
+        if not matched_key:
             logger.warning(f"Decision '{decision}' not in routing map, using first option")
-            decision = list(task.routing_map.keys())[0] if task.routing_map else "DEFAULT"
+            matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
 
-        # Speichere nächsten Task in metadata für Router
-        next_task_id = task.routing_map.get(decision, "")
-        task.metadata["next_task_id"] = next_task_id
-        task.metadata["decision_made"] = decision
-        self.variable_manager.set(f"tasks.{task.id}.result", decision)
-        return decision
+        routing_instruction = task.routing_map.get(matched_key, matched_key)
+
+        # Check if routing instruction is a planning action
+        if isinstance(routing_instruction, dict) and "action" in routing_instruction:
+            # This is a dynamic planning instruction
+            action = routing_instruction["action"]
+
+            if not hasattr(task, 'metadata'):
+                task.metadata = {}
+
+            task.metadata.update({
+                "decision_made": matched_key,
+                "routing_action": action,
+                "routing_instruction": routing_instruction
+            })
+
+            if action == "replan_from_here":
+                # Store replan context for TaskPlannerNode
+                task.metadata["replan_context"] = {
+                    "new_goal": routing_instruction.get("new_goal", "Continue with alternative approach"),
+                    "failure_reason": f"Decision task {task.id} determined: {matched_key}",
+                    "original_task": task.id,
+                    "context": routing_instruction.get("context", "")
+                }
+
+            elif action == "append_plan":
+                # Store append context
+                task.metadata["append_context"] = {
+                    "new_goal": routing_instruction.get("new_goal", "Continue with additional steps"),
+                    "extend_from": task.id
+                }
+
+            # Return the action for executor routing
+            self.variable_manager.set(f"tasks.{task.id}.result", {
+                "decision": matched_key,
+                "action": action,
+                "instruction": routing_instruction
+            })
+
+            return action  # This triggers special handling in post_async
+
+        else:
+            # Traditional routing to task ID
+            next_task_id = routing_instruction if isinstance(routing_instruction, str) else str(routing_instruction)
+
+            if not hasattr(task, 'metadata'):
+                task.metadata = {}
+
+            task.metadata.update({
+                "decision_made": matched_key,
+                "next_task_id": next_task_id,
+                "routing_action": "route_to_task"
+            })
+
+            self.variable_manager.set(f"tasks.{task.id}.result", {
+                "decision": matched_key,
+                "next_task": next_task_id
+            })
+
+            return matched_key
 
     async def _verify_tool_result_enhanced(self, task: ToolTask) -> Dict[str, Any]:
         """Erweiterte Verifikation mit strukturierter Bewertung"""
@@ -2337,7 +2597,7 @@ Respond with EXACTLY one of these options - nothing else:"""
 
         try:
             # Get model from task metadata or use default
-            model_to_use = getattr(task, 'metadata', {}).get("complex_llm_model", "openrouter/openai/gpt-4o")
+            model_to_use = self.fast_llm_model
 
             response = await litellm.acompletion(
                 model=model_to_use,
@@ -2362,6 +2622,9 @@ Respond with EXACTLY one of these options - nothing else:"""
 
         except Exception as e:
             logger.error(f"Enhanced tool verification failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+
             return {
                 "status": "verification_error",
                 "error": str(e),
@@ -2394,7 +2657,7 @@ Respond with EXACTLY one of these options - nothing else:"""
         return re.sub(r'\{\{\s*([^}]+)\s*}}', replace_match, template)
 
     async def post_async(self, shared, prep_res, exec_res):
-        """Erweiterte Post-Processing mit Performance-Tracking"""
+        """Erweiterte Post-Processing mit dynamischer Plan-Anpassung"""
 
         # Results store in shared state integrieren
         shared["results_store"] = self.results_store
@@ -2418,23 +2681,51 @@ Respond with EXACTLY one of these options - nothing else:"""
         }
         shared["executor_performance"] = performance_data
 
-        # Task-Status updates
+        # Check for dynamic planning actions
+        planning_action_detected = False
+
         for result in exec_res.get("results", []):
             task_id = result["task_id"]
             if task_id in shared["tasks"]:
                 task = shared["tasks"][task_id]
                 task.status = result["status"]
+
                 if result["status"] == "completed":
                     task.result = result["result"]
-                    # Speichere Verifikationsergebnisse
+
+                    # Check for planning actions from DecisionTasks
+                    if hasattr(task, 'metadata') and task.metadata:
+                        routing_action = task.metadata.get("routing_action")
+
+                        if routing_action == "replan_from_here":
+                            shared["needs_dynamic_replan"] = True
+                            shared["replan_context"] = task.metadata.get("replan_context", {})
+                            planning_action_detected = True
+                            logger.info(f"Dynamic replan triggered by task {task_id}")
+
+                        elif routing_action == "append_plan":
+                            shared["needs_plan_append"] = True
+                            shared["append_context"] = task.metadata.get("append_context", {})
+                            planning_action_detected = True
+                            logger.info(f"Plan append triggered by task {task_id}")
+
+                    # Store verification results if available
                     if result.get("verification"):
                         if not hasattr(task, 'metadata'):
                             task.metadata = {}
                         task.metadata["verification"] = result["verification"]
+
                 elif result["status"] == "failed":
                     task.error = result.get("error", "Unknown error")
 
-        # Plan completion check
+        # Return appropriate status based on planning actions
+        if planning_action_detected:
+            if shared.get("needs_dynamic_replan"):
+                return "needs_dynamic_replan"  # Goes to PlanReflectorNode
+            elif shared.get("needs_plan_append"):
+                return "needs_plan_append"  # Goes to PlanReflectorNode
+
+        # Regular completion checking
         current_plan = shared["current_plan"]
         if current_plan:
             all_finished = all(
@@ -2446,20 +2737,19 @@ Respond with EXACTLY one of these options - nothing else:"""
                 current_plan.status = "completed"
                 shared["plan_completion_time"] = datetime.now().isoformat()
                 logger.info(f"Plan {current_plan.id} finished")
-                return "plan_completed"  # Goes to completion checker
+                return "plan_completed"
             else:
-                # Still has work to do
                 ready_tasks = [
                     task for task in current_plan.tasks
                     if shared["tasks"][task.id].status == "pending"
                 ]
 
                 if ready_tasks:
-                    return "continue_execution"  # Goes to completion checker
+                    return "continue_execution"
                 else:
-                    return "waiting"  # Goes to completion checker
+                    return "waiting"
 
-        return "execution_complete"  # Fallback
+        return "execution_complete"
 
     def get_execution_statistics(self) -> Dict[str, Any]:
         """Erhalte detaillierte Ausführungsstatistiken"""
@@ -2637,7 +2927,7 @@ confidence: 0.75
 
 
 class PlanReflectorNode(AsyncNodeT):
-    """Adaptive Plan-Reflexion und -Anpassung"""
+    """Unified Adaptive Plan Reflection and Dynamic Adjustment"""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -2647,12 +2937,21 @@ class PlanReflectorNode(AsyncNodeT):
         tasks = shared.get("tasks", {})
         results_store = shared.get("results_store", {})
 
+        # Standard reflection on recently completed tasks
         recently_completed = [
             task for task in (current_plan.tasks if current_plan else [])
             if task.status == "completed" and
                task.completed_at and
-               (datetime.now() - task.completed_at).seconds < 300  # Letzte 5 min
+               (datetime.now() - task.completed_at).seconds < 300  # Last 5 minutes
         ]
+
+        # Dynamic replanning context (triggered by DecisionTasks)
+        needs_dynamic_replan = shared.get("needs_dynamic_replan", False)
+        replan_context = shared.get("replan_context", {})
+
+        # Plan append context (triggered by DecisionTasks)
+        needs_plan_append = shared.get("needs_plan_append", False)
+        append_context = shared.get("append_context", {})
 
         return {
             "current_plan": current_plan,
@@ -2661,31 +2960,178 @@ class PlanReflectorNode(AsyncNodeT):
             "recently_completed": recently_completed,
             "fast_llm_model": shared.get("fast_llm_model"),
             "complex_llm_model": shared.get("complex_llm_model"),
-            "agent_instance": shared.get("agent_instance")
+            "agent_instance": shared.get("agent_instance"),
+            "original_query": shared.get("current_query", ""),
+            # Dynamic planning contexts
+            "needs_dynamic_replan": needs_dynamic_replan,
+            "replan_context": replan_context,
+            "needs_plan_append": needs_plan_append,
+            "append_context": append_context,
+            # Additional context
+            "plan_adaptations": shared.get("plan_adaptations", 0),
+            "execution_performance": shared.get("executor_performance", {})
         }
 
     async def exec_async(self, prep_res):
-        if not prep_res["recently_completed"]:
-            return {"action": "CONTINUE", "reason": "No recent completions to reflect on"}
+        """Unified execution handling all reflection scenarios"""
 
-        # Analysiere kürzlich abgeschlossene Tasks
+        # Priority 1: Handle dynamic replanning (triggered by DecisionTask)
+        if prep_res["needs_dynamic_replan"]:
+            logger.info("Handling dynamic replan request")
+            return await self._handle_dynamic_replan(prep_res)
+
+        # Priority 2: Handle plan append (triggered by DecisionTask)
+        if prep_res["needs_plan_append"]:
+            logger.info("Handling plan append request")
+            return await self._handle_plan_append(prep_res)
+
+        # Priority 3: Standard reflection on completed tasks
+        if prep_res["recently_completed"]:
+            logger.info("Analyzing recently completed tasks")
+            return await self._handle_standard_reflection(prep_res)
+
+        # Priority 4: Check execution performance issues
+        performance = prep_res["execution_performance"]
+        if performance.get("status") == "error" or performance.get("success_rate", 1.0) < 0.3:
+            logger.info("Handling performance issues")
+            return await self._handle_performance_issues(prep_res)
+
+        # Default: Continue normal execution
+        return {
+            "action": "CONTINUE",
+            "reason": "No reflection triggers detected, continuing normal execution"
+        }
+
+    async def _handle_dynamic_replan(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle dynamic replanning triggered by DecisionTask"""
+
+        replan_context = prep_res.get("replan_context", {})
+        current_plan = prep_res["current_plan"]
+
+        # Find the triggering task
+        triggering_task_id = replan_context.get("original_task")
+        triggering_task = prep_res["tasks"].get(triggering_task_id) if triggering_task_id else None
+
+        # Extract learned context from completed tasks
+        completed_tasks = [t for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"]
+        learned_context = self._extract_learned_context_from_tasks(completed_tasks, prep_res["results_store"])
+
+        # Enhanced replan context with all necessary information
+        enhanced_replan_context = {
+            "original_query": prep_res.get("original_query", ""),
+            "new_goal": replan_context.get("new_goal", ""),
+            "failure_reason": replan_context.get("failure_reason", ""),
+            "learned_context": learned_context,
+            "completed_task_ids": [t.id for t in completed_tasks],
+            "triggering_decision": replan_context.get("context", ""),
+            "avoid_approaches": self._extract_failed_approaches_from_context(replan_context),
+            "dynamic_replan": True  # Flag for TaskPlannerNode
+        }
+
+        logger.info(f"Dynamic replan triggered: {replan_context.get('new_goal', 'No goal specified')}")
+
+        return {
+            "action": "DYNAMIC_REPLAN_TRIGGERED",
+            "replan_context": enhanced_replan_context,
+            "reason": f"DecisionTask {triggering_task_id} triggered dynamic replanning",
+            "previous_plan_id": current_plan.id,
+            "preserve_completed": True,
+            "priority": "critical"
+        }
+
+    async def _handle_plan_append(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle plan append operation triggered by DecisionTask"""
+
+        append_context = prep_res.get("append_context", {})
+        current_plan = prep_res["current_plan"]
+
+        # Create append-specific planning context
+        append_planning_context = {
+            "original_query": prep_res.get("original_query", ""),
+            "append_goal": append_context.get("new_goal", ""),
+            "extend_from_task": append_context.get("extend_from", ""),
+            "completed_tasks": [t.id for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"],
+            "current_results": self._summarize_current_results(prep_res),
+            "append_operation": True  # Flag for TaskPlannerNode
+        }
+
+        logger.info(f"Plan append triggered: {append_context.get('new_goal', 'No goal specified')}")
+
+        return {
+            "action": "PLAN_APPEND_TRIGGERED",
+            "append_context": append_planning_context,
+            "reason": f"DecisionTask requested plan extension",
+            "current_plan_id": current_plan.id,
+            "preserve_existing": True,
+            "priority": "high"
+        }
+
+    async def _handle_standard_reflection(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle standard reflection on recently completed tasks"""
+
+        # Analyze recent completions
         reflection_result = await self._analyze_recent_completions(prep_res)
 
-        # Entscheide über nächste Aktionen
+        # Decide on next action using LLM
         action_decision = await self._decide_next_action(reflection_result, prep_res)
 
-        # Führe adaptive Aktionen aus
+        # Execute the decided action
         if action_decision["action"] == "ADAPT":
             adaptation_result = await self._adapt_plan(action_decision, prep_res)
             return adaptation_result
         elif action_decision["action"] == "REPLAN":
-            replan_result = await self._trigger_replanning(action_decision, prep_res)
+            replan_result = await self._trigger_standard_replanning(action_decision, prep_res)
             return replan_result
+        elif action_decision["action"] == "HALT_FAILURE":
+            return {
+                "action": "HALT_FAILURE",
+                "reason": action_decision.get("reasoning", "Critical failure detected"),
+                "halt_details": action_decision,
+                "priority": "critical"
+            }
         else:
             return action_decision
 
+    async def _handle_performance_issues(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle execution performance issues"""
+
+        performance = prep_res["execution_performance"]
+
+        if performance.get("success_rate", 1.0) < 0.3:
+            return {
+                "action": "PERFORMANCE_REPLAN",
+                "reason": f"Low success rate: {performance.get('success_rate', 0.0):.1%}",
+                "performance_context": {
+                    "failed_tasks": performance.get("failed_tasks", 0),
+                    "completed_tasks": performance.get("completed_tasks", 0),
+                    "strategy_used": performance.get("strategy_used", "unknown")
+                },
+                "priority": "high"
+            }
+        else:
+            return {
+                "action": "CONTINUE",
+                "reason": "Performance issues detected but not critical"
+            }
+
+    def _summarize_current_results(self, prep_res: Dict) -> str:
+        """Summarize current results for context"""
+
+        results_store = prep_res["results_store"]
+        current_plan = prep_res["current_plan"]
+
+        summary_items = []
+
+        for task in current_plan.tasks:
+            if prep_res["tasks"][task.id].status == "completed":
+                result = results_store.get(task.id, {})
+                data_preview = str(result.get("data", ""))[:100]
+                summary_items.append(f"{task.id}: {data_preview}...")
+
+        return "; ".join(summary_items) if summary_items else "No results yet"
+
     async def _analyze_recent_completions(self, prep_res) -> Dict[str, Any]:
-        """Analysiere kürzlich abgeschlossene Tasks auf Probleme und Erfolge"""
+        """Analyze recently completed tasks for issues and successes"""
 
         recently_completed = prep_res["recently_completed"]
         results_store = prep_res["results_store"]
@@ -2695,7 +3141,7 @@ class PlanReflectorNode(AsyncNodeT):
             "problematic_tasks": [],
             "verification_issues": [],
             "unexpected_results": [],
-            "missing_information": []
+            "dynamic_decisions": []  # Track DecisionTask outcomes
         }
 
         for task in recently_completed:
@@ -2707,17 +3153,48 @@ class PlanReflectorNode(AsyncNodeT):
                 analysis["problematic_tasks"].append(task_analysis)
             elif task_analysis["status"] == "unexpected":
                 analysis["unexpected_results"].append(task_analysis)
+            elif task_analysis["status"] == "dynamic_decision":
+                analysis["dynamic_decisions"].append(task_analysis)
 
         return analysis
 
     async def _analyze_single_task(self, task: Task, results_store: Dict) -> Dict[str, Any]:
-        """Detaillierte Analyse eines einzelnen Tasks"""
+        """Enhanced single task analysis including DecisionTask dynamics"""
 
         task_result = results_store.get(task.id, {})
         verification = task.metadata.get("verification", {}) if hasattr(task, 'metadata') else {}
 
-        # ToolTask spezielle Analyse
-        if isinstance(task, ToolTask) and task.hypothesis:
+        # Enhanced DecisionTask analysis
+        if isinstance(task, DecisionTask):
+            if hasattr(task, 'metadata') and task.metadata:
+                routing_action = task.metadata.get("routing_action")
+                decision_made = task.metadata.get("decision_made", "")
+
+                if routing_action in ["replan_from_here", "append_plan"]:
+                    return {
+                        "task_id": task.id,
+                        "status": "dynamic_decision",
+                        "action": routing_action,
+                        "decision": decision_made,
+                        "details": task.metadata.get("routing_instruction", {})
+                    }
+                elif decision_made and decision_made in task.routing_map:
+                    return {
+                        "task_id": task.id,
+                        "status": "successful",
+                        "decision": decision_made,
+                        "routing_action": routing_action or "route_to_task"
+                    }
+
+            return {
+                "task_id": task.id,
+                "status": "problematic",
+                "issue": "decision_task_incomplete",
+                "decision": task.metadata.get("decision_made", "") if hasattr(task, 'metadata') else ""
+            }
+
+        # ToolTask analysis (existing logic)
+        elif isinstance(task, ToolTask) and task.hypothesis:
             hypothesis_score = verification.get("hypothesis_score", 0.5)
             criteria_score = verification.get("criteria_score", 0.5)
 
@@ -2751,25 +3228,7 @@ class PlanReflectorNode(AsyncNodeT):
                     "details": verification
                 }
 
-        # DecisionTask Analyse
-        elif isinstance(task, DecisionTask):
-            decision_made = task.metadata.get("decision_made", "") if hasattr(task, 'metadata') else ""
-            if decision_made and decision_made in task.routing_map:
-                return {
-                    "task_id": task.id,
-                    "status": "successful",
-                    "decision": decision_made,
-                    "next_task": task.routing_map[decision_made]
-                }
-            else:
-                return {
-                    "task_id": task.id,
-                    "status": "problematic",
-                    "issue": "invalid_decision",
-                    "decision": decision_made
-                }
-
-        # Standard Task Analyse
+        # Standard Task analysis
         else:
             if task.result and not task.error:
                 return {"task_id": task.id, "status": "successful"}
@@ -2780,6 +3239,126 @@ class PlanReflectorNode(AsyncNodeT):
                     "issue": "execution_error",
                     "error": task.error
                 }
+
+    async def _trigger_standard_replanning(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Trigger standard replanning (not dynamic)"""
+
+        original_query = prep_res.get("original_query", "")
+        learned_context = self._extract_learned_context(prep_res)
+
+        replan_context = {
+            "original_query": original_query,
+            "previous_attempt_failed": True,
+            "learned_context": learned_context,
+            "failure_reason": decision.get("reasoning", ""),
+            "avoid_approaches": self._extract_failed_approaches(prep_res),
+            "standard_replan": True
+        }
+
+        return {
+            "action": "STANDARD_REPLAN_TRIGGERED",
+            "replan_context": replan_context,
+            "reason": decision.get("reasoning", ""),
+            "previous_plan_id": prep_res["current_plan"].id if prep_res["current_plan"] else None
+        }
+
+    # Helper methods for dynamic replanning
+    def _extract_learned_context_from_tasks(self, completed_tasks: List[Task], results_store: Dict) -> str:
+        """Extract learned context from completed tasks for replanning"""
+
+        context_items = []
+
+        for task in completed_tasks:
+            result_data = results_store.get(task.id, {})
+
+            if isinstance(task, ToolTask):
+                if result_data.get("metadata", {}).get("success", False):
+                    context_items.append(f"Tool {task.tool_name}: {str(result_data.get('data', ''))[:150]}...")
+
+            elif isinstance(task, LLMTask):
+                if task.result:
+                    context_items.append(f"Analysis result: {str(task.result)[:100]}...")
+
+            elif isinstance(task, DecisionTask):
+                decision = task.metadata.get("decision_made") if hasattr(task, 'metadata') else None
+                if decision:
+                    context_items.append(f"Decision made: {decision}")
+
+        return "\n".join(context_items) if context_items else "No significant context from previous tasks"
+
+    def _extract_failed_approaches_from_context(self, replan_context: Dict) -> List[str]:
+        """Extract failed approaches to avoid in replanning"""
+
+        failed_approaches = []
+
+        failure_reason = replan_context.get("failure_reason", "")
+        if "search" in failure_reason.lower():
+            failed_approaches.append("initial_search_approach")
+
+        if "tool" in failure_reason.lower():
+            failed_approaches.append("direct_tool_usage")
+
+        # Add context-specific failures
+        context = replan_context.get("context", "")
+        if context:
+            failed_approaches.append(f"approach_described_as: {context[:50]}...")
+
+        return failed_approaches
+
+    async def post_async(self, shared, prep_res, exec_res):
+        """Unified post-processing with complete action spectrum"""
+
+        action = exec_res.get("action", "CONTINUE")
+
+        # Clear trigger flags
+        shared["needs_dynamic_replan"] = False
+        shared["needs_plan_append"] = False
+        shared["replan_context"] = {}
+        shared["append_context"] = {}
+
+        # Handle all possible actions
+        if action == "DYNAMIC_REPLAN_TRIGGERED":
+            shared["replan_context"] = exec_res.get("replan_context", {})
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "PLAN_APPEND_TRIGGERED":
+            shared["append_context"] = exec_res.get("append_context", {})
+            shared["needs_plan_extension"] = True
+            return "needs_plan_append"
+
+        elif action == "STANDARD_REPLAN_TRIGGERED":
+            shared["replan_context"] = exec_res.get("replan_context", {})
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "PERFORMANCE_REPLAN":
+            shared["replan_context"] = {
+                "performance_failure": True,
+                "performance_context": exec_res.get("performance_context", {}),
+                "original_query": shared.get("current_query", "")
+            }
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "ADAPT_COMPLETED":
+            shared["plan_adaptations"] = shared.get("plan_adaptations", 0) + 1
+            shared["last_adaptation"] = datetime.now()
+            return "adapted"
+
+        elif action == "HALT_FAILURE":
+            shared["plan_halted"] = True
+            shared["halt_reason"] = exec_res.get("reason", "Critical failure")
+            shared["halt_details"] = exec_res.get("halt_details", {})
+            return "plan_halted"
+
+        elif action == "CONTINUE":
+            return "continue"
+
+        else:
+            # Unknown action - default to continue
+            logger.warning(f"Unknown reflection action: {action}")
+            return "continue"
 
     async def _decide_next_action(self, reflection_result: Dict, prep_res: Dict) -> Dict[str, Any]:
         """LLM-basierte Entscheidung über nächste Aktionen"""
@@ -2954,30 +3533,6 @@ adaptation_suggestions:
         else:
             return {"input": f"{description} - {reason}"}
 
-    async def _trigger_replanning(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
-        """Triggere komplette Neuplanung"""
-
-        logger.warning(f"Triggering complete replan: {decision.get('reasoning', 'Unknown reason')}")
-
-        # Erstelle neuen Planungskontext mit gelernten Informationen
-        original_query = prep_res.get("current_query", "")
-        learned_context = self._extract_learned_context(prep_res)
-
-        replan_context = {
-            "original_query": original_query,
-            "previous_attempt_failed": True,
-            "learned_context": learned_context,
-            "failure_reason": decision.get("reasoning", ""),
-            "avoid_approaches": self._extract_failed_approaches(prep_res)
-        }
-
-        return {
-            "action": "REPLAN_TRIGGERED",
-            "replan_context": replan_context,
-            "reason": decision.get("reasoning", ""),
-            "previous_plan_id": prep_res["current_plan"].id if prep_res["current_plan"] else None
-        }
-
     def _extract_learned_context(self, prep_res: Dict) -> str:
         """Extrahiere gelernten Kontext aus bisherigen Ergebnissen"""
         results_store = prep_res.get("results_store", {})
@@ -2999,33 +3554,6 @@ adaptation_suggestions:
                 failed_approaches.append(f"Tool {task.tool_name} with args {task.arguments}")
 
         return failed_approaches
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Update shared state basierend auf Reflexions-Ergebnisse"""
-
-        action = exec_res.get("action", "CONTINUE")
-
-        if action == "ADAPT_COMPLETED":
-            # Neue Tasks wurden hinzugefügt
-            shared["plan_adaptations"] = shared.get("plan_adaptations", 0) + 1
-            shared["last_adaptation"] = datetime.now()
-            return "adapted"
-
-        elif action == "REPLAN_TRIGGERED":
-            # Markiere für komplette Neuplanung
-            shared["replan_context"] = exec_res.get("replan_context", {})
-            shared["needs_replanning"] = True
-            return "needs_replan"
-
-        elif action == "HALT_FAILURE":
-            # Plan abbrechen
-            shared["plan_halted"] = True
-            shared["halt_reason"] = exec_res.get("reason", "Critical failure")
-            return "plan_halted"
-
-        else:
-            # Normale Fortsetzung
-            return "continue"
 
 class LLMToolNode(AsyncNodeT):
     """Enhanced LLM tool with automatic tool calling and agent loop integration"""
@@ -3052,7 +3580,7 @@ class LLMToolNode(AsyncNodeT):
             "available_tools": shared.get("available_tools", []),
             "tool_capabilities": shared.get("tool_capabilities", {}),
             "persona_config": shared.get("persona_config"),
-            "base_system_message": self._get_base_system_message(shared),
+            "base_system_message": variable_manager.format_text(agent_instance.amd.get_system_message_with_persona()),
             "recent_interaction": context.get("recent_interaction", ""),
             "session_summary": context.get("session_summary", ""),
             "task_context": context.get("task_context", ""),
@@ -3076,8 +3604,9 @@ class LLMToolNode(AsyncNodeT):
         # Initial user prompt with variable resolution
         initial_prompt = self._build_context_aware_prompt(prep_res)
         conversation_history.append({"role": "user", "content": initial_prompt})
-
+        runs = 0
         while tool_call_count < self.max_tool_calls:
+            runs += 1
             # Get LLM response
             messages = [{"role": "system", "content": system_message}] + conversation_history
 
@@ -3092,6 +3621,10 @@ class LLMToolNode(AsyncNodeT):
                 )
 
                 llm_response = response.choices[0].message.content
+                if not llm_response:
+                    final_response = "I encountered an error while processing your request."
+                    break
+                llm_response = prep_res["variable_manager"].format_text(llm_response)
                 conversation_history.append({"role": "assistant", "content": llm_response})
 
                 # Check for tool calls
@@ -3100,7 +3633,8 @@ class LLMToolNode(AsyncNodeT):
                 if not tool_calls:
                     # No more tool calls, this is the final response
                     final_response = llm_response
-                    break
+                    if not (runs == 1 and '{{' in llm_response):
+                        break
 
                 # Execute tool calls
                 tool_results = await self._execute_tool_calls(tool_calls, prep_res)
@@ -3117,11 +3651,11 @@ class LLMToolNode(AsyncNodeT):
             except Exception as e:
                 logger.error(f"LLM tool execution failed: {e}")
                 final_response = f"I encountered an error while processing: {str(e)}"
+                import traceback
+                print(traceback.format_exc())
                 break
 
         # Apply persona if needed
-        if final_response and prep_res.get("persona_config"):
-            final_response = await self._apply_persona_style(final_response, prep_res)
 
         return {
             "success": True,
@@ -3137,6 +3671,7 @@ class LLMToolNode(AsyncNodeT):
         available_tools = prep_res.get("available_tools", [])
         tool_capabilities = prep_res.get("tool_capabilities", {})
         variable_manager = prep_res.get("variable_manager")
+        context = prep_res.get("context", {})
 
         if available_tools:
             base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
@@ -3191,7 +3726,7 @@ class LLMToolNode(AsyncNodeT):
             if args_str.strip():
                 # Wrap in dict if not already
                 if not args_str.strip().startswith('{'):
-                    args_str = f"{{{args_str}}}"
+                    args_str = "{"+args_str+"}"
                 return ast.literal_eval(args_str)
             return {}
         except:
@@ -3200,10 +3735,44 @@ class LLMToolNode(AsyncNodeT):
             for pair in args_str.split(','):
                 if '=' in pair:
                     key, value = pair.split('=', 1)
-                    key = key.strip().strip('"\'')
-                    value = value.strip().strip('"\'')
+                    key = key.strip().strip("'")
+                    value = value.strip().strip("'")
                     args[key] = value
             return args
+
+    def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
+        """Select optimal model based on task complexity and available resources"""
+        complexity_score = self._estimate_task_complexity(task_description, prep_res)
+        if complexity_score > 0.7:
+            return prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+        else:
+            return prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+
+    def _estimate_task_complexity(self, task_description: str, prep_res: Dict) -> float:
+        """Estimate task complexity based on description, length, and available tools"""
+        # Simple heuristic: length + keyword matching + tool availability
+        description_length_score = min(len(task_description) / 500, 1.0)  # cap at 1.0
+        keywords = ["analyze", "research", "generate", "simulate", "complex", "deep", "strategy"]
+        keyword_score = sum(1 for k in keywords if k in task_description.lower()) / len(keywords)
+        tool_score = min(len(prep_res.get("available_tools", [])) / 10, 1.0)
+
+        # Weighted sum
+        complexity_score = (0.5 * description_length_score) + (0.3 * keyword_score) + (0.2 * tool_score)
+        return round(complexity_score, 2)
+
+    async def _fallback_response(self, prep_res: Dict) -> Dict:
+        """Fallback response if LiteLLM is not available"""
+        logger.warning("LiteLLM not available — using fallback response.")
+        return {
+            "success": False,
+            "final_response": (
+                "I'm unable to process this request fully right now because the LLM interface "
+                "is not available. Please try again later or check system configuration."
+            ),
+            "tool_calls_made": 0,
+            "conversation_history": [],
+            "model_used": None
+        }
 
     async def _execute_tool_calls(self, tool_calls: List[Dict], prep_res: Dict) -> List[Dict]:
         """Execute tool calls via agent"""
@@ -3218,6 +3787,7 @@ class LLMToolNode(AsyncNodeT):
 
             try:
                 # Resolve variables in arguments
+                print(arguments)
                 if variable_manager:
                     resolved_args = {}
                     for key, value in arguments.items():
@@ -3230,7 +3800,7 @@ class LLMToolNode(AsyncNodeT):
 
                 # Execute via agent
                 result = await agent_instance.arun_function(tool_name, **resolved_args)
-
+                variable_manager.set(f"results.{tool_name}.data", result)
                 results.append({
                     "tool_name": tool_name,
                     "arguments": resolved_args,
@@ -3315,7 +3885,10 @@ class LLMToolNode(AsyncNodeT):
         shared["current_response"] = exec_res.get("final_response", "Task completed.")
         shared["tool_calls_made"] = exec_res.get("tool_calls_made", 0)
         shared["llm_tool_conversation"] = exec_res.get("conversation_history", [])
-
+        shared["synthesized_response"] = {"synthesized_response":exec_res.get("final_response", "Task completed."),
+                                          "confidence": (0.7 if exec_res.get("model_used") == prep_res.get("complex_llm_model") else 0.6) if exec_res.get("success", False) else 0,
+                                          "metadata": exec_res.get("metadata", {"model_used": exec_res.get("model_used")}),
+                                          "synthesis_method": "llm_tool"}
         return "llm_tool_complete"
 
 class StateSyncNode(AsyncNodeT):
@@ -3541,7 +4114,8 @@ class TaskManagementFlow(AsyncFlowT):
         # === MAIN FLOW (Linear with controlled cycles) ===
 
         # Strategy -> Planning Phase
-        self.strategy_node - "multi_step_planning" >> self.planner_node
+        self.strategy_node - "fast_simple_planning" >> self.planner_node
+        self.strategy_node - "slow_complex_planning" >> self.planner_node
         self.strategy_node - "research_and_analyze" >> self.planner_node
         self.strategy_node - "creative_generation" >> self.planner_node
         self.strategy_node - "problem_solving" >> self.planner_node
@@ -3563,6 +4137,12 @@ class TaskManagementFlow(AsyncFlowT):
         self.executor_node - "execution_error" >> self.reflector_node
         self.executor_node - "waiting" >> self.completion_checker
         self.executor_node - "execution_complete" >> self.completion_checker  # HINZUGEFÜGT
+
+        # für dynamische Aktionen
+        self.executor_node - "needs_dynamic_replan" >> self.reflector_node
+        self.executor_node - "needs_plan_append" >> self.reflector_node
+
+
         self.executor_node - "default" >> self.completion_checker  # GEÄNDERT von sync_node
 
         # Completion Checker decides next action
@@ -3573,11 +4153,11 @@ class TaskManagementFlow(AsyncFlowT):
         self.completion_checker - "default" >> self.sync_node
 
         # Reflector actions (limited cycles)
-        self.reflector_node - "continue" >> self.completion_checker  # Back to checker
-        self.reflector_node - "adapted" >> self.completion_checker  # Back to checker
-        self.reflector_node - "needs_replan" >> self.planner_node  # Restart planning
-        self.reflector_node - "final_complete" >> self.sync_node
-        self.reflector_node - "plan_halted" >> self.sync_node  # TERMINATE
+        self.reflector_node - "needs_replan" >> self.planner_node
+        self.reflector_node - "needs_plan_append" >> self.planner_node
+        self.reflector_node - "adapted" >> self.completion_checker
+        self.reflector_node - "continue" >> self.completion_checker
+        self.reflector_node - "plan_halted" >> self.sync_node
         self.reflector_node - "default" >> self.sync_node
 
         super().__init__(start=self.strategy_node)
@@ -3698,7 +4278,8 @@ class ResultSynthesizerNode(AsyncNodeT):
         return {
             "aggregated_context": shared.get("aggregated_context", {}),
             "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model")
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance")
         }
 
     async def exec_async(self, prep_res):
@@ -3706,7 +4287,7 @@ class ResultSynthesizerNode(AsyncNodeT):
             return await self._fallback_synthesis(prep_res)
 
         context = prep_res["aggregated_context"]
-
+        persona = (prep_res['agent_instance'].amd.persona.to_system_prompt_addition() if not prep_res['agent_instance'].amd.persona.should_post_process() else '') if prep_res['agent_instance'].amd.persona else None
         prompt = f"""
 Du bist ein Experte für Informationssynthese. Erstelle eine umfassende, hilfreiche Antwort basierend auf den gesammelten Ergebnissen.
 
@@ -3724,6 +4305,8 @@ Du bist ein Experte für Informationssynthese. Erstelle eine umfassende, hilfrei
 
 ## Fehlgeschlagene Versuche
 {self._format_failed_attempts(context.get('failed_attempts', {}))}
+
+{persona}
 
 ## Anweisungen
 1. Gib eine direkte, hilfreiche Antwort auf die ursprüngliche Anfrage
@@ -3885,28 +4468,239 @@ class ResponseQualityNode(AsyncNodeT):
         return {
             "formatted_response": shared.get("formatted_response", {}),
             "original_query": shared.get("current_query", ""),
-            "fast_llm_model": shared.get("fast_llm_model")
+            "format_config": self._get_format_config(shared),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "persona_config": shared.get("persona_config")
         }
+
+    def _get_format_config(self, shared) -> Optional[FormatConfig]:
+        """Extrahiere Format-Konfiguration"""
+        persona = shared.get("persona_config")
+        if persona and hasattr(persona, 'format_config'):
+            return persona.format_config
+        return None
 
     async def exec_async(self, prep_res):
         response_data = prep_res["formatted_response"]
         response_text = response_data.get("formatted_response", "")
         original_query = prep_res["original_query"]
+        format_config = prep_res["format_config"]
 
-        # Heuristische Qualitätsprüfung
-        quality_score = self._heuristic_quality_check(response_text, original_query)
+        # Basis-Qualitätsprüfung
+        base_quality = self._heuristic_quality_check(response_text, original_query)
 
-        # LLM-basierte Qualitätsprüfung falls verfügbar
-        if LITELLM_AVAILABLE and len(response_text) > 50:
-            llm_quality = await self._llm_quality_check(response_text, original_query, prep_res)
-            # Kombiniere beide Scores
-            quality_score = (quality_score + llm_quality) / 2
+        # Format-spezifische Bewertung
+        format_quality = await self._evaluate_format_adherence(response_text, format_config)
+
+        # Längen-spezifische Bewertung
+        length_quality = self._evaluate_length_adherence(response_text, format_config)
+
+        # LLM-basierte Gesamtbewertung
+        llm_quality = 0.5
+        if LITELLM_AVAILABLE and len(response_text) > 500:
+            llm_quality = await self._llm_format_quality_check(
+                response_text, original_query, format_config, prep_res
+            )
+
+        # Gewichtete Gesamtbewertung
+        total_quality = (
+            base_quality * 0.3 +
+            format_quality * 0.3 +
+            length_quality * 0.2 +
+            llm_quality * 0.2
+        )
+
+        quality_details = {
+            "total_score": total_quality,
+            "base_quality": base_quality,
+            "format_adherence": format_quality,
+            "length_adherence": length_quality,
+            "llm_assessment": llm_quality,
+            "format_config_used": format_config is not None
+        }
 
         return {
-            "quality_score": quality_score,
-            "quality_assessment": self._score_to_assessment(quality_score),
-            "suggestions": self._generate_quality_suggestions(quality_score, response_text)
+            "quality_score": total_quality,
+            "quality_assessment": self._score_to_assessment(total_quality),
+            "quality_details": quality_details,
+            "suggestions": self._generate_format_quality_suggestions(
+                total_quality, response_text, format_config, quality_details
+            )
         }
+
+    async def _evaluate_format_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+        """Bewerte Format-Einhaltung"""
+        if not format_config:
+            return 0.8  # Neutral wenn kein Format vorgegeben
+
+        format_type = format_config.response_format
+        score = 0.5
+
+        # Format-spezifische Checks
+        if format_type == ResponseFormat.WITH_TABLES:
+            if '|' in response or 'Table:' in response or '| ' in response:
+                score += 0.4
+
+        elif format_type == ResponseFormat.WITH_BULLET_POINTS:
+            bullet_count = response.count('•') + response.count('-') + response.count('*')
+            if bullet_count >= 2:
+                score += 0.4
+            elif bullet_count >= 1:
+                score += 0.2
+
+        elif format_type == ResponseFormat.WITH_LISTS:
+            list_patterns = ['1.', '2.', '3.', 'a)', 'b)', 'c)']
+            list_score = sum(1 for pattern in list_patterns if pattern in response)
+            score += min(0.4, list_score * 0.1)
+
+        elif format_type == ResponseFormat.MD_TEXT:
+            md_elements = ['#', '**', '*', '`', '```', '[', ']', '(', ')']
+            md_score = sum(1 for element in md_elements if element in response)
+            score += min(0.4, md_score * 0.05)
+
+        elif format_type == ResponseFormat.YAML_TEXT:
+            if response.strip().startswith(('```yaml', '---')) or ': ' in response:
+                score += 0.4
+
+        elif format_type == ResponseFormat.JSON_TEXT:
+            if response.strip().startswith(('{', '[')):
+                try:
+                    json.loads(response)
+                    score += 0.4
+                except:
+                    score += 0.1  # Partial credit for JSON-like structure
+
+        elif format_type == ResponseFormat.TEXT_ONLY:
+            # Penalize if formatting elements are present
+            format_elements = ['#', '*', '|', '```', '1.', '•', '-']
+            format_count = sum(1 for element in format_elements if element in response)
+            score += max(0.1, 0.5 - format_count * 0.05)
+
+        elif format_type == ResponseFormat.PSEUDO_CODE:
+            code_indicators = ['if ', 'for ', 'while ', 'def ', 'return ', 'function', 'BEGIN', 'END']
+            code_score = sum(1 for indicator in code_indicators if indicator in response)
+            score += min(0.4, code_score * 0.1)
+
+        return max(0.0, min(1.0, score))
+
+    def _evaluate_length_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+        """Bewerte Längen-Einhaltung"""
+        if not format_config:
+            return 0.8
+
+        word_count = len(response.split())
+        min_words, max_words = format_config.get_expected_word_range()
+
+        if min_words <= word_count <= max_words:
+            return 1.0
+        elif word_count < min_words:
+            # Zu kurz - sanfte Bestrafung
+            ratio = word_count / min_words
+            return max(0.3, ratio * 0.8)
+        else:  # word_count > max_words
+            # Zu lang - weniger Bestrafung als zu kurz
+            excess_ratio = (word_count - max_words) / max_words
+            return max(0.4, 1.0 - excess_ratio * 0.3)
+
+    async def _llm_format_quality_check(
+        self,
+        response: str,
+        query: str,
+        format_config: Optional[FormatConfig],
+        prep_res: Dict
+    ) -> float:
+        """LLM-basierte Format- und Qualitätsbewertung"""
+        if not format_config:
+            return await self._standard_llm_quality_check(response, query, prep_res)
+
+        format_desc = format_config.get_format_instructions()
+        length_desc = format_config.get_length_instructions()
+
+        prompt = f"""
+Bewerte diese Antwort auf einer Skala von 0.0 bis 1.0 basierend auf Format-Einhaltung und Qualität:
+
+Benutzer-Anfrage: {query}
+
+Antwort: {response}
+
+Erwartetes Format: {format_desc}
+Erwartete Länge: {length_desc}
+
+Bewertungskriterien:
+1. Format-Einhaltung (40%): Entspricht die Antwort dem geforderten Format?
+2. Längen-Angemessenheit (25%): Ist die Länge angemessen?
+3. Inhaltliche Qualität (25%): Beantwortet die Anfrage vollständig?
+4. Lesbarkeit und Struktur (10%): Ist die Antwort gut strukturiert?
+
+Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
+
+        try:
+            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+
+            llm_response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=10
+            )
+
+            score_text = llm_response.choices[0].message.content.strip()
+            return float(score_text)
+
+        except Exception as e:
+            logger.warning(f"LLM format quality check failed: {e}")
+            return 0.6  # Neutral fallback
+
+    def _generate_format_quality_suggestions(
+        self,
+        score: float,
+        response: str,
+        format_config: Optional[FormatConfig],
+        quality_details: Dict
+    ) -> List[str]:
+        """Generiere Format-spezifische Verbesserungsvorschläge"""
+        suggestions = []
+
+        if not format_config:
+            return ["Consider defining a specific response format for better consistency"]
+
+        # Format-spezifische Vorschläge
+        if quality_details["format_adherence"] < 0.6:
+            format_type = format_config.response_format
+
+            if format_type == ResponseFormat.WITH_TABLES:
+                suggestions.append("Add tables using markdown format (| Column | Column |)")
+            elif format_type == ResponseFormat.WITH_BULLET_POINTS:
+                suggestions.append("Use bullet points (•, -, *) to structure information")
+            elif format_type == ResponseFormat.MD_TEXT:
+                suggestions.append("Use markdown formatting (headers, bold, code blocks)")
+            elif format_type == ResponseFormat.YAML_TEXT:
+                suggestions.append("Format response as valid YAML structure")
+            elif format_type == ResponseFormat.JSON_TEXT:
+                suggestions.append("Format response as valid JSON")
+
+        # Längen-spezifische Vorschläge
+        if quality_details["length_adherence"] < 0.6:
+            word_count = len(response.split())
+            min_words, max_words = format_config.get_expected_word_range()
+
+            if word_count < min_words:
+                suggestions.append(f"Response too short ({word_count} words). Aim for {min_words}-{max_words} words")
+            else:
+                suggestions.append(f"Response too long ({word_count} words). Aim for {min_words}-{max_words} words")
+
+        # Qualitäts-spezifische Vorschläge
+        if score < 0.5:
+            suggestions.append("Overall quality needs improvement - consider regenerating")
+        elif score < 0.7:
+            suggestions.append("Good response but could be enhanced with better format adherence")
+
+        return suggestions
+
+    async def _standard_llm_quality_check(self, response: str, query: str, prep_res: Dict) -> float:
+        """Standard LLM-Qualitätsprüfung ohne Format-Fokus"""
+        # Bestehende Implementierung beibehalten
+        return await self._llm_quality_check(response, query, prep_res)
 
     def _heuristic_quality_check(self, response: str, query: str) -> float:
         """Heuristische Qualitätsprüfung"""
@@ -3970,18 +4764,6 @@ Respond with just a number between 0.0 and 1.0:"""
             return "quality_acceptable"
         else:
             return "quality_poor"
-
-    def _generate_quality_suggestions(self, score: float, response: str) -> List[str]:
-        suggestions = []
-
-        if score < 0.5:
-            suggestions.append("Response may need more relevant information")
-        if len(response) < 100:
-            suggestions.append("Response could be more detailed")
-        if score < 0.3:
-            suggestions.append("Consider regenerating with different approach")
-
-        return suggestions
 
     async def post_async(self, shared, prep_res, exec_res):
         shared["quality_assessment"] = exec_res
@@ -4296,13 +5078,13 @@ class VariableManager:
         # Find all {{ }} references
         double_brace_refs = re.findall(r'\{\{\s*([^}]+)\s*\}\}', text)
         for ref in double_brace_refs:
-            references[f"{{{{{ref}}}}}"] = self.get(ref.strip()) is not None
+            references["{{"+ref+"}}"] = self.get(ref.strip()) is not None
 
         # Find all {} references
         single_brace_refs = re.findall(r'\{([^{}\s]+)\}', text)
         for ref in single_brace_refs:
             if '.' not in ref:  # Only simple vars
-                references[f"{{{ref}}}"] = self.get(ref.strip()) is not None
+                references["{"+ref+"}"] = self.get(ref.strip()) is not None
 
         # Find all $ references
         dollar_refs = re.findall(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', text)
@@ -4368,7 +5150,7 @@ class VariableManager:
                 context_parts.append(f"- {scope_name}: {', '.join(sample_keys)}")
 
         context_parts.append("\nSyntax: {{ variable.path }} or {variable} or $variable")
-        context_parts.append("Examples: {{ user.name }}, {{ results.search.data }}, {timestamp}")
+        context_parts.append("Examples: {{ user.name }}, {{ results.search.data }}, {{ system_context.timestamp }}")
 
         return "\n".join(context_parts)
 
@@ -4459,6 +5241,11 @@ class FlowAgent:
 
         logger.info(f"FlowAgent initialized: {amd.name}")
 
+    async def a_run_llm_completion(self, **kwargs) -> str:
+        kwargs["model"] = self.amd.complex_llm_model
+        res = await litellm.acompletion(**kwargs)
+        return res.choices[0].message.content
+
     async def a_run(
         self,
         query: str,
@@ -4471,17 +5258,29 @@ class FlowAgent:
 
         try:
             # Set user context variables
+            timestamp = datetime.now()
             self.variable_manager.register_scope('user', {
                 'id': user_id,
                 'session': session_id,
                 'query': query,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': timestamp.isoformat()
             })
 
             # Update system variables
-            self.variable_manager.set('system.current_session', session_id)
-            self.variable_manager.set('system.current_user', user_id)
-            self.variable_manager.set('system.last_query', query)
+            self.variable_manager.set('system_context.timestamp', {'isoformat':timestamp.isoformat()})
+            self.variable_manager.set('system_context.timestamp.year', timestamp.year)
+            self.variable_manager.set('system_context.timestamp.month', timestamp.month)
+            self.variable_manager.set('system_context.timestamp.week', timestamp.strftime('%W'))
+            self.variable_manager.set('system_context.timestamp.day', timestamp.day)
+            self.variable_manager.set('system_context.timestamp.hour', timestamp.hour)
+            self.variable_manager.set('system_context.timestamp.minute', timestamp.minute)
+            self.variable_manager.set('system_context.timestamp.second', timestamp.second)
+            self.variable_manager.set('system_context.timestamp.date', timestamp.strftime('%Y-%m-%d'))
+            self.variable_manager.set('system_context.timestamp.weekday', timestamp.strftime('%A'))
+            self.variable_manager.set('system_context.timestamp.kalenderwoche', timestamp.strftime('%W'))
+            self.variable_manager.set('system_context.current_session', session_id)
+            self.variable_manager.set('system_context.current_user', user_id)
+            self.variable_manager.set('system_context.last_query', query)
 
             # Initialize with tool awareness
             await self._initialize_context_awareness()
@@ -4541,6 +5340,152 @@ class FlowAgent:
         finally:
             self.shared["system_status"] = "idle"
             self.is_running = False
+
+    def set_response_format(
+        self,
+        response_format: str,
+        text_length: str,
+        custom_instructions: str = "",
+        quality_threshold: float = 0.7
+    ):
+        """Dynamische Format- und Längen-Konfiguration"""
+
+        # Validiere Eingaben
+        try:
+            ResponseFormat(response_format)
+            TextLength(text_length)
+        except ValueError:
+            available_formats = [f.value for f in ResponseFormat]
+            available_lengths = [l.value for l in TextLength]
+            raise ValueError(
+                f"Invalid format or length. "
+                f"Available formats: {available_formats}. "
+                f"Available lengths: {available_lengths}"
+            )
+
+        # Erstelle oder aktualisiere Persona
+        if not self.amd.persona:
+            self.amd.persona = PersonaConfig(name="Assistant")
+
+        # Erstelle Format-Konfiguration
+        format_config = FormatConfig(
+            response_format=ResponseFormat(response_format),
+            text_length=TextLength(text_length),
+            custom_instructions=custom_instructions,
+            quality_threshold=quality_threshold
+        )
+
+        self.amd.persona.format_config = format_config
+
+        # Aktualisiere Personality Traits mit Format-Hinweisen
+        self._update_persona_with_format(response_format, text_length)
+
+        # Update shared state
+        self.shared["persona_config"] = self.amd.persona
+        self.shared["format_config"] = format_config
+
+        logger.info(f"Response format set: {response_format}, length: {text_length}")
+
+    def _update_persona_with_format(self, response_format: str, text_length: str):
+        """Aktualisiere Persona-Traits basierend auf Format"""
+
+        # Format-spezifische Traits
+        format_traits = {
+            "with-tables": ["structured", "data-oriented", "analytical"],
+            "with-bullet-points": ["organized", "clear", "systematic"],
+            "with-lists": ["methodical", "sequential", "thorough"],
+            "md-text": ["technical", "formatted", "detailed"],
+            "yaml-text": ["structured", "machine-readable", "precise"],
+            "json-text": ["technical", "API-focused", "structured"],
+            "text-only": ["conversational", "natural", "flowing"],
+            "pseudo-code": ["logical", "algorithmic", "step-by-step"],
+            "code-structure": ["technical", "systematic", "hierarchical"]
+        }
+
+        # Längen-spezifische Traits
+        length_traits = {
+            "mini-chat": ["concise", "quick", "to-the-point"],
+            "chat-conversation": ["conversational", "friendly", "balanced"],
+            "table-conversation": ["structured", "comparative", "organized"],
+            "detailed-indepth": ["thorough", "comprehensive", "analytical"],
+            "phd-level": ["academic", "scholarly", "authoritative"]
+        }
+
+        # Kombiniere Traits
+        current_traits = set(self.amd.persona.personality_traits)
+
+        # Entferne alte Format-Traits
+        old_format_traits = set()
+        for traits in format_traits.values():
+            old_format_traits.update(traits)
+        for traits in length_traits.values():
+            old_format_traits.update(traits)
+
+        current_traits -= old_format_traits
+
+        # Füge neue Traits hinzu
+        new_traits = format_traits.get(response_format, [])
+        new_traits.extend(length_traits.get(text_length, []))
+
+        current_traits.update(new_traits)
+        self.amd.persona.personality_traits = list(current_traits)
+
+    def get_available_formats(self) -> Dict[str, List[str]]:
+        """Erhalte verfügbare Format- und Längen-Optionen"""
+        return {
+            "formats": [f.value for f in ResponseFormat],
+            "lengths": [l.value for l in TextLength],
+            "format_descriptions": {
+                f.value: FormatConfig(response_format=f).get_format_instructions()
+                for f in ResponseFormat
+            },
+            "length_descriptions": {
+                l.value: FormatConfig(text_length=l).get_length_instructions()
+                for l in TextLength
+            }
+        }
+
+    async def a_run_with_format(
+        self,
+        query: str,
+        response_format: str = "frei-text",
+        text_length: str = "chat-conversation",
+        custom_instructions: str = "",
+        **kwargs
+    ) -> str:
+        """Führe Agent mit spezifischem Format aus"""
+
+        # Temporäre Format-Einstellung
+        original_persona = self.amd.persona
+
+        try:
+            self.set_response_format(response_format, text_length, custom_instructions)
+            response = await self.a_run(query, **kwargs)
+            return response
+        finally:
+            # Restore original persona
+            self.amd.persona = original_persona
+            self.shared["persona_config"] = original_persona
+
+    def get_format_quality_report(self) -> Dict[str, Any]:
+        """Erhalte detaillierten Format-Qualitätsbericht"""
+        quality_assessment = self.shared.get("quality_assessment", {})
+
+        if not quality_assessment:
+            return {"status": "no_assessment", "message": "No recent quality assessment available"}
+
+        quality_details = quality_assessment.get("quality_details", {})
+
+        return {
+            "overall_score": quality_details.get("total_score", 0.0),
+            "format_adherence": quality_details.get("format_adherence", 0.0),
+            "length_adherence": quality_details.get("length_adherence", 0.0),
+            "content_quality": quality_details.get("base_quality", 0.0),
+            "llm_assessment": quality_details.get("llm_assessment", 0.0),
+            "suggestions": quality_assessment.get("suggestions", []),
+            "assessment": quality_assessment.get("quality_assessment", "unknown"),
+            "format_config_active": quality_details.get("format_config_used", False)
+        }
 
     def get_variable_documentation(self) -> str:
         """Get comprehensive variable system documentation"""
@@ -4616,17 +5561,17 @@ class FlowAgent:
             session_managers = {
                 "main_conversation": ChatSession(
                     memory_instance,
-                    space_name=f"Context/{self.amd.name}/{session_id}/conversation",
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.conversation",
                     max_length=max_history
                 ),
                 "task_history": ChatSession(
                     memory_instance,
-                    space_name=f"Context/{self.amd.name}/{session_id}/tasks",
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.tasks",
                     max_length=max_history // 2
                 ),
                 "insights": ChatSession(
                     memory_instance,
-                    space_name=f"Context/{self.amd.name}/{session_id}/insights",
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.insights",
                     max_length=100
                 )
             }
@@ -4677,7 +5622,7 @@ class FlowAgent:
             "analysis_loaded": len(self._tool_capabilities),
             "intelligence_level": "high" if self._tool_capabilities else "basic",
             "context_management": "advanced_session_aware",
-            "session_managers": len(self.shared.get("session_managers", {}))
+            "session_managers": len(self.shared.get("session_managers", {})),
         }
 
         logger.info(f"Advanced context awareness initialized with session management")
@@ -4795,26 +5740,6 @@ class FlowAgent:
 
         logger.info(
             f"Execution complete - Tasks: {completed_tasks} completed, {failed_tasks} failed, {adaptations} adaptations")
-
-    async def _initialize_context_awareness(self):
-        """Initialize system self-awareness"""
-
-        # Ensure tool capabilities are loaded/analyzed
-        for tool_name in self.shared["available_tools"]:
-            if tool_name not in self._tool_capabilities:
-                tool_info = self._tool_registry.get(tool_name, {})
-                description = tool_info.get("description", "No description")
-                await self._analyze_tool_capabilities(tool_name, description)
-
-        # Set system context with capabilities
-        self.shared["system_context"] = {
-            "capabilities_summary": self._build_capabilities_summary(),
-            "tool_count": len(self.shared["available_tools"]),
-            "analysis_loaded": len(self._tool_capabilities),
-            "intelligence_level": "high" if self._tool_capabilities else "basic"
-        }
-
-        logger.info(f"Context awareness initialized: {len(self._tool_capabilities)} tools analyzed")
 
     def _build_capabilities_summary(self) -> str:
         """Build summary of agent capabilities"""
@@ -5036,7 +5961,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         os.makedirs(folder, exist_ok=True)
         return folder + '/tool_capabilities.json'
 
-    async def add_tool(self, tool_func: Callable, name: str = None, description: str = None):
+    async def add_tool(self, tool_func: Callable, name: str = None, description: str = None, is_new=False):
         """Enhanced tool addition with intelligent analysis"""
         if not asyncio.iscoroutinefunction(tool_func):
             @wraps(tool_func)
@@ -5061,7 +5986,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             self.shared["available_tools"].append(tool_name)
 
         # Intelligent tool analysis
-        await self._analyze_tool_capabilities(tool_name, tool_description)
+        if is_new:
+            await self._analyze_tool_capabilities(tool_name, tool_description)
 
         logger.info(f"Tool added with analysis: {tool_name}")
 
@@ -5337,36 +6263,311 @@ tool_complexity: low/medium/high
             return getattr(self.amd.budget_manager, 'total_cost', 0.0)
         return 0.0
 
-    @property
-    def status(self, full=True) -> Dict[str, Any]:
-        """Get comprehensive agent status"""
-        return {
-            "name": self.amd.name,
-            "status": self.shared.get("system_status", "idle"),
-            "is_running": self.is_running,
-            "is_paused": self.is_paused,
-            "total_tasks": len(self.shared.get("tasks", {})),
-            "active_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "running"]),
-            "completed_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "completed"]),
-            "total_cost": self.total_cost,
-            "last_checkpoint": self.last_checkpoint.isoformat() if self.last_checkpoint else None,
-            "conversation_turns": len(self.shared.get("conversation_history", [])),
-            "world_model_size": len(self.shared.get("world_model", {})),
-            "available_tools": len(self.shared.get("available_tools", [])),
-            "servers": {
-                "a2a": self.a2a_server is not None,
-                "mcp": self.mcp_server is not None
-            },
-            "full_state": self.shared if full else None
+    def status(self, pretty_print: bool = False) -> Union[Dict[str, Any], str]:
+        """Get comprehensive agent status with optional pretty printing"""
 
+        # Core status information
+        base_status = {
+            "agent_info": {
+                "name": self.amd.name,
+                "version": "2.0",
+                "type": "FlowAgent"
+            },
+            "runtime_status": {
+                "status": self.shared.get("system_status", "idle"),
+                "is_running": self.is_running,
+                "is_paused": self.is_paused,
+                "uptime_seconds": (datetime.now() - getattr(self, '_start_time', datetime.now())).total_seconds()
+            },
+            "task_execution": {
+                "total_tasks": len(self.shared.get("tasks", {})),
+                "active_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "running"]),
+                "completed_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "completed"]),
+                "failed_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "failed"]),
+                "plan_adaptations": self.shared.get("plan_adaptations", 0)
+            },
+            "conversation": {
+                "turns": len(self.shared.get("conversation_history", [])),
+                "session_id": self.shared.get("session_id", "default"),
+                "current_user": self.shared.get("user_id"),
+                "last_query": self.shared.get("current_query", "")[:100] + "..." if len(
+                    self.shared.get("current_query", "")) > 100 else self.shared.get("current_query", "")
+            },
+            "capabilities": {
+                "available_tools": len(self.shared.get("available_tools", [])),
+                "tool_names": list(self.shared.get("available_tools", [])),
+                "analyzed_tools": len(self._tool_capabilities),
+                "world_model_size": len(self.shared.get("world_model", {})),
+                "intelligence_level": "high" if self._tool_capabilities else "basic"
+            },
+            "memory_context": {
+                "session_initialized": self.shared.get("session_initialized", False),
+                "session_managers": len(self.shared.get("session_managers", {})),
+                "context_system": "advanced_session_aware" if self.shared.get("session_initialized") else "basic",
+                "variable_scopes": len(self.variable_manager.get_scope_info()) if hasattr(self,
+                                                                                          'variable_manager') else 0
+            },
+            "performance": {
+                "total_cost": self.total_cost,
+                "checkpoint_enabled": self.enable_pause_resume,
+                "last_checkpoint": self.last_checkpoint.isoformat() if self.last_checkpoint else None,
+                "max_parallel_tasks": self.max_parallel_tasks
+            },
+            "servers": {
+                "a2a_server": self.a2a_server is not None,
+                "mcp_server": self.mcp_server is not None,
+                "server_count": sum([self.a2a_server is not None, self.mcp_server is not None])
+            },
+            "configuration": {
+                "fast_llm_model": self.amd.fast_llm_model,
+                "complex_llm_model": self.amd.complex_llm_model,
+                "use_fast_response": getattr(self.amd, 'use_fast_response', False),
+                "max_input_tokens": getattr(self.amd, 'max_input_tokens', 8000),
+                "persona_configured": self.amd.persona is not None,
+                "format_config": bool(getattr(self.amd.persona, 'format_config', None)) if self.amd.persona else False
+            }
         }
+
+        # Add detailed execution summary if tasks exist
+        tasks = self.shared.get("tasks", {})
+        if tasks:
+            task_types_used = {}
+            tools_used = []
+            execution_timeline = []
+
+            for task_id, task in tasks.items():
+                # Count task types
+                task_type = getattr(task, 'type', 'unknown')
+                task_types_used[task_type] = task_types_used.get(task_type, 0) + 1
+
+                # Collect tools used
+                if hasattr(task, 'tool_name') and task.tool_name:
+                    tools_used.append(task.tool_name)
+
+                # Timeline info
+                if hasattr(task, 'started_at') and task.started_at:
+                    timeline_entry = {
+                        "task_id": task_id,
+                        "type": task_type,
+                        "started": task.started_at.isoformat(),
+                        "status": getattr(task, 'status', 'unknown')
+                    }
+                    if hasattr(task, 'completed_at') and task.completed_at:
+                        timeline_entry["completed"] = task.completed_at.isoformat()
+                        timeline_entry["duration"] = (task.completed_at - task.started_at).total_seconds()
+                    execution_timeline.append(timeline_entry)
+
+            base_status["task_execution"].update({
+                "task_types_used": task_types_used,
+                "tools_used": list(set(tools_used)),
+                "execution_timeline": execution_timeline[-5:]  # Last 5 tasks
+            })
+
+        # Add context statistics
+        if hasattr(self.task_flow, 'context_manager'):
+            context_manager = self.task_flow.context_manager
+            base_status["memory_context"].update({
+                "compression_threshold": context_manager.compression_threshold,
+                "max_tokens": context_manager.max_tokens,
+                "active_context_sessions": len(getattr(context_manager, 'session_managers', {}))
+            })
+
+        # Add variable system info
+        if hasattr(self, 'variable_manager'):
+            available_vars = self.variable_manager.get_available_variables()
+            scope_info = self.variable_manager.get_scope_info()
+
+            base_status["variable_system"] = {
+                "total_scopes": len(scope_info),
+                "scope_names": list(scope_info.keys()),
+                "total_variables": sum(len(vars) for vars in available_vars.values()),
+                "scope_details": {
+                    scope: {"type": info["type"], "variables": len(available_vars.get(scope, {}))}
+                    for scope, info in scope_info.items()
+                }
+            }
+
+        # Add format quality info if available
+        quality_assessment = self.shared.get("quality_assessment", {})
+        if quality_assessment:
+            quality_details = quality_assessment.get("quality_details", {})
+            base_status["format_quality"] = {
+                "overall_score": quality_details.get("total_score", 0.0),
+                "format_adherence": quality_details.get("format_adherence", 0.0),
+                "length_adherence": quality_details.get("length_adherence", 0.0),
+                "content_quality": quality_details.get("base_quality", 0.0),
+                "assessment": quality_assessment.get("quality_assessment", "unknown"),
+                "has_suggestions": bool(quality_assessment.get("suggestions", []))
+            }
+
+        # Add LLM usage statistics
+        llm_stats = self.shared.get("llm_call_stats", {})
+        if llm_stats:
+            base_status["llm_usage"] = {
+                "total_calls": llm_stats.get("total_calls", 0),
+                "context_compression_rate": llm_stats.get("context_compression_rate", 0.0),
+                "average_context_tokens": llm_stats.get("context_tokens_used", 0) / max(llm_stats.get("total_calls", 1),
+                                                                                        1),
+                "total_tokens_used": llm_stats.get("total_tokens_used", 0)
+            }
+
+        # Add timestamp
+        base_status["timestamp"] = datetime.now().isoformat()
+
+        if not pretty_print:
+            return base_status
+
+        # Pretty print using EnhancedVerboseOutput
+        try:
+            from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+            verbose_output = EnhancedVerboseOutput(verbose=True)
+
+            # Header
+            verbose_output.log_header(f"Agent Status: {base_status['agent_info']['name']}")
+
+            # Runtime Status
+            status_color = {
+                "running": "SUCCESS",
+                "paused": "WARNING",
+                "idle": "INFO",
+                "error": "ERROR"
+            }.get(base_status["runtime_status"]["status"], "INFO")
+
+            getattr(verbose_output, f"print_{status_color.lower()}")(
+                f"Status: {base_status['runtime_status']['status'].upper()}"
+            )
+
+            # Task Execution Summary
+            task_exec = base_status["task_execution"]
+            if task_exec["total_tasks"] > 0:
+                verbose_output.formatter.print_section(
+                    "Task Execution",
+                    f"Total: {task_exec['total_tasks']} | "
+                    f"Completed: {task_exec['completed_tasks']} | "
+                    f"Failed: {task_exec['failed_tasks']} | "
+                    f"Active: {task_exec['active_tasks']}\n"
+                    f"Adaptations: {task_exec['plan_adaptations']}"
+                )
+
+                if task_exec.get("tools_used"):
+                    verbose_output.formatter.print_section(
+                        "Tools Used",
+                        ", ".join(task_exec["tools_used"])
+                    )
+
+            # Capabilities
+            caps = base_status["capabilities"]
+            verbose_output.formatter.print_section(
+                "Capabilities",
+                f"Intelligence Level: {caps['intelligence_level']}\n"
+                f"Available Tools: {caps['available_tools']}\n"
+                f"Analyzed Tools: {caps['analyzed_tools']}\n"
+                f"World Model Size: {caps['world_model_size']}"
+            )
+
+            # Memory & Context
+            memory = base_status["memory_context"]
+            verbose_output.formatter.print_section(
+                "Memory & Context",
+                f"Context System: {memory['context_system']}\n"
+                f"Session Managers: {memory['session_managers']}\n"
+                f"Variable Scopes: {memory['variable_scopes']}\n"
+                f"Session Initialized: {memory['session_initialized']}"
+            )
+
+            # Configuration
+            config = base_status["configuration"]
+            verbose_output.formatter.print_section(
+                "Configuration",
+                f"Fast LLM: {config['fast_llm_model']}\n"
+                f"Complex LLM: {config['complex_llm_model']}\n"
+                f"Max Tokens: {config['max_input_tokens']}\n"
+                f"Persona: {'Configured' if config['persona_configured'] else 'Default'}\n"
+                f"Format Config: {'Active' if config['format_config'] else 'None'}"
+            )
+
+            # Performance
+            perf = base_status["performance"]
+            verbose_output.formatter.print_section(
+                "Performance",
+                f"Total Cost: ${perf['total_cost']:.4f}\n"
+                f"Checkpointing: {'Enabled' if perf['checkpoint_enabled'] else 'Disabled'}\n"
+                f"Max Parallel Tasks: {perf['max_parallel_tasks']}\n"
+                f"Last Checkpoint: {perf['last_checkpoint'] or 'None'}"
+            )
+
+            # Variable System Details
+            if "variable_system" in base_status:
+                var_sys = base_status["variable_system"]
+                scope_details = []
+                for scope, details in var_sys["scope_details"].items():
+                    scope_details.append(f"{scope}: {details['variables']} variables ({details['type']})")
+
+                verbose_output.formatter.print_section(
+                    "Variable System",
+                    f"Total Scopes: {var_sys['total_scopes']}\n"
+                    f"Total Variables: {var_sys['total_variables']}\n" +
+                    "\n".join(scope_details)
+                )
+
+            # Format Quality
+            if "format_quality" in base_status:
+                quality = base_status["format_quality"]
+                verbose_output.formatter.print_section(
+                    "Format Quality",
+                    f"Overall Score: {quality['overall_score']:.2f}\n"
+                    f"Format Adherence: {quality['format_adherence']:.2f}\n"
+                    f"Length Adherence: {quality['length_adherence']:.2f}\n"
+                    f"Content Quality: {quality['content_quality']:.2f}\n"
+                    f"Assessment: {quality['assessment']}"
+                )
+
+            # LLM Usage
+            if "llm_usage" in base_status:
+                llm = base_status["llm_usage"]
+                verbose_output.formatter.print_section(
+                    "LLM Usage Statistics",
+                    f"Total Calls: {llm['total_calls']}\n"
+                    f"Avg Context Tokens: {llm['average_context_tokens']:.1f}\n"
+                    f"Total Tokens: {llm['total_tokens_used']}\n"
+                    f"Compression Rate: {llm['context_compression_rate']:.2%}"
+                )
+
+            # Servers
+            servers = base_status["servers"]
+            if servers["server_count"] > 0:
+                server_status = []
+                if servers["a2a_server"]:
+                    server_status.append("A2A Server: Active")
+                if servers["mcp_server"]:
+                    server_status.append("MCP Server: Active")
+
+                verbose_output.formatter.print_section(
+                    "Servers",
+                    "\n".join(server_status)
+                )
+
+            verbose_output.print_separator()
+            verbose_output.print_info(f"Status generated at: {base_status['timestamp']}")
+
+            return "Status printed above"
+
+        except Exception as e:
+            # Fallback to JSON if pretty print fails
+            import json
+            return json.dumps(base_status, indent=2, default=str)
+
+    @property
+    def tool_registry(self):
+        return self._tool_registry
+
 
 if __name__ == "__main__":
     # Simple test
     async def _agent():
         amd = AgentModelData(
         name="TestAgent",
-        fast_llm_model="groq/meta-llama/llama-guard-4-12b",
+        fast_llm_model="groq/llama-3.3-70b-versatile",
         complex_llm_model="openrouter/qwen/qwen3-coder",
         persona=PersonaConfig(
             name="Isaa",
@@ -5384,10 +6585,12 @@ if __name__ == "__main__":
         print(agent.get_available_variables())
         await agent.add_tool(get_user_name, "get_user_name", "Get the user's name")
         print("online")
-        response = await agent.a_run("Hello. what is my name?")
-        print(agent.get_available_variables())
+        import time
+        t = time.perf_counter()
+        response = await agent.a_run("is 1980 45 years ago?")
+        print(f"Time: {time.perf_counter() - t}")
         print(f"Response: {response}")
-        print(f"Status: {agent.status}")
+        agent.status(pretty_print=True)
 
         while True:
             query = input("Query: ")
@@ -5399,18 +6602,8 @@ if __name__ == "__main__":
                 break
             response = await agent.a_run(query)
             print(f"Response: {response}")
-            print(f"Status: {agent.status}")
 
         await agent.close()
 
     asyncio.run(_agent())
 
-    x = [
-            {'id': 'respond_to_name_query',
-             'type': 'LLMTask',
-             'description': "Generate response to user's name question",
-             'priority': 1,
-             'dependencies': [],
-             'prompt_template': "The user asked: 'What is my name?' Please provide a helpful and polite response.",
-             'llm_config': {'model_preference': 'fast', 'temperature': 0.7}}
-    ]

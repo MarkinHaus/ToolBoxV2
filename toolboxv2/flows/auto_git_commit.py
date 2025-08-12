@@ -5,7 +5,7 @@ import sys
 from typing import Optional
 
 from toolboxv2 import Spinner, remove_styles
-from toolboxv2.mods.isaa.base.Agent.agent import EnhancedAgent
+from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
 
 NAME = "AutoGitCommit"
 
@@ -93,7 +93,7 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
             str_file_changes = await isaa.mas_text_summaries(str_file_changes, ref="file changes with context")
 
         # Create detailed prompt for ISAA with context about changes
-        agent: EnhancedAgent = await isaa.get_agent("GitCommitMessageGenerator")
+        agent: FlowAgent = await isaa.get_agent("GitCommitMessageGenerator")
         agent.amd.system_message = (
             "You are a git commit message generator. Return only the commit message without any other text. "
             "Based on the following file changes, which include a diff with context, "

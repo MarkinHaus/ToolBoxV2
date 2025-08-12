@@ -28,6 +28,8 @@ from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
+from toolboxv2.mods.isaa.base.Agent.builder import AgentConfig, logger
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Style, remove_styles
 
@@ -64,11 +66,19 @@ class WorkspaceIsaasCli:
         self.app = app_instance
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
         self.isaa_tools.stuf = True #
+        self.app = app_instance
+        # New agent system
+        self.agent_builder = None
+        self.workspace_agent: Optional[FlowAgent] = None
+        self.worker_agents: Dict[str, FlowAgent] = {}
+        self.active_agent: Optional[FlowAgent] = None
+
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=print)
         self.active_agent_name = "workspace_supervisor"
         self.session_id = "workspace_session"
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
 
+        # Rest of existing initialization...
         # Dedizierte Completer für Pfade
 
         from toolboxv2 import __init_cwd__
@@ -123,6 +133,8 @@ class WorkspaceIsaasCli:
             "*.pyd",
             ".DS_Store"
         }
+        self.agents_registry: Dict[str, FlowAgent] = {}
+        self.agent_configs: Dict[str, AgentConfig] = {}
 
     def _init_session_stats(self) -> Dict:
         """Initialisiert die Struktur für die Sitzungsstatistiken."""
@@ -892,12 +904,11 @@ class WorkspaceIsaasCli:
         """Create a specialized agent with predefined or custom capabilities"""
         try:
             new_builder = self.isaa_tools.get_agent_builder(agent_name)
-            new_builder.with_adk_code_executor("unsafe_simple")
             if system_prompt:
                 new_builder.with_system_message(system_prompt)
             await self.add_comprehensive_tools_to_agent(new_builder, is_worker=True)
             if model:
-                new_builder.with_model(model)
+                new_builder.with_models(model, model)
             await self.isaa_tools.register_agent(new_builder)
             return f"✅ Specialized agent '{agent_name}' created for {system_prompt[:25]}"
         except Exception as e:
@@ -960,8 +971,8 @@ class WorkspaceIsaasCli:
                         f"\n   {Style.Underlined('System Prompt')}:\n     {Style.GREY(msg.replace('\n', '\n     '))}")
 
                 # Tools
-                if hasattr(agent, 'processed_adk_tools') and agent.processed_adk_tools:
-                    tool_names = [tool.name if hasattr(tool, 'name') else tool.__name__ for tool in agent.processed_adk_tools]
+                if hasattr(agent, '_tool_registry') and agent.tool_registry:
+                    tool_names = [tool.name if hasattr(tool, 'name') else tool.__name__ for tool in agent.tool_registry]
                     output_lines.append(f"\n   {Style.Underlined('Tools')}:")
                     if tool_names:
                         tools_str = ", ".join(tool_names)
@@ -1146,6 +1157,25 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error changing workspace: {str(e)}"
 
+    async def _show_agent_status(self):
+        """Show current agent status"""
+        if not self.active_agent:
+            self.formatter.print_error("No active agent")
+            return
+
+        agent = self.active_agent
+
+        # Get status from agent
+        status_info = agent.status(pretty_print=False)
+
+        # Display key information
+        self.formatter.print_section(f"Agent Status: {agent.amd.name}", "")
+        print(f"🤖 Name: {agent.amd.name}")
+        print(f"🔧 Tools: {len(agent.shared.get('available_tools', []))}")
+        print(f"📊 Status: {status_info['runtime_status']['status']}")
+        print(f"💰 Cost: ${status_info['performance']['total_cost']:.4f}")
+        print(f"🔄 Tasks: {status_info['task_execution']['completed_tasks']} completed")
+
     async def workspace_status_tool(self, include_git: bool = True, max_items_per_type: int = 15):
         """
         Displays a comprehensive and visually clean workspace status directly to the console.
@@ -1304,14 +1334,13 @@ class WorkspaceIsaasCli:
         self.formatter.print_info("online")
 
     async def init(self):
-        """Initialize workspace CLI with progress tracking"""
+        """Initialize workspace CLI with new agent system"""
 
-        # Initialization steps with progress
         steps = [
-            ("Initializing ISAA framework", self.isaa_tools.init_isaa),
-            ("Setting up workspace agent", self.setup_workspace_agent),
+            ("Initializing FlowAgent Builder", self._init_agent_builder),
+            ("Setting up workspace supervisor", self.setup_workspace_agent),
             ("Setting up worker agent", self.create_worker_agent),
-            ("Loading configurations", self.load_configurations),
+            ("Loading workspace configurations", self.load_configurations),
             ("Preparing workspace tools", self.prepare_tools),
         ]
 
@@ -1321,19 +1350,41 @@ class WorkspaceIsaasCli:
                 await step_func()
             else:
                 step_func()
-            await asyncio.sleep(0.2)  # Brief pause for visual feedback
+            await asyncio.sleep(0.1)
 
         self.formatter.print_progress_bar(len(steps), len(steps), "Setup: Complete")
-        print()  # New line after progress
+        print()
 
         await self.show_welcome()
+
+    async def _init_agent_builder(self):
+        """Initialize the FlowAgent builder system"""
+        try:
+            # Create base agent configuration
+            base_config = AgentConfig(
+                name="workspace_system",
+                description="Workspace management and automation system",
+                fast_llm_model=os.getenv("DEFAULTMODEL1", "openrouter/anthropic/claude-3-haiku"),
+                complex_llm_model=os.getenv("DEFAULTMODELST", "openrouter/openai/gpt-4o"),
+                max_parallel_tasks=6,
+                verbose_logging=True
+            )
+
+            # Store base configuration
+            self.agent_configs["base"] = base_config
+
+            logger.info("FlowAgent builder system initialized")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize agent builder: {e}")
+            raise
 
     async def setup_workspace_agent(self):
         """Setup the main workspace supervisor agent"""
         if self.active_agent_name != "workspace_supervisor":
             self.active_agent_name = "workspace_supervisor"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
-        builder.with_system_message(
+        (builder.with_system_message(
             """You are an autonomous multi-agent Supervisor.
 
 # CORE BEHAVIOR
@@ -1388,14 +1439,11 @@ You have full power to:
 Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Complete all objectives through optimal agent orchestration without requesting guidance.
 
 """
-            # # FORMAT RULES
-            # - Always use tools in valid JSON format!
-            # - all other responses must be in JSON format and only contain the JSON object, no additional text or markdown!
-            # - the thinking steps must be in JSON format!
         )
+         .with_checkpointing(enabled=True, checkpoint_dir=str(self.app.data_dir  + "/checkpoints"),interval_seconds=300)
+                              .with_assistant_persona("Workspace Supervisor"))
 
         builder = await self.add_comprehensive_tools_to_agent(builder)
-        builder.enable_adk_state_sync(True)
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
 
@@ -1453,16 +1501,13 @@ Your purpose is to function reliably for extended periods with minimal oversight
         # 3. Configure the builder with a full set of capabilities for a production-ready worker.
         (
             builder
-            .with_model("openrouter/google/gemini-2.5-flash-lite")  # A capable model that supports ADK code execution
+            .with_models("openrouter/google/gemini-2.5-flash-lite")  # A capable model that supports ADK code execution
             .verbose(True)  # A long-running agent needs detailed logs for observability
 
             # --- ADK (Agent Development Kit) Setup for structured work ---
-            .enable_adk_state_sync(True)  # CRITICAL: Syncs WorldModel with ADK session for persistence
-            .with_adk_code_executor("unsafe_simple")  # Use the most secure and powerful code execution method
-
-            # --- A2A (Agent-to-Agent) Setup for collaboration ---
-            # The worker must be a server to accept tasks from the supervisor.
-            # Use a different port to avoid conflicts with other agents.
+            .with_checkpointing(enabled=True,
+                                checkpoint_dir=str(self.app.data_dir + "/checkpoints/" + agent_name))
+            .with_developer_persona(name=f"Worker {agent_name}")
             .enable_a2a_server(host="0.0.0.0", port=5002)
 
             # --- MCP (Model-Context-Protocol) Setup for interoperability ---
@@ -1503,63 +1548,63 @@ Your purpose is to function reliably for extended periods with minimal oversight
     async def add_comprehensive_tools_to_agent(self, builder, is_worker=False):
         """Add comprehensive workspace and agent management tools"""
 
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.replace_in_file_tool,
             name="replace_in_file",
             description="🔁 Replace all occurrences of a string in a specific files."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.read_file_tool,
             name="read_file",
             description="📖 Read the content of a file, optionally by line range (e.g. '1-10')."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.read_multimodal_file,
             name="view_file",
             description="🖼️ View the content of a file, including images and other media."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.write_file_tool,
             name="write_file",
             description="✍️ Write or append content to a file, with optional backup."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.search_in_files_tool,
             name="search_in_files",
             description="🔍 Search for a term in files, with optional surrounding context lines."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.list_directory_tool,
             name="list_directory",
             description="📂 List contents of a directory with filtering, recursion, and hidden file support."
         )
         if not is_worker:
-            builder.with_adk_tool_function(
+            builder.add_tool(
                 self.create_specialized_agent_tool,
                 name="create_specialized_agent",
                 description="🤖 Create a new agent with a specialization like coder, writer, researcher, etc."
             )
-            builder.with_adk_tool_function(
+            builder.add_tool(
                 self.remove_agent_tool,
                 name="remove_agent",
                 description="🗑️ Remove an existing agent (requires confirm=True)."
             )
-            builder.with_adk_tool_function(
+            builder.add_tool(
                 self.list_agents_tool,
                 name="list_agents",
                 description="📋 List all agents in the system, optionally with details and system prompts."
             )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.run_agent_background_tool,
             name="run_agent_background",
             description="⚙️ Run a task with a specific agent in the background (with priority)."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.get_background_tasks_status_tool,
             name="get_background_tasks_status",
             description="🔄 Show all background task statuses with agent, prompt, and runtime info."
         )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.kill_background_task_tool,
             name="kill_background_task",
             description="⛔ Kill or cancel a background task by its ID (optionally force)."
@@ -1570,7 +1615,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         #     name="change_workspace",
         #     description="📁 Change the current workspace directory (create if missing)."
         # )
-        builder.with_adk_tool_function(
+        builder.add_tool(
             self.workspace_status_tool,
             name="workspace_status",
             description="📊 Get current workspace status, active agent, background task count, Git status, and file stats."
@@ -1611,6 +1656,8 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 break
             except Exception as e:
                 self.formatter.print_error(f"Unexpected error in main loop: {e}")
+                import traceback
+                self.formatter.print_error(traceback.format_exc())
                 continue
         await self.cleanup()
 
@@ -1746,8 +1793,8 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 name=self.active_agent_name,
                 text=request,
                 session_id=self.session_id,
+                user_id="cli_user",
                 progress_callback=self.progress_callback,
-                strategy_override="adk_run"
             ))
 
             async def run_task():
@@ -2384,7 +2431,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
 
         if sub_command == "save":
             session_name = args[1] if len(args) > 1 else self.session_id
-            history = agent.message_history.get(self.session_id, [])
+            history = agent.message_history.get(self.session_id, []) # TODO deep fix
             context_file = Path(self.app.data_dir) / f"context_{session_name}.json"
             await self.formatter.process(f"Saving context '{session_name}'", self.save_context(context_file, history))
             self.formatter.print_success(f"Context saved as '{session_name}' ({len(history)} messages)")
@@ -2399,7 +2446,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             context_file = Path(self.app.data_dir) / f"context_{session_name}.json"
             try:
                 history = await self.formatter.process(f"Loading context '{session_name}'", self.load_context(context_file))
-                agent.message_history[self.session_id] = history
+                agent.message_history[self.session_id] = history # TODO deep fix
                 self.formatter.print_success(f"Context '{session_name}' loaded ({len(history)} messages)")
             except FileNotFoundError:
                 self.formatter.print_error(f"Context '{session_name}' not found")
@@ -2429,11 +2476,11 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 return
 
             # --- Step 1: Clear the local LiteLLM message history ---
-            local_message_count = len(agent.message_history.get(self.session_id, []))
-            agent.message_history[self.session_id] = []
+            local_message_count = len(agent.message_history.get(self.session_id, []))  # TODO deep fix
+            agent.message_history[self.session_id] = []  # TODO deep fix
 
             # --- Step 2: Reset the ADK session if configured ---
-            if not agent.adk_runner or not agent.adk_session_service:
+            if not agent.adk_runner or not agent.adk_session_service:  # TODO deep fix
                 self.formatter.print_warning("ADK not configured. Only local message history was cleared.")
                 self.formatter.print_success(f"Local context cleared ({local_message_count} messages removed).")
                 return
@@ -2441,17 +2488,17 @@ Your purpose is to function reliably for extended periods with minimal oversight
             self.formatter.print_info(f"Resetting ADK session '{self.session_id}'...")
 
             try:
-                app_name = agent.adk_runner.app_name
+                app_name = agent.adk_runner.app_name  # TODO deep fix
                 user_id = agent.amd.user_id or "adk_user"
 
                 # To "reset" an ADK session, we effectively re-create it.
                 # This overwrites the existing session on the service with a new, empty one.
                 # We initialize its state from the agent's current World Model.
-                initial_state = agent.world_model.to_dict() if agent.sync_adk_state else {}
+                initial_state = agent.world_model.to_dict() if agent.sync_adk_state else {}  # TODO deep fix
 
                 # This is the same logic used to create a session for the first time.
                 # By calling it on an existing session_id, we achieve a reset.
-                await agent.adk_session_service.create_session(
+                await agent.adk_session_service.create_session(  # TODO deep fix
                     app_name=app_name,
                     user_id=user_id,
                     session_id=self.session_id,

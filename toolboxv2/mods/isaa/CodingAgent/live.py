@@ -1004,10 +1004,6 @@ class VirtualFileSystem:
         return s
 
 
-
-
-
-
 class VirtualEnvContext:
     """Context manager for temporary virtual environment activation"""
 

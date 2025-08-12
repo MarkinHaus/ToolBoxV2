@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 from toolboxv2 import get_app
@@ -12,11 +13,12 @@ class ChatSession:
             max_length = 100
         self.max_length = max_length
         self.history = []
-        try:
-            if not self.mem.load_memory(self.space_name, f'{get_app().appdata}/{space_name}.mem'):
-                self.mem.create_memory(self.space_name)
-        except ValueError:
-            pass
+        if os.path.exists(f'{get_app().appdata}/{space_name}.mem'):
+            self.mem.load_memory(self.space_name, f'{get_app().appdata}/{space_name}.mem')
+        else:
+            self.mem.create_memory(self.space_name)
+            os.makedirs(f'{get_app().appdata}', exist_ok=True)
+            os.makedirs(f'{get_app().appdata}/ChatSession', exist_ok=True)
 
     async def add_message(self, message):
         self.history.append(message)

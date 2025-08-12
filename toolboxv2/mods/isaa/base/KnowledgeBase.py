@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, NamedTuple
-
+import dill
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
@@ -1678,10 +1678,10 @@ class KnowledgeBase:
                 }
             }
             if path is None:
-                return pickle.dumps(data)
+                return dill.dumps(data)
             # Save to disk using pickle
             with open(path, 'wb') as f:
-                pickle.dump(data, f)
+                dill.dump(data, f)
             # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
         except Exception as e:
@@ -1704,9 +1704,9 @@ class KnowledgeBase:
             if isinstance(path, str):
                 # Load data from disk
                 with open(path, 'rb') as f:
-                    data = pickle.load(f)
+                    data = dill.load(f)
             elif isinstance(path, bytes):
-                data = pickle.loads(path)
+                data = dill.loads(path)
             else:
                 raise ValueError("Invalid path type")
 

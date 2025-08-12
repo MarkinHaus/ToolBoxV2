@@ -62,7 +62,8 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
                         spec.loader.exec_module(module)
                     except Exception as e:
                         print("Error loading module ", name)
-                        print(e)
+                        import traceback
+                        traceback.print_exc()
                         continue
 
                     # Füge das Modul der Dictionary hinzu
