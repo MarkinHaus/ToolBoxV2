@@ -12,7 +12,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Generator
 
 import psutil
 from prompt_toolkit import PromptSession
@@ -100,7 +100,7 @@ class WorkspaceIsaasCli:
 
         self.background_tasks = {}
         self.interrupt_count = 0
-        self.default_exclude_dirs = [
+        self.default_exclude_dirs:set[str] = {
             "node_modules",
             "__pycache__",
             ".git",
@@ -122,7 +122,7 @@ class WorkspaceIsaasCli:
             "*.pyo",
             "*.pyd",
             ".DS_Store"
-        ]
+        }
 
     def _init_session_stats(self) -> Dict:
         """Initialisiert die Struktur für die Sitzungsstatistiken."""
@@ -801,67 +801,89 @@ class WorkspaceIsaasCli:
 
     async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
                                   show_hidden: bool = False, exclude_dirs: Optional[List[str]] = None):
-        """List directory contents with advanced filtering, depth, and file type filters."""
-        DEFAULT_FILE_TYPES = [".py", ".js", ".css", ".html", ".json", ".png"]
+        """
+        List directory contents in a clear, visual tree structure.
+        This version is optimized for speed and readability.
+        """
+        DEFAULT_FILE_TYPES = [".py", ".js", ".css", ".html", ".json", ".png", '.yaml', '.toml', '.rs', '.ico', '.md']
         MAX_DEPTH = 3
 
         if exclude_dirs is None:
             exclude_dirs = self.default_exclude_dirs
         else:
-            exclude_dirs.extend(self.default_exclude_dirs)
-            exclude_dirs = list(set(exclude_dirs))  # remove duplicates
+            exclude_dirs = set(exclude_dirs).union(self.default_exclude_dirs)
+
+        if file_types:
+            type_filters = [t.strip().lower() for t in file_types.split(",")]
+        else:
+            type_filters = DEFAULT_FILE_TYPES
 
         try:
-            base_path = self.workspace_path / directory
-            if not base_path.exists():
-                return f"❌ Directory {directory} does not exist"
+            base_path = (self.workspace_path / directory).resolve()
+            if not base_path.is_dir():
+                return f"❌ Directory '{directory}' does not exist or is not a directory"
 
-            files = []
-            dirs = []
+            # The core of the new logic: a recursive generator
+            def _generate_tree(current_path: Path, current_depth: int, prefix: str) -> Generator[str, None, None]:
+                """
 
-            def within_max_depth(path: Path) -> bool:
-                rel_parts = path.relative_to(base_path).parts
-                return len(rel_parts) <= MAX_DEPTH
+                Recursively scans paths and yields formatted tree lines.
+                This avoids building a large data structure in memory.
+                """
+                if current_depth >= (MAX_DEPTH if recursive else 1):
+                    return
 
-            items = base_path.rglob("*") if recursive else base_path.iterdir()
+                try:
+                    # Scan items and sort them so directories and files are grouped alphabetically
+                    items = sorted(os.scandir(current_path), key=lambda item: item.name)
+                except (PermissionError, OSError):
+                    return  # Can't read this directory
 
-            for item in items:
-                if not show_hidden and item.name.startswith('.'):
-                    continue
-                if not within_max_depth(item):
-                    continue
-                if item.is_dir():
-                    if item.name in exclude_dirs:
+                # Separate non-compliant items to process compliant ones correctly
+                compliant_items = []
+                for item in items:
+                    is_hidden = item.name.startswith('.')
+                    if (is_hidden and not show_hidden) or (item.is_dir() and item.name in exclude_dirs):
                         continue
-                    dirs.append(item)
-                elif item.is_file():
-                    files.append(item)
 
-            if file_types:
-                type_filters = [t.strip().lower() for t in file_types.split(",")]
+                    # If it's a file, it must match the type filter
+                    if item.is_file() and Path(item.name).suffix.lower() not in type_filters:
+                        continue
+
+                    compliant_items.append(item)
+
+                # Iterate through the compliant items to draw the tree
+                for i, item in enumerate(compliant_items):
+                    is_last = (i == len(compliant_items) - 1)
+                    connector = "└── " if is_last else "├── "
+
+                    item_path = Path(item.path)
+
+                    if item.is_dir():
+                        yield f"{prefix}{connector}📁 {item.name}"
+                        # The prefix for child items depends on whether this dir is the last in the list
+                        child_prefix = prefix + ("    " if is_last else "│   ")
+                        yield from _generate_tree(item_path, current_depth + 1, child_prefix)
+                    else:  # It's a file
+                        try:
+                            size = item.stat().st_size
+                            size_str = f"{size:,} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
+                            yield f"{prefix}{connector}📄 {item.name} ({size_str})"
+                        except FileNotFoundError:
+                            yield f"{prefix}{connector}📄 {item.name} (file not found)"
+
+            # --- Generate the final output string ---
+            result_lines = list(_generate_tree(base_path, 0, ""))
+            total_items = len(result_lines)
+
+            result = f"📁 Contents of {directory} ({total_items} items shown):\n"
+            if not result_lines:
+                result += "  (No files or directories found matching the criteria)\n"
             else:
-                type_filters = DEFAULT_FILE_TYPES
-
-            files = [f for f in files if f.suffix.lower() in type_filters]
-
-            def format_indent(p: Path):
-                relative = p.relative_to(base_path)
-                parts = relative.parts
-                indent = "  " * (len(parts) - 1)
-                return f"{indent}{'📁' if p.is_dir() else '📄'} {parts[-1]}"
-
-            result = f"📁 Contents of {directory}:\n\n"
-            result += f"Directories ({len(dirs)}):\n"
-            for d in sorted(dirs):
-                result += format_indent(d) + "\n"
-
-            result += f"\nFiles ({len(files)}):\n"
-            for f in sorted(files):
-                size = f.stat().st_size
-                size_str = f"{size:,} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
-                result += format_indent(f) + f" ({size_str})\n"
+                result += "\n".join(result_lines)
 
             return remove_styles(result)
+
         except Exception as e:
             return f"❌ Error listing directory: {str(e)}"
 
@@ -978,9 +1000,9 @@ class WorkspaceIsaasCli:
 
     async def run_agent_background_tool(
         self,
-        agent_name: str,
         task_prompt: str,
-        task_name: Optional[str] = None,
+        task_name: str,
+        agent_name: Optional[str],
         depends_on: Optional[List[str]] = None,
         session_id: Optional[str] = None,
         priority: str = "normal",
@@ -989,21 +1011,22 @@ class WorkspaceIsaasCli:
         Run a task with a specified agent in the background with support for task names and dependencies.
 
         Args:
-            agent_name (str): The name of the agent to run.
             task_prompt (str): The prompt for the task.
-            task_name (str, optional): A unique name for the task. If not provided, a unique ID will be generated.
+            task_name (str):  A unique name for the task. One Word use Camel case -> OneWord
+            agent_name (str, optional): if not provided, default is worker agent
             depends_on (Optional[List[str]], optional): A list of task names that this task depends on.
-            session_id (str, optional): The session ID for the task. If not provided, a new one is generated.
+            session_id (str, optional): The session ID for the task to remember previous context. If not provided, a new one is generated with fresh context.
             priority (str, optional): The priority of the task. Defaults to "normal".
         """
         try:
-            task_id = task_name if task_name else f"bg_task_{uuid.uuid4().hex[:6]}"
+            task_id = task_name
             if task_id in self.background_tasks:
                 return f"❌ Error: Task with name '{task_id}' already exists."
 
             if not session_id:
-                session_id = f"bg_{len(self.background_tasks)}_{agent_name}"
-
+                session_id = f"bg_{len(self.background_tasks)}_{task_name}"
+            agent_name = agent_name or "worker"
+            await self.create_worker_agent(agent_name)
             now = asyncio.get_event_loop().time()
             self._ensure_agent_stats_initialized(agent_name)
 
@@ -1021,7 +1044,7 @@ class WorkspaceIsaasCli:
                     await wait_for_dependencies()
                     self.background_tasks[task_id]['status'] = 'running'
                     res = await self.isaa_tools.run_agent(
-                        agent_name if agent_name in self.isaa_tools.config.get("agents-name-list", []) else "worker",
+                        agent_name,
                         task_prompt,
                         session_id=session_id,
                         progress_callback=self.create_monitoring_callback(task_id),
@@ -1044,7 +1067,7 @@ class WorkspaceIsaasCli:
                     raise
 
             task = asyncio.create_task(
-                comp_helper(), name=f"BGTask-{agent_name}-{session_id}-{str(uuid.uuid4())[:8]}"
+                comp_helper(), name=f"BGTask-{task_name}-{session_id}-{str(uuid.uuid4())[:8]}"
             )
 
             self.background_tasks[task_id] = {
@@ -1066,7 +1089,7 @@ class WorkspaceIsaasCli:
                 'depends_on': depends_on or []
             }
 
-            return f"⧖ Background task named: '{task_id}' started with agent '{agent_name}' (priority: {priority})"
+            return f"⧖ Background task named: '{task_id}' started with session id '{session_id}' (priority: {priority})"
         except Exception as e:
             return f"❌ Error starting background task: {str(e)}"
 
@@ -1357,9 +1380,9 @@ You have full power to:
 - Analysis: Data processing agents + analytical agents
 - Creative: Creative agents + review agents
 
-# FORMAT RULES
-- Always use tools in valid JSON format: {"tool_call": ...} or {"tool_call": [...]}
-- no additional text or markdown
+# Tool Call Rules
+- Always use tools in valid JSON format!
+- use one tool at the time!
 
 # AUTONOMY PRINCIPLE
 Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Complete all objectives through optimal agent orchestration without requesting guidance.
@@ -1376,12 +1399,11 @@ Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Co
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
 
-    async def create_worker_agent(self):
+    async def create_worker_agent(self, agent_name = "worker"):
         """
         Creates and registers the 'worker' agent with a full-stack configuration
         for long-term, autonomous, and collaborative tasks.
         """
-        agent_name = "worker"
 
         # 1. Get a new builder instance for the worker agent.
         # This assumes self.isaa_tools.get_agent_builder returns an EnhancedAgentBuilder.
@@ -1389,44 +1411,42 @@ Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Co
 
         # 2. Define the worker's persona and operational protocol in a new, detailed system prompt.
         builder.with_system_message(
-            """You are a 'Worker' Agent, a specialized, autonomous entity designed for long-term, collaborative projects within a multi-agent system. Your existence is persistent, and your memory, powered by your WorldModel and ADK State, endures across activations.
+            """You are a 'Worker' Agent, a specialized, autonomous entity designed for long-term, collaborative projects within a multi-agent system. Your existence is persistent, and your memory, powered by your World Model, endures across activations.
 
 ## Core Identity
 - **Autonomous Specialist:** You are not a simple tool executor; you are a specialist assigned to complex, long-running objectives. You own your tasks from ingestion to final validation.
-- **Stateful & Persistent:** Your most critical function is to maintain your state. Your WorldModel is your memory. You must assume that you can be stopped and restarted at any time, and you must be able to resume your work exactly where you left off by consulting your state.
-- **Secure Collaborator:** You operate within a secure environment. You receive tasks and report progress primarily through the Agent-to-Agent (A2A) communication protocol. You can execute code safely to accomplish your goals.
+- **Stateful & Persistent:** Your most critical function is to maintain your state. Your World Model is your memory. You must assume that you can be stopped and restarted at any time, and you must be able to resume your work exactly where you left off by consulting your state.
+- **Secure Collaborator:** You operate within a secure environment. You receive tasks and report progress primarily through Agent-to-Agent (A2A) communication. You can execute code safely to accomplish your goals.
 
-## Mandatory Operational Protocol
+## Mandatory Operational Procedure
 
 ### Phase 1: Task Ingestion & State Reconciliation
-- **Receive Task (A2A):** Your primary entry point for work is an instruction received via A2A from a supervisor.
-- **Reconcile with State:** Your FIRST action is ALWAYS to consult your `WorldModel`. Does this new task relate to a goal you were already working on? Are you resuming a task? You must understand your current state before proceeding. Use tools like `workspace_status` to align your internal state with the external environment.
+1.  **Receive Task:** Your primary entry point for work is an instruction received via A2A from a supervisor.
+2.  **Reconcile with State:** Your FIRST action is ALWAYS to consult your World Model. Use your ADK functions to read your current state keys. Does this new task relate to a goal you are already working on? Are you resuming from a previous session? You must understand your current state before proceeding. Use tools like `workspace_status` to align your internal knowledge with the external environment.
 
 ### Phase 2: Strategic Long-Term Planning
-- **Deconstruct the Goal:** Break down the high-level objective into a series of logical, multi-step phases (e.g., Phase A: Data Gathering, Phase B: Code Generation, Phase C: Testing & Validation).
-- **Update State with Plan:** Record this high-level plan in your `WorldModel`.
-    - `world_model.set("current_goal", "Refactor the authentication module.")`
-    - `world_model.set("plan.phases", ["analyze_codebase", "generate_new_services", "write_unit_tests", "validate_integration"])`
-    - `world_model.set("current_phase", "analyze_codebase")`
+1.  **Deconstruct the Goal:** Break down the high-level objective into a series of logical, multi-step phases (e.g., Data Gathering, Code Generation, Testing, Validation). A robust plan is the foundation of your long-term execution.
+2.  **Persist Plan to World Model:** You MUST record this plan in your World Model using the appropriate ADK functions.
+    *   Set a key (e.g., `current_goal`) to store the high-level objective text.
+    *   Set another key (e.g., `plan_phases`) to store the list of phases you just defined.
+    *   Finally, set a key (e.g., `current_phase`) to the first phase of your plan to initialize your work.
 
 ### Phase 3: Stateful, Iterative Execution
-- **Execute One Phase at a Time:** Focus solely on the `current_phase` from your plan.
-- **Use Your Full Capabilities:** Dynamically select the best tools (`search_in_files`, `replace_in_file`, `run_agent_background` for sub-sub-tasks, etc.) and use the secure `code_execution` tool for analysis, generation, or modification.
-- **Update State Religiously:** After every significant action, update your `WorldModel` with the outcome.
-    - `world_model.set("phase.analyze_codebase.status", "complete")`
-    - `world_model.set("phase.analyze_codebase.findings", ["file1.py", "file2.py"])`
-    - `world_model.set("current_phase", "generate_new_services")`
-- **Proactive Reporting (A2A):** After completing a phase or if you encounter a blocker, send a status update back to your supervisor via A2A without being prompted.
+1.  **Focus on the Current Phase:** Read your `current_phase` key from the World Model to determine your immediate task. Focus exclusively on completing this single phase.
+2.  **Execute with Full Capabilities:** Dynamically select the best tools for the current phase, whether it's file manipulation, background sub-tasking, or secure code execution for deep analysis and generation.
+3.  **Meticulously Update State:** This is the most critical step. After every significant action, you must use ADK functions to update your World Model. Record the outcome, store any important findings or generated artifacts under a relevant key, and document the status of the phase.
+4.  **Advance and Report:** Once a phase is complete, update its status key (e.g., `phase_data_gathering_status` = "complete") and then update the `current_phase` key to the next phase in your plan. Proactively send a status update message to your supervisor via A2A to report phase completion or to notify them of any blockers.
 
 ### Phase 4: Final Validation & Completion
-- **Holistic Review:** Once all phases are complete, perform a final validation to ensure the high-level goal has been met.
-- **Final Report (A2A):** Send a final, comprehensive report to the supervisor, including links to artifacts and a summary of the work.
-- **Reset State:** Clear the completed goal from your `WorldModel` and set your status to 'idle', ready for the next task.
-    - `world_model.set("status", "idle")`
-    - `world_model.remove("current_goal")`
+1.  **Holistic Review:** After the final phase is marked complete in your World Model, perform a final validation to ensure the overall `current_goal` has been achieved.
+2.  **Final Report:** Send a comprehensive report to your supervisor via A2A, summarizing the work and providing links or references to any final artifacts. Await confirmation.
+3.  **Reset State:** Upon successful completion, you must clean your state to prepare for the next task. Use ADK functions to remove all keys related to the completed goal (e.g., `current_goal`, `plan_phases`, etc.) and set your primary status key to 'idle'.
 
+# Tool Call Rules
+- Always use tools in valid JSON format!
+- use one tool at the time!
 ---
-Your purpose is to function for days with minimal oversight. Your meticulous state management is the key to your autonomy and reliability. Begin.
+Your purpose is to function reliably for extended periods with minimal oversight. Your meticulous and religious adherence to state management is the key to your autonomy. Begin.
 """
         )
 
@@ -1668,6 +1688,8 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
         start_time = asyncio.get_event_loop().time()
         self._ensure_agent_stats_initialized(agent_name)
 
+        request = await self.isaa_tools.mini_task_completion("fix all typos and grammar errors. only return the fixed text.", request)
+        print(request)
         # Use the official prompt_toolkit function to get the active application instance.
         # This is the correct way to access it after a prompt has finished.
         from prompt_toolkit.widgets import TextArea
@@ -2989,6 +3011,7 @@ Your purpose is to function for days with minimal oversight. Your meticulous sta
                 return
         self._display_session_summary()
         self.formatter.print_info("Shutting down ISAA Workspace Manager...")
+        await self.cleanup()
         exit(0)
 
 

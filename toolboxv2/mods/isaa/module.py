@@ -292,7 +292,7 @@ class Tools(MainTool, FileHandler):
         return await self.agent_chain_executor.a_execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)
 
-    async def create_task_chain(self, prompt: str):
+    async def create_task_chain(self, prompt: str, agent_name:Optional[str]=None):
         if prompt is None:
             return None
         if prompt == "": return None
@@ -305,10 +305,10 @@ class Tools(MainTool, FileHandler):
         prompt += f"\n\nAvailable Agents: {agents_list}"
         prompt += f"\n\nAvailable Tools on 'self' agent: {tools_list_str}"
         prompt += f"\n\nAvailable Chains: {self.list_task()}"
-
-        if 'TaskChainAgent' not in self.config['agents-name-list']:
+        agent_name = agent_name or "TaskChainAgent"
+        if agent_name not in self.config['agents-name-list']:
             task_chain_builder = self.get_agent_builder("code")
-            task_chain_builder.with_agent_name("TaskChainAgent")
+            task_chain_builder.with_agent_name(agent_name)
             tcm = self.controller.rget(TaskChainMode)
             task_chain_builder.with_system_message(tcm.system_msg)  # Use system_msg from LLMMode
             await self.register_agent(task_chain_builder)  # await here
@@ -623,13 +623,13 @@ class Tools(MainTool, FileHandler):
         agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description=f"Run a shell command. in {detect_shell()}")
 
         # Add more tools based on agent 'name' or type
-        if name == "self" or "code" in name.lower() or "pipe" in name.lower() or "worker" in name.lower():  # Example condition
+        if name == "self" or "code" in name.lower() or "pipe" in name.lower():  # Example condition
             async def code_pipeline_tool(task: str, do_continue: bool = False):
                 pipe_agent_name = name  # Use current agent's context for the pipe
                 return await self.run_pipe(pipe_agent_name, task, do_continue=do_continue)
 
             agent_builder.with_adk_tool_function(code_pipeline_tool, name="runCodePipeline",
-                                                 description="Run a multi-step code generation/execution task. allows direct interaction with the ToolBox Framework and its Modules.")
+                                                 description="Run a multi-step code generation/execution task. in an isolated python environment.")
 
         if name == "self" or "task" in name.lower() or "chain" in name.lower() or "supervisor" in name.lower():
             # adding tasks tools create_task_chain run_task get_task load_task save_task remove_task list_task

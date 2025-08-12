@@ -967,7 +967,6 @@ class KnowledgeBase:
             self.existing_hashes = {chunk.content_hash for chunk in self.vdb.chunks}
             self.vdb.rebuild_index()
 
-
             return initial_count - len(self.vdb.chunks)
 
         except Exception as e:

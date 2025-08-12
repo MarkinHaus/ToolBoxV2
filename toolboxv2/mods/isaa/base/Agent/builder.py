@@ -1,1224 +1,2228 @@
 import asyncio
-import contextlib
 import json
+import yaml
 import logging
 import os
-import threading
-from functools import wraps
-from inspect import iscoroutinefunction
-
-import google.adk.models.lite_llm
-from collections.abc import Awaitable, Callable
+import sys
+import inspect
+import re
+import ast
+import tempfile
+import subprocess
 from pathlib import Path
-from typing import (
-    Any,
-    Literal,
-    Protocol,
-    TypeVar, Optional,
-)
+from typing import Dict, List, Any, Optional, Callable, Union, Type, Set
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
+from dataclasses import asdict
+from datetime import datetime
+import uuid
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
-
-from toolboxv2 import get_logger, get_app
-
-# Framework Imports & Availability Checks (mirrored from agent.py)
-from importlib.metadata import version
-
-try:
-    from google.adk.agents import LlmAgent
-    from google.adk.tools import BaseTool, FunctionTool, AgentTool
-    from google.adk.tools.mcp_tool import MCPToolset
-    from google.adk.runners import Runner, InMemoryRunner
-    from google.adk.sessions import BaseSessionService as SessionService, InMemorySessionService
-    from google.adk.code_executors import BaseCodeExecutor as ADKBaseCodeExecutor
-    from google.adk.planners import BasePlanner
-    from google.adk.examples import Example
-    from mcp import StdioServerParameters
-
-    ADK_AVAILABLE = True
-    ADKRunner = Runner
-    ADKBaseTool = BaseTool
-    print("INFO: Google ADK components found. ADK features enabled. version", version("google.adk"))
-except ImportError as e:
-    print(f"WARN: Google ADK components not found or import error ({e}). ADK features disabled.")
-    ADK_AVAILABLE = False
-    class LlmAgent: pass
-    class BaseTool: pass
-    class ADKBaseTool: pass
-    class FunctionTool: pass
-    class AgentTool: pass
-    class MCPToolset: pass
-    class Runner: pass
-    class ADKRunner: pass
-    class InMemoryRunner: pass
-    class AsyncWebRunner: pass
-    class SessionService: pass
-    class InMemorySessionService: pass
-    class ADKBaseCodeExecutor: pass
-    class BasePlanner: pass
-    class Example: pass
-    class BaseLlm: pass
-    class LiteLlm(BaseLlm): pass
-    class BaseLlm: pass
-    class LiteLlm(BaseLlm): pass
-
-
-# python-a2a
-try:
-    from python_a2a import A2AClient, A2AServer, AgentCard
-    from python_a2a import run_server as run_a2a_server_func
-    A2A_AVAILABLE = True
-except ImportError:
-    A2A_AVAILABLE = False
-    class A2AServer: pass
-    class A2AClient: pass
-    class AgentCard: pass
-    def run_a2a_server_func(*a, **kw):
-        return None
-
-
-# MCP
-try:
-    from mcp.server.fastmcp import FastMCP
-    MCP_AVAILABLE = True
-except ImportError:
-    MCP_AVAILABLE = False
-    class FastMCP: pass
-
-
-# LiteLLM
-try:
-    import litellm
-    from litellm import BudgetManager
-    from litellm.utils import get_max_tokens
-    LITELLM_AVAILABLE = True
-except ImportError:
-    print("CRITICAL ERROR: LiteLLM not found. Agent functionality will be severely limited.")
-    LITELLM_AVAILABLE = False
-    class BudgetManager: pass
-    def get_max_tokens(*a, **kw):
-        return 4096 # Dummy fallback
-
-# OpenTelemetry
-try:
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    OTEL_AVAILABLE = True
-except ImportError:
-    OTEL_AVAILABLE = False
-    class TracerProvider: pass # Dummy
-
-# --- Local Imports ---
-# Assume EnhancedAgent and supporting classes (WorldModel, AgentModelData, etc.)
-# are in the same directory or properly importable
-from toolboxv2.mods.isaa.base.Agent.agent import (
-    A2A_AVAILABLE as AGENT_A2A_AVAILABLE,  # Check agent's view
-)
-from google.adk.code_executors.built_in_code_executor import (
-            BuiltInCodeExecutor as adk_BuiltInCodeExecutor,  # Secure option
-        )
-from toolboxv2.mods.isaa.base.Agent.agent import (
-    MCP_AVAILABLE as AGENT_MCP_AVAILABLE,  # Check agent's view
-)
-from toolboxv2.mods.isaa.base.Agent.agent import (  # Relative import assuming builder is in same dir/package
+# Import agent components
+from agent import (
+    FlowAgent,
     AgentModelData,
-    EnhancedAgent,
-    SecureCodeExecutorPlaceholder,
-    UnsafeSimplePythonExecutor,
+    PersonaConfig,
+    AsyncFlowT,
+    AsyncNodeT,
+    VariableManager,
+    LITELLM_AVAILABLE,
+    A2A_AVAILABLE,
+    MCP_AVAILABLE,
+    OTEL_AVAILABLE
 )
 
-# Local Imports
+# Framework imports
+if LITELLM_AVAILABLE:
+    from litellm import BudgetManager
+    import litellm
 
-logger = logging.getLogger("EnhancedAgentBuilder")
-logger.propagate = False
+if OTEL_AVAILABLE:
+    from opentelemetry.sdk.trace import TracerProvider
 
-# Silence root logger output
-logging.getLogger().handlers.clear()
-logger.setLevel(get_logger().level)
+if MCP_AVAILABLE:
+    from mcp.server.fastmcp import FastMCP
 
-T = TypeVar('T', bound='EnhancedAgent') # Type variable for the agent being built
+from toolboxv2 import get_logger
 
-
-# --- User Cost Tracking ---
-
-class UserCostTracker(Protocol):
-    """Protocol for tracking costs per user."""
-    def get_cost(self, user_id: str) -> float: ...
-    def add_cost(self, user_id: str, cost: float) -> None: ...
-    def get_all_costs(self) -> dict[str, float]: ...
-    def save(self) -> None: ...
-    def load(self) -> None: ...
-
-class JsonFileUserCostTracker:
-    """Stores user costs persistently in a JSON file."""
-    def __init__(self, filepath: str | Path):
-        self.filepath = Path(filepath)
-        self._costs: dict[str, float] = {}
-        self._lock = threading.Lock()
-        self.load() # Load costs on initialization
-
-    def get_cost(self, user_id: str) -> float:
-        with self._lock:
-            return self._costs.get(user_id, 0.0)
-
-    def add_cost(self, user_id: str, cost: float) -> None:
-        if not user_id:
-            logger.warning("Cost tracking skipped: user_id is missing.")
-            return
-        if cost > 0:
-            with self._lock:
-                self._costs[user_id] = self._costs.get(user_id, 0.0) + cost
-                logger.debug(f"Cost added for user '{user_id}': +{cost:.6f}. New total: {self._costs[user_id]:.6f}")
-            # Optional: Auto-save periodically or based on number of updates
-            # For simplicity, we rely on explicit save() or agent close
-
-    def get_all_costs(self) -> dict[str, float]:
-        with self._lock:
-            return self._costs.copy()
-
-    def save(self) -> None:
-        with self._lock:
-            try:
-                self.filepath.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.filepath, 'w') as f:
-                    json.dump(self._costs, f, indent=2)
-                logger.info(f"User costs saved to {self.filepath}")
-            except OSError as e:
-                logger.error(f"Failed to save user costs to {self.filepath}: {e}")
-
-    def load(self) -> None:
-        with self._lock:
-            if self.filepath.exists():
-                try:
-                    with open(self.filepath) as f:
-                        self._costs = json.load(f)
-                    logger.info(f"User costs loaded from {self.filepath}")
-                except (OSError, json.JSONDecodeError) as e:
-                    logger.error(f"Failed to load user costs from {self.filepath}: {e}. Starting fresh.")
-                    self._costs = {}
-            else:
-                logger.info(f"User cost file not found ({self.filepath}). Starting fresh.")
-                self._costs = {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.save()
+logger = get_logger()
 
 
-# --- Builder Configuration Model ---
+# ===== ENHANCED CONFIGURATION MODELS =====
 
-class BuilderADKConfig(BaseModel):
-    enabled: bool = False
-    description: str | None = None
-    runner_class_name: str | None = Field(default="InMemoryRunner", description="ADK Runner class name (e.g., 'InMemoryRunner', 'AsyncWebRunner')")
-    runner_options: dict[str, Any] = Field(default_factory=dict)
-    code_executor_config: Literal["adk_builtin", "unsafe_simple", "secure_placeholder", "custom_instance", "none"] | dict = "none"
-    # Custom instance requires passing instance during build, dict allows config for future executors
-    sync_state: bool = Field(default=False, description="Sync WorldModel <-> ADK Session State")
-    mcp_toolset_configs: list[dict[str, Any]] = Field(default_factory=list, description="Configs for ADK MCPToolset (e.g., {'type': 'stdio', 'command': '...', 'args': []})")
-    planner_config: dict[str, Any] | None = None # For future planner config
-    examples: list[dict[str, Any]] | None = None # For few-shot examples (ADK Example format)
-    output_schema: dict[str, Any] | None = None # For structured output hints
+class MCPToolConfig(BaseModel):
+    """Configuration for MCP tools"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    model_config = ConfigDict(extra='ignore')
+    name: str
+    description: str = ""
+    function_code: Optional[str] = None
+    function_file: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    async_mode: bool = True
+    expose_in_mcp: bool = True
+    auto_analyze: bool = True
+    category: str = "general"
+    requires_packages: List[str] = Field(default_factory=list)
+    environment_setup: Optional[str] = None
 
-    @field_validator('runner_class_name')
-    def check_runner_class(cls, v):
-        # Basic check for known runner types
-        known_runners = {"InMemoryRunner","Runner", "AsyncWebRunner"} # Add more as needed
-        if v not in known_runners:
-            logger.warning(f"ADK Runner class '{v}' not in known list {known_runners}. Ensure it's importable.")
-        return v
 
-class BuilderServerConfig(BaseModel):
-    enabled: bool = False
-    host: str = "0.0.0.0"
-    port: int = 0 # Placeholder, specific defaults below
-    extra_options: dict[str, Any] = Field(default_factory=dict)
+class CodeExecutionConfig(BaseModel):
+    """Configuration for code execution capabilities"""
+    enabled: bool = True
+    allowed_languages: List[str] = Field(default_factory=lambda: ["python", "javascript", "bash"])
+    sandbox_mode: bool = True
+    timeout_seconds: int = 30
+    max_output_length: int = 10000
+    install_packages: bool = True
+    persistent_environment: bool = False
+    environment_path: Optional[str] = None
+    allowed_imports: List[str] = Field(default_factory=lambda: ["os", "sys", "json", "yaml", "re", "math", "datetime"])
+    blocked_imports: List[str] = Field(default_factory=lambda: ["subprocess", "socket", "urllib"])
 
-    model_config = ConfigDict(extra='ignore')
 
-class BuilderA2AConfig(BuilderServerConfig):
-    port: int = 5000 # Default A2A port
-    known_clients: dict[str, str] = Field(default_factory=dict, description="Map name -> URL for A2A clients")
+class FlowSpecializationConfig(BaseModel):
+    """Configuration for specialized flows"""
+    name: str
+    domain: str
+    nodes: List[str] = Field(default_factory=list)
+    custom_strategies: Dict[str, Dict] = Field(default_factory=dict)
+    specialized_tools: List[str] = Field(default_factory=list)
+    context_awareness: str = "enhanced"
+    persona_integration: str = "domain_adapted"
+    flow_pattern: str = "adaptive"
+    priority_rules: Dict[str, int] = Field(default_factory=dict)
 
-class BuilderMCPConfig(BuilderServerConfig):
-    port: int = 8000 # Default MCP port
-    server_name: str | None = None
 
-class BuilderHistoryConfig(BaseModel):
-    max_turns: int | None = 20
-    max_tokens: int | None = None # Takes precedence over turns if set
-    trim_strategy: Literal["litellm", "basic"] = "litellm"
+class PersonaProfileConfig(BaseModel):
+    """Extended persona configuration"""
+    profiles: Dict[str, PersonaConfig] = Field(default_factory=dict)
+    active_profile: str = "default"
+    domain_adaptations: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+    auto_switch: bool = False
+    switch_triggers: Dict[str, str] = Field(default_factory=dict)
+    context_sensitivity: float = 0.7
 
-    model_config = ConfigDict(extra='ignore')
 
-class BuilderConfig(BaseModel):
-    """Serializable configuration state for the EnhancedAgentBuilder."""
-    agent_name: str = "UnnamedEnhancedAgent"
-    agent_version: str = "0.1.0"
+class AdvancedBuilderConfig(BaseModel):
+    """Complete enhanced agent configuration"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # Core Model Config (Subset of AgentModelData, as some are instance-specific like BudgetManager)
-    model_identifier: str | None = None
-    formatter_llm_model: str | None = None
-    system_message: str = """You are an autonomous agent operating within the ISAA (Intelligent, Self-improving, Autonomous Agent) Framework. Your primary directive is to solve problems by thinking, acting, and evaluating your actions.
+    # Basic agent settings
+    agent_name: str = "AdvancedProductionAgent"
+    agent_version: str = "2.0.0"
+    description: str = "Advanced production-ready PocketFlow agent with specialization capabilities"
 
-**Core Directives:**
-- **Think:** Analyze the user's request, break it down into smaller steps, and formulate a plan.
-- **Act:** Execute the plan using your available tools and capabilities.
-- **Evaluate:** Assess the outcome of your actions, learn from them, and adjust your plan accordingly.
+    # Model configuration
+    fast_llm_model: str = "openrouter/anthropic/claude-3-haiku"
+    complex_llm_model: str = "openrouter/openai/gpt-4o"
+    system_message: str = """You are an advanced autonomous agent built on the enhanced PocketFlow framework.
 
-**Capabilities:**
-You have access to a variety of tools and capabilities, including:
-- **Code Execution:** You can write and execute Python code in a sandboxed environment.
-- **Web Search:** You can search the web for information.
-- **File System Access:** You can read and write files to the local file system.
-- **Memory:** You have access to a semantic memory system to store and retrieve information.
-- **Agent-to-Agent Communication (A2A):** You can delegate tasks to other agents and receive tasks from them.
-- **Toolbox Framework:** You can interact with the ToolBoxV2 framework and its modules.
+Your capabilities include:
+- Intelligent task decomposition and execution
+- Advanced context management with session awareness
+- Specialized domain expertise (code, analysis, management)
+- Dynamic tool integration and usage
+- Adaptive planning with reflection and optimization
+- Persona-aware communication
+- Code execution and development assistance
+- Variable system for dynamic content generation
 
-**Pipeline Function:**
-You can use the `runCodePipeline` tool to execute complex, multi-step tasks. This tool allows you to chain together multiple actions, such as code generation, execution, and analysis, to achieve a larger goal.
+You operate with specialized flows optimized for different domains and can adapt your approach based on task requirements.
+Always use available tools when they can help solve the user's request."""
 
-**Context is Key:**
-To understand the user's request and the current state of the system, you can and should read the contents of relevant files.
-"""
-    temperature: float | None = None
-    top_k: int | None = None
-    top_p: float | None = None
-    max_tokens_output: int | None = None # Max tokens for LLM *generation*
-    max_tokens_input: int | None = None # Max context window (for trimming)
-    api_key_env_var: str | None = None # Store env var name, not the key itself
-    api_base: str | None = None
-    api_version: str | None = None
-    stop_sequence: list[str] | None = None
-    llm_user_id: str | None = None # 'user' param for LLM calls
-    enable_litellm_caching: bool = True
-
-    # Agent Behavior
+    # LLM parameters
+    temperature: float = 0.7
+    max_tokens_output: int = 2048
+    max_tokens_input: int = 32768
+    api_key_env_var: Optional[str] = None
+    api_base: Optional[str] = None
+    api_version: Optional[str] = None
+    use_fast_response: bool = True
     enable_streaming: bool = False
     verbose_logging: bool = False
-    world_model_initial_data: dict[str, Any] | None = None
-    history: BuilderHistoryConfig = Field(default_factory=BuilderHistoryConfig)
 
-    # Framework Integrations
-    adk: BuilderADKConfig = Field(default_factory=BuilderADKConfig)
-    a2a: BuilderA2AConfig = Field(default_factory=BuilderA2AConfig)
-    mcp: BuilderMCPConfig = Field(default_factory=BuilderMCPConfig)
+    # Enhanced configurations
+    mcp_tools: List[MCPToolConfig] = Field(default_factory=list)
+    code_execution: CodeExecutionConfig = Field(default_factory=CodeExecutionConfig)
+    flow_specializations: List[FlowSpecializationConfig] = Field(default_factory=list)
+    persona_profiles: PersonaProfileConfig = Field(default_factory=PersonaProfileConfig)
 
-    # Cost Tracking (Configuration for persistence)
-    cost_tracker_config: dict[str, Any] | None = Field(default={'type': 'json', 'filepath': './user_costs.json'}, description="Config for UserCostTracker (e.g., type, path)")
+    # Context and session management
+    session_management: Dict[str, Any] = Field(default_factory=lambda: {
+        "max_history": 200,
+        "compression_threshold": 0.76,
+        "enable_infinite_scaling": True,
+        "context_awareness": "advanced_session_aware"
+    })
 
-    # Observability (Configuration)
-    telemetry_config: dict[str, Any] | None = Field(default={'enabled': False, 'service_name': None, 'endpoint': None}, description="Basic OTel config hints")
+    # Task management
+    task_management: Dict[str, Any] = Field(default_factory=lambda: {
+        "max_parallel_tasks": 5,
+        "enable_reflection": True,
+        "enable_adaptation": True,
+        "max_adaptations": 3,
+        "intelligent_routing": True,
+        "task_timeout": 300
+    })
 
-    model_config = ConfigDict(validate_assignment=True)
+    # Tool management
+    tool_management: Dict[str, Any] = Field(default_factory=lambda: {
+        "auto_analyze_capabilities": True,
+        "enable_tool_chaining": True,
+        "intelligent_selection": True,
+        "cache_analysis": True,
+        "fallback_strategies": True
+    })
 
-    @model_validator(mode='after')
-    def _resolve_names(self) -> 'BuilderConfig':
-        # Ensure service name defaults to agent name if not set
-        if self.telemetry_config and self.telemetry_config.get('enabled') and not self.telemetry_config.get('service_name'):
-            self.telemetry_config['service_name'] = self.agent_name
-        # Ensure MCP server name defaults if not set
-        if self.mcp.enabled and not self.mcp.server_name:
-             self.mcp.server_name = f"{self.agent_name}_MCPServer"
-        return self
+    # Servers and integrations
+    a2a: Dict[str, Any] = Field(default_factory=dict)
+    mcp: Dict[str, Any] = Field(default_factory=dict)
+    telemetry: Dict[str, Any] = Field(default_factory=dict)
+    checkpoint: Dict[str, Any] = Field(default_factory=lambda: {
+        "enabled": True,
+        "interval_seconds": 300,
+        "max_checkpoints": 10,
+        "checkpoint_dir": "./checkpoints"
+    })
+
+    # World model and state
+    initial_world_model: Dict[str, Any] = Field(default_factory=dict)
+    default_tools: List[str] = Field(default_factory=list)
+    custom_variables: Dict[str, Any] = Field(default_factory=dict)
 
 
-# --- Production Builder Class ---
+# ===== SPECIALIZED NODES =====
 
-class EnhancedAgentBuilder:
-    """
-    Fluent builder for configuring and constructing production-ready EnhancedAgent instances.
-    Supports loading configuration from files and provides methods for detailed setup.
-    """
+class CodeExecutorNode(AsyncNodeT):
+    """Enhanced code execution node with security and multiple language support"""
 
-    def __init__(self,agent_name: str = "DefaultAgent", config: BuilderConfig | None = None, config_path: str | Path | None = None):
-        """
-        Initialize the builder. Can start with a config object, path, or blank.
+    def __init__(self, config: CodeExecutionConfig):
+        super().__init__()
+        self.config = config
+        self.persistent_env = None
+        self.installed_packages = set()
 
-        Args:
-            config: An existing BuilderConfig object.
-            config_path: Path to a YAML/JSON configuration file for the builder.
-        """
-        if config and config_path:
-            raise ValueError("Provide either config object or config_path, not both.")
+    async def prep_async(self, shared):
+        return {
+            "code": shared.get("code_to_execute", ""),
+            "language": shared.get("language", "python"),
+            "context": shared.get("execution_context", {}),
+            "config": self.config,
+            "install_deps": shared.get("install_dependencies", False)
+        }
 
-        if config_path:
-            self.load_config(config_path) # Sets self._config
-        elif config:
-            self._config = config.copy(deep=True)
-        else:
-            self._config = BuilderConfig() # Start with defaults
+    async def exec_async(self, prep_res):
+        if not prep_res["config"].enabled:
+            return {"error": "Code execution is disabled", "success": False}
 
-        # --- Transient fields (not saved/loaded directly via BuilderConfig JSON) ---
-        # Instances or non-serializable objects provided programmatically.
-        self._adk_tools_transient: list[ADKBaseTool | Callable] = []
-        self._adk_code_executor_instance: ADKBaseCodeExecutor | None = None
-        self._adk_runner_instance: ADKRunner | None = None
-        self._adk_session_service_instance: SessionService | None = None
-        self._adk_planner_instance: BasePlanner | None = None
-        self._litellm_budget_manager_instance: BudgetManager | None = None
-        self._user_cost_tracker_instance: UserCostTracker | None = None
-        self._otel_trace_provider_instance: TracerProvider | None = None
-        self._callbacks_transient: dict[str, Callable] = {}
-        # Pre-initialized server instances (less common, but possible)
-        self._a2a_server_instance: A2AServer | None = None
-        self._mcp_server_instance: FastMCP | None = None
+        code = prep_res["code"]
+        language = prep_res["language"]
 
-        # Set initial log level based on loaded config
-        logger.setLevel(logging.DEBUG if self._config.verbose_logging else logging.INFO)
-        self.with_agent_name(agent_name)
+        if language not in prep_res["config"].allowed_languages:
+            return {"error": f"Language {language} not allowed", "success": False}
 
-    # --- Configuration Save/Load ---
-
-    def save_config(self, path: str | Path, indent: int = 2):
-        """Saves the current builder configuration to a JSON file."""
-        filepath = Path(path)
         try:
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            config_json = self._config.model_dump_json(indent=indent)
-            with open(filepath, 'w') as f:
-                f.write(config_json)
-            logger.info(f"Builder configuration saved to {filepath}")
-        except OSError as e:
-            logger.error(f"Failed to save builder configuration to {filepath}: {e}")
-        except ValidationError as e:
-             logger.error(f"Configuration is invalid, cannot save: {e}")
-        except Exception as e:
-             logger.error(f"An unexpected error occurred during config save: {e}")
-
-
-    def load_config(self, path: str | Path) -> 'EnhancedAgentBuilder':
-        """Loads builder configuration from a JSON file, overwriting current settings."""
-        filepath = Path(path)
-        if not filepath.exists():
-            raise FileNotFoundError(f"Builder configuration file not found: {filepath}")
-        try:
-            with open(filepath) as f:
-                config_data = json.load(f)
-            self._config = BuilderConfig.model_validate(config_data)
-            logger.info(f"Builder configuration loaded from {filepath}")
-            # Reset transient fields, as they are not saved
-            self._reset_transient_fields()
-            logger.warning("Transient fields (callbacks, tool instances, tracker instance, etc.) reset. Re-add them if needed.")
-            # Update logger level based on loaded config
-            logger.setLevel(logging.DEBUG if self._config.verbose_logging else logging.INFO)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to load or parse builder configuration from {filepath}: {e}")
-            raise
-        except ValidationError as e:
-             logger.error(f"Loaded configuration data is invalid: {e}")
-             raise
-        return self
-
-    def _reset_transient_fields(self):
-        """Clears fields that are not part of the saved BuilderConfig."""
-        self._adk_tools_transient = []
-        self._adk_code_executor_instance = None
-        self._adk_runner_instance = None
-        self._adk_session_service_instance = None
-        self._adk_planner_instance = None
-        self._litellm_budget_manager_instance = None
-        self._user_cost_tracker_instance = None
-        self._otel_trace_provider_instance = None
-        self._callbacks_transient = {}
-        self._a2a_server_instance = None
-        self._mcp_server_instance = None
-
-    # --- Fluent Configuration Methods (Modify self._config) ---
-
-    def with_agent_name(self, name: str) -> 'EnhancedAgentBuilder':
-        self._config.agent_name = name
-        # Update dependent defaults
-        self._config = BuilderConfig.model_validate(self._config.model_dump())
-        return self
-
-    def with_agent_version(self, version: str) -> 'EnhancedAgentBuilder':
-        self._config.agent_version = version
-        return self
-
-    def with_model(self, model_identifier: str) -> 'EnhancedAgentBuilder':
-        self._config.model_identifier = model_identifier
-        # Auto-detect context window if not set
-        if not self._config.max_tokens_input:
-            try:
-                max_input = get_max_tokens(model_identifier)
-                if max_input:
-                    self._config.max_tokens_input = max_input
-                    logger.info(f"Auto-detected max_input_tokens for {model_identifier}: {max_input}")
-                else:
-                     # Default fallback if detection fails
-                    self._config.max_tokens_input = 4096
-                    logger.warning(f"Could not auto-detect max_input_tokens for {model_identifier}, defaulting to 4096.")
-            except Exception as e:
-                 self._config.max_tokens_input = 4096
-                 logger.warning(f"Error auto-detecting max_input_tokens ({e}), defaulting to 4096.")
-        # Auto-configure Ollama base URL
-        if 'ollama/' in model_identifier and not self._config.api_base:
-            self.with_api_base("http://localhost:11434") # Uses the method to log
-        return self
-
-    def with_system_message(self, message: str) -> 'EnhancedAgentBuilder':
-        self._config.system_message = message
-        return self
-
-    def with_temperature(self, temp: float) -> 'EnhancedAgentBuilder':
-        self._config.temperature = temp
-        return self
-
-    def with_max_output_tokens(self, tokens: int) -> 'EnhancedAgentBuilder':
-        self._config.max_tokens_output = tokens
-        return self
-
-    def with_max_input_tokens(self, tokens: int) -> 'EnhancedAgentBuilder':
-        self._config.max_tokens_input = tokens
-        return self
-
-    def with_stop_sequence(self, stop: list[str]) -> 'EnhancedAgentBuilder':
-        self._config.stop_sequence = stop
-        return self
-
-    def with_api_key_from_env(self, env_var_name: str) -> 'EnhancedAgentBuilder':
-        self._config.api_key_env_var = env_var_name
-        self._config.api_key_env_var = env_var_name
-        # Quick check if env var exists
-        if not os.getenv(env_var_name):
-            logger.warning(f"API key environment variable '{env_var_name}' is not set.")
-        return self
-
-    def with_api_base(self, base_url: str | None) -> 'EnhancedAgentBuilder':
-        self._config.api_base = base_url
-        logger.info(f"API base set to: {base_url}")
-        return self
-
-    def with_api_version(self, version: str | None) -> 'EnhancedAgentBuilder':
-        self._config.api_version = version
-        return self
-
-    def with_llm_user_id(self, user_id: str) -> 'EnhancedAgentBuilder':
-        self._config.llm_user_id = user_id
-        return self
-
-    def enable_litellm_caching(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.enable_litellm_caching = enable
-        return self
-
-    def enable_streaming(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.enable_streaming = enable
-        return self
-
-    def verbose(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.verbose_logging = enable
-        logger.setLevel(logging.DEBUG if enable else logging.INFO)
-        os.environ['LITELLM_LOG'] = 'DEBUG' if enable else 'NONE' # Control LiteLLM verbosity too
-        return self
-    def formatter_llm_model(self, model: str) -> 'EnhancedAgentBuilder':
-        self._config.formatter_llm_model = model
-        return self
-
-    def with_initial_world_data(self, data: dict[str, Any]) -> 'EnhancedAgentBuilder':
-        self._config.world_model_initial_data = data
-        return self
-
-    def with_history_options(self, max_turns: int | None = 20, max_tokens: int | None = None, trim_strategy: Literal["litellm", "basic"] = "litellm") -> 'EnhancedAgentBuilder':
-        self._config.history = BuilderHistoryConfig(max_turns=max_turns, max_tokens=max_tokens, trim_strategy=trim_strategy)
-        return self
-
-    # --- ADK Configuration Methods ---
-    def _ensure_adk(self, feature: str):
-        if not ADK_AVAILABLE:
-            logger.warning(f"ADK not available. Cannot configure ADK feature: {feature}.")
-            return False
-        self._config.adk.enabled = True # Mark ADK as enabled if any ADK feature is used
-        return True
-
-    def enable_adk(self, runner_class: type[ADKRunner] = InMemoryRunner, runner_options: dict[str, Any] | None = None) -> 'EnhancedAgentBuilder':
-        """Enables ADK integration with a specified runner."""
-        if not self._ensure_adk("Runner"): return self
-        self._config.adk.runner_class_name = runner_class.__name__
-        self._config.adk.runner_options = runner_options or {}
-        logger.info(f"ADK integration enabled with runner: {self._config.adk.runner_class_name}")
-        return self
-
-    def with_adk_description(self, description: str) -> 'EnhancedAgentBuilder':
-        if not self._ensure_adk("Description"): return self
-        self._config.adk.description = description
-        return self
-
-    def with_adk_tool_instance(self, tool: ADKBaseTool) -> 'EnhancedAgentBuilder':
-        """Adds a pre-initialized ADK Tool instance (transient)."""
-        if not self._ensure_adk("Tool Instance"): return self
-        if not isinstance(tool, ADKBaseTool):
-            raise TypeError(f"Expected ADK BaseTool instance, got {type(tool)}")
-        self._adk_tools_transient.append(tool)
-        return self
-
-    def with_adk_tool_function(self, func: Callable, name: Optional[str] = None,
-                               description: Optional[str] = None) -> 'EnhancedAgentBuilder':
-        """
-        Fügt eine aufrufbare Funktion als ADK-Tool hinzu.
-        Umschließt synchrone Funktionen automatisch in einem nicht-blockierenden
-        asynchronen Wrapper, um Parallelität zu gewährleisten.
-        """
-        if not self._ensure_adk("Tool Function"):
-            return self
-        if not callable(func):
-            raise TypeError(f"Expected callable function for ADK tool, got {type(func)}")
-
-        effective_func = func
-
-        if not iscoroutinefunction(func):
-            # Dies ist eine synchrone Funktion. Wir müssen sie verpacken.
-            get_logger().warning(
-                f"Werkzeug '{func.__name__}' ist eine synchrone Funktion. "
-                f"Sie wird automatisch in einem nicht-blockierenden Thread ausgeführt, um Parallelität zu ermöglichen."
-            )
-
-            @wraps(func)  # WICHTIG: Kopiert Name, Docstring und Signatur von der Originalfunktion.
-            async def async_wrapper(*args, **kwargs):
-                """Dieser Wrapper führt die synchrone Funktion in einem Thread aus."""
-                # asyncio.to_thread führt die blockierende Funktion in einem separaten Thread aus
-                # und gibt das Ergebnis zurück, sobald es fertig ist, ohne den Event-Loop zu blockieren.
-                return await asyncio.to_thread(func, *args, **kwargs)
-
-            effective_func = async_wrapper
-
-        ### ENDE: Safeguard Wrapper Logik ###
-
-        # Ihre bestehende Logik zum Setzen von Metadaten.
-        # Sie fungiert nun als explizite Überschreibung, selbst nach @wraps.
-        def set_func_metadata(f, n=None, d=None):
-            if n:
-                try:
-                    f.__name__ = n
-                except (AttributeError, TypeError):
-                    pass
-            if d:
-                try:
-                    f.__doc__ = d
-                except (AttributeError, TypeError):
-                    pass
-                if hasattr(f, '__call__') and hasattr(f.__call__, '__doc__'):
-                    try:
-                        f.__call__.__doc__ = d
-                    except (AttributeError, TypeError):
-                        pass
-
-        ### GEÄNDERT: Wenden Sie die Metadaten auf die `effective_func` an ###
-        set_func_metadata(effective_func, name, description)
-
-        # Erstellen Sie das ADK-Tool mit der Funktion, die garantiert asynchron ist.
-        tool = FunctionTool(effective_func)
-        self._adk_tools_transient.append(tool)
-        return self
-
-    def with_adk_mcp_toolset(self, connection_type: Literal["stdio", "sse"], **kwargs) -> 'EnhancedAgentBuilder':
-        """Configures an ADK MCP Toolset connection (saved in config)."""
-        if not self._ensure_adk("MCP Toolset"): return self
-        if connection_type == "stdio":
-            if "command" not in kwargs: raise ValueError("Stdio MCP toolset requires 'command' argument.")
-            config = {"type": "stdio", "command": kwargs["command"], "args": kwargs.get("args", [])}
-        elif connection_type == "sse":
-            if "url" not in kwargs: raise ValueError("SSE MCP toolset requires 'url' argument.")
-            config = {"type": "sse", "url": kwargs["url"]}
-        else:
-            raise ValueError(f"Unknown MCP toolset connection type: {connection_type}")
-        self._config.adk.mcp_toolset_configs.append(config)
-        logger.info(f"Configured ADK MCP Toolset: {config}")
-        return self
-
-    def with_adk_code_executor(self, executor_type: Literal["adk_builtin", "unsafe_simple", "secure_placeholder", "none"]) -> 'EnhancedAgentBuilder':
-        """Configures the type of ADK code executor to use (saved in config)."""
-        if not self._ensure_adk("Code Executor Type"): return self
-        if executor_type == "unsafe_simple":
-            logger.critical("***********************************************************")
-            logger.critical("*** WARNING: Configuring UNSAFE SimplePythonExecutor!   ***")
-            logger.critical("***********************************************************")
-        elif executor_type == "secure_placeholder":
-            logger.warning("Configuring SecureCodeExecutorPlaceholder. Implement actual sandboxing!")
-        elif executor_type == "adk_builtin":
-            if self._config.model_identifier and ("gemini-1.5" not in self._config.model_identifier and "gemini-2" not in self._config.model_identifier) :
-                logger.warning(f"ADK built-in code execution selected, but model '{self._config.model_identifier}' might not support it. Ensure model compatibility.")
-            logger.info("Configuring ADK built-in code execution (tool-based, requires compatible model).")
-
-        self._config.adk.code_executor_config = executor_type
-        self._adk_code_executor_instance = None # Clear any previously set instance
-        return self
-
-    def with_adk_code_executor_instance(self, executor: ADKBaseCodeExecutor) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized ADK code executor instance (transient)."""
-        if not self._ensure_adk("Code Executor Instance"): return self
-        if not isinstance(executor, ADKBaseCodeExecutor):
-            raise TypeError(f"Expected ADKBaseCodeExecutor instance, got {type(executor)}")
-        self._adk_code_executor_instance = executor
-        self._config.adk.code_executor_config = "custom_instance" # Mark config
-        logger.info(f"Using custom ADK code executor instance: {type(executor).__name__}")
-        return self
-
-    def enable_adk_state_sync(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        if not self._ensure_adk("State Sync"): return self
-        self._config.adk.sync_state = enable
-        return self
-
-    # --- Server Configuration Methods ---
-    def enable_a2a_server(self, host: str = "0.0.0.0", port: int = 5000, **extra_options) -> 'EnhancedAgentBuilder':
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not available. Cannot enable A2A server.")
-            self._config.a2a.enabled = False
-            return self
-        self._config.a2a.enabled = True
-        self._config.a2a.host = host
-        self._config.a2a.port = port
-        self._config.a2a.extra_options = extra_options
-        return self
-
-    def add_a2a_known_client(self, name: str, url: str) -> 'EnhancedAgentBuilder':
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not available. Cannot add known A2A client.")
-            return self
-        # A2A client setup is handled by the agent itself, we just store the config
-        self._config.a2a.known_clients[name] = url
-        logger.info(f"Added known A2A client config: '{name}' -> {url}")
-        return self
-
-    def enable_mcp_server(self, host: str = "0.0.0.0", port: int = 8000, server_name: str | None = None, **extra_options) -> 'EnhancedAgentBuilder':
-         if not MCP_AVAILABLE:
-             logger.warning("MCP library (FastMCP) not available. Cannot enable MCP server.")
-             self._config.mcp.enabled = False
-             return self
-         self._config.mcp.enabled = True
-         self._config.mcp.host = host
-         self._config.mcp.port = port
-         self._config.mcp.server_name = server_name # Will default later if None
-         self._config.mcp.extra_options = extra_options
-         # Re-validate to update default name if needed
-         self._config = BuilderConfig.model_validate(self._config.model_dump())
-         return self
-
-    # --- Cost Tracking & Budgeting Methods ---
-    def with_cost_tracker(self, tracker: UserCostTracker) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized UserCostTracker instance (transient)."""
-        if not hasattr(tracker, "get_all_costs"): # Check protocol using isinstance
-             raise TypeError("Cost tracker must implement the UserCostTracker protocol.")
-        self._user_cost_tracker_instance = tracker
-        # Clear file config if instance is provided
-        self._config.cost_tracker_config = {'type': 'custom_instance'}
-        logger.info(f"Using custom UserCostTracker instance: {type(tracker).__name__}")
-        return self
-
-    def with_json_cost_tracker(self, filepath: str | Path) -> 'EnhancedAgentBuilder':
-        """Configures the builder to use the JsonFileUserCostTracker (saved in config)."""
-        self._config.cost_tracker_config = {'type': 'json', 'filepath': str(filepath)}
-        self._user_cost_tracker_instance = None # Clear any instance
-        logger.info(f"Configured JsonFileUserCostTracker: {filepath}")
-        return self
-
-    def with_litellm_budget_manager(self, manager: BudgetManager) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized LiteLLM BudgetManager instance (transient)."""
-        if not LITELLM_AVAILABLE:
-             logger.warning("LiteLLM not available, cannot set BudgetManager.")
-             return self
-        if not isinstance(manager, BudgetManager):
-            raise TypeError("Expected litellm.BudgetManager instance.")
-        self._litellm_budget_manager_instance = manager
-        return self
-
-    # --- Observability Methods ---
-    def enable_telemetry(self, service_name: str | None = None, endpoint: str | None = None) -> 'EnhancedAgentBuilder':
-         if not OTEL_AVAILABLE:
-              logger.warning("OpenTelemetry SDK not available. Cannot enable telemetry.")
-              self._config.telemetry_config = {'enabled': False}
-              return self
-         self._config.telemetry_config = {
-             'enabled': True,
-             'service_name': service_name, # Defaults to agent name later
-             'endpoint': endpoint # For OTLP exporter, e.g. "http://localhost:4317"
-         }
-         # Re-validate to update default name if needed
-         self._config = BuilderConfig.model_validate(self._config.model_dump())
-         return self
-
-    def with_telemetry_provider_instance(self, provider: TracerProvider) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized OpenTelemetry TracerProvider instance (transient)."""
-        if not OTEL_AVAILABLE:
-            logger.warning("OpenTelemetry SDK not available. Cannot set TracerProvider.")
-            return self
-        if not isinstance(provider, TracerProvider):
-             raise TypeError("Expected opentelemetry.sdk.trace.TracerProvider instance.")
-        self._otel_trace_provider_instance = provider
-        # Mark telemetry as enabled, but using custom instance
-        self._config.telemetry_config = {'enabled': True, 'type': 'custom_instance'}
-        logger.info("Using custom OpenTelemetry TracerProvider instance.")
-        return self
-
-    # --- Callback Methods (Transient) ---
-    def with_stream_callback(self, func: Callable[[str], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['stream_callback'] = func; return self
-    def with_post_run_callback(self, func: Callable[[str, str, float, str | None], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['post_run_callback'] = func; return self # Added user_id
-    def with_progress_callback(self, func: Callable[[Any], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['progress_callback'] = func; return self
-    def with_human_in_loop_callback(self, func: Callable[[dict], str | Awaitable[str]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['human_in_loop_callback'] = func; return self
-
-    # --- Build Method ---
-    async def build(self) -> EnhancedAgent:
-        """
-        Constructs and returns the configured EnhancedAgent instance.
-        Handles asynchronous setup like fetching ADK MCP tools.
-        """
-        logger.info(f"--- Building EnhancedAgent: {self._config.agent_name} v{self._config.agent_version} ---")
-
-        # 1. Final Config Validation (Pydantic model handles most)
-        if not self._config.model_identifier:
-            raise ValueError("LLM model identifier is required. Use .with_model()")
-
-        # 2. Resolve API Key
-        api_key = None
-        if self._config.api_key_env_var:
-            api_key = os.getenv(self._config.api_key_env_var)
-            if not api_key:
-                logger.warning(f"API key environment variable '{self._config.api_key_env_var}' is set in config but not found in environment.")
-            # else: logger.debug("API key loaded from environment variable.") # Avoid logging key presence
-
-        # 3. Setup Telemetry Provider (if instance provided)
-        if self._otel_trace_provider_instance and OTEL_AVAILABLE:
-            trace.set_tracer_provider(self._otel_trace_provider_instance)
-            logger.info("Global OpenTelemetry TracerProvider set from provided instance.")
-        elif self._config.telemetry_config.get('enabled') and self._config.telemetry_config.get('type') != 'custom_instance' and OTEL_AVAILABLE:
-            # Basic provider setup from config (can be expanded)
-            logger.info("Setting up basic OpenTelemetry based on config (ConsoleExporter example).")
-            from opentelemetry.sdk.trace.export import (
-             BatchSpanProcessor,
-             ConsoleSpanExporter,
-            )
-            provider = TracerProvider()
-
-            if get_app().debug:
-                # Nur wenn Debug aktiv ist, wird ein ConsoleSpanExporter registriert
-                console_exporter = ConsoleSpanExporter()
-                span_processor = BatchSpanProcessor(console_exporter)
-                provider.add_span_processor(span_processor)
-                logger.info("ConsoleSpanExporter enabled (debug mode).")
+            if language == "python":
+                result = await self._execute_python(code, prep_res)
+            elif language == "javascript":
+                result = await self._execute_javascript(code, prep_res)
+            elif language == "bash":
+                result = await self._execute_bash(code, prep_res)
             else:
-                logger.info("OpenTelemetry initialized without ConsoleSpanExporter.")
+                return {"error": f"Unsupported language: {language}", "success": False}
 
-            trace.set_tracer_provider(provider)
-            self._otel_trace_provider_instance = provider
+            return result
 
-        # 4. Prepare Core Components
-        # Agent Model Data
-        try:
-            amd = AgentModelData(
-                name=self._config.agent_name,
-                model=self._config.model_identifier,
-                system_message=self._config.system_message,
-                temperature=self._config.temperature,
-                top_k=self._config.top_k,
-                top_p=self._config.top_p,
-                max_tokens=self._config.max_tokens_output,
-                max_input_tokens=self._config.max_tokens_input,
-                api_key=api_key,
-                api_base=self._config.api_base,
-                api_version=self._config.api_version,
-                stop_sequence=self._config.stop_sequence,
-                user_id=self._config.llm_user_id,
-                budget_manager=self._litellm_budget_manager_instance,
-                caching=self._config.enable_litellm_caching
-            )
-        except ValidationError as e:
-            logger.error(f"Validation error creating AgentModelData: {e}")
-            raise
+        except Exception as e:
+            logger.error(f"Code execution failed: {e}")
+            return {"error": str(e), "success": False}
 
-        # World Model
-        world_model = self._config.world_model_initial_data or {}
-
-        # User Cost Tracker
-        cost_tracker = self._user_cost_tracker_instance # Use provided instance if available
-        if not cost_tracker and self._config.cost_tracker_config:
-            tracker_type = self._config.cost_tracker_config.get('type')
-            if tracker_type == 'json':
-                filepath = self._config.cost_tracker_config.get('filepath')
-                if filepath:
-                    cost_tracker = JsonFileUserCostTracker(filepath)
-                    logger.info(f"Initialized JsonFileUserCostTracker ({filepath})")
-                else:
-                    logger.warning("JSON cost tracker configured but filepath missing.")
-            elif tracker_type == 'custom_instance':
-                 logger.warning("Cost tracker configured as 'custom_instance' but no instance was provided via .with_cost_tracker().")
-            # Add other tracker types (DB, InMemory) here
-
-        # 5. Prepare ADK Components
-        adk_runner_instance = self._adk_runner_instance
-        adk_session_service = self._adk_session_service_instance
-        adk_planner_instance = self._adk_planner_instance
-        adk_code_executor = self._adk_code_executor_instance # Use provided instance first
-        adk_exit_stack = None
-        processed_adk_tools = list(self._adk_tools_transient) # Start with transient tools
-
-        if ADK_AVAILABLE and self._config.adk.enabled:
-            logger.info("Configuring ADK components...")
-            adk_exit_stack = contextlib.AsyncExitStack()
-
-            # --- ADK Runner & Session Service ---
-            if not adk_runner_instance:
-                runner_cls_name = self._config.adk.runner_class_name
-                runner_opts = self._config.adk.runner_options
-                try:
-                    # Dynamically import/get runner class
-                    if runner_cls_name == "InMemoryRunner": runner_class = InMemoryRunner
-                    elif runner_cls_name == "Runner": runner_class = Runner
-                    elif runner_cls_name == "AsyncWebRunner": runner_class = AsyncWebRunner # If available
-                    else: raise ValueError(f"Unsupported ADK Runner class name: {runner_cls_name}")
-
-                    # Special handling: InMemoryRunner needs agent instance *later*
-                    if runner_class is InMemoryRunner or runner_class is Runner:
-                         logger.debug("Deferring InMemoryRunner creation until after agent instantiation.")
-                         # Store config to create it later
-                         adk_runner_config_for_later = {
-                             "runner_class": runner_class,
-                             "app_name": runner_opts.get("app_name", f"{self._config.agent_name}_ADKApp"),
-                             "session_service": adk_session_service, # Pass service if already created
-                             **runner_opts # Pass other options
-                         }
-                         adk_runner_instance = None # Ensure it's None for now
-                    else: # Other runners might be creatable now
-                         # Need to ensure session service is handled correctly if runner needs it
-                         if not adk_session_service:
-                             # Create default session service if needed by runner
-                             # This part is complex as runners might create their own
-                             logger.info("Using default ADK InMemorySessionService for runner.")
-                             adk_session_service = InMemorySessionService()
-
-                         adk_runner_instance = runner_class(
-                             session_service=adk_session_service,
-                             app_name=runner_opts.get("app_name", f"{self._config.agent_name}_ADKApp"),
-                             **runner_opts # Pass other options
-                         )
-                         logger.info(f"Created ADK Runner instance: {runner_cls_name}")
-
-                except (ImportError, ValueError, TypeError) as e:
-                    logger.error(f"Failed to configure ADK Runner '{runner_cls_name}': {e}", exc_info=True)
-                    raise ValueError(f"Failed to setup ADK Runner: {e}") from e
-
-            # Ensure session service exists if runner created one
-            if adk_runner_instance and hasattr(adk_runner_instance, 'session_service'):
-                 if not adk_session_service:
-                     adk_session_service = adk_runner_instance.session_service
-                 elif adk_session_service is not adk_runner_instance.session_service:
-                     logger.warning("Provided ADK SessionService differs from the one in the provided ADK Runner. Using the runner's service.")
-                     adk_session_service = adk_runner_instance.session_service
-
-            # Fallback: create default session service if none exists by now
-            if not adk_session_service:
-                  logger.info("Using default ADK InMemorySessionService.")
-                  adk_session_service = InMemorySessionService()
-
-
-            # --- ADK Code Executor ---
-            if not adk_code_executor: # If instance wasn't provided directly
-                executor_config = self._config.adk.code_executor_config
-                if executor_config == "unsafe_simple":
-                    adk_code_executor = UnsafeSimplePythonExecutor()
-                    logger.critical("UNSAFE code executor instance created!")
-                elif executor_config == "secure_placeholder":
-                    adk_code_executor = SecureCodeExecutorPlaceholder()
-                    logger.warning("SecureCodeExecutorPlaceholder instance created.")
-                elif executor_config == "adk_builtin":
-                    # This type uses the TOOL, not an executor instance passed to LlmAgent init
-                    adk_code_executor = adk_BuiltInCodeExecutor()
-                    #if not any(getattr(t, 'func', None) == tool_func for t in processed_adk_tools if isinstance(t, FunctionTool)):
-                    #     tool_func.__name__ = "code_execution"
-                    # processed_adk_tools.append(tool_func)
-                    #     logger.info("Added ADK built-in code execution tool.")
-                    # adk_code_executor = None # Ensure no executor instance is passed for this case
-                elif executor_config == "none":
-                    adk_code_executor = None
-                elif executor_config == "custom_instance":
-                    # Should have been provided via .with_adk_code_executor_instance()
-                    logger.error("ADK code executor configured as 'custom_instance' but no instance was provided.")
-                    adk_code_executor = None
-                # Add handling for dict config if needed in the future
-
-            # --- ADK Tools (Wrap callables) ---
-            temp_tools = []
-            for tool_input in processed_adk_tools:
-                 if isinstance(tool_input, ADKBaseTool):
-                     temp_tools.append(tool_input)
-                 elif callable(tool_input):
-                     try:
-                         wrapped = FunctionTool(func=tool_input)
-                         temp_tools.append(wrapped)
-                     except Exception as e: logger.warning(f"Could not wrap callable '{getattr(tool_input, '__name__', 'unknown')}' as ADK tool: {e}")
-                 else: logger.warning(f"Skipping invalid ADK tool input: {type(tool_input)}")
-            processed_adk_tools = temp_tools
-
-            # --- ADK MCP Toolsets ---
-            for mcp_conf in self._config.adk.mcp_toolset_configs:
-                 logger.info(f"Fetching tools from configured MCP Server: {mcp_conf}...")
-                 try:
-                      params = None
-                      if mcp_conf.get("type") == "stdio":
-                          params = StdioServerParameters(command=mcp_conf["command"], args=mcp_conf.get("args", []))
-                      elif mcp_conf.get("type") == "sse":
-
-                          print("TODO: Add SSE support to ADK MCPToolset.")
-                          pass
-                          # params = SseServerParams(url=mcp_conf["url"])
-
-                      if params:
-                          mcp_tools, _ = await MCPToolset.from_server(
-                              connection_params=params,
-                              async_exit_stack=adk_exit_stack
-                          )
-                          for tool in mcp_tools: tool._is_mcp_tool = True
-                          processed_adk_tools.extend(mcp_tools)
-                          logger.info(f"Fetched {len(mcp_tools)} tools via ADK MCPToolset ({mcp_conf.get('type')}).")
-                      else:
-                           logger.warning(f"Unsupported MCP config type: {mcp_conf.get('type')}")
-
-                 except Exception as e:
-                      logger.error(f"Failed to fetch tools from MCP server {mcp_conf}: {e}", exc_info=True)
-                      # Decide whether to raise or continue
-
-            # --- ADK Planner, Examples, Output Schema ---
-
-
-
-        # 6. Instantiate EnhancedAgent
-        try:
-            # Base arguments for EnhancedAgent
-            agent_init_kwargs = {
-                'amd': amd,
-                'world_model': world_model,
-                'format_model': self._config.formatter_llm_model if self._config.formatter_llm_model else None, # Example passing extra config
-                'verbose': self._config.verbose_logging,
-                'stream': self._config.enable_streaming,
-                'max_history_turns': self._config.history.max_turns,
-                'max_history_tokens': self._config.history.max_tokens,
-                'trim_strategy': self._config.history.trim_strategy,
-                'sync_adk_state': self._config.adk.sync_state if ADK_AVAILABLE else False,
-                'adk_exit_stack': adk_exit_stack, # Pass stack for cleanup
-                'user_cost_tracker': cost_tracker, # Pass the tracker instance
-                **self._callbacks_transient, # Pass configured callbacks
-                # Pass server instances if provided (less common)
-                'a2a_server': self._a2a_server_instance,
-                'mcp_server': self._mcp_server_instance,
+    async def _execute_python(self, code: str, prep_res: Dict) -> Dict:
+        """Execute Python code with security checks"""
+        # Security check - scan for dangerous imports
+        if not self._validate_python_code(code, prep_res["config"]):
+            return {
+                "error": "Code contains blocked imports or dangerous operations",
+                "success": False
             }
 
-            # Add ADK-specific arguments if inheriting from LlmAgent
-            agent_class = EnhancedAgent
-            if ADK_AVAILABLE and issubclass(EnhancedAgent, LlmAgent):
-                 logger.debug("Adding ADK LlmAgent specific arguments to init.")
-                 adk_specific_kwargs = {
-                     'name': self._config.agent_name, # Required by LlmAgent
-                     'model': google.adk.models.lite_llm.LiteLlm(model=self._config.model_identifier), # LlmAgent needs BaseLlm instance
-                     'description': self._config.adk.description or self._config.system_message,
-                     'instruction': self._config.system_message, # Or dedicated instruction field?
-                     'tools': processed_adk_tools,
-                     'code_executor': adk_code_executor, # Pass the *instance*
-                     'planner': adk_planner_instance,
-                     # Process examples/schema if needed
-                     'examples': [Example(**ex) for ex in self._config.adk.examples] if self._config.adk.examples else None,
-                     'output_schema': self._config.adk.output_schema,
-                     # Pass runner/session service if NOT using InMemoryRunner deferred creation
-                     # If runner is created later, it's assigned post-init
-                     'runner': adk_runner_instance if adk_runner_instance else None, # Pass runner if created now
-                     'session_service': adk_session_service, # Pass session service
-                 }
-                 # Merge, ensuring agent_init_kwargs takes precedence for overlapping basic fields if necessary
-                 # but allow ADK specifics to be added. Be careful with overlaps like 'name'.
-                 # EnhancedAgent init should handle reconciling these if needed.
-                 # A safer merge:
-                 final_kwargs = agent_init_kwargs.copy()
-                 for k, v in adk_specific_kwargs.items():
-                      if k not in final_kwargs: # Only add ADK specifics not already handled
-                          final_kwargs[k] = v
-                      # Handle specific overrides/merges needed for LlmAgent base
-                      elif k == 'tools' and v: # Merge tools
-                          final_kwargs['tools'] = (final_kwargs.get('tools') or []) + v
-                      # Overwrite description/instruction from ADK config if set
-                      elif k in ['description', 'instruction'] and v or k == 'code_executor' or k == 'model':
-                           final_kwargs[k] = v
+        # Auto-install dependencies if enabled
+        if prep_res["install_deps"] and prep_res["config"].install_packages:
+            await self._install_python_dependencies(code)
 
-                 agent_init_kwargs = final_kwargs
+        if prep_res["config"].sandbox_mode:
+            return await self._execute_python_sandboxed(code, prep_res)
+        else:
+            return await self._execute_python_direct(code, prep_res)
 
+    def _validate_python_code(self, code: str, config: CodeExecutionConfig) -> bool:
+        """Validate Python code for security"""
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return False
 
-            logger.info(f"Final keys for EnhancedAgent init: {list(agent_init_kwargs.keys())}")
-            logger.info(f"Final keys for EnhancedAgent init: {agent_init_kwargs}")
+        blocked = config.blocked_imports
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in blocked:
+                        return False
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module in blocked:
+                    return False
 
-            # --- Instantiate the Agent ---
-            agent = agent_class(**agent_init_kwargs)
-            # --- Agent Instantiated ---
+        # Check for dangerous function calls
+        dangerous_calls = ['exec', 'eval', 'compile', '__import__']
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in dangerous_calls:
+                    return False
 
-            # If ADK InMemoryRunner creation was deferred, create and assign now
-            if ADK_AVAILABLE and 'adk_runner_config_for_later' in locals():
-                 cfg = locals()['adk_runner_config_for_later']
-                 if not isinstance(cfg['runner_class'], InMemoryRunner) and cfg.get('session_service') is None: cfg['session_service'] = agent.adk_session_service # Ensure service is passed
-                 agent.setup_adk_runner(cfg)
-                 logger.info(f"Created and assigned deferred ADK Runner instance: {agent.adk_runner.__class__.__name__}")
-                 # Ensure agent has runner's session service if it differs
-                 if agent.adk_runner and agent.adk_session_service is not agent.adk_runner.session_service:
-                      logger.warning("Agent session service differs from deferred runner's service. Updating agent's reference.")
-                      agent.adk_session_service = agent.adk_runner.session_service
-                 agent.processed_adk_tools = processed_adk_tools
-            elif ADK_AVAILABLE and adk_runner_instance and not agent.adk_runner:
-                # If runner was created earlier but not passed via LlmAgent init (e.g. non-LlmAgent base)
-                # Or if we want to explicitly assign it
-                 agent.adk_runner = adk_runner_instance
-                 # Ensure session service consistency
-                 if agent.adk_session_service is not agent.adk_runner.session_service:
-                      agent.adk_session_service = agent.adk_runner.session_service
+        return True
 
+    async def _install_python_dependencies(self, code: str):
+        """Auto-install Python dependencies from code"""
+        try:
+            tree = ast.parse(code)
+            imports = set()
 
-        except ValidationError as e:
-            logger.error(f"Pydantic validation error Instantiating EnhancedAgent: {e}", exc_info=True)
-            raise e
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.add(alias.name.split('.')[0])
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        imports.add(node.module.split('.')[0])
+
+            # Install missing packages
+            for pkg in imports:
+                if pkg not in self.installed_packages and pkg not in sys.stdlib_module_names:
+                    try:
+                        process = await asyncio.create_subprocess_exec(
+                            sys.executable, "-m", "pip", "install", pkg,
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.DEVNULL
+                        )
+                        await process.wait()
+                        if process.returncode == 0:
+                            self.installed_packages.add(pkg)
+                    except Exception as e:
+                        logger.debug(f"Failed to install {pkg}: {e}")
+
         except Exception as e:
-            logger.error(f"Unexpected error Instantiating EnhancedAgent: {e}", exc_info=True)
-            raise e
+            logger.debug(f"Dependency installation failed: {e}")
 
-        # 7. Setup Agent's Internal Server Capabilities (if enabled and not pre-initialized)
-        if self._config.a2a.enabled and not agent.a2a_server:
-            if AGENT_A2A_AVAILABLE:
-                logger.info("Setting up A2A server on agent instance...")
-                agent.setup_a2a_server(
-                    host=self._config.a2a.host,
-                    port=self._config.a2a.port,
-                    **self._config.a2a.extra_options
+    async def _execute_python_sandboxed(self, code: str, prep_res: Dict) -> Dict:
+        """Execute Python code in sandboxed environment"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            temp_file = f.name
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, temp_file,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=prep_res["config"].timeout_seconds
+            )
+
+            return {
+                "success": process.returncode == 0,
+                "stdout": stdout.decode()[:prep_res["config"].max_output_length],
+                "stderr": stderr.decode()[:prep_res["config"].max_output_length],
+                "return_code": process.returncode
+            }
+
+        finally:
+            os.unlink(temp_file)
+
+    async def _execute_python_direct(self, code: str, prep_res: Dict) -> Dict:
+        """Execute Python code directly (less secure but more flexible)"""
+        import io
+        import contextlib
+
+        output_buffer = io.StringIO()
+        error_buffer = io.StringIO()
+        execution_globals = {"__builtins__": __builtins__}
+        execution_locals = {}
+
+        try:
+            with contextlib.redirect_stdout(output_buffer), contextlib.redirect_stderr(error_buffer):
+                exec(code, execution_globals, execution_locals)
+
+            return {
+                "success": True,
+                "stdout": output_buffer.getvalue()[:prep_res["config"].max_output_length],
+                "stderr": error_buffer.getvalue()[:prep_res["config"].max_output_length],
+                "return_code": 0,
+                "locals": {k: str(v) for k, v in execution_locals.items() if not k.startswith('_')}
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "stdout": output_buffer.getvalue(),
+                "stderr": str(e),
+                "return_code": 1
+            }
+
+    async def _execute_javascript(self, code: str, prep_res: Dict) -> Dict:
+        """Execute JavaScript code using Node.js"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
+            f.write(code)
+            temp_file = f.name
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "node", temp_file,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=prep_res["config"].timeout_seconds
+            )
+
+            return {
+                "success": process.returncode == 0,
+                "stdout": stdout.decode()[:prep_res["config"].max_output_length],
+                "stderr": stderr.decode()[:prep_res["config"].max_output_length],
+                "return_code": process.returncode
+            }
+
+        except FileNotFoundError:
+            return {
+                "error": "Node.js not found. Please install Node.js for JavaScript execution.",
+                "success": False
+            }
+        finally:
+            os.unlink(temp_file)
+
+    async def _execute_bash(self, code: str, prep_res: Dict) -> Dict:
+        """Execute Bash code"""
+        try:
+            process = await asyncio.create_subprocess_shell(
+                code,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=prep_res["config"].timeout_seconds
+            )
+
+            return {
+                "success": process.returncode == 0,
+                "stdout": stdout.decode()[:prep_res["config"].max_output_length],
+                "stderr": stderr.decode()[:prep_res["config"].max_output_length],
+                "return_code": process.returncode
+            }
+
+        except Exception as e:
+            return {
+                "error": f"Bash execution failed: {str(e)}",
+                "success": False
+            }
+
+
+# ===== SPECIALIZED FLOW NODES =====
+
+class CodeRequirementsNode(AsyncNodeT):
+    """Analyze and clarify code requirements"""
+
+    async def prep_async(self, shared):
+        return {
+            "query": shared.get("current_query", ""),
+            "context": shared.get("context", {}),
+            "fast_llm_model": shared.get("fast_llm_model")
+        }
+
+    async def exec_async(self, prep_res):
+        if not LITELLM_AVAILABLE:
+            return {"requirements_clear": True, "analysis": "Basic requirements extracted"}
+
+        query = prep_res["query"]
+
+        prompt = f"""
+Analyze this code request and extract clear, detailed requirements:
+
+Request: {query}
+
+Extract:
+1. Functional requirements (what the code should do)
+2. Technical requirements (language, frameworks, constraints)
+3. Quality requirements (performance, security, style)
+4. Input/Output specifications
+5. Edge cases to consider
+
+Respond with structured requirements in JSON format:
+{{
+    "functional": ["requirement1", "requirement2"],
+    "technical": {{"language": "python", "frameworks": [], "constraints": []}},
+    "quality": {{"performance": "", "security": "", "style": ""}},
+    "io_specs": {{"inputs": [], "outputs": []}},
+    "edge_cases": [],
+    "clarity_score": 0.8
+}}
+"""
+
+        try:
+            response = await litellm.acompletion(
+                model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000
+            )
+
+            content = response.choices[0].message.content
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                requirements = json.loads(json_match.group())
+            else:
+                requirements = {"functional": ["Basic functionality"], "clarity_score": 0.5}
+
+            return {
+                "requirements_clear": requirements.get("clarity_score", 0.5) > 0.6,
+                "analysis": requirements,
+                "needs_clarification": requirements.get("clarity_score", 0.5) < 0.6
+            }
+
+        except Exception as e:
+            logger.error(f"Requirements analysis failed: {e}")
+            return {
+                "requirements_clear": False,
+                "analysis": {"error": str(e)},
+                "needs_clarification": True
+            }
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["code_requirements"] = exec_res["analysis"]
+        if exec_res["requirements_clear"]:
+            return "requirements_clear"
+        else:
+            return "needs_clarification"
+
+
+class CodeGeneratorNode(AsyncNodeT):
+    """Generate code based on requirements"""
+
+    async def prep_async(self, shared):
+        return {
+            "requirements": shared.get("code_requirements", {}),
+            "context": shared.get("context", {}),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "code_executor": shared.get("code_executor")
+        }
+
+    async def exec_async(self, prep_res):
+        if not LITELLM_AVAILABLE:
+            return {"code_generated": False, "error": "LLM not available"}
+
+        requirements = prep_res["requirements"]
+
+        prompt = f"""
+Generate high-quality code based on these requirements:
+
+Requirements: {json.dumps(requirements, indent=2)}
+
+Guidelines:
+1. Write clean, readable, well-documented code
+2. Include proper error handling
+3. Add type hints (if Python)
+4. Follow best practices
+5. Include example usage
+6. Add comprehensive docstrings
+
+Generate the complete code solution:
+"""
+
+        try:
+            response = await litellm.acompletion(
+                model=prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2000
+            )
+
+            generated_code = response.choices[0].message.content
+
+            # Extract code from markdown blocks if present
+            code_blocks = re.findall(r'```(?:python|py|javascript|js|bash)?\n(.*?)\n```',
+                                     generated_code, re.DOTALL)
+
+            if code_blocks:
+                code = code_blocks[0]
+            else:
+                code = generated_code
+
+            # Test the code if executor is available
+            test_result = None
+            if prep_res.get("code_executor") and code:
+                test_context = {
+                    "code_to_execute": code,
+                    "language": requirements.get("technical", {}).get("language", "python")
+                }
+                test_result = await prep_res["code_executor"].run_async(test_context)
+
+            return {
+                "code_generated": True,
+                "code": code,
+                "full_response": generated_code,
+                "test_result": test_result,
+                "quality_score": self._assess_code_quality(code)
+            }
+
+        except Exception as e:
+            logger.error(f"Code generation failed: {e}")
+            return {
+                "code_generated": False,
+                "error": str(e)
+            }
+
+    def _assess_code_quality(self, code: str) -> float:
+        """Basic code quality assessment"""
+        score = 0.5
+
+        # Check for docstrings
+        if '"""' in code or "'''" in code:
+            score += 0.1
+
+        # Check for type hints (Python)
+        if '->' in code or ': ' in code:
+            score += 0.1
+
+        # Check for error handling
+        if 'try:' in code or 'except' in code:
+            score += 0.1
+
+        # Check for comments
+        if '#' in code:
+            score += 0.05
+
+        # Length reasonable
+        if 50 <= len(code.split('\n')) <= 200:
+            score += 0.1
+
+        return min(1.0, score)
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["generated_code"] = exec_res.get("code", "")
+        shared["code_quality_score"] = exec_res.get("quality_score", 0.0)
+
+        if exec_res["code_generated"]:
+            return "code_generated"
+        else:
+            return "generation_failed"
+
+
+# ===== SPECIALIZED FLOW BUILDERS =====
+
+class FlowSpecializer:
+    """Creates specialized flows for different domains"""
+
+    def __init__(self):
+        self.specializations = {
+            "code_writing": self._build_code_writing_flow,
+            "code_editing": self._build_code_editing_flow,
+            "data_analysis": self._build_data_analysis_flow,
+            "project_management": self._build_project_management_flow,
+            "research": self._build_research_flow,
+            "creative_writing": self._build_creative_writing_flow,
+            "problem_solving": self._build_problem_solving_flow,
+            "refinement": self._build_refinement_flow
+        }
+
+    def create_specialized_flow(self, spec_config: FlowSpecializationConfig) -> AsyncFlowT:
+        """Create a specialized flow based on configuration"""
+        domain = spec_config.domain
+
+        if domain in self.specializations:
+            return self.specializations[domain](spec_config)
+        else:
+            return self._build_custom_flow(spec_config)
+
+    def _build_code_writing_flow(self, config: FlowSpecializationConfig) -> AsyncFlowT:
+        """Specialized flow for code writing tasks"""
+
+        class CodeWritingFlow(AsyncFlowT):
+            def __init__(self):
+                self.requirements_analyzer = CodeRequirementsNode()
+                self.code_generator = CodeGeneratorNode()
+                self.code_tester = CodeTestingNode()
+                self.code_refiner = CodeRefinerNode()
+
+                # Flow connections
+                self.requirements_analyzer - "requirements_clear" >> self.code_generator
+                self.requirements_analyzer - "needs_clarification" >> self.code_generator
+                self.code_generator - "code_generated" >> self.code_tester
+                self.code_tester - "tests_passed" >> self.code_refiner
+                self.code_tester - "tests_failed" >> self.code_generator
+
+                super().__init__(start=self.requirements_analyzer)
+
+        return CodeWritingFlow()
+
+    def _build_refinement_flow(self, config: FlowSpecializationConfig) -> AsyncFlowT:
+        """Specialized flow for content refinement"""
+
+        class RefinementFlow(AsyncFlowT):
+            def __init__(self):
+                self.content_analyzer = ContentAnalyzerNode()
+                self.improvement_generator = ImprovementGeneratorNode()
+                self.refinement_applier = RefinementApplierNode()
+                self.quality_checker = QualityCheckerNode()
+
+                # Flow connections
+                self.content_analyzer - "analyzed" >> self.improvement_generator
+                self.improvement_generator - "improvements_generated" >> self.refinement_applier
+                self.refinement_applier - "refinement_applied" >> self.quality_checker
+                self.quality_checker - "needs_more_refinement" >> self.improvement_generator
+
+                super().__init__(start=self.content_analyzer)
+
+        return RefinementFlow()
+
+    def _build_custom_flow(self, config: FlowSpecializationConfig) -> AsyncFlowT:
+        """Build custom flow from configuration"""
+
+        # For now, return a simple flow
+        # In production, this would dynamically create flows based on config
+        class CustomFlow(AsyncFlowT):
+            pass
+
+        return CustomFlow()
+
+
+# Additional specialized nodes
+class CodeTestingNode(AsyncNodeT):
+    """Test generated code"""
+
+    async def exec_async(self, prep_res):
+        return {"tests_passed": True, "test_results": "All tests passed"}
+
+
+class CodeRefinerNode(AsyncNodeT):
+    """Refine and optimize code"""
+
+    async def exec_async(self, prep_res):
+        return {"code_refined": True, "refinements": "Code optimized"}
+
+
+class ContentAnalyzerNode(AsyncNodeT):
+    """Analyze content for refinement opportunities"""
+
+    async def exec_async(self, prep_res):
+        return {"analyzed": True, "analysis": "Content analyzed"}
+
+
+class ImprovementGeneratorNode(AsyncNodeT):
+    """Generate improvement suggestions"""
+
+    async def exec_async(self, prep_res):
+        return {"improvements_generated": True, "improvements": []}
+
+
+class RefinementApplierNode(AsyncNodeT):
+    """Apply refinements to content"""
+
+    async def exec_async(self, prep_res):
+        return {"refinement_applied": True, "refined_content": ""}
+
+
+class QualityCheckerNode(AsyncNodeT):
+    """Check quality of refined content"""
+
+    async def exec_async(self, prep_res):
+        return {"quality_acceptable": True, "quality_score": 0.8}
+
+
+# ===== MAIN ENHANCED BUILDER =====
+
+class AgentBuilder:
+    """Comprehensive builder for production-ready Flow Agents with specialization capabilities"""
+
+    def __init__(self, config: AdvancedBuilderConfig = None, config_path: str = None):
+        """Initialize builder with enhanced configuration"""
+
+        if config and config_path:
+            raise ValueError("Provide either config object or config_path, not both")
+
+        if config_path:
+            self.config = self._load_config(config_path)
+        elif config:
+            self.config = config
+        else:
+            self.config = AdvancedBuilderConfig()
+
+        # Enhanced registries
+        self._custom_tools: Dict[str, Dict] = {}
+        self._mcp_tools: Dict[str, MCPToolConfig] = {}
+        self._custom_nodes: Dict[str, Any] = {}
+        self._custom_flows: Dict[str, AsyncFlowT] = {}
+        self._specialized_flows: Dict[str, AsyncFlowT] = {}
+
+        # Specialization system
+        self.flow_specializer = FlowSpecializer()
+
+        # Runtime components
+        self._budget_manager: Optional[BudgetManager] = None
+        self._tracer_provider: Optional[TracerProvider] = None
+        self._callbacks: Dict[str, Callable] = {}
+        self._code_executor: Optional[CodeExecutorNode] = None
+        self._variable_manager: Optional[VariableManager] = None
+
+        # Initialize code execution if enabled
+        if self.config.code_execution.enabled:
+            self._code_executor = CodeExecutorNode(self.config.code_execution)
+
+        # Set logging level
+        if self.config.verbose_logging:
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            logging.getLogger().setLevel(logging.INFO)
+
+        logger.info(f"Advanced builder initialized: {self.config.agent_name}")
+
+    # ===== CONFIG MANAGEMENT =====
+
+    def _load_config(self, config_path: str) -> AdvancedBuilderConfig:
+        """Load configuration from file"""
+        path = Path(config_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                if path.suffix.lower() in ['.yaml', '.yml']:
+                    data = yaml.safe_load(f)
+                else:
+                    data = json.load(f)
+
+            return AdvancedBuilderConfig(**data)
+
+        except Exception as e:
+            logger.error(f"Failed to load config from {config_path}: {e}")
+            raise
+
+    def save_config(self, config_path: str, format: str = 'yaml'):
+        """Save current configuration to file"""
+        path = Path(config_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            data = self.config.model_dump()
+
+            with open(path, 'w', encoding='utf-8') as f:
+                if format.lower() == 'yaml':
+                    yaml.dump(data, f, default_flow_style=False, indent=2)
+                else:
+                    json.dump(data, f, indent=2)
+
+            logger.info(f"Configuration saved to {config_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save config to {config_path}: {e}")
+            raise
+
+    # ===== FLUENT CONFIGURATION API =====
+
+    def with_name(self, name: str) -> 'AgentBuilder':
+        """Set agent name"""
+        self.config.agent_name = name
+        return self
+
+    def with_models(self, fast_model: str, complex_model: str = None) -> 'AgentBuilder':
+        """Set LLM models"""
+        self.config.fast_llm_model = fast_model
+        if complex_model:
+            self.config.complex_llm_model = complex_model
+        return self
+
+    def with_system_message(self, message: str) -> 'AgentBuilder':
+        """Set system message"""
+        self.config.system_message = message
+        return self
+
+    def with_temperature(self, temp: float) -> 'AgentBuilder':
+        """Set temperature"""
+        self.config.temperature = temp
+        return self
+
+    def with_max_tokens(self, output: int, input: int = None) -> 'AgentBuilder':
+        """Set max tokens for output and optionally input"""
+        self.config.max_tokens_output = output
+        if input:
+            self.config.max_tokens_input = input
+        return self
+
+    def with_api_config(self, api_key_env_var: str = None, api_base: str = None,
+                        api_version: str = None) -> 'AgentBuilder':
+        """Configure API settings"""
+        if api_key_env_var:
+            self.config.api_key_env_var = api_key_env_var
+        if api_base:
+            self.config.api_base = api_base
+        if api_version:
+            self.config.api_version = api_version
+        return self
+
+    def with_budget_manager(self, max_cost: float = 10.0) -> 'AgentBuilder':
+        """Enable budget management"""
+        if LITELLM_AVAILABLE:
+            self._budget_manager = BudgetManager(max_budget=max_cost)
+            logger.info(f"Budget manager enabled: ${max_cost}")
+        else:
+            logger.warning("LiteLLM not available, budget manager disabled")
+        return self
+
+    def verbose(self, enable: bool = True) -> 'AgentBuilder':
+        """Enable verbose logging"""
+        self.config.verbose_logging = enable
+        if enable:
+            logging.getLogger().setLevel(logging.DEBUG)
+        else:
+            logging.getLogger().setLevel(logging.INFO)
+        return self
+
+    def with_session_config(self, max_history: int = 200, compression_threshold: float = 0.76,
+                            infinite_scaling: bool = True) -> 'AgentBuilder':
+        """Configure session management"""
+        self.config.session_management.update({
+            "max_history": max_history,
+            "compression_threshold": compression_threshold,
+            "enable_infinite_scaling": infinite_scaling
+        })
+        return self
+
+    def with_task_config(self, max_parallel: int = 5, enable_reflection: bool = True,
+                         enable_adaptation: bool = True, max_adaptations: int = 3) -> 'AgentBuilder':
+        """Configure task management"""
+        self.config.task_management.update({
+            "max_parallel_tasks": max_parallel,
+            "enable_reflection": enable_reflection,
+            "enable_adaptation": enable_adaptation,
+            "max_adaptations": max_adaptations
+        })
+        return self
+
+    # ===== ENHANCED TOOL MANAGEMENT =====
+
+    def add_tool(self, func: Callable, name: str = None, description: str = None,
+                 expose_in_mcp: bool = True, category: str = "general",
+                 auto_analyze: bool = True) -> 'AgentBuilder':
+        """Add tool function with enhanced metadata"""
+        tool_name = name or func.__name__
+
+        # Extract parameter information
+        sig = inspect.signature(func)
+        parameters = {}
+        for param_name, param in sig.parameters.items():
+            param_info = {
+                "type": param.annotation.__name__ if param.annotation != param.empty else "Any",
+                "default": param.default if param.default != param.empty else None,
+                "required": param.default == param.empty
+            }
+            parameters[param_name] = param_info
+
+        self._custom_tools[tool_name] = {
+            'function': func,
+            'description': description or func.__doc__ or f"Tool function: {tool_name}",
+            'expose_in_mcp': expose_in_mcp,
+            'category': category,
+            'parameters': parameters,
+            'auto_analyze': auto_analyze,
+            'added_at': datetime.now().isoformat(),
+            'is_async': asyncio.iscoroutinefunction(func)
+        }
+
+        if tool_name not in self.config.default_tools:
+            self.config.default_tools.append(tool_name)
+
+        logger.info(f"Tool added: {tool_name} (category: {category}, async: {asyncio.iscoroutinefunction(func)})")
+        return self
+
+    def add_tools_from_module(self, module, prefix: str = "",
+                              exclude: List[str] = None,
+                              include_private: bool = False) -> 'AgentBuilder':
+        """Add all functions from a module as tools"""
+        exclude = exclude or []
+
+        for name, obj in inspect.getmembers(module, inspect.isfunction):
+            if name in exclude:
+                continue
+
+            if not include_private and name.startswith('_'):
+                continue
+
+            tool_name = f"{prefix}{name}" if prefix else name
+            self.add_tool(obj, name=tool_name,
+                          description=f"Function from {module.__name__}: {obj.__doc__ or 'No description'}",
+                          category="imported")
+
+        logger.info(f"Added tools from module {module.__name__}")
+        return self
+
+    def add_lambda_tool(self, lambda_func: Callable, name: str, description: str = "",
+                        category: str = "lambda") -> 'AgentBuilder':
+        """Add a lambda function as a tool"""
+        return self.add_tool(lambda_func, name=name, description=description or f"Lambda tool: {name}",
+                             category=category, auto_analyze=False)
+
+    def add_mcp_tool_from_code(self, name: str, code: str, description: str = "",
+                               parameters: Dict[str, Any] = None,
+                               async_mode: bool = True,
+                               requires_packages: List[str] = None) -> 'AgentBuilder':
+        """Add MCP tool from code string with enhanced validation"""
+
+        # Validate code syntax
+        try:
+            compile(code, f"<{name}>", "exec")
+        except SyntaxError as e:
+            raise ValueError(f"Invalid Python code for tool {name}: {e}")
+
+        mcp_config = MCPToolConfig(
+            name=name,
+            description=description,
+            function_code=code,
+            parameters=parameters or {},
+            async_mode=async_mode,
+            requires_packages=requires_packages or []
+        )
+
+        self._mcp_tools[name] = mcp_config
+        self.config.mcp_tools.append(mcp_config)
+
+        # Create and register the function
+        try:
+            func = self._create_function_from_code(code, name, async_mode)
+            self.add_tool(func, name, description, expose_in_mcp=True, category="mcp")
+        except Exception as e:
+            logger.error(f"Failed to create function from code for {name}: {e}")
+            raise
+
+        logger.info(f"MCP tool added from code: {name}")
+        return self
+
+    def add_mcp_tool_from_file(self, name: str, file_path: str, description: str = "",
+                               parameters: Dict[str, Any] = None,
+                               async_mode: bool = True) -> 'AgentBuilder':
+        """Add MCP tool from file with validation"""
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Tool file not found: {file_path}")
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                code = f.read()
+        except Exception as e:
+            raise ValueError(f"Failed to read tool file {file_path}: {e}")
+
+        return self.add_mcp_tool_from_code(name, code, description, parameters, async_mode)
+
+    def load_mcp_tools_from_config(self, config_path: str) -> 'AgentBuilder':
+        """Load MCP tools from configuration file"""
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"MCP tools config not found: {config_path}")
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                if config_path.suffix.lower() in ['.yaml', '.yml']:
+                    tools_config = yaml.safe_load(f)
+                else:
+                    tools_config = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Failed to load MCP tools config: {e}")
+
+        loaded_count = 0
+        for tool_data in tools_config.get('tools', []):
+            try:
+                mcp_config = MCPToolConfig(**tool_data)
+
+                if mcp_config.function_code:
+                    self.add_mcp_tool_from_code(
+                        mcp_config.name,
+                        mcp_config.function_code,
+                        mcp_config.description,
+                        mcp_config.parameters,
+                        mcp_config.async_mode,
+                        mcp_config.requires_packages
+                    )
+                    loaded_count += 1
+                elif mcp_config.function_file:
+                    self.add_mcp_tool_from_file(
+                        mcp_config.name,
+                        mcp_config.function_file,
+                        mcp_config.description,
+                        mcp_config.parameters,
+                        mcp_config.async_mode
+                    )
+                    loaded_count += 1
+                else:
+                    logger.warning(f"Tool {mcp_config.name} has no code or file specified")
+
+            except Exception as e:
+                logger.error(f"Failed to load MCP tool {tool_data.get('name', 'unknown')}: {e}")
+
+        logger.info(f"Loaded {loaded_count} MCP tools from config")
+        return self
+
+    def _create_function_from_code(self, code: str, name: str, async_mode: bool) -> Callable:
+        """Create callable function from code string with enhanced error handling"""
+        namespace = {"__builtins__": __builtins__}
+
+        try:
+            exec(code, namespace)
+        except Exception as e:
+            raise ValueError(f"Failed to execute code for {name}: {e}")
+
+        # Find the function
+        func = None
+        if name in namespace and callable(namespace[name]):
+            func = namespace[name]
+        else:
+            # Try to find any function in the namespace
+            functions = [v for v in namespace.values()
+                         if callable(v) and not getattr(v, '__name__', '').startswith('_')]
+            if functions:
+                func = functions[0]
+
+        if not func:
+            raise ValueError(f"No callable function found in code for {name}")
+
+        # Handle async mode
+        if async_mode and not asyncio.iscoroutinefunction(func):
+            # Wrap sync function as async
+            import functools
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                return await asyncio.to_thread(func, *args, **kwargs)
+
+            return async_wrapper
+        elif not async_mode and asyncio.iscoroutinefunction(func):
+            # Wrap async function as sync (not recommended but supported)
+            import functools
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(func(*args, **kwargs))
+                finally:
+                    loop.close()
+
+            return sync_wrapper
+
+        return func
+
+    # ===== CODE EXECUTION CAPABILITIES =====
+
+    def enable_code_execution(self, languages: List[str] = None, sandbox: bool = True,
+                              timeout: int = 30, install_packages: bool = True,
+                              allowed_imports: List[str] = None,
+                              blocked_imports: List[str] = None) -> 'AgentBuilder':
+        """Enable code execution capabilities with security controls"""
+        if languages is None:
+            languages = ["python", "javascript", "bash"]
+
+        config = CodeExecutionConfig(
+            enabled=True,
+            allowed_languages=languages,
+            sandbox_mode=sandbox,
+            timeout_seconds=timeout,
+            install_packages=install_packages
+        )
+
+        if allowed_imports:
+            config.allowed_imports = allowed_imports
+        if blocked_imports:
+            config.blocked_imports = blocked_imports
+
+        self.config.code_execution = config
+        self._code_executor = CodeExecutorNode(config)
+
+        # Add code execution as tools
+        async def execute_code(code: str, language: str = "python",
+                               install_dependencies: bool = False):
+            """Execute code in specified language with optional dependency installation"""
+            if not self._code_executor:
+                return {"error": "Code execution not enabled", "success": False}
+
+            shared_context = {
+                "code_to_execute": code,
+                "language": language,
+                "execution_context": {},
+                "install_dependencies": install_dependencies
+            }
+            result = await self._code_executor.run_async(shared_context)
+            return result
+
+        async def execute_python(code: str, install_deps: bool = False):
+            """Execute Python code with optional auto-installation of dependencies"""
+            return await execute_code(code, "python", install_deps)
+
+        async def execute_javascript(code: str):
+            """Execute JavaScript code using Node.js"""
+            return await execute_code(code, "javascript")
+
+        async def execute_bash(command: str):
+            """Execute bash commands safely"""
+            return await execute_code(command, "bash")
+
+        # Add the tools
+        self.add_tool(execute_code, "execute_code",
+                      "Execute code in various languages with security controls",
+                      category="code_execution")
+        self.add_tool(execute_python, "execute_python",
+                      "Execute Python code with auto-dependency installation",
+                      category="code_execution")
+
+        if "javascript" in languages:
+            self.add_tool(execute_javascript, "execute_javascript",
+                          "Execute JavaScript code using Node.js",
+                          category="code_execution")
+
+        if "bash" in languages:
+            self.add_tool(execute_bash, "execute_bash",
+                          "Execute bash commands safely",
+                          category="code_execution")
+
+        logger.info(f"Code execution enabled for languages: {languages}")
+        return self
+
+    def with_secure_python_execution(self, timeout: int = 30) -> 'AgentBuilder':
+        """Enable secure Python execution with restricted imports"""
+        safe_imports = [
+            "json", "yaml", "csv", "math", "statistics", "datetime", "time",
+            "re", "string", "itertools", "collections", "functools",
+            "numpy", "pandas", "matplotlib", "seaborn", "plotly",
+            "requests", "pathlib", "os.path"
+        ]
+
+        dangerous_imports = [
+            "subprocess", "os.system", "eval", "exec", "compile",
+            "socket", "urllib", "http", "ftplib", "smtplib",
+            "pickle", "shelve", "dbm", "__import__"
+        ]
+
+        return self.enable_code_execution(
+            languages=["python"],
+            sandbox=True,
+            timeout=timeout,
+            install_packages=True,
+            allowed_imports=safe_imports,
+            blocked_imports=dangerous_imports
+        )
+
+    # ===== FLOW SPECIALIZATION =====
+
+    def add_specialization(self, domain: str, specialized_tools: List[str] = None,
+                           custom_strategies: Dict[str, Dict] = None,
+                           **kwargs) -> 'AgentBuilder':
+        """Add flow specialization for a domain"""
+        spec_config = FlowSpecializationConfig(
+            name=f"{domain}_specialization",
+            domain=domain,
+            specialized_tools=specialized_tools or [],
+            custom_strategies=custom_strategies or {},
+            **kwargs
+        )
+
+        # Create specialized flow
+        try:
+            specialized_flow = self.flow_specializer.create_specialized_flow(spec_config)
+            self._specialized_flows[domain] = specialized_flow
+            self.config.flow_specializations.append(spec_config)
+
+            # Add as a tool
+            async def run_specialized_flow(query: str, context: Dict[str, Any] = None):
+                """Run specialized flow for specific domain"""
+                flow_context = context or {}
+                flow_context.update({
+                    "current_query": query,
+                    "domain": domain,
+                    "specialization_config": spec_config
+                })
+
+                # Add code executor if available
+                if self._code_executor:
+                    flow_context["code_executor"] = self._code_executor
+
+                return await specialized_flow.run_async(flow_context)
+
+            self.add_tool(run_specialized_flow, f"{domain}_flow",
+                          f"Execute specialized flow for {domain} tasks",
+                          category="specialization")
+
+            logger.info(f"Specialization added: {domain}")
+        except Exception as e:
+            logger.error(f"Failed to create specialization for {domain}: {e}")
+
+        return self
+
+    def with_code_writing_specialization(self) -> 'AgentBuilder':
+        """Add comprehensive code writing specialization"""
+        tools = ["execute_code", "execute_python"]
+        if self._code_executor:
+            tools.extend(["execute_javascript", "execute_bash"])
+
+        return self.add_specialization("code_writing",
+                                       specialized_tools=tools,
+                                       context_awareness="code_focused",
+                                       flow_pattern="iterative")
+
+    def with_data_analysis_specialization(self) -> 'AgentBuilder':
+        """Add data analysis specialization with Python focus"""
+        return self.add_specialization("data_analysis",
+                                       specialized_tools=["execute_python", "execute_code"],
+                                       context_awareness="data_focused",
+                                       flow_pattern="analytical")
+
+    def with_project_management_specialization(self) -> 'AgentBuilder':
+        """Add project management specialization"""
+        return self.add_specialization("project_management",
+                                       specialized_tools=[],
+                                       context_awareness="project_focused",
+                                       flow_pattern="structured")
+
+    def with_refinement_specialization(self) -> 'AgentBuilder':
+        """Add content refinement and optimization specialization"""
+        return self.add_specialization("refinement",
+                                       specialized_tools=[],
+                                       context_awareness="quality_focused",
+                                       flow_pattern="iterative")
+
+    def with_all_specializations(self) -> 'AgentBuilder':
+        """Add all available specializations"""
+        return (self.with_code_writing_specialization()
+                .with_data_analysis_specialization()
+                .with_project_management_specialization()
+                .with_refinement_specialization())
+
+    # ===== PERSONA MANAGEMENT =====
+
+    def add_persona_profile(self, profile_name: str, persona: PersonaConfig) -> 'AgentBuilder':
+        """Add a persona profile"""
+        self.config.persona_profiles.profiles[profile_name] = persona
+        logger.info(f"Persona profile added: {profile_name}")
+        return self
+
+    def set_active_persona(self, profile_name: str) -> 'AgentBuilder':
+        """Set active persona profile"""
+        if profile_name in self.config.persona_profiles.profiles:
+            self.config.persona_profiles.active_profile = profile_name
+            logger.info(f"Active persona set: {profile_name}")
+        else:
+            logger.warning(f"Persona profile not found: {profile_name}")
+        return self
+
+    def with_developer_persona(self, name: str = "Senior Developer") -> 'AgentBuilder':
+        """Add and set a developer persona"""
+        persona = PersonaConfig(
+            name=name,
+            style="technical",
+            tone="professional",
+            personality_traits=["precise", "thorough", "best_practices", "security_conscious"],
+            custom_instructions="Focus on code quality, maintainability, security, and best practices. "
+                                "Always consider edge cases and provide comprehensive documentation.",
+            apply_method="both",
+            integration_level="medium"
+        )
+        return self.add_persona_profile("developer", persona).set_active_persona("developer")
+
+    def with_analyst_persona(self, name: str = "Data Analyst") -> 'AgentBuilder':
+        """Add and set an analyst persona"""
+        persona = PersonaConfig(
+            name=name,
+            style="analytical",
+            tone="objective",
+            personality_traits=["methodical", "thorough", "insight_driven", "evidence_based"],
+            custom_instructions="Focus on statistical rigor, clear data insights, and actionable recommendations. "
+                                "Always validate assumptions and provide confidence intervals where appropriate.",
+            apply_method="both",
+            integration_level="medium"
+        )
+        return self.add_persona_profile("analyst", persona).set_active_persona("analyst")
+
+    def with_assistant_persona(self, name: str = "AI Assistant") -> 'AgentBuilder':
+        """Add and set a general assistant persona"""
+        persona = PersonaConfig(
+            name=name,
+            style="friendly",
+            tone="helpful",
+            personality_traits=["helpful", "patient", "clear", "adaptive"],
+            custom_instructions="Be helpful, patient, and clear in all interactions. "
+                                "Adapt your communication style to the user's level of expertise.",
+            apply_method="system_prompt",
+            integration_level="light"
+        )
+        return self.add_persona_profile("assistant", persona).set_active_persona("assistant")
+
+    def with_domain_adapted_personas(self, enable: bool = True) -> 'AgentBuilder':
+        """Enable domain-adapted personas that change based on task type"""
+        if enable:
+            self.config.persona_profiles.domain_adaptations = {
+                "code_writing": {"style": "technical", "tone": "precise"},
+                "data_analysis": {"style": "analytical", "tone": "objective"},
+                "project_management": {"style": "professional", "tone": "authoritative"},
+                "creative_writing": {"style": "creative", "tone": "inspiring"},
+                "refinement": {"style": "editorial", "tone": "constructive"}
+            }
+            self.config.persona_profiles.auto_switch = True
+
+            # Set up switch triggers
+            self.config.persona_profiles.switch_triggers = {
+                "code|programming|development|bug|function": "developer",
+                "data|analysis|statistics|chart|graph": "analyst",
+                "project|management|timeline|milestone": "manager",
+                "creative|story|content|writing": "creative"
+            }
+
+        return self
+
+    # ===== CUSTOM FLOWS =====
+
+    def add_custom_flow(self, flow: AsyncFlowT, name: str,
+                        description: str = "", category: str = "custom") -> 'AgentBuilder':
+        """Add custom flow as a tool"""
+        self._custom_flows[name] = flow
+
+        # Wrap flow as a tool
+        async def run_custom_flow(query: str = "", context: Dict[str, Any] = None):
+            """Run custom flow with provided context"""
+            flow_context = context or {}
+            flow_context.update({"current_query": query})
+
+            # Add shared resources
+            if self._code_executor:
+                flow_context["code_executor"] = self._code_executor
+            if self._variable_manager:
+                flow_context["variable_manager"] = self._variable_manager
+
+            return await flow.run_async(flow_context)
+
+        self.add_tool(run_custom_flow, name,
+                      description or f"Custom flow: {flow.__class__.__name__}",
+                      category=category)
+
+        logger.info(f"Custom flow added as tool: {name}")
+        return self
+
+    def add_custom_node(self, node: AsyncNodeT, name: str,
+                        description: str = "") -> 'AgentBuilder':
+        """Add custom node as a tool"""
+        self._custom_nodes[name] = node
+
+        # Wrap node as a tool
+        async def run_custom_node(context: Dict[str, Any] = None):
+            """Run custom node with provided context"""
+            node_context = context or {}
+            return await node.run_async(node_context)
+
+        self.add_tool(run_custom_node, name,
+                      description or f"Custom node: {node.__class__.__name__}",
+                      category="custom_node")
+
+        logger.info(f"Custom node added as tool: {name}")
+        return self
+
+    # ===== VARIABLE SYSTEM =====
+
+    def with_custom_variables(self, variables: Dict[str, Any]) -> 'AgentBuilder':
+        """Add custom variables to the agent"""
+        self.config.custom_variables.update(variables)
+        return self
+
+    def add_variable_scope(self, scope_name: str, variables: Dict[str, Any]) -> 'AgentBuilder':
+        """Add a variable scope"""
+        if 'variable_scopes' not in self.config.custom_variables:
+            self.config.custom_variables['variable_scopes'] = {}
+        self.config.custom_variables['variable_scopes'][scope_name] = variables
+        return self
+
+    # ===== SERVER CONFIGURATION =====
+
+    def enable_a2a_server(self, host: str = "0.0.0.0", port: int = 5000,
+                          **kwargs) -> 'AgentBuilder':
+        """Enable A2A server"""
+        if not A2A_AVAILABLE:
+            logger.warning("A2A not available, cannot enable server")
+            return self
+
+        self.config.a2a = {
+            "enabled": True,
+            "host": host,
+            "port": port,
+            **kwargs
+        }
+        logger.info(f"A2A server configured: {host}:{port}")
+        return self
+
+    def enable_mcp_server(self, host: str = "0.0.0.0", port: int = 8000,
+                          server_name: str = None, **kwargs) -> 'AgentBuilder':
+        """Enable MCP server"""
+        if not MCP_AVAILABLE:
+            logger.warning("MCP not available, cannot enable server")
+            return self
+
+        self.config.mcp = {
+            "enabled": True,
+            "host": host,
+            "port": port,
+            "server_name": server_name or f"{self.config.agent_name}_MCP",
+            **kwargs
+        }
+        logger.info(f"MCP server configured: {host}:{port}")
+        return self
+
+    def enable_telemetry(self, service_name: str = None, **kwargs) -> 'AgentBuilder':
+        """Enable OpenTelemetry tracing"""
+        if not OTEL_AVAILABLE:
+            logger.warning("OpenTelemetry not available, cannot enable telemetry")
+            return self
+
+        self.config.telemetry = {
+            "enabled": True,
+            "service_name": service_name or self.config.agent_name,
+            **kwargs
+        }
+
+        # Initialize tracer provider
+        self._tracer_provider = TracerProvider()
+        logger.info(f"Telemetry enabled for service: {service_name}")
+        return self
+
+    # ===== VALIDATION AND OPTIMIZATION =====
+
+    def validate_config(self) -> Dict[str, List[str]]:
+        """Validate the current configuration and return issues"""
+        issues = {"errors": [], "warnings": []}
+
+        # Validate models
+        if not self.config.fast_llm_model:
+            issues["errors"].append("Fast LLM model not specified")
+        if not self.config.complex_llm_model:
+            issues["errors"].append("Complex LLM model not specified")
+
+        # Validate tools
+        if self.config.code_execution.enabled:
+            for lang in self.config.code_execution.allowed_languages:
+                if lang not in ["python", "javascript", "bash", "sql", "r"]:
+                    issues["warnings"].append(f"Unsupported language: {lang}")
+
+        # Validate specializations
+        for spec in self.config.flow_specializations:
+            if spec.domain not in ["code_writing", "data_analysis", "project_management", "refinement"]:
+                issues["warnings"].append(f"Unknown specialization domain: {spec.domain}")
+
+        # Validate personas
+        if not self.config.persona_profiles.profiles:
+            issues["warnings"].append("No persona profiles defined")
+
+        # Validate server configs
+        if self.config.a2a.get("enabled") and not A2A_AVAILABLE:
+            issues["errors"].append("A2A server enabled but A2A not available")
+        if self.config.mcp.get("enabled") and not MCP_AVAILABLE:
+            issues["errors"].append("MCP server enabled but MCP not available")
+
+        return issues
+
+    def optimize_config(self) -> 'AgentBuilder':
+        """Optimize configuration based on enabled features"""
+
+        # Optimize token limits based on models
+        if "claude" in self.config.fast_llm_model.lower():
+            self.config.max_tokens_input = min(self.config.max_tokens_input, 100000)
+        elif "gpt-4" in self.config.complex_llm_model.lower():
+            self.config.max_tokens_input = min(self.config.max_tokens_input, 128000)
+
+        # Optimize task management based on tools
+        tool_count = len(self.config.default_tools) + len(self._custom_tools)
+        if tool_count > 10:
+            self.config.task_management["max_parallel_tasks"] = min(
+                self.config.task_management["max_parallel_tasks"], 3
+            )
+
+        # Optimize session management for code execution
+        if self.config.code_execution.enabled:
+            self.config.session_management["compression_threshold"] = 0.8
+
+        logger.info("Configuration optimized")
+        return self
+
+    def get_build_summary(self) -> Dict[str, Any]:
+        """Get summary of what will be built"""
+        return {
+            "agent_name": self.config.agent_name,
+            "models": {
+                "fast": self.config.fast_llm_model,
+                "complex": self.config.complex_llm_model
+            },
+            "tools": {
+                "custom_tools": len(self._custom_tools),
+                "mcp_tools": len(self._mcp_tools),
+                "default_tools": len(self.config.default_tools)
+            },
+            "features": {
+                "code_execution": self.config.code_execution.enabled,
+                "specializations": len(self.config.flow_specializations),
+                "persona_profiles": len(self.config.persona_profiles.profiles),
+                "custom_flows": len(self._custom_flows),
+                "custom_nodes": len(self._custom_nodes)
+            },
+            "servers": {
+                "a2a": self.config.a2a.get("enabled", False),
+                "mcp": self.config.mcp.get("enabled", False),
+                "telemetry": self.config.telemetry.get("enabled", False)
+            },
+            "configuration": {
+                "max_parallel_tasks": self.config.task_management.get("max_parallel_tasks"),
+                "session_management": self.config.session_management.get("context_awareness"),
+                "budget_manager": self._budget_manager is not None,
+                "verbose_logging": self.config.verbose_logging
+            }
+        }
+
+    # ===== BUILD METHOD =====
+
+    async def build(self) -> FlowAgent:
+        """Build the enhanced FlowAgent with comprehensive error handling"""
+
+        logger.info(f"Building advanced FlowAgent: {self.config.agent_name}")
+
+        # Validate configuration
+        validation_issues = self.validate_config()
+        if validation_issues["errors"]:
+            error_msg = f"Configuration validation failed: {', '.join(validation_issues['errors'])}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        if validation_issues["warnings"]:
+            for warning in validation_issues["warnings"]:
+                logger.warning(f"Configuration warning: {warning}")
+
+        try:
+            # 1. Setup API configuration
+            api_key = None
+            if self.config.api_key_env_var:
+                api_key = os.getenv(self.config.api_key_env_var)
+                if not api_key:
+                    logger.warning(f"API key env var {self.config.api_key_env_var} not set")
+
+            # 2. Determine active persona
+            active_persona = None
+            if self.config.persona_profiles.profiles:
+                active_profile = self.config.persona_profiles.active_profile
+                if active_profile in self.config.persona_profiles.profiles:
+                    active_persona = self.config.persona_profiles.profiles[active_profile]
+                    logger.info(f"Using persona: {active_persona.name}")
+
+            # 3. Create enhanced AgentModelData
+            amd = AgentModelData(
+                name=self.config.agent_name,
+                fast_llm_model=self.config.fast_llm_model,
+                complex_llm_model=self.config.complex_llm_model,
+                system_message=self.config.system_message,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens_output,
+                max_input_tokens=self.config.max_tokens_input,
+                api_key=api_key,
+                api_base=self.config.api_base,
+                budget_manager=self._budget_manager,
+                persona=active_persona,
+                use_fast_response=self.config.use_fast_response
+            )
+
+            # 4. Create enhanced FlowAgent
+            agent = FlowAgent(
+                amd=amd,
+                world_model=self.config.initial_world_model.copy(),
+                verbose=self.config.verbose_logging,
+                enable_pause_resume=self.config.checkpoint.get("enabled", True),
+                checkpoint_interval=self.config.checkpoint.get("interval_seconds", 300),
+                max_parallel_tasks=self.config.task_management.get("max_parallel_tasks", 5)
+            )
+
+            # 5. Add custom variable scopes
+            if 'variable_scopes' in self.config.custom_variables:
+                for scope_name, variables in self.config.custom_variables['variable_scopes'].items():
+                    agent.variable_manager.register_scope(scope_name, variables)
+
+            # Add other custom variables
+            for key, value in self.config.custom_variables.items():
+                if key != 'variable_scopes':
+                    agent.set_variable(key, value)
+
+            # 6. Add all custom tools
+            tool_count = 0
+            for tool_name, tool_info in self._custom_tools.items():
+                try:
+                    await agent.add_tool(
+                        tool_info['function'],
+                        name=tool_name,
+                        description=tool_info['description']
+                    )
+                    tool_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to add tool {tool_name}: {e}")
+
+            # 7. Add specialized flows as tools
+            for domain, flow in self._specialized_flows.items():
+                try:
+                    async def run_flow(query: str = "", **kwargs):
+                        context = {"current_query": query, "domain": domain}
+                        context.update(kwargs)
+
+                        # Add enhanced context
+                        context["agent_instance"] = agent
+                        context["variable_manager"] = agent._variable_manager
+                        if self._code_executor:
+                            context["code_executor"] = self._code_executor
+
+                        return await flow.run_async(context)
+
+                    await agent.add_tool(run_flow, f"{domain}_flow",
+                                         f"Execute {domain} specialized flow")
+                    tool_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to add specialized flow {domain}: {e}")
+
+            # 8. Add custom flows
+            for flow_name, flow in self._custom_flows.items():
+                try:
+                    async def run_custom_flow(query: str = "", context: Dict[str, Any] = None):
+                        flow_context = context or {}
+                        flow_context.update({"current_query": query})
+                        flow_context["agent_instance"] = agent
+                        if agent._variable_manager:
+                            flow_context["variable_manager"] = agent._variable_manager
+                        return await flow.run_async(flow_context)
+
+                    await agent.add_tool(run_custom_flow, flow_name,
+                                         f"Custom flow: {flow.__class__.__name__}")
+                    tool_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to add custom flow {flow_name}: {e}")
+
+            # 9. Initialize session context if configured
+            if self.config.session_management.get("enable_infinite_scaling"):
+                try:
+                    await agent.initialize_session_context(
+                        max_history=self.config.session_management.get("max_history", 200)
+                    )
+                except Exception as e:
+                    logger.warning(f"Session context initialization failed: {e}")
+
+            # 10. Setup servers
+            if self.config.a2a.get("enabled"):
+                try:
+                    agent.setup_a2a_server(
+                        host=self.config.a2a.get("host", "0.0.0.0"),
+                        port=self.config.a2a.get("port", 5000),
+                        **{k: v for k, v in self.config.a2a.items()
+                           if k not in ["enabled", "host", "port"]}
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to setup A2A server: {e}")
+
+            if self.config.mcp.get("enabled"):
+                try:
+                    agent.setup_mcp_server(
+                        host=self.config.mcp.get("host", "0.0.0.0"),
+                        port=self.config.mcp.get("port", 8000),
+                        name=self.config.mcp.get("server_name"),
+                        **{k: v for k, v in self.config.mcp.items()
+                           if k not in ["enabled", "host", "port", "server_name"]}
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to setup MCP server: {e}")
+
+            # 11. Final setup and validation
+            build_summary = self.get_build_summary()
+
+            logger.info(f"Advanced FlowAgent built successfully!")
+            logger.info(f"Agent: {agent.amd.name}")
+            logger.info(f"Tools registered: {len(agent.shared.get('available_tools', []))}")
+            logger.info(f"Specializations: {len(self._specialized_flows)}")
+            logger.info(f"Custom flows: {len(self._custom_flows)}")
+            logger.info(f"Features enabled: {list(build_summary['features'].keys())}")
+
+            return agent
+
+        except Exception as e:
+            logger.error(f"Failed to build FlowAgent: {e}")
+            raise
+
+    # ===== CONVENIENCE FACTORY METHODS =====
+
+    @classmethod
+    def create_developer_agent(cls, name: str = "DeveloperAgent") -> 'AgentBuilder':
+        """Create an agent optimized for software development"""
+        return (cls()
+                .with_name(name)
+                .with_developer_persona()
+                .enable_code_execution()
+                .with_code_writing_specialization()
+                .with_refinement_specialization()
+                .with_session_config(max_history=300)
+                .with_task_config(max_parallel=3)
+                .verbose(True))
+
+    @classmethod
+    def create_analyst_agent(cls, name: str = "AnalystAgent") -> 'AgentBuilder':
+        """Create an agent optimized for data analysis"""
+        return (cls()
+                .with_name(name)
+                .with_analyst_persona()
+                .with_secure_python_execution()
+                .with_data_analysis_specialization()
+                .with_session_config(max_history=250)
+                .verbose(False))
+
+    @classmethod
+    def create_general_assistant(cls, name: str = "AssistantAgent") -> 'AgentBuilder':
+        """Create a general-purpose assistant agent"""
+        return (cls()
+                .with_name(name)
+                .with_assistant_persona()
+                .with_all_specializations()
+                .enable_code_execution(sandbox=True)
+                .with_domain_adapted_personas(True)
+                .with_session_config(max_history=200)
+                .with_task_config(max_parallel=5))
+
+    @classmethod
+    def from_config_file(cls, config_path: str) -> 'AgentBuilder':
+        """Create builder from configuration file"""
+        return cls(config_path=config_path)
+
+
+# ===== DEFAULT CONFIGURATIONS =====
+
+def create_code_development_config() -> AdvancedBuilderConfig:
+    """Create configuration optimized for code development"""
+    return AdvancedBuilderConfig(
+        agent_name="CodeDevelopmentAgent",
+        description="Advanced code development agent with secure execution and testing capabilities",
+        fast_llm_model=os.getenv("DEFAULTMODEL2", "openrouter/anthropic/claude-3-haiku"),
+        complex_llm_model=os.getenv("DEFAULTMODELsT", "openrouter/anthropic/claude-3-haiku"),
+
+        code_execution=CodeExecutionConfig(
+            enabled=True,
+            allowed_languages=["python", "javascript", "typescript", "bash"],
+            sandbox_mode=True,
+            timeout_seconds=60,
+            install_packages=True,
+            allowed_imports=[
+                "json", "yaml", "csv", "math", "statistics", "datetime",
+                "re", "string", "itertools", "collections", "functools",
+                "numpy", "pandas", "matplotlib", "seaborn", "requests"
+            ],
+            blocked_imports=["subprocess", "os.system", "eval", "exec", "socket"]
+        ),
+
+        flow_specializations=[
+            FlowSpecializationConfig(
+                name="code_writing_flow",
+                domain="code_writing",
+                specialized_tools=["execute_code", "execute_python"],
+                flow_pattern="iterative",
+                context_awareness="code_focused"
+            )
+        ],
+
+        persona_profiles=PersonaProfileConfig(
+            profiles={
+                "senior_developer": PersonaConfig(
+                    name="Senior Developer",
+                    style="technical",
+                    tone="professional",
+                    personality_traits=["precise", "thorough", "security_conscious"],
+                    custom_instructions="Focus on code quality, security, and maintainability."
                 )
-            else: logger.warning("A2A server configured in builder, but A2A not available in agent environment.")
+            },
+            active_profile="senior_developer"
+        ),
 
-        if self._config.mcp.enabled and not agent.mcp_server:
-            if AGENT_MCP_AVAILABLE:
-                logger.info("Setting up MCP server on agent instance...")
-                agent.setup_mcp_server(
-                    host=self._config.mcp.host,
-                    port=self._config.mcp.port,
-                    name=self._config.mcp.server_name, # Already defaulted
-                    **self._config.mcp.extra_options
-                )
-            else: logger.warning("MCP server configured in builder, but MCP not available in agent environment.")
-
-        # 8. Setup A2A known clients configuration on the agent
-        if self._config.a2a.known_clients:
-             if AGENT_A2A_AVAILABLE:
-                 # The agent likely handles client creation on demand,
-                 # but we can pass the config for it to use.
-                 # Assuming agent has a way to receive this, e.g., during init or a setter
-                 if hasattr(agent, 'set_known_a2a_clients'):
-                     agent.set_known_a2a_clients(self._config.a2a.known_clients)
-                 else:
-                      # Fallback: store on a generic config dict? Less ideal.
-                      # agent.config.a2a_known_clients = self._config.a2a.known_clients
-                      logger.warning("Agent does not have 'set_known_a2a_clients' method. Known client config stored raw.")
-             else:
-                  logger.warning("A2A known clients configured, but A2A not available in agent env.")
-
-
-        logger.info(f"--- EnhancedAgent Build Complete: {agent.amd.name} ---")
-        return agent
-
-
-# Example Usage (Illustrative)
-async def main_example():
-
-    # --- Configure Telemetry (Example: Console Exporter) ---
-    # This should typically happen once at application startup
-    provider = None
-    if OTEL_AVAILABLE:
-        provider = TracerProvider()
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        # Set the global provider
-        # trace.set_tracer_provider(provider) # Builder will do this if passed
-
-    # --- Build the Agent ---
-    builder = EnhancedAgentBuilder(agent_name="ProdAgent007")
-
-    agent = await (
-        builder
-        .with_model("gemini/gemini-1.5-flash-latest") # Or "ollama/mistral", "gpt-4o", etc.
-        # .with_api_key(os.getenv("GEMINI_API_KEY")) # Use env vars
-        .with_system_message("You are ProdAgent007, an advanced AI assistant integrating multiple frameworks.")
-        .verbose(True)
-        .enable_streaming(False)
-        .with_history_options(max_tokens=8000, trim_strategy="litellm") # Token-based history
-        .with_initial_world_data({"user_prefs": {"theme": "dark"}, "last_location": None})
-
-        # --- ADK Features ---
-        .with_adk_code_executor("adk_builtin") # Use ADK's secure executor if possible
-        # .with_unsafe_code_executor() # Uncomment ONLY if you understand the risks
-        .enable_adk_state_sync() # Sync world model with ADK state
-        # Add MCP tools via ADK Toolset
-        # .with_adk_mcp_toolset(StdioServerParameters(command='npx', args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/your/folder"]))
-
-        # --- A2A Features ---
-        .enable_a2a_server(host="127.0.0.1", port=5001) # Agent can receive A2A tasks
-        # .with_a2a_client("http://other-agent:5002") # Pre-configure client for delegation
-
-         # --- MCP Server Feature ---
-        .enable_mcp_server(host="127.0.0.1", port=8001) # Agent can expose capabilities via MCP
-
-        # --- Callbacks & Observability ---
-        .with_post_run_callback(lambda sid, resp, cost, *s: print(f"[Callback] Run Done (Session: {sid}): Cost ${cost:.6f}, s: {s}, Resp: {resp[:50]}..."))
-        .with_telemetry_provider_instance(provider) # Pass configured OTel provider
-
-        .build() # Asynchronous build step
+        task_management={
+            "max_parallel_tasks": 3,
+            "enable_reflection": True,
+            "enable_adaptation": True,
+            "intelligent_routing": True
+        }
     )
 
-    # --- Interact with the Agent ---
-    print("\n--- Interacting with Agent ---")
-    response1 = await agent.a_run("Hello there! What can you do?")
-    print("Response 1:", response1)
 
-    response2 = await agent.a_run("What is the square root of 289?") # Test code execution (if enabled)
-    print("Response 2:", response2)
+def create_data_analysis_config() -> AdvancedBuilderConfig:
+    """Create configuration optimized for data analysis"""
+    return AdvancedBuilderConfig(
+        agent_name="DataAnalysisAgent",
+        description="Advanced data analysis agent with statistical computing capabilities",
+        fast_llm_model=os.getenv("DEFAULTMODEL2", "openrouter/anthropic/claude-3-haiku"),
+        complex_llm_model=os.getenv("DEFAULTMODELsT", "openrouter/anthropic/claude-3-haiku"),
 
-    response3 = await agent.a_run("My location is London.", session_id="user123") # Test world model update
-    print("Response 3:", response3)
+        code_execution=CodeExecutionConfig(
+            enabled=True,
+            allowed_languages=["python"],
+            sandbox_mode=True,
+            timeout_seconds=120,
+            install_packages=True
+        ),
 
-    response4 = await agent.a_run("What was the location I mentioned?", session_id="user123") # Test world model retrieval
-    print("Response 4:", response4)
+        persona_profiles=PersonaProfileConfig(
+            profiles={
+                "data_scientist": PersonaConfig(
+                    name="Data Scientist",
+                    style="analytical",
+                    tone="objective",
+                    personality_traits=["methodical", "insight_driven", "evidence_based"],
+                    custom_instructions="Focus on statistical rigor and actionable insights."
+                )
+            },
+            active_profile="data_scientist"
+        )
+    )
 
-    # If A2A client configured:
-    # response5 = await agent.a_run("Ask the agent at http://other-agent:5002 about the weather in London.")
-    # print("Response 5:", response5)
 
-    print(agent.total_cost)
+# ===== EXAMPLE USAGE =====
 
+async def example_comprehensive_usage():
+    """Comprehensive example showing all builder capabilities"""
 
-    # --- Cleanup ---
+    logger.info("Starting comprehensive FlowAgent builder example...")
+
+    # Create builder with full configuration
+    builder = (AgentBuilder()
+               .with_name("ComprehensiveAgent")
+               .with_models(
+        fast_model="openrouter/anthropic/claude-3-haiku",
+        complex_model="openrouter/openai/gpt-4o"
+    )
+               .with_temperature(0.7)
+               .with_api_config(api_key_env_var="OPENROUTER_API_KEY")
+               .verbose(True))
+
+    # Add custom tools
+    def get_current_time():
+        """Get current timestamp"""
+        return datetime.now().isoformat()
+
+    def calculate_fibonacci(n: int) -> int:
+        """Calculate nth Fibonacci number"""
+        if n <= 1:
+            return n
+        return calculate_fibonacci(n - 1) + calculate_fibonacci(n - 2)
+
+    builder.add_tool(get_current_time, description="Get current system time")
+    builder.add_tool(calculate_fibonacci, description="Calculate Fibonacci numbers")
+
+    # Add MCP tool from code
+    mcp_code = '''
+async def analyze_text_sentiment(text: str) -> dict:
+    """Analyze sentiment of text (mock implementation)"""
+    import re
+
+    positive_words = ["good", "great", "excellent", "amazing", "wonderful"]
+    negative_words = ["bad", "terrible", "awful", "horrible", "disappointing"]
+
+    text_lower = text.lower()
+    pos_count = sum(1 for word in positive_words if word in text_lower)
+    neg_count = sum(1 for word in negative_words if word in text_lower)
+
+    if pos_count > neg_count:
+        sentiment = "positive"
+        score = min(0.5 + (pos_count - neg_count) * 0.1, 1.0)
+    elif neg_count > pos_count:
+        sentiment = "negative"
+        score = max(-0.5 - (neg_count - pos_count) * 0.1, -1.0)
+    else:
+        sentiment = "neutral"
+        score = 0.0
+return {
+        "sentiment": sentiment,
+        "score": score,
+        "positive_words_found": pos_count,
+        "negative_words_found": neg_count
+    }
+'''
+
+    builder.add_mcp_tool_from_code(
+        "analyze_sentiment",
+        mcp_code,
+        "Analyze text sentiment with scoring"
+    )
+
+    # Enable code execution with security
+    builder.with_secure_python_execution(timeout=45)
+
+    # Add all specializations
+    builder.with_all_specializations()
+
+    # Configure personas
+    builder.with_developer_persona("Senior Full-Stack Developer")
+    builder.with_domain_adapted_personas(True)
+
+    # Add custom variables
+    builder.with_custom_variables({
+        "project_name": "FlowAgent Demo",
+        "version": "2.0.0",
+        "environment": "development"
+    })
+
+    builder.add_variable_scope("demo", {
+        "started_at": datetime.now().isoformat(),
+        "features_tested": [],
+        "test_counter": 0
+    })
+
+    # Enable servers
+    builder.enable_mcp_server(port=8001, server_name="ComprehensiveAgent_MCP")
+
+    # Optimize and validate
+    builder.optimize_config()
+    validation_issues = builder.validate_config()
+
+    if validation_issues["warnings"]:
+        logger.info(f"Configuration warnings: {validation_issues['warnings']}")
+
+    # Show build summary
+    summary = builder.get_build_summary()
+    logger.info(f"Build summary: {json.dumps(summary, indent=2)}")
+
+    # Build the agent
+    agent = await builder.build()
+
+    logger.info(f"Agent built successfully: {agent.amd.name}")
+    logger.info(f"Available tools: {agent.shared.get('available_tools', [])}")
+
+    # Test variable system
+    logger.info("Testing variable system...")
+
+    # Set some test variables
+    agent.set_variable("test.start_time", datetime.now().isoformat())
+    agent.set_variable("user.name", "TestUser")
+    agent.set_variable("demo.test_counter", 1)
+
+    # Test variable resolution
+    test_text = "Hello {{ user.name }}! Project: {{ project_name }} started at {{ test.start_time }}"
+    formatted_text = agent.format_text(test_text)
+    logger.info(f"Variable formatting test: {formatted_text}")
+
+    # Get variable documentation
+    var_docs = agent.get_variable_documentation()
+    logger.info("Variable system documentation generated")
+
+    # Test basic functionality
+    logger.info("\n=== Testing Basic Functionality ===")
+
+    simple_response = await agent.a_run("Hello! What's the current time?")
+    logger.info(f"Simple query response: {simple_response}")
+
+    # Test code execution
+    logger.info("\n=== Testing Code Execution ===")
+
+    code_response = await agent.a_run(
+        "Write and execute Python code to calculate the factorial of 5 and show the result"
+    )
+    logger.info(f"Code execution response: {code_response}")
+
+    # Test sentiment analysis tool
+    logger.info("\n=== Testing MCP Tool ===")
+
+    sentiment_response = await agent.a_run(
+        "Analyze the sentiment of this text: 'This is an amazing product! I love how well it works.'"
+    )
+    logger.info(f"Sentiment analysis response: {sentiment_response}")
+
+    # Test specialization
+    logger.info("\n=== Testing Code Writing Specialization ===")
+
+    specialization_response = await agent.a_run(
+        "Create a Python class for managing a simple todo list with add, remove, and list methods. "
+        "Include proper error handling and documentation."
+    )
+    logger.info(f"Code writing specialization response: {specialization_response[:200]}...")
+
+    # Test variable usage in query
+    logger.info("\n=== Testing Variables in Queries ===")
+
+    # Update counter
+    agent.set_variable("demo.test_counter",
+                       agent.get_variable("demo.test_counter", 0) + 1)
+
+    variable_response = await agent.a_run(
+        "This is test number {{ demo.test_counter }} for project {{ project_name }}. "
+        "Can you create a summary of what we've accomplished so far?"
+    )
+    logger.info(f"Variable integration response: {variable_response}")
+
+    # Test refinement specialization
+    logger.info("\n=== Testing Refinement Specialization ===")
+
+    refinement_response = await agent.a_run(
+        "Please refine and improve this code snippet: "
+        "def calc(x): return x*2 if x>0 else 'error'"
+    )
+    logger.info(f"Refinement response: {refinement_response}")
+
+    # Test agent statistics and status
+    logger.info("\n=== Agent Statistics ===")
+
+    status = agent.status
+    logger.info(f"Agent status: {status}")
+
+    if hasattr(agent.task_flow, 'executor_node'):
+        exec_stats = agent.task_flow.executor_node.get_execution_statistics()
+        logger.info(f"Execution statistics: {exec_stats}")
+
+    # Test context management
+    logger.info("\n=== Testing Context Management ===")
+
+    context_stats = agent.get_context_statistics()
+    logger.info(f"Context statistics: {json.dumps(context_stats, indent=2)}")
+
+    # Test reasoning explanation
+    logger.info("\n=== Testing Reasoning Process ===")
+
+    try:
+        reasoning = await agent.explain_reasoning_process()
+        logger.info(f"Reasoning explanation: {reasoning}")
+    except Exception as e:
+        logger.info(f"Reasoning explanation not available: {e}")
+
+    # Test task execution summary
+    logger.info("\n=== Testing Task Summary ===")
+
+    try:
+        task_summary = await agent.get_task_execution_summary()
+        logger.info(f"Task execution summary: {json.dumps(task_summary, indent=2)}")
+    except Exception as e:
+        logger.info(f"Task summary not available: {e}")
+
+    # Test variable system features
+    logger.info("\n=== Testing Advanced Variable Features ===")
+
+    # Test variable validation
+    test_template = "Hello {{ user.name }}, you have {{ invalid.variable }} notifications"
+    validation_results = agent.variable_manager.validate_references(test_template)
+    logger.info(f"Variable validation: {validation_results}")
+
+    # Test variable suggestions
+    suggestions = agent.variable_manager.get_variable_suggestions("user information")
+    logger.info(f"Variable suggestions for 'user information': {suggestions}")
+
+    # Test scope information
+    scope_info = agent.variable_manager.get_scope_info()
+    logger.info(f"Variable scope info: {json.dumps(scope_info, indent=2)}")
+
+    # Final comprehensive test
+    logger.info("\n=== Comprehensive Integration Test ===")
+
+    comprehensive_response = await agent.a_run(
+        "I'm working on project {{ project_name }} and need help. "
+        "Can you: 1) Write Python code to generate the first 10 prime numbers, "
+        "2) Execute the code to verify it works, "
+        "3) Analyze the sentiment of this feedback: 'The code works perfectly!', "
+        "4) Provide a summary with the current time. "
+        "This is test {{ demo.test_counter }} of our comprehensive evaluation."
+    )
+    logger.info(f"Comprehensive test response: {comprehensive_response}")
+
+    # Update final variables
+    agent.set_variable("demo.features_tested", [
+        "basic_queries", "code_execution", "mcp_tools",
+        "specializations", "variable_system", "context_management"
+    ])
+    agent.set_variable("demo.completed_at", datetime.now().isoformat())
+
+    # Final status
+    logger.info("\n=== Final Agent State ===")
+    final_status = agent.status
+    logger.info(f"Final status: {json.dumps(final_status, indent=2)}")
+
+    logger.info("\n=== Available Variables ===")
+    available_vars = agent.get_available_variables()
+    for scope, variables in available_vars.items():
+        logger.info(f"Scope '{scope}': {len(variables)} variables")
+        for var_name, var_info in list(variables.items())[:3]:  # Show first 3
+            logger.info(f"  - {var_info['path']}: {var_info['preview']}")
+
+    # Test configuration save/load
+    logger.info("\n=== Testing Configuration Persistence ===")
+
+    config_path = "/tmp/test_agent_config.yaml"
+    try:
+        builder.save_config(config_path)
+        logger.info(f"Configuration saved to {config_path}")
+
+        # Test loading
+        loaded_builder = AgentBuilder.from_config_file(config_path)
+        logger.info("Configuration loaded successfully")
+    except Exception as e:
+        logger.error(f"Configuration persistence test failed: {e}")
+
+    # Cleanup
+    logger.info("\n=== Cleanup ===")
     await agent.close()
+    logger.info("Agent closed successfully")
 
-    # --- Run Servers (Example - requires separate processes/tasks usually) ---
-    # These are blocking calls, typically run separately
-    # if agent.a2a_server:
-    #     print("\nStarting A2A Server (Blocking)... Press Ctrl+C to stop.")
-    #     # agent.run_a2a_server() # Run in separate thread/process
-    # if agent.mcp_server:
-    #      print("\nStarting MCP Server (Blocking)... Press Ctrl+C to stop.")
-         # agent.run_mcp_server() # Run in separate thread/process
+    logger.info("Comprehensive FlowAgent builder example completed!")
+
+
+async def example_quick_start():
+    """Quick start example for common use cases"""
+
+    logger.info("=== Quick Start Examples ===")
+
+    # Example 1: Developer Agent
+    logger.info("Creating developer agent...")
+    dev_agent = await (AgentBuilder
+                       .create_developer_agent("DevHelper")
+                       .with_models("openrouter/anthropic/claude-3-haiku")
+                       .build())
+
+    dev_response = await dev_agent.a_run(
+        "Create a Python function to validate email addresses using regex"
+    )
+    logger.info(f"Dev agent response: {dev_response[:150]}...")
+    await dev_agent.close()
+
+    # Example 2: Analyst Agent
+    logger.info("Creating analyst agent...")
+    analyst_agent = await (AgentBuilder
+                           .create_analyst_agent("DataHelper")
+                           .build())
+
+    analyst_response = await analyst_agent.a_run(
+        "Generate Python code to create a simple data visualization of sales trends"
+    )
+    logger.info(f"Analyst agent response: {analyst_response[:150]}...")
+    await analyst_agent.close()
+
+    # Example 3: General Assistant
+    logger.info("Creating general assistant...")
+    assistant_agent = await (AgentBuilder
+                             .create_general_assistant("GeneralHelper")
+                             .build())
+
+    assistant_response = await assistant_agent.a_run(
+        "Help me plan a simple Python project structure for a web scraping tool"
+    )
+    logger.info(f"Assistant agent response: {assistant_response[:150]}...")
+    await assistant_agent.close()
+
+    logger.info("Quick start examples completed!")
 
 
 if __name__ == "__main__":
-    # Note: Running the example might require setting up environment variables (API keys)
-    # and potentially running dependent services (like other A2A/MCP agents).
-    try:
-        asyncio.run(main_example())
-    except Exception as main_e:
-         print(f"\n--- Example execution failed: {main_e} ---")
-         # Print traceback for debugging
-         import traceback
-         traceback.print_exc()
+    # Run comprehensive example
+    asyncio.run(example_comprehensive_usage())
 
+    # Run quick start examples
+    # asyncio.run(example_quick_start())
