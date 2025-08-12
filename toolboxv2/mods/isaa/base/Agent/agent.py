@@ -116,7 +116,7 @@ class AsyncNodeT(AsyncNode):
         return await super().exec_async(prep_res)
 
     async def exec_fallback_async(self, prep_res, exc):
-        logger.info(f"ExecFallback: {self.__class__.__name__} args {json.dumps(prep_res, indent=2, errors='ignore') if isinstance(prep_res, dict) else prep_res} exc {exc}")
+        logger.info(f"ExecFallback: {self.__class__.__name__} args {prep_res} exc {exc}")
         return await super().exec_fallback_async(prep_res, exc)
     async def post_async(self, shared, prep_res, exec_res):
         logger.info(f"Post: {self.__class__.__name__} args {prep_res} exec_res {json.dumps(exec_res, indent=2, errors='ignore') if isinstance(exec_res, dict) else exec_res}")
@@ -146,6 +146,22 @@ class Task:
     retry_count: int = 0
     max_retries: int = 3
     critical: bool = False
+
+
+    def __post_init__(self):
+        """Ensure all mutable defaults are properly initialized"""
+        if self.metadata is None:
+            self.metadata = {}
+        if self.dependencies is None:
+            self.dependencies = []
+        if self.subtasks is None:
+            self.subtasks = []
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        setattr(self, key, value)
 
 @dataclass
 class TaskPlan:
@@ -223,7 +239,18 @@ def create_task(task_type: str, **kwargs) -> Task:
     if "critical" not in kwargs:
         kwargs["critical"] = task_type in ["llm_call", "decision"]
 
-    return task_class(**kwargs)
+    # Ensure metadata is initialized
+    if "metadata" not in kwargs:
+        kwargs["metadata"] = {}
+
+    # Create task and ensure post_init is called
+    task = task_class(**kwargs)
+
+    # Double-check metadata initialization
+    if not hasattr(task, 'metadata') or task.metadata is None:
+        task.metadata = {}
+
+    return task
 
 @dataclass
 class AgentCheckpoint:
@@ -790,7 +817,8 @@ class StrategyOrchestratorNode(AsyncNodeT):
             "fast_llm_model": shared.get("fast_llm_model"),
             "complex_llm_model": shared.get("complex_llm_model"),
             "tool_capabilities": tool_capabilities,
-            "available_tools_names": shared.get("available_tools", [])
+            "available_tools_names": shared.get("available_tools", []),
+            "variable_manager": shared.get("variable_manager")
         }
 
     async def exec_async(self, prep_res):
@@ -808,70 +836,65 @@ class StrategyOrchestratorNode(AsyncNodeT):
         }
 
     async def _determine_strategy_llm(self, prep_res) -> str:
-        """Enhanced strategy determination with tool awareness"""
-
+        """Enhanced strategy determination with variable awareness"""
         if not LITELLM_AVAILABLE:
             return "direct_response"
 
-        # Build tool context
+        variable_manager = prep_res.get("variable_manager")
         tool_context = self._build_tool_awareness_context(prep_res)
 
+        # Variable-aware context
+        var_context = ""
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+
         prompt = f"""
-    You are a strategic AI agent. Analyze the query and your available capabilities to select the optimal strategy.
+You are a strategic AI agent with advanced variable system and tool capabilities.
 
-    ## User Query
-    {prep_res['query']}
+## User Query
+{prep_res['query']}
 
-    ## Your Available Tools & Capabilities
-    {tool_context}
+## Your Capabilities & Context
+{tool_context}
 
-    ## System Status
-    - Active tasks: {len(prep_res['tasks'])}
-    - System status: {prep_res['system_status']}
+{var_context}
 
-    ## Available Strategies:
-    - direct_response: Simple response without tools (ONLY if no relevant tools available)
-    - multi_step_planning: Complex task breakdown with tool usage
-    - research_and_analyze: Information gathering using available tools
-    - creative_generation: Content creation, may use tools for context
-    - problem_solving: Analysis and problem solving with tools
+## System Variables Available
+- User context: {{ user.name }}, {{ user.session }}, {{ user.id }}
+- System state: {{ system.timestamp }}, {{ agent.name }}
+- Previous results: {{ results.* }} (if any exist)
+- World knowledge: {{ world.* }} (learned facts)
 
-    ## IMPORTANT DECISION CRITERIA:
-    1. If you have tools that can DIRECTLY answer the query, use multi_step_planning
-    2. If tools can provide context/data for better responses, use research_and_analyze
-    3. Only use direct_response if NO tools are relevant
-    4. Consider INDIRECT connections - tools might be useful even if not obvious
+## Available Strategies:
+- direct_response: Simple LLM response with optional tool calls
+- simple_planning: Simple multi-step plan with tool calls
+- multi_step_planning: Complex task breakdown with tool orchestration
+- research_and_analyze: Information gathering with variable integration
+- creative_generation: Content creation with personalization
+- problem_solving: Analysis with tool validation
 
-    ## Analysis Process:
-    1. Check if any tools can directly fulfill the request
-    2. Check if tools can provide supporting information
-    3. Consider personalization opportunities
-    4. Look for non-obvious connections
+## Decision Criteria:
+1. Check if tools can directly answer the query
+2. Consider variable/personalization opportunities
+3. Evaluate complexity and multi-step needs
+4. Look for context dependencies
 
-    Respond ONLY with the strategy name:"""
+Respond ONLY with strategy name:"""
 
         try:
-            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-
             response = await litellm.acompletion(
-                model=model_to_use,
+                model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,  # Lower temperature for more consistent tool usage
+                temperature=0.2,
                 max_tokens=50
             )
 
             strategy = response.choices[0].message.content.strip().lower()
-
-            if strategy in self.strategies:
-                logger.info(f"Selected strategy: {strategy} (tool-aware)")
-                return strategy
-            else:
-                logger.warning(f"Invalid strategy returned: {strategy}, using multi_step_planning as fallback")
-                return "multi_step_planning"  # Better fallback than direct_response
+            return strategy if strategy in self.strategies else "multi_step_planning"
 
         except Exception as e:
             logger.error(f"Strategy determination failed: {e}")
-            return "multi_step_planning"  # Tool-aware fallback
+            return "multi_step_planning"
 
     def _build_tool_awareness_context(self, prep_res: Dict) -> str:
         """Build comprehensive tool context for strategy decisions"""
@@ -923,6 +946,11 @@ class StrategyOrchestratorNode(AsyncNodeT):
                 "phases": ["context_prep", "llm_call", "response_format"],
                 "parallel_capable": False,
                 "resources": {"llm_calls": 1, "complexity": "low"}
+            },
+            "simple_planning": {
+                "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
+                "parallel_capable": True,
+                "resources": {"llm_calls": "multiple", "complexity": "low"}
             },
             "multi_step_planning": {
                 "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
@@ -981,10 +1009,11 @@ class TaskPlannerNode(AsyncNodeT):
             "fast_llm_model": shared.get("fast_llm_model"),
             "complex_llm_model": shared.get("complex_llm_model"),
             "agent_instance": shared.get("agent_instance"),
+            "variable_manager": shared.get("variable_manager")
         }
 
     async def exec_async(self, prep_res):
-        if prep_res["strategy"] == "direct_response":
+        if prep_res["strategy"] == "simple_planning":
             return self._create_simple_plan(prep_res)
         else:
             return await self._advanced_llm_decomposition(prep_res)
@@ -1021,7 +1050,7 @@ class TaskPlannerNode(AsyncNodeT):
 
     def _create_simple_plan(self, prep_res) -> TaskPlan:
         """Fast lightweight planning for direct or simple multi-step queries."""
-        taw = self._build_tool_intelligence(prep_res)
+        taw = self._build_tool_intelligence(prep_res) # TODO contet and var injection
         logger.info("You are a FAST "+ taw)
         prompt = f"""
 You are a FAST abstract pattern recognizer and task planner.
@@ -1127,7 +1156,7 @@ Pick minimal plan type for fastest completion!
                 description="Direct response only",
                 tasks=[
                     LLMTask(
-                        id="direct_response",
+                        id="simple_planning",
                         type="LLMTask",
                         description="Generate direct response",
                         priority=1,
@@ -1140,7 +1169,16 @@ Pick minimal plan type for fastest completion!
 
     async def _advanced_llm_decomposition(self, prep_res) -> TaskPlan:
         """Erweiterte LLM-basierte Dekomposition mit Tool-Integration"""
+        variable_manager = prep_res.get("variable_manager")
         tool_intelligence = self._build_tool_intelligence(prep_res)
+
+        # Get variable context for planning
+        var_suggestions = ""
+        if variable_manager:
+            suggestions = variable_manager.get_variable_suggestions(prep_res['query'])
+            if suggestions:
+                var_suggestions = f"\n## Suggested Variables\n{', '.join(suggestions)}"
+
         prompt = f"""
 You are an expert **task planner** and **abstract pattern recognizer** with access to specialized tools and task types.
 Your goal: Create intelligent, structured **execution plans** in YAML format by first recognizing patterns in the query and tool capabilities.
@@ -1150,6 +1188,19 @@ Your goal: Create intelligent, structured **execution plans** in YAML format by 
 
 ## Your Available Tools & Intelligence
 {tool_intelligence}
+
+{variable_manager.get_llm_variable_context() if variable_manager else ""}
+{var_suggestions}
+
+## VARIABLE INTEGRATION EXAMPLES:
+- LLMTask prompt_template: "Hello {{ user.name }}, here's your {{ results.search.data }}"
+- ToolTask arguments: {{"query": "{{ user.query }}", "user_id": "{{ user.id }}"}}
+- Task descriptions: "Search for {{ user.preferences }} related content"
+
+## Task Types with Variable Support:
+- **LLMTask**: prompt_template, context_keys support variables
+- **ToolTask**: arguments dict supports {{ }} syntax
+- **DecisionTask**: decision_prompt supports variables
 
 ## CRITICAL INSTRUCTIONS:
 1. ALWAYS check if tools can directly answer the query
@@ -1478,12 +1529,26 @@ class TaskExecutorNode(AsyncNodeT):
         self.results_store = {}  # Für {{ }} Referenzen
         self.execution_history = []  # Für LLM-basierte Optimierung
         self.agent_instance = None  # Wird gesetzt vom FlowAgent
+        self.variable_manager = None
 
     async def prep_async(self, shared):
-        """Intelligente Vorbereitung der Task-Ausführung mit LLM-Unterstützung"""
-
+        """Enhanced preparation with unified variable system"""
         current_plan = shared.get("current_plan")
         tasks = shared.get("tasks", {})
+
+        # Get unified variable manager
+        self.variable_manager = shared.get("variable_manager")
+        if not self.variable_manager:
+            self.variable_manager = VariableManager(shared.get("world_model", {}), shared)
+
+        # Register all necessary scopes
+        self.variable_manager.set_results_store(self.results_store)
+        self.variable_manager.set_tasks_store(tasks)
+        self.variable_manager.register_scope('user', shared.get('user_context', {}))
+        self.variable_manager.register_scope('system', {
+            'timestamp': datetime.now().isoformat(),
+            'agent_name': shared.get('agent_instance', {}).amd.name if shared.get('agent_instance') else 'unknown'
+        })
 
         # Stelle sicher, dass Agent-Referenz verfügbar ist
         if not self.agent_instance:
@@ -1492,18 +1557,13 @@ class TaskExecutorNode(AsyncNodeT):
         if not current_plan:
             return {"error": "No active plan", "tasks": tasks}
 
-        # Analysiere verfügbare Tasks
+        # Rest of existing prep_async logic...
         ready_tasks = self._find_ready_tasks(current_plan, tasks)
         blocked_tasks = self._find_blocked_tasks(current_plan, tasks)
 
-        # LLM-basierte Ausführungsplanung
         execution_plan = await self._create_intelligent_execution_plan(
             ready_tasks, blocked_tasks, current_plan, shared
         )
-
-        # Integriere results_store aus shared wenn vorhanden
-        if "results_store" in shared:
-            self.results_store.update(shared["results_store"])
 
         return {
             "plan": current_plan,
@@ -1515,7 +1575,8 @@ class TaskExecutorNode(AsyncNodeT):
             "complex_llm_model": shared.get("complex_llm_model"),
             "available_tools": shared.get("available_tools", []),
             "world_model": shared.get("world_model", {}),
-            "results_store": self.results_store
+            "results_store": self.results_store,
+            "variable_manager": self.variable_manager
         }
 
     def _find_ready_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
@@ -2021,40 +2082,45 @@ confidence: 0.85
         return results
 
     async def _execute_single_task(self, task: Task) -> Dict:
-        """Task-Ausführung (unverändert von vorher)"""
+        """Enhanced task execution with unified variable system"""
         try:
             task.status = "running"
             task.started_at = datetime.now()
 
-            # Dynamische Argumentauflösung vor Ausführung
+            # Ensure metadata is initialized
+            if not hasattr(task, 'metadata') or task.metadata is None:
+                task.metadata = {}
+
+            # Pre-process task with variable resolution
             if isinstance(task, ToolTask):
-                resolved_args = await self._resolve_dynamic_arguments(task.arguments)
+                resolved_args = self._resolve_task_variables(task.arguments)
                 result = await self._execute_tool_task_enhanced(task, resolved_args)
             elif isinstance(task, LLMTask):
+                # Resolve LLM task variables
+                resolved_prompt = self._resolve_task_variables(task.prompt_template)
+                task.prompt_template = resolved_prompt
                 result = await self._execute_llm_task_enhanced(task)
             elif isinstance(task, DecisionTask):
+                resolved_prompt = self._resolve_task_variables(task.decision_prompt)
+                task.decision_prompt = resolved_prompt
                 result = await self._execute_decision_task(task)
             else:
-                result = await self._execute_llm_task(task)
+                result = await self._execute_generic_task(task)
 
-            # Ergebnis strukturiert speichern
-            self.results_store[task.id] = {
-                "data": result,
-                "metadata": {
-                    "task_type": task.type,
-                    "completed_at": datetime.now().isoformat(),
-                    "success": True
-                }
-            }
+            # Store result in unified system
+            self._store_task_result(task.id, result, True)
 
             task.result = result
             task.status = "completed"
             task.completed_at = datetime.now()
 
-            # Verifikation für ToolTasks
+            # Verification for ToolTasks
             verification_result = None
             if isinstance(task, ToolTask) and task.hypothesis:
                 verification_result = await self._verify_tool_result_enhanced(task)
+                # Ensure metadata exists before assignment
+                if not hasattr(task, 'metadata') or task.metadata is None:
+                    task.metadata = {}
                 task.metadata["verification"] = verification_result
 
             return {
@@ -2069,15 +2135,8 @@ confidence: 0.85
             task.status = "failed"
             task.retry_count += 1
 
-            # Auch Fehler in results_store speichern
-            self.results_store[task.id] = {
-                "error": str(e),
-                "metadata": {
-                    "task_type": task.type,
-                    "failed_at": datetime.now().isoformat(),
-                    "success": False
-                }
-            }
+            # Store error in unified system
+            self._store_task_result(task.id, None, False, str(e))
 
             logger.error(f"Task {task.id} failed: {e}")
             return {
@@ -2088,7 +2147,7 @@ confidence: 0.85
             }
 
     async def _resolve_dynamic_arguments(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Löse {{ results.task_id.key }} Referenzen auf"""
+        """Enhanced dynamic argument resolution with full variable system"""
         resolved = {}
 
         for key, value in arguments.items():
@@ -2141,6 +2200,10 @@ confidence: 0.85
             logger.info(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
             result = await agent.arun_function(task.tool_name, **resolved_args)
 
+            # Store in variable manager if available
+            if self.variable_manager:
+                self.variable_manager.set(f"tasks.{task.id}.result", result)
+
             return result
 
         except Exception as e:
@@ -2148,58 +2211,54 @@ confidence: 0.85
             raise
 
     async def _execute_llm_task_enhanced(self, task: LLMTask) -> Any:
-        """Erweiterte LLM-Task Ausführung mit Template-System"""
-
+        """Enhanced LLM task execution with unified variable system"""
         if not LITELLM_AVAILABLE:
             raise Exception("LiteLLM not available for LLM tasks")
 
-        # Model-Präferenz auflösen
+        # Get model preference with variable support
         llm_config = task.llm_config
         model_preference = llm_config.get("model_preference", "fast")
 
         if model_preference == "complex":
-            model_to_use = task.metadata.get("complex_llm_model", "openrouter/openai/gpt-4o")
+            model_to_use = self.variable_manager.get("system.complex_llm_model", "openrouter/openai/gpt-4o")
         else:
-            model_to_use = task.metadata.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+            model_to_use = self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
-        # Prompt aus Template erstellen
-        prompt = task.prompt_template
-
-        # Context-Keys auflösen
+        # Build context for prompt
+        context_data = {}
         for context_key in task.context_keys:
-            if context_key.startswith("results."):
-                # Dynamische Referenz auflösen
-                pattern = r'results\.([^.]+)\.(.+)'
-                match = re.match(pattern, context_key)
-                if match:
-                    task_id, result_key = match.groups()
-                    if task_id in self.results_store:
-                        context_value = self.results_store[task_id].get("data", "")
-                        placeholder = f"{{{{{context_key}}}}}"
-                        prompt = prompt.replace(placeholder, str(context_value))
+            value = self.variable_manager.get(context_key)
+            if value is not None:
+                context_data[context_key] = value
+
+        # Resolve prompt template with full variable system
+        final_prompt = self.variable_manager.format_text(
+            task.prompt_template,
+            context=context_data
+        )
 
         response = await litellm.acompletion(
             model=model_to_use,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": final_prompt}],
             temperature=llm_config.get("temperature", 0.7),
             max_tokens=llm_config.get("max_tokens", 1024)
         )
 
         result = response.choices[0].message.content
 
-        # Output-Schema Validierung falls vorhanden
+        # Store intermediate result for other tasks
+        self.variable_manager.set(f"tasks.{task.id}.result", result)
+
+        # Output schema validation if present
         if task.output_schema:
             try:
-                # Versuche JSON zu parsen und gegen Schema zu validieren
                 if result.strip().startswith('{') or result.strip().startswith('['):
                     parsed = json.loads(result)
-                    # Hier könnte eine Schema-Validierung implementiert werden
                     logger.info(f"LLM output validated against schema for task {task.id}")
             except json.JSONDecodeError:
                 logger.warning(f"LLM output for task {task.id} is not valid JSON")
 
         return result
-
     async def _execute_decision_task(self, task: DecisionTask) -> str:
         """Führe Decision Task aus und gib Routing-Entscheidung zurück"""
 
@@ -2235,7 +2294,7 @@ Respond with EXACTLY one of these options - nothing else:"""
         next_task_id = task.routing_map.get(decision, "")
         task.metadata["next_task_id"] = next_task_id
         task.metadata["decision_made"] = decision
-
+        self.variable_manager.set(f"tasks.{task.id}.result", decision)
         return decision
 
     async def _verify_tool_result_enhanced(self, task: ToolTask) -> Dict[str, Any]:
@@ -2249,39 +2308,36 @@ Respond with EXACTLY one of these options - nothing else:"""
             return {"status": "no_verification", "reason": "LiteLLM unavailable"}
 
         prompt = f"""
-Bewerte das Tool-Ausführungsergebnis systematisch:
+    Bewerte das Tool-Ausführungsergebnis systematisch:
 
-## Tool-Kontext
-Tool: {task.tool_name}
-Hypothese: {hypothesis}
-Validierungskriterien: {validation_criteria}
+    ## Tool-Kontext
+    Tool: {task.tool_name}
+    Hypothese: {hypothesis}
+    Validierungskriterien: {validation_criteria}
 
-## Tatsächliches Ergebnis
-{result}
+    ## Tatsächliches Ergebnis
+    {result}
 
-## Bewertungsaufgabe
-Bewerte das Ergebnis auf einer Skala von 0.0 bis 1.0:
+    ## Bewertungsaufgabe
+    Bewerte das Ergebnis auf einer Skala von 0.0 bis 1.0:
 
-Antworte NUR mit gültigem YAML:
+    Antworte NUR mit gültigem YAML:
 
-```yaml
-hypothesis_score: 0.85  # Wie gut wurde die Hypothese erfüllt?
-criteria_score: 0.92    # Wie gut erfüllt es die Validierungskriterien?
-usefulness_score: 0.88  # Wie nützlich ist das Ergebnis insgesamt?
-overall_status: "success"  # success | partial_success | failure
-confidence: 0.87        # Wie sicher ist diese Bewertung?
-reasoning: "Brief explanation"
-recommendations:
-  - "Specific suggestion 1"
-  - "Specific suggestion 2"
-next_actions:
-  - action: "refine_search"
-    reason: "Need more specific results"
-    priority: "medium"
-```"""
+    ```yaml
+    hypothesis_score: 0.85
+    criteria_score: 0.92
+    usefulness_score: 0.88
+    overall_status: "success"
+    confidence: 0.87
+    reasoning: "Brief explanation"
+    recommendations:
+      - "Specific suggestion 1"
+      - "Specific suggestion 2"
+    ```"""
 
         try:
-            model_to_use = task.metadata.get("complex_llm_model", "openrouter/openai/gpt-4o")
+            # Get model from task metadata or use default
+            model_to_use = getattr(task, 'metadata', {}).get("complex_llm_model", "openrouter/openai/gpt-4o")
 
             response = await litellm.acompletion(
                 model=model_to_use,
@@ -2313,10 +2369,6 @@ next_actions:
                 "criteria_score": 0.0,
                 "usefulness_score": 0.0
             }
-
-
-
-        ### ===========================================
 
     def _resolve_template_string(self, template: str) -> str:
         """Fallback method for template resolution"""
@@ -2428,6 +2480,69 @@ next_actions:
             "average_confidence": sum(h["plan_confidence"] for h in history) / len(history),
             "recent_performance": history[-3:] if len(history) >= 3 else history
         }
+
+    def _resolve_task_variables(self, data):
+        """Unified variable resolution for any task data"""
+        if isinstance(data, str):
+            return self.variable_manager.format_text(data)
+        elif isinstance(data, dict):
+            resolved = {}
+            for key, value in data.items():
+                resolved[key] = self._resolve_task_variables(value)
+            return resolved
+        elif isinstance(data, list):
+            return [self._resolve_task_variables(item) for item in data]
+        else:
+            return data
+
+
+    def _store_task_result(self, task_id: str, result: Any, success: bool, error: str = None):
+        """Store task result in unified variable system"""
+        result_data = {
+            "data": result,
+            "metadata": {
+                "task_type": "task",
+                "completed_at": datetime.now().isoformat(),
+                "success": success
+            }
+        }
+
+        if error:
+            result_data["error"] = error
+            result_data["metadata"]["success"] = False
+
+        # Store in results_store and update variable manager
+        self.results_store[task_id] = result_data
+        self.variable_manager.set_results_store(self.results_store)
+
+        # Also store in variable scopes for easy access
+        self.variable_manager.set(f"results.{task_id}", result_data)
+
+
+    async def _execute_generic_task(self, task: Task) -> Any:
+        """Execute generic task with variable resolution"""
+        description = self.variable_manager.format_text(task.description)
+
+        # If it's a generic task, treat it as an LLM task
+        if not LITELLM_AVAILABLE:
+            return f"Completed: {description}"
+
+        prompt = f"Complete this task: {description}"
+
+        try:
+            response = await litellm.acompletion(
+                model=self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1024
+            )
+            result = response.choices[0].message.content
+            self.variable_manager.set(f"tasks.{task.id}.result", result)
+            return result
+
+        except Exception as e:
+            logger.error(f"Generic task execution failed: {e}")
+            return f"Task completed with basic processing: {description}"
 
     async def optimize_future_executions(self, shared: Dict) -> Dict[str, Any]:
         """LLM-basierte Optimierung für zukünftige Ausführungen"""
@@ -2671,7 +2786,7 @@ class PlanReflectorNode(AsyncNodeT):
 
         if not LITELLM_AVAILABLE:
             return {"action": "CONTINUE", "reason": "No LLM available for decision making"}
-
+# TODO add context
         prompt = f"""
 Du bist ein Plan-Reflexionssystem. Analysiere die Task-Ergebnisse und entscheide über die nächste Aktion.
 
@@ -2913,142 +3028,257 @@ adaptation_suggestions:
             return "continue"
 
 class LLMToolNode(AsyncNodeT):
-    """Enhanced LLM tool with task-specific processing"""
-    def __init__(self, model: str | None = None,tools=None, **kwargs):
+    """Enhanced LLM tool with automatic tool calling and agent loop integration"""
+
+    def __init__(self, model: str = None, max_tool_calls: int = 5, **kwargs):
         super().__init__(**kwargs)
-        if model is None:
-            model = os.getenv("DEFAULTMODEL1", "openrouter/qwen/qwen3-code")
-        self.model = model
-        self.tools = tools
+        self.model = model or os.getenv("DEFAULTMODEL1", "openrouter/qwen/qwen3-code")
+        self.max_tool_calls = max_tool_calls
         self.call_log = []
 
     async def prep_async(self, shared):
         context = shared.get("formatted_context", {})
-        task_description = shared.get("current_task_description", "")
-        hypothesis = shared.get("hypothesis", "")
-        expectation = shared.get("expectation", "")
-        reasoning = shared.get("reasoning", "")
-        tools_available = shared.get("available_tools", [])
-        complex_llm_model = shared.get("complex_llm_model", "openrouter/openai/gpt-4o")
+        task_description = shared.get("current_task_description", shared.get("current_query", ""))
 
-        # Variable Manager und Persona hinzufügen
+        # Variable Manager integration
         variable_manager = shared.get("variable_manager")
-        persona_config = shared.get("persona_config")
-
-        # Base system message from agent
         agent_instance = shared.get("agent_instance")
-        base_system_message = self._get_base_system_message(shared)
-        formatted_context = shared.get("formatted_context", {})
-        return {
-            "context": context,
-            "task_description": task_description,
-            "hypothesis": hypothesis,
-            "expectation": expectation,
-            "reasoning": reasoning,
-            "tools_available": tools_available,
-            "complex_llm_model": complex_llm_model,
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "variable_manager": variable_manager,
-            "persona_config": persona_config,
-            "base_system_message": base_system_message,
 
-            "recent_interaction": formatted_context.get("recent_interaction", ""),
-            "session_summary": formatted_context.get("session_summary", ""),
-            "task_context": formatted_context.get("task_context", ""),
-            "context_tokens": formatted_context.get("total_tokens", 0),
-            "context_compressed": formatted_context.get("compression_applied", False)
+        return {
+            "task_description": task_description,
+            "context": context,
+            "variable_manager": variable_manager,
+            "agent_instance": agent_instance,
+            "available_tools": shared.get("available_tools", []),
+            "tool_capabilities": shared.get("tool_capabilities", {}),
+            "persona_config": shared.get("persona_config"),
+            "base_system_message": self._get_base_system_message(shared),
+            "recent_interaction": context.get("recent_interaction", ""),
+            "session_summary": context.get("session_summary", ""),
+            "task_context": context.get("task_context", ""),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "tool_call_count": 0
         }
 
-    def _get_base_system_message(self, shared):
-        """Get base system message from agent"""
-        agent_instance = shared.get("agent_instance")
-        if agent_instance and hasattr(agent_instance, 'amd'):
-            return agent_instance.amd.get_system_message_with_persona()
-        return "You are a helpful AI assistant."
-
     async def exec_async(self, prep_res):
+        """Main execution with tool calling loop"""
         if not LITELLM_AVAILABLE:
             return await self._fallback_response(prep_res)
 
-        #prompt = self._build_enhanced_prompt(prep_res)
+        conversation_history = []
+        tool_call_count = 0
+        final_response = None
 
-        ## Persona-Integration in System Message
-        #persona_config = prep_res.get("persona_config")
-        #system_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        # Initial system message with tool awareness
+        system_message = self._build_tool_aware_system_message(prep_res)
 
-        #if persona_config and persona_config.apply_method in ["system_prompt", "both"]:
-        #    persona_addition = persona_config.to_system_prompt_addition()
-        #    if persona_addition:
-        #        system_message += f"\n\n{persona_addition}"
+        # Initial user prompt with variable resolution
+        initial_prompt = self._build_context_aware_prompt(prep_res)
+        conversation_history.append({"role": "user", "content": initial_prompt})
 
-        # Model selection basierend auf task complexity
-        task_description = prep_res.get("task_description", "")
-        # Build context-aware prompt
-        prompt = self._build_context_aware_prompt(prep_res)
+        while tool_call_count < self.max_tool_calls:
+            # Get LLM response
+            messages = [{"role": "system", "content": system_message}] + conversation_history
 
-        # Build system message with context awareness
-        system_message = self._build_enhanced_system_message(prep_res)
-        model_to_use = self._select_optimal_model(task_description, prep_res)
-        # model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+            model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
 
-        logger.info(f"Using model {model_to_use} for task {task_description} in LLMToolNode")
-        call_info = {
-            "timestamp": datetime.now().isoformat(),
-            "model": model_to_use,
-            "context_tokens": prep_res.get("context_tokens", 0),
-            "context_compressed": prep_res.get("context_compressed", False),
-            "task_type": self._classify_task(task_description)
-        }
-        # Messages mit System-Prompt
+            try:
+                response = await litellm.acompletion(
+                    model=model_to_use,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2048
+                )
 
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt}
-        ]
+                llm_response = response.choices[0].message.content
+                conversation_history.append({"role": "assistant", "content": llm_response})
 
-        response = await litellm.acompletion(
-            model=model_to_use,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2048
-        )
+                # Check for tool calls
+                tool_calls = self._extract_tool_calls(llm_response)
 
-        content = response.choices[0].message.content
-        processed_response = await self._process_llm_response(content, prep_res)
+                if not tool_calls:
+                    # No more tool calls, this is the final response
+                    final_response = llm_response
+                    break
 
-        call_info.update({
-            "success": True,
-            "response_tokens": len(content) // 4,
-            "total_tokens": response.usage.total_tokens if response.usage else 0
-        })
+                # Execute tool calls
+                tool_results = await self._execute_tool_calls(tool_calls, prep_res)
+                tool_call_count += len(tool_calls)
 
-        session_manager = prep_res.get("session_manager")
-        if session_manager:
-            await session_manager.add_message({
-                'role': 'assistant',
-                'content': content
-            })
+                # Add tool results to conversation
+                tool_results_text = self._format_tool_results(tool_results)
+                conversation_history.append({"role": "user",
+                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue or provide your final response."})
+
+                # Update variable manager with tool results
+                self._update_variables_with_results(tool_results, prep_res["variable_manager"])
+
+            except Exception as e:
+                logger.error(f"LLM tool execution failed: {e}")
+                final_response = f"I encountered an error while processing: {str(e)}"
+                break
+
+        # Apply persona if needed
+        if final_response and prep_res.get("persona_config"):
+            final_response = await self._apply_persona_style(final_response, prep_res)
 
         return {
             "success": True,
-            "raw_response": content,
-            "processed_response": processed_response,
-            "model_used": model_to_use,
-            "persona_applied": prep_res.get("persona_config") is not None,
-            "call_info": call_info,
-            "usage": response.usage.model_dump() if response.usage else {}
+            "final_response": final_response or "I was unable to complete the request.",
+            "tool_calls_made": tool_call_count,
+            "conversation_history": conversation_history,
+            "model_used": model_to_use
         }
 
+    def _build_tool_aware_system_message(self, prep_res: Dict) -> str:
+        """Build system message with tool awareness and variable context"""
+        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        available_tools = prep_res.get("available_tools", [])
+        tool_capabilities = prep_res.get("tool_capabilities", {})
+        variable_manager = prep_res.get("variable_manager")
 
-    async def exec_fallback_async(self, prep_res, exc):
-        return {
-            "success": False,
-            "error": str(exc),
-            "fallback_response": "I'm unable to process this request due to an error."
-        }
+        if available_tools:
+            base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
+
+            # Add tool descriptions
+            for tool_name in available_tools:
+                if tool_name in tool_capabilities:
+                    cap = tool_capabilities[tool_name]
+                    base_message += f"\n**{tool_name}**: {cap.get('primary_function', 'No description')}"
+                    use_cases = cap.get('use_cases', [])
+                    if use_cases:
+                        base_message += f"\n  Use cases: {', '.join(use_cases[:3])}"
+
+            base_message += "\n\n## Tool Usage\nTo use tools, respond with: TOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
+
+        # Add variable context
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+            if var_context:
+                base_message += f"\n\n{var_context}"
+
+        return base_message
+
+    def _extract_tool_calls(self, text: str) -> List[Dict]:
+        """Extract tool calls from LLM response"""
+        import re
+
+        tool_calls = []
+        pattern = r'TOOL_CALL:\s*(\w+)\((.*?)\)'
+
+        matches = re.findall(pattern, text, re.MULTILINE)
+
+        for tool_name, args_str in matches:
+            try:
+                # Parse arguments
+                args = self._parse_tool_arguments(args_str)
+                tool_calls.append({
+                    "tool_name": tool_name,
+                    "arguments": args
+                })
+            except Exception as e:
+                logger.warning(f"Failed to parse tool call {tool_name}: {e}")
+
+        return tool_calls
+
+    def _parse_tool_arguments(self, args_str: str) -> Dict:
+        """Parse tool arguments from string"""
+        import ast
+
+        try:
+            # Try to evaluate as Python dict
+            if args_str.strip():
+                # Wrap in dict if not already
+                if not args_str.strip().startswith('{'):
+                    args_str = f"{{{args_str}}}"
+                return ast.literal_eval(args_str)
+            return {}
+        except:
+            # Fallback: simple key=value parsing
+            args = {}
+            for pair in args_str.split(','):
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
+                    key = key.strip().strip('"\'')
+                    value = value.strip().strip('"\'')
+                    args[key] = value
+            return args
+
+    async def _execute_tool_calls(self, tool_calls: List[Dict], prep_res: Dict) -> List[Dict]:
+        """Execute tool calls via agent"""
+        agent_instance = prep_res.get("agent_instance")
+        variable_manager = prep_res.get("variable_manager")
+
+        results = []
+
+        for tool_call in tool_calls:
+            tool_name = tool_call["tool_name"]
+            arguments = tool_call["arguments"]
+
+            try:
+                # Resolve variables in arguments
+                if variable_manager:
+                    resolved_args = {}
+                    for key, value in arguments.items():
+                        if isinstance(value, str):
+                            resolved_args[key] = variable_manager.format_text(value)
+                        else:
+                            resolved_args[key] = value
+                else:
+                    resolved_args = arguments
+
+                # Execute via agent
+                result = await agent_instance.arun_function(tool_name, **resolved_args)
+
+                results.append({
+                    "tool_name": tool_name,
+                    "arguments": resolved_args,
+                    "success": True,
+                    "result": result
+                })
+
+            except Exception as e:
+                logger.error(f"Tool execution failed {tool_name}: {e}")
+                results.append({
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "success": False,
+                    "error": str(e)
+                })
+
+        return results
+
+    def _format_tool_results(self, results: List[Dict]) -> str:
+        """Format tool results for LLM"""
+        formatted = []
+
+        for result in results:
+            if result["success"]:
+                formatted.append(f"✓ {result['tool_name']}: {result['result']}")
+            else:
+                formatted.append(f"✗ {result['tool_name']}: ERROR - {result['error']}")
+
+        return "\n".join(formatted)
+
+    def _update_variables_with_results(self, results: List[Dict], variable_manager):
+        """Update variable manager with tool results"""
+        if not variable_manager:
+            return
+
+        for i, result in enumerate(results):
+            if result["success"]:
+                # Store result in variables
+                var_key = f"tool_result_{result['tool_name']}_{i}"
+                variable_manager.set(var_key, result["result"])
+
+                # Also store in tools scope
+                variable_manager.set(f"tools.{result['tool_name']}", result["result"])
 
     def _build_context_aware_prompt(self, prep_res: Dict) -> str:
-        """Build prompt with integrated context awareness"""
+        """Build context-aware prompt with variable resolution"""
+        variable_manager = prep_res.get("variable_manager")
+
         prompt_parts = []
 
         # Add context sections
@@ -3058,265 +3288,35 @@ class LLMToolNode(AsyncNodeT):
 
         if recent_interaction:
             prompt_parts.append(recent_interaction)
-
         if session_summary:
             prompt_parts.append(session_summary)
-
         if task_context:
             prompt_parts.append(task_context)
 
-        # Add context usage notice
-        if prep_res.get("context_compressed"):
-            prompt_parts.append(
-                "## Context Notice\n*Some historical context has been compressed to fit memory limits.*")
-
-        # Add task-specific content
+        # Add main task
         task_description = prep_res.get("task_description", "")
         if task_description:
-            prompt_parts.append(f"## Current Task\n{task_description}")
+            prompt_parts.append(f"## Current Request\n{task_description}")
 
-        # Add hypothesis and expectations
-        hypothesis = prep_res.get("hypothesis", "")
-        if hypothesis:
-            var_manager = prep_res.get("variable_manager")
-            if var_manager:
-                hypothesis = var_manager.format_text(hypothesis)
-            prompt_parts.append(f"## Hypothesis\n{hypothesis}")
+        # Variable suggestions
+        if variable_manager and task_description:
+            suggestions = variable_manager.get_variable_suggestions(task_description)
+            if suggestions:
+                prompt_parts.append(f"## Available Variables\nYou can use: {', '.join(suggestions)}")
 
-        expectation = prep_res.get("expectation", "")
-        if expectation:
-            var_manager = prep_res.get("variable_manager")
-            if var_manager:
-                expectation = var_manager.format_text(expectation)
-            prompt_parts.append(f"## Expected Outcome\n{expectation}")
-
-        # Add available tools
-        tools_available = prep_res.get("tools_available", [])
-        if tools_available:
-            prompt_parts.append(f"## Available Tools\n{', '.join(tools_available)}")
-
-        prompt_parts.append("## Response\nProvide a comprehensive response considering all context and requirements.")
-
-        # Final variable formatting
+        # Final variable resolution
         final_prompt = "\n\n".join(prompt_parts)
-        var_manager = prep_res.get("variable_manager")
-        if var_manager:
-            final_prompt = var_manager.format_text(final_prompt)
+        if variable_manager:
+            final_prompt = variable_manager.format_text(final_prompt)
 
         return final_prompt
 
-    def _build_enhanced_system_message(self, prep_res: Dict) -> str:
-        """Build enhanced system message with context awareness"""
-        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
-
-        if self.context_aware:
-            context_enhancement = """
-## Context Awareness Instructions
-You have access to three types of context:
-1. **Recent Interaction**: Latest conversation exchanges
-2. **Session Summary**: Compressed historical context and relevant references
-3. **Task Context**: Current agent state, active tasks, and capabilities
-
-Use this context to provide more personalized, informed responses. Reference previous conversations when relevant, and build upon established context."""
-
-            base_message += context_enhancement
-
-        # Add persona integration
-        persona_config = prep_res.get("persona_config")
-        if persona_config and persona_config.apply_method in ["system_prompt", "both"]:
-            persona_addition = persona_config.to_system_prompt_addition()
-            if persona_addition:
-                base_message += f"\n\n## Persona Instructions\n{persona_addition}"
-
-        return base_message
-
-    def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
-        """Select optimal model based on task complexity and context"""
-        context_tokens = prep_res.get("context_tokens", 0)
-
-        # Use complex model for high-context or complex tasks
-        complexity_indicators = ["analyze", "complex", "detailed", "comprehensive", "research"]
-        is_complex = any(indicator in task_description.lower() for indicator in complexity_indicators)
-
-        # Use complex model if context is substantial
-        high_context = context_tokens > 2000
-
-        if is_complex or high_context:
-            return prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
-        else:
-            return prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-
-    def _classify_task(self, task_description: str) -> str:
-        """Classify task type for logging"""
-        desc_lower = task_description.lower()
-
-        if any(word in desc_lower for word in ["analyze", "analysis", "examine"]):
-            return "analysis"
-        elif any(word in desc_lower for word in ["create", "generate", "write"]):
-            return "generation"
-        elif any(word in desc_lower for word in ["search", "find", "lookup"]):
-            return "search"
-        elif any(word in desc_lower for word in ["decide", "choose", "select"]):
-            return "decision"
-        else:
-            return "general"
-
-    async def _fallback_response(self, prep_res):
-        """Fallback response when LLM unavailable"""
-        return {
-            "success": False,
-            "error": "LiteLLM not available",
-            "fallback_response": "I'm unable to process this request due to missing LLM capabilities.",
-            "context_aware": False
-        }
-
-    async def _process_llm_response(self, response: str, prep_res: Dict) -> Dict:
-        """Process and enhance the LLM response based on task requirements"""
-
-        processed = {
-            "main_response": response,
-            "confidence": self._estimate_confidence(response),
-            "task_completion": self._assess_task_completion(response, prep_res),
-            "follow_up_needed": self._identify_follow_up_needs(response),
-            "extracted_data": self._extract_structured_data(response)
-        }
-
-        return processed
-
-    def _estimate_confidence(self, response: str) -> float:
-        # Simple confidence estimation based on language patterns
-        confidence_indicators = ["certainly", "definitely", "clearly", "obviously"]
-        uncertainty_indicators = ["might", "possibly", "perhaps", "unclear", "uncertain"]
-
-        conf_count = sum(1 for indicator in confidence_indicators if indicator in response.lower())
-        uncertain_count = sum(1 for indicator in uncertainty_indicators if indicator in response.lower())
-
-        base_confidence = 0.7
-        confidence = base_confidence + (conf_count * 0.1) - (uncertain_count * 0.15)
-        return max(0.1, min(1.0, confidence))
-
-    def _assess_task_completion(self, response: str, prep_res: Dict) -> str:
-        task_desc = prep_res["task_description"].lower()
-        response_lower = response.lower()
-
-        # Check if response addresses key elements of the task
-        key_terms = task_desc.split()[:5]  # First 5 words of task
-        addressed_terms = sum(1 for term in key_terms if term in response_lower)
-
-        completion_ratio = addressed_terms / max(len(key_terms), 1)
-
-        if completion_ratio > 0.8:
-            return "complete"
-        elif completion_ratio > 0.5:
-            return "partial"
-        else:
-            return "incomplete"
-
-    def _identify_follow_up_needs(self, response: str) -> List[str]:
-        follow_up_patterns = [
-            "need more information",
-            "would require",
-            "further investigation",
-            "additional details",
-            "follow up"
-        ]
-
-        needs = []
-        for pattern in follow_up_patterns:
-            if pattern in response.lower():
-                needs.append(pattern)
-
-        return needs
-
-    def _extract_structured_data(self, response: str) -> Dict[str, Any]:
-        """Extract any structured data from the response"""
-        extracted = {}
-
-        # Extract lists
-        lines = response.split('\n')
-        current_list = []
-        list_name = None
-
-        for line in lines:
-            line = line.strip()
-            if line.startswith('- ') or line.startswith('* '):
-                current_list.append(line[2:])
-            elif line.endswith(':') and current_list:
-                if list_name:
-                    extracted[list_name] = current_list
-                list_name = line[:-1].lower().replace(' ', '_')
-                current_list = []
-
-        if list_name and current_list:
-            extracted[list_name] = current_list
-
-        # Extract key-value pairs
-        for line in lines:
-            if ':' in line and not line.strip().endswith(':'):
-                key, value = line.split(':', 1)
-                key = key.strip().lower().replace(' ', '_')
-                value = value.strip()
-                if key and value:
-                    extracted[key] = value
-
-        return extracted
-
-    def get_call_statistics(self) -> Dict[str, Any]:
-        """Get LLM call statistics for monitoring"""
-        if not self.call_log:
-            return {"total_calls": 0}
-
-        total_calls = len(self.call_log)
-        successful_calls = sum(1 for call in self.call_log if call.get("success", False))
-
-        # Token statistics
-        total_tokens = sum(call.get("total_tokens", 0) for call in self.call_log)
-        context_tokens = sum(call.get("context_tokens", 0) for call in self.call_log)
-
-        # Model usage
-        model_usage = {}
-        for call in self.call_log:
-            model = call.get("model", "unknown")
-            model_usage[model] = model_usage.get(model, 0) + 1
-
-        # Task type distribution
-        task_types = {}
-        for call in self.call_log:
-            task_type = call.get("task_type", "unknown")
-            task_types[task_type] = task_types.get(task_type, 0) + 1
-
-        return {
-            "total_calls": total_calls,
-            "success_rate": successful_calls / total_calls if total_calls > 0 else 0,
-            "total_tokens_used": total_tokens,
-            "average_tokens_per_call": total_tokens / total_calls if total_calls > 0 else 0,
-            "context_tokens_used": context_tokens,
-            "model_distribution": model_usage,
-            "task_type_distribution": task_types,
-            "context_compression_rate": sum(
-                1 for call in self.call_log if call.get("context_compressed")) / total_calls if total_calls > 0 else 0
-        }
-
     async def post_async(self, shared, prep_res, exec_res):
-        shared["last_llm_response"] = exec_res
-        shared["llm_call_stats"] = self.get_call_statistics()
-        if "call_info" in exec_res:
-            self.call_log.append(exec_res["call_info"])
-        # Keep only last 50 calls
-        if len(self.call_log) > 50:
-            self.call_log = self.call_log[-50:]
-        if exec_res["success"]:
-            shared["current_response"] = exec_res["processed_response"]["main_response"]
-            shared["response_confidence"] = exec_res["processed_response"]["confidence"]
-            return "llm_success"
-        else:
-            shared["current_response"] = exec_res["fallback_response"]
-            self.call_log[-1].update({
-                "success": False,
-                "error": shared["current_response"]
-            })
-            logger.error(f"Context-aware LLM call failed: {shared["current_response"]}")
-            return "llm_failed"
+        shared["current_response"] = exec_res.get("final_response", "Task completed.")
+        shared["tool_calls_made"] = exec_res.get("tool_calls_made", 0)
+        shared["llm_tool_conversation"] = exec_res.get("conversation_history", [])
+
+        return "llm_tool_complete"
 
 class StateSyncNode(AsyncNodeT):
     """Synchronize state between world model and shared store"""
@@ -3533,6 +3533,7 @@ class TaskManagementFlow(AsyncFlowT):
         self.executor_node = TaskExecutorNode(max_parallel=max_parallel_tasks)
         self.reflector_node = PlanReflectorNode()
         self.sync_node = StateSyncNode()
+        self.llm_tool_node = LLMToolNode()
 
         # Add a completion checker node to break cycles
         self.completion_checker = CompletionCheckerNode()
@@ -3544,7 +3545,9 @@ class TaskManagementFlow(AsyncFlowT):
         self.strategy_node - "research_and_analyze" >> self.planner_node
         self.strategy_node - "creative_generation" >> self.planner_node
         self.strategy_node - "problem_solving" >> self.planner_node
-        self.strategy_node - "direct_response" >> self.executor_node
+
+        self.strategy_node - "direct_response" >> self.llm_tool_node
+        self.llm_tool_node - "llm_tool_complete" >> self.sync_node
         self.strategy_node - "default" >> self.planner_node
 
         # Planning -> Execution
@@ -4085,56 +4088,311 @@ class ResponseFinalProcessorNode(AsyncNodeT):
 
 # ===== Foramt Helper =====
 class VariableManager:
-    """Variable management system using world_model"""
+    """Unified variable management system with advanced features"""
 
-    def __init__(self, world_model: Dict):
+    def __init__(self, world_model: Dict, shared_state: Dict = None):
         self.world_model = world_model
+        self.shared_state = shared_state or {}
+        self.scopes = {
+            'world': world_model,
+            'shared': self.shared_state,
+            'results': {},
+            'tasks': {},
+            'user': {},
+            'system': {}
+        }
+        self._cache = {}
 
-    def get(self, key: str, default=None):
-        """Get variable from world_model"""
-        return self.world_model.get(key, default)
+    def register_scope(self, name: str, data: Dict):
+        """Register a new variable scope"""
+        self.scopes[name] = data
+        self._cache.clear()
 
-    def set(self, key: str, value):
-        """Set variable in world_model"""
-        self.world_model[key] = value
+    def set_results_store(self, results_store: Dict):
+        """Set the results store for task result references"""
+        self.scopes['results'] = results_store
+        self._cache.clear()
 
-    def format_text(self, text: str) -> str:
-        """Format text with variables using {{ variable_name }} syntax"""
+    def set_tasks_store(self, tasks_store: Dict):
+        """Set tasks store for task metadata access"""
+        self.scopes['tasks'] = tasks_store
+        self._cache.clear()
+
+    def get(self, path: str, default=None, use_cache: bool = True):
+        """Get variable with dot notation path support"""
+        if use_cache and path in self._cache:
+            return self._cache[path]
+
+        try:
+            value = self._resolve_path(path)
+            if use_cache:
+                self._cache[path] = value
+            return value if value is not None else default
+        except:
+            return default
+
+    def set(self, path: str, value, create_scope: bool = True):
+        """Set variable with dot notation path support"""
+        parts = path.split('.')
+
+        if len(parts) == 1:
+            # Simple key in world_model
+            self.world_model[path] = value
+        else:
+            scope_name = parts[0]
+
+            if scope_name not in self.scopes:
+                if create_scope:
+                    self.scopes[scope_name] = {}
+                else:
+                    raise KeyError(f"Scope '{scope_name}' not found")
+
+            # Navigate to nested location
+            current = self.scopes[scope_name]
+            for part in parts[1:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
+
+        self._cache.clear()
+
+    def _resolve_path(self, path: str):
+        """Resolve dot notation path to actual value"""
+        parts = path.split('.')
+
+        if len(parts) == 1:
+            # Try world_model first, then other scopes
+            if path in self.world_model:
+                return self.world_model[path]
+
+            for scope in self.scopes.values():
+                if isinstance(scope, dict) and path in scope:
+                    return scope[path]
+            return None
+
+        # Multi-part path
+        scope_name = parts[0]
+        if scope_name not in self.scopes:
+            return None
+
+        current = self.scopes[scope_name]
+
+        for part in parts[1:]:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+
+        return current
+
+    def format_text(self, text: str, context: Dict = None) -> str:
+        """Enhanced text formatting with multiple syntaxes"""
+        if not text or not isinstance(text, str):
+            return str(text) if text is not None else ""
+
+        # Temporary context overlay
+        if context:
+            original_scopes = self.scopes.copy()
+            self.scopes['context'] = context
+
+        try:
+            # Handle {{ variable }} syntax
+            formatted = self._format_double_braces(text)
+
+            # Handle {variable} syntax
+            formatted = self._format_single_braces(formatted)
+
+            # Handle $variable syntax
+            formatted = self._format_dollar_syntax(formatted)
+
+            return formatted
+
+        finally:
+            if context:
+                self.scopes = original_scopes
+
+    def _format_double_braces(self, text: str) -> str:
+        """Handle {{ variable.path }} syntax"""
         import re
 
         def replace_var(match):
             var_path = match.group(1).strip()
-            try:
-                # Handle nested access like results.task_id.data
-                if '.' in var_path:
-                    parts = var_path.split('.')
-                    value = self.world_model
-                    for part in parts:
-                        if isinstance(value, dict):
-                            value = value.get(part, {})
-                        else:
-                            return f"{{{{ {var_path} }}}}"  # Return original if not found
-                else:
-                    value = self.world_model.get(var_path, f"{{{{ {var_path} }}}}")
+            value = self.get(var_path)
 
-                return str(value) if value is not None else ""
-            except:
-                return f"{{{{ {var_path} }}}}"
+            if value is None:
+                return match.group(0)  # Keep original if not found
 
-        # Replace {{ variable }} patterns
-        formatted = re.sub(r'\{\{\s*([^}]+)\s*\}\}', replace_var, text)
-        return formatted
+            return self._value_to_string(value)
 
-    def get_available_variables(self) -> Dict[str, str]:
-        """Get list of available variables with descriptions"""
+        return re.sub(r'\{\{\s*([^}]+)\s*\}\}', replace_var, text)
+
+    def _format_single_braces(self, text: str) -> str:
+        """Handle {variable} syntax for simple variables"""
+        import re
+
+        def replace_var(match):
+            var_name = match.group(1).strip()
+            # Only simple variable names, no dots
+            if '.' in var_name:
+                return match.group(0)
+
+            value = self.get(var_name)
+            return self._value_to_string(value) if value is not None else match.group(0)
+
+        return re.sub(r'\{([^{}\s]+)\}', replace_var, text)
+
+    def _format_dollar_syntax(self, text: str) -> str:
+        """Handle $variable syntax"""
+        import re
+
+        def replace_var(match):
+            var_name = match.group(1)
+            value = self.get(var_name)
+            return self._value_to_string(value) if value is not None else match.group(0)
+
+        return re.sub(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', replace_var, text)
+
+    def _value_to_string(self, value) -> str:
+        """Convert value to string representation"""
+        if isinstance(value, str):
+            return value
+        elif isinstance(value, (dict, list)):
+            return json.dumps(value, default=str)
+        else:
+            return str(value)
+
+    def get_available_variables(self) -> Dict[str, Dict]:
+        """Get comprehensive variable documentation"""
         variables = {}
-        for key, value in self.world_model.items():
-            if isinstance(value, str):
-                preview = value[:50] + "..." if len(value) > 50 else value
-            else:
-                preview = str(type(value).__name__)
-            variables[key] = preview
+
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict):
+                variables[scope_name] = {}
+                for key, value in scope_data.items():
+                    if isinstance(value, str):
+                        preview = value[:50] + "..." if len(value) > 50 else value
+                    elif isinstance(value, dict):
+                        preview = f"Object with {len(value)} keys"
+                    elif isinstance(value, list):
+                        preview = f"Array with {len(value)} items"
+                    else:
+                        preview = str(type(value).__name__)
+
+                    variables[scope_name][key] = {
+                        'preview': preview,
+                        'type': type(value).__name__,
+                        'path': f"{scope_name}.{key}"
+                    }
+
         return variables
+
+    def validate_references(self, text: str) -> Dict[str, bool]:
+        """Validate all variable references in text"""
+        import re
+
+        references = {}
+
+        # Find all {{ }} references
+        double_brace_refs = re.findall(r'\{\{\s*([^}]+)\s*\}\}', text)
+        for ref in double_brace_refs:
+            references[f"{{{{{ref}}}}}"] = self.get(ref.strip()) is not None
+
+        # Find all {} references
+        single_brace_refs = re.findall(r'\{([^{}\s]+)\}', text)
+        for ref in single_brace_refs:
+            if '.' not in ref:  # Only simple vars
+                references[f"{{{ref}}}"] = self.get(ref.strip()) is not None
+
+        # Find all $ references
+        dollar_refs = re.findall(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', text)
+        for ref in dollar_refs:
+            references[f"${ref}"] = self.get(ref) is not None
+
+        return references
+
+    def get_scope_info(self) -> Dict[str, Any]:
+        """Get information about all available scopes"""
+        info = {}
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict):
+                info[scope_name] = {
+                    'type': 'dict',
+                    'keys': len(scope_data),
+                    'sample_keys': list(scope_data.keys())[:5]
+                }
+            else:
+                info[scope_name] = {
+                    'type': type(scope_data).__name__,
+                    'value': str(scope_data)[:100]
+                }
+        return info
+
+    def _validate_task_references(self, task: Task) -> Dict[str, Any]:
+        """Validate all variable references in a task"""
+        validation_results = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
+        }
+
+        # Check different task types
+        if isinstance(task, LLMTask):
+            if task.prompt_template:
+                refs = self.validate_references(task.prompt_template)
+                for ref, is_valid in refs.items():
+                    if not is_valid:
+                        validation_results['errors'].append(f"Invalid reference in prompt: {ref}")
+                        validation_results['valid'] = False
+
+        elif isinstance(task, ToolTask):
+            for key, value in task.arguments.items():
+                if isinstance(value, str):
+                    refs = self.validate_references(value)
+                    for ref, is_valid in refs.items():
+                        if not is_valid:
+                            validation_results['warnings'].append(f"Invalid reference in {key}: {ref}")
+
+        return validation_results
+
+    def get_llm_variable_context(self) -> str:
+        """Get variable context formatted for LLM consumption"""
+        context_parts = []
+        context_parts.append("## Variable System")
+        context_parts.append("You have access to a powerful variable system:")
+
+        # Show available scopes with examples
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict) and scope_data:
+                sample_keys = list(scope_data.keys())[:3]
+                context_parts.append(f"- {scope_name}: {', '.join(sample_keys)}")
+
+        context_parts.append("\nSyntax: {{ variable.path }} or {variable} or $variable")
+        context_parts.append("Examples: {{ user.name }}, {{ results.search.data }}, {timestamp}")
+
+        return "\n".join(context_parts)
+
+    def get_variable_suggestions(self, query: str) -> List[str]:
+        """Get variable suggestions based on query content"""
+
+        query_lower = query.lower()
+        suggestions = []
+
+        # Check all variables for relevance
+        for scope in self.scopes.values():
+            for name, var_def in scope.items():
+                # Name similarity
+                if any(word in name.lower() for word in query_lower.split()):
+                    suggestions.append(name)
+                    continue
+
+                # Description similarity
+                if var_def and any(word in str(var_def).lower() for word in query_lower.split()):
+                    suggestions.append(name)
+                    continue
+
+
+        return list(set(suggestions))[:10]
 
 # ===== MAIN AGENT CLASS =====
 class FlowAgent:
@@ -4158,7 +4416,7 @@ class FlowAgent:
 
         # Core state
         self.shared = {
-            "world_model": self.world_model.copy(),
+            "world_model": self.world_model,
             "tasks": {},
             "task_plans": {},
             "system_status": "idle",
@@ -4167,8 +4425,9 @@ class FlowAgent:
             "conversation_history": [],
             "available_tools": []
         }
-        self.variable_manager = VariableManager(self.shared["world_model"])
-
+        self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+        # Register default scopes
+        self._setup_variable_scopes()
         # Flows
         self.task_flow = TaskManagementFlow(max_parallel_tasks=self.max_parallel_tasks)
         self.response_flow = ResponseGenerationFlow()
@@ -4211,6 +4470,19 @@ class FlowAgent:
         """Main entry point for agent execution"""
 
         try:
+            # Set user context variables
+            self.variable_manager.register_scope('user', {
+                'id': user_id,
+                'session': session_id,
+                'query': query,
+                'timestamp': datetime.now().isoformat()
+            })
+
+            # Update system variables
+            self.variable_manager.set('system.current_session', session_id)
+            self.variable_manager.set('system.current_user', user_id)
+            self.variable_manager.set('system.last_query', query)
+
             # Initialize with tool awareness
             await self._initialize_context_awareness()
 
@@ -4221,7 +4493,6 @@ class FlowAgent:
                 "user_id": user_id,
                 "stream_callback": stream_callback
             })
-
             # Set LLM models in shared context
             self.shared['fast_llm_model'] = self.amd.fast_llm_model
             self.shared['complex_llm_model'] = self.amd.complex_llm_model
@@ -4270,6 +4541,67 @@ class FlowAgent:
         finally:
             self.shared["system_status"] = "idle"
             self.is_running = False
+
+    def get_variable_documentation(self) -> str:
+        """Get comprehensive variable system documentation"""
+        docs = []
+        docs.append("# Variable System Documentation\n")
+
+        # Available scopes
+        docs.append("## Available Scopes:")
+        scope_info = self.variable_manager.get_scope_info()
+        for scope_name, info in scope_info.items():
+            docs.append(f"- `{scope_name}`: {info['type']} with {info.get('keys', 'N/A')} keys")
+
+        docs.append("\n## Syntax Options:")
+        docs.append("- `{{ variable.path }}` - Full path resolution")
+        docs.append("- `{variable}` - Simple variable (no dots)")
+        docs.append("- `$variable` - Shell-style variable")
+
+        docs.append("\n## Example Usage:")
+        docs.append("- `{{ results.task_1.data }}` - Get result from task_1")
+        docs.append("- `{{ user.name }}` - Get user name")
+        docs.append("- `{agent_name}` - Simple agent name")
+        docs.append("- `$timestamp` - System timestamp")
+
+        # Available variables
+        docs.append("\n## Available Variables:")
+        variables = self.variable_manager.get_available_variables()
+        for scope_name, scope_vars in variables.items():
+            docs.append(f"\n### {scope_name}:")
+            for var_name, var_info in scope_vars.items():
+                docs.append(f"- `{var_info['path']}`: {var_info['preview']} ({var_info['type']})")
+
+        return "\n".join(docs)
+
+    def _setup_variable_scopes(self):
+        """Setup default variable scopes"""
+        self.variable_manager.register_scope('agent', {
+            'name': self.amd.name,
+            'model_fast': self.amd.fast_llm_model,
+            'model_complex': self.amd.complex_llm_model
+        })
+
+        self.variable_manager.register_scope('system', {
+            'timestamp': datetime.now().isoformat(),
+            'version': '2.0',
+            'capabilities': []
+        })
+
+        # Update shared state
+        self.shared["variable_manager"] = self.variable_manager
+
+    def set_variable(self, path: str, value: Any):
+        """Set variable using unified system"""
+        self.variable_manager.set(path, value)
+
+    def get_variable(self, path: str, default=None):
+        """Get variable using unified system"""
+        return self.variable_manager.get(path, default)
+
+    def format_text(self, text: str, **context) -> str:
+        """Format text with variables"""
+        return self.variable_manager.format_text(text, context)
 
     async def initialize_session_context(self, session_id: str = "default", max_history: int = 200) -> bool:
         """Initialize session-aware context management for infinite scaling"""
@@ -4866,20 +5198,26 @@ tool_complexity: low/medium/high
         Asynchronously finds a function by its string name, executes it with
         the given arguments, and returns the result.
         """
-        print(f"Attempting to run function: {function_name}")
-        logger.info(f"Attempting to run function: {function_name}")
+        logger.info(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
         target_function = self.get_tool_by_name(function_name)
 
         if not target_function:
             raise ValueError(f"Function '{function_name}' not found in the agent's registered tools.")
 
-        if asyncio.iscoroutinefunction(target_function):
-            return await target_function(*args, **kwargs)
-        else:
-            # If the function is not async, run it in a thread pool
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
+        try:
+            if asyncio.iscoroutinefunction(target_function):
+                result = await target_function(*args, **kwargs)
+            else:
+                # If the function is not async, run it in a thread pool
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
 
+            logger.info(f"Function {function_name} completed successfully with result: {result}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Function {function_name} execution failed: {e}")
+            raise
     async def execute_custom_node(self, node_name: str, **kwargs) -> Any:
         """Execute a custom node dynamically"""
         if not hasattr(self, '_node_registry') or node_name not in self._node_registry:
@@ -5028,7 +5366,7 @@ if __name__ == "__main__":
     async def _agent():
         amd = AgentModelData(
         name="TestAgent",
-        fast_llm_model="groq/llama-3.3-70b-versatile",
+        fast_llm_model="groq/meta-llama/llama-guard-4-12b",
         complex_llm_model="openrouter/qwen/qwen3-coder",
         persona=PersonaConfig(
             name="Isaa",
@@ -5043,9 +5381,11 @@ if __name__ == "__main__":
         def get_user_name():
             return "Markin"
 
+        print(agent.get_available_variables())
         await agent.add_tool(get_user_name, "get_user_name", "Get the user's name")
         print("online")
         response = await agent.a_run("Hello. what is my name?")
+        print(agent.get_available_variables())
         print(f"Response: {response}")
         print(f"Status: {agent.status}")
 
