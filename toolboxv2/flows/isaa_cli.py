@@ -2,6 +2,7 @@ import base64
 import datetime
 import mimetypes
 import re
+from dataclasses import asdict
 
 import asyncio
 import json
@@ -28,8 +29,10 @@ from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
+from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent
 from toolboxv2.mods.isaa.base.Agent.builder import AgentConfig, logger
+from toolboxv2.mods.isaa.extras.terminal_progress import DynamicProgressPrinter, VerbosityMode
+from toolboxv2.mods.isaa.extras.terminal_progress2 import ProgressiveTreePrinter
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Style, remove_styles
 
@@ -62,7 +65,8 @@ def strip_ansi(text: str) -> str:
 class WorkspaceIsaasCli:
     """Advanced ISAA CLI with comprehensive agent tools and enhanced formatting"""
 
-    def __init__(self, app_instance: Any):
+    def __init__(self, app_instance: Any, mode=VerbosityMode.VERBOSE):
+        self.printer = ProgressiveTreePrinter(mode=mode)
         self.app = app_instance
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
         self.isaa_tools.stuf = True #
@@ -135,6 +139,7 @@ class WorkspaceIsaasCli:
         }
         self.agents_registry: Dict[str, FlowAgent] = {}
         self.agent_configs: Dict[str, AgentConfig] = {}
+
 
     def _init_session_stats(self) -> Dict:
         """Initialisiert die Struktur für die Sitzungsstatistiken."""
@@ -1683,6 +1688,8 @@ Your purpose is to function reliably for extended periods with minimal oversight
         now = asyncio.get_event_loop().time()
         total_duration = now - self.session_stats['session_start_time']
 
+        self.printer.print_final_summary()
+
         # Zeit-Statistiken
         self.formatter.print_section("Time Usage", (
             f"Total Session: {total_duration:.2f}s\n"
@@ -1736,7 +1743,6 @@ Your purpose is to function reliably for extended periods with minimal oversight
         self._ensure_agent_stats_initialized(agent_name)
 
         request = await self.isaa_tools.mini_task_completion("fix all typos and grammar errors. only return the fixed text.", request)
-        print(request)
         # Use the official prompt_toolkit function to get the active application instance.
         # This is the correct way to access it after a prompt has finished.
         from prompt_toolkit.widgets import TextArea
@@ -1812,6 +1818,8 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 except Exception as e:
                     self.session_stats["agents"][agent_name]["failed_runs"] += 1
                     self.formatter.print_error(f"An unexpected error occurred during agent execution: {e}")
+                    import traceback
+                    self.formatter.print_error(traceback.format_exc())
                 finally:
                     duration = asyncio.get_event_loop().time() - start_time
                     self.session_stats["agent_running_time"] += duration
@@ -1906,50 +1914,9 @@ Your purpose is to function reliably for extended periods with minimal oversight
             except Exception:
                 pass # Ignore if agent not found or other issues
 
-    async def progress_callback(self, event: Dict[str, Any]):
+    async def progress_callback(self, event: ProgressEvent):
         """The main progress callback for the interactive CLI, handles printing."""
-        await self._update_stats_from_event(event)
-
-        agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
-
-        if event.get("content") and event["content"].get("parts"):
-            for part in event["content"]["parts"]:
-                if "text" in part:
-                    self.formatter.log_state("THINKING", {"process": Style.GREY(part.get("text", "...")[:255] + '...')})
-
-                if "function_call" in part:
-                    call_data = part["function_call"]
-                    tool_name = call_data.get("name", "UnknownTool")
-                    tool_args = call_data.get("args", {})
-                    self.formatter.print_info(f"🔧 Using tool: {tool_name}")
-                    self.formatter.print_info(f"   Args: {json.dumps(tool_args, indent=2, ensure_ascii=False)}")
-
-                if "function_response" in part:
-                    response_data = part["function_response"]
-                    tool_name = response_data.get("name", "UnknownTool")
-                    response_content = response_data.get("response", {})
-
-                    is_error = "error" in response_content
-
-                    if is_error:
-                        self.formatter.print_error(f"❌ Tool '{tool_name}' failed.")
-                    else:
-                        self.formatter.print_success(f"✅ Tool '{tool_name}' succeeded.")
-
-                    result = response_content.get("result", "")
-                    self.formatter.print_section("Result", Style.GREY(str(result))[:255] + '...')
-
-        if "usage_metadata" in event:
-            try:
-                agent = await self.isaa_tools.get_agent(agent_name)
-                if hasattr(agent, 'total_cost'):
-                    new_cost = agent.total_cost or 0.0
-                    previous_cost = self.session_stats["agents"][agent_name].get("cost", 0.0)
-                    cost_delta = new_cost - previous_cost
-                    if cost_delta > 0:
-                        self.formatter.print_info(f"Cost update for {agent_name}: +${cost_delta:.6f} (Total: ${new_cost:.6f})")
-            except Exception:
-                pass
+        await self.printer.progress_callback(event)
     def create_monitoring_callback(self, task_id):
         async def monitoring_progress_callback(event: Dict[str, Any]):
             """A dedicated callback for background tasks to update monitor state."""

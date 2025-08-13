@@ -704,9 +704,13 @@ class Tools(MainTool, FileHandler):
         for _agent_name in self.config["agents-name-list"]:
             _instance_key = f'agent-instance-{_agent_name}'
             if _instance_key not in self.config:
+                if agent_name != "self" and _agent_name == "self":
+                    await self.get_agent("self")
+
+            if _instance_key not in self.config:
                 continue
             _agent_instance = self.config[_instance_key]
-            _agent_tool_nams = set(_agent_instance.tool_registry.keys())
+            _agent_tool_nams = set(_agent_instance._tool_capabilities.keys())
             # extract the tool names that are in both agents_registry
             overlap_tool_nams = agent_tool_nams.intersection(_agent_tool_nams)
             _tc = _agent_instance._tool_capabilities
@@ -715,7 +719,7 @@ class Tools(MainTool, FileHandler):
                     continue
                 tools_data[tool_name] = _tc[tool_name]
 
-        agent_instance._tool_capabilities = tools_data
+        agent_instance._tool_capabilities.update(tools_data)
         # Cache the instance and update tracking
         self.config[instance_key] = agent_instance
         if agent_name not in self.agent_data:

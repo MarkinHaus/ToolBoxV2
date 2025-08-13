@@ -933,13 +933,13 @@ class FlowAgentBuilder:
                 logger.warning(f"Session context initialization failed: {e}")
 
             # Final summary
-            logger.info(f"✅ FlowAgent built successfully!")
+            logger.info(f"ok FlowAgent built successfully!")
             logger.info(f"   Agent: {agent.amd.name}")
             logger.info(f"   Tools: {tools_added}")
-            logger.info(f"   MCP: {'✅' if self.config.mcp.enabled else '❌'}")
-            logger.info(f"   A2A: {'✅' if self.config.a2a.enabled else '❌'}")
-            logger.info(f"   Telemetry: {'✅' if self.config.telemetry.enabled else '❌'}")
-            logger.info(f"   Checkpoints: {'✅' if self.config.checkpoint.enabled else '❌'}")
+            logger.info(f"   MCP: {'ok' if self.config.mcp.enabled else 'F'}")
+            logger.info(f"   A2A: {'ok' if self.config.a2a.enabled else 'F'}")
+            logger.info(f"   Telemetry: {'ok' if self.config.telemetry.enabled else 'F'}")
+            logger.info(f"   Checkpoints: {'ok' if self.config.checkpoint.enabled else 'F'}")
             logger.info(f"   Persona: {active_persona.name if active_persona else 'Default'}")
 
             return agent

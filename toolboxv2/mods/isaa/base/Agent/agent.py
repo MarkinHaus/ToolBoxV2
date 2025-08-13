@@ -1,6 +1,5 @@
 import os
 import re
-
 from enum import Enum
 import asyncio
 import yaml
@@ -12,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable, Union, Type
 from dataclasses import dataclass, asdict, field
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, ValidationError
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 import uuid
@@ -20,6 +19,8 @@ import time
 
 # PocketFlow imports
 from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
+
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 
 
@@ -63,7 +64,9 @@ from toolboxv2 import get_logger
 
 logger = get_logger()
 litllm_logger = logging.getLogger("LiteLLM")
-litllm_logger.setLevel(logging.CRITICAL) #(get_logger().level)
+git_logger = logging.getLogger("git")
+litllm_logger.setLevel(logging.CRITICAL)
+git_logger.setLevel(logging.CRITICAL) #(get_logger().level)
 
 TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
@@ -89,6 +92,179 @@ class TextLength(Enum):
     TABLE_CONVERSATION = "table-conversation"
     DETAILED_INDEPTH = "detailed-indepth"
     PHD_LEVEL = "phd-level"
+
+
+@dataclass
+class ProgressEvent_old:
+    """Detailed progress event for comprehensive monitoring"""
+    event_type: str  # "llm_call", "tool_call", "node_enter", "node_exit", "routing", "error"
+    timestamp: float
+    node_name: str
+    event_id: str = ""
+
+    # LLM-specific data
+    llm_model: Optional[str] = None
+    llm_prompt_tokens: Optional[int] = None
+    llm_completion_tokens: Optional[int] = None
+    llm_total_tokens: Optional[int] = None
+    llm_cost: Optional[float] = None
+    llm_duration: Optional[float] = None
+    llm_temperature: Optional[float] = None
+
+    # Tool-specific data
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    tool_result: Optional[Any] = None
+    tool_duration: Optional[float] = None
+    tool_success: Optional[bool] = None
+    tool_error: Optional[str] = None
+
+    # Node/Routing data
+    routing_decision: Optional[str] = None
+    routing_from: Optional[str] = None
+    routing_to: Optional[str] = None
+    node_phase: Optional[str] = None  # "prep", "exec", "post"
+    node_duration: Optional[float] = None
+
+    # Context data
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    plan_id: Optional[str] = None
+
+    # Additional metadata
+    metadata: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+        if not self.event_id:
+            self.event_id = f"{self.node_name}_{self.event_type}_{int(self.timestamp * 1000000)}"
+
+class NodeStatus(Enum):
+    PENDING = "pending"
+    STARTING = "starting"
+    RUNNING = "running"
+    WAITING = "waiting"
+    COMPLETING = "completing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class ProgressEvent:
+    """Enhanced progress event with better error handling"""
+    event_type: str
+    timestamp: float
+    node_name: str
+    event_id: str = ""
+
+    # Status information
+    status: Optional[NodeStatus] = None
+    success: Optional[bool] = None
+    error_details: Optional[Dict[str, Any]] = None
+
+    # LLM-specific data
+    llm_model: Optional[str] = None
+    llm_prompt_tokens: Optional[int] = None
+    llm_completion_tokens: Optional[int] = None
+    llm_total_tokens: Optional[int] = None
+    llm_cost: Optional[float] = None
+    llm_duration: Optional[float] = None
+    llm_temperature: Optional[float] = None
+
+    # Tool-specific data
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    tool_result: Optional[Any] = None
+    tool_duration: Optional[float] = None
+    tool_success: Optional[bool] = None
+    tool_error: Optional[str] = None
+
+    # Node/Routing data
+    routing_decision: Optional[str] = None
+    routing_from: Optional[str] = None
+    routing_to: Optional[str] = None
+    node_phase: Optional[str] = None
+    node_duration: Optional[float] = None
+
+    # Context data
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    plan_id: Optional[str] = None
+
+    # Additional metadata
+    metadata: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+        if not self.event_id:
+            self.event_id = f"{self.node_name}_{self.event_type}_{int(self.timestamp * 1000000)}"
+
+
+class ProgressTracker:
+    """Advanced progress tracking with cost calculation"""
+
+    def __init__(self, progress_callback: Optional[callable] = None):
+        self.progress_callback = progress_callback
+        self.events: List[ProgressEvent_old] = []
+        self.active_timers: Dict[str, float] = {}
+
+        # Cost tracking (simplified - would need actual provider pricing)
+        self.token_costs = {
+            "input": 0.00001,  # $0.01/1K tokens input
+            "output": 0.00003,  # $0.03/1K tokens output
+        }
+
+    async def emit_event(self, event: ProgressEvent_old):
+        """Emit progress event with callback and storage"""
+        self.events.append(event)
+
+        if self.progress_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.progress_callback):
+                    await self.progress_callback(event)
+                else:
+                    self.progress_callback(event)
+            except Exception as e:
+                logger.warning(f"Progress callback failed: {e}")
+
+    def start_timer(self, key: str) -> float:
+        """Start timing operation"""
+        start_time = time.perf_counter()
+        self.active_timers[key] = start_time
+        return start_time
+
+    def end_timer(self, key: str) -> float:
+        """End timing operation and return duration"""
+        if key not in self.active_timers:
+            return 0.0
+        duration = time.perf_counter() - self.active_timers[key]
+        del self.active_timers[key]
+        return duration
+
+    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
+        """Calculate approximate LLM cost"""
+        # Simplified cost calculation - would need actual provider pricing
+        input_cost = (input_tokens / 1000) * self.token_costs["input"]
+        output_cost = (output_tokens / 1000) * self.token_costs["output"]
+        return input_cost + output_cost
+
+    def get_summary(self) -> Dict[str, Any]:
+        """Get comprehensive progress summary"""
+        summary = {
+            "total_events": len(self.events),
+            "llm_calls": len([e for e in self.events if e.event_type == "llm_call"]),
+            "tool_calls": len([e for e in self.events if e.event_type == "tool_call"]),
+            "total_cost": sum(e.llm_cost for e in self.events if e.llm_cost),
+            "total_tokens": sum(e.llm_total_tokens for e in self.events if e.llm_total_tokens),
+            "total_duration": sum(e.node_duration for e in self.events if e.node_duration),
+            "nodes_visited": list(set(e.node_name for e in self.events)),
+            "tools_used": list(set(e.tool_name for e in self.events if e.tool_name)),
+            "models_used": list(set(e.llm_model for e in self.events if e.llm_model))
+        }
+        return summary
 
 
 @dataclass
@@ -185,36 +361,151 @@ class dAsyncFlowT(AsyncFlow):
         logger.info(f"Run: {self.__class__.__name__}")
         return await super().run_async(shared)
 
+
 class AsyncNodeT(AsyncNode):
-    """
-    Pass through observer class
-    adds print statements to
-    async def prep_async(self,shared): pass
-    async def exec_async(self,prep_res): pass
-    async def exec_fallback_async(self,prep_res,exc): raise exc
-    async def post_async(self,shared,prep_res,exec_res): pass
-    async def run_async(self,shared):
+    """Enhanced AsyncNode with comprehensive progress tracking"""
 
-    with args.
-    """
+    async def run_async(self, shared):
+        """Enhanced run_async with detailed progress tracking"""
+        progress_tracker = shared.get("progress_tracker")
+        node_name = self.__class__.__name__
+
+        if progress_tracker:
+            timer_key = f"{node_name}_total"
+            progress_tracker.start_timer(timer_key)
+
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_enter",
+                timestamp=time.time(),
+                node_name=node_name,
+                session_id=shared.get("session_id"),
+                task_id=shared.get("current_task_id"),
+                plan_id=shared.get("current_plan", {}).get("id") if shared.get("current_plan") else None,
+                status=NodeStatus.STARTING,
+                success=None
+            ))
+
+        try: # TODO : https://console.anthropic.com/workbench/69554aee-db3d-43c4-9bdc-c1fda2ca4537 continur replacement
+            # Execute original node logic
+            result = await super().run_async(shared)
+
+            if progress_tracker:
+                total_duration = progress_tracker.end_timer(timer_key)
+
+                await progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="node_exit",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    node_duration=total_duration,
+                    routing_decision=result,
+                    session_id=shared.get("session_id"),
+                    task_id=shared.get("current_task_id"),
+                    metadata={"success": True}
+                ))
+
+            return result
+
+        except Exception as e:
+            if progress_tracker:
+                total_duration = progress_tracker.end_timer(timer_key)
+
+                await progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    node_duration=total_duration,
+                    session_id=shared.get("session_id"),
+                    metadata={"error": str(e), "error_type": type(e).__name__}
+                ))
+
+            raise
+
     async def prep_async(self, shared):
-        logger.info(f"Prep: {self.__class__.__name__}")
-        return await super().prep_async(shared)
+        """Enhanced prep_async with progress tracking"""
+        progress_tracker = shared.get("progress_tracker")
+        node_name = self.__class__.__name__
 
-    async def exec_async(self, prep_res):
-        logger.info(f"Exec: {self.__class__.__name__} args {json.dumps(prep_res, indent=2, errors='ignore') if isinstance(prep_res, dict) else prep_res}")
-        return await super().exec_async(prep_res)
+        if progress_tracker:
+            timer_key = f"{node_name}_prep"
+            progress_tracker.start_timer(timer_key)
+
+            await progress_tracker.emit_event(ProgressEvent_old(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                node_phase="prep",
+                session_id=shared.get("session_id")
+            ))
+
+        try:
+            result = await super().prep_async(shared)
+
+            if progress_tracker:
+                prep_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="node_phase",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    node_phase="prep_complete",
+                    node_duration=prep_duration,
+                    session_id=shared.get("session_id")
+                ))
+
+            return result
+        except Exception as e:
+            if progress_tracker:
+                progress_tracker.end_timer(timer_key)
+            raise
 
     async def exec_fallback_async(self, prep_res, exc):
-        logger.info(f"ExecFallback: {self.__class__.__name__} args {prep_res} exc {exc}")
+        """Enhanced exec_fallback_async with progress tracking"""
+        progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+        node_name = self.__class__.__name__
+        if progress_tracker:
+            timer_key = f"{node_name}_exec"
+            progress_tracker.end_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent_old(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                node_phase="exec_fallback",
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None,
+                metadata={"error": str(exc), "error_type": type(exc).__name__},
+            ))
         return await super().exec_fallback_async(prep_res, exc)
-    async def post_async(self, shared, prep_res, exec_res):
-        logger.info(f"Post: {self.__class__.__name__} args {prep_res} exec_res {json.dumps(exec_res, indent=2, errors='ignore') if isinstance(exec_res, dict) else exec_res}")
-        return await super().post_async(shared, prep_res, exec_res)
-    async def run_async(self, shared):
-        logger.info(f"Run: {self.__class__.__name__} ")
-        return await super().run_async(shared)
 
+    async def exec_async(self, prep_res):
+        """Enhanced exec_async with progress tracking"""
+        # Note: We don't have direct access to shared here, so we pass it through prep_res
+        progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+        node_name = self.__class__.__name__
+
+        if progress_tracker:
+            timer_key = f"{node_name}_exec"
+            progress_tracker.start_timer(timer_key)
+
+            await progress_tracker.emit_event(ProgressEvent_old(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                node_phase="exec",
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
+
+        result = await super().exec_async(prep_res)
+
+        if progress_tracker:
+            exec_duration = progress_tracker.end_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent_old(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                node_phase="exec_complete",
+                node_duration=exec_duration,
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
+
+        return result
 AsyncFlowT = AsyncFlow
 dAsyncNodeT = AsyncNode
 
@@ -438,6 +729,18 @@ class AgentModelData(BaseModel):
 
         return base_message
 
+
+class ToolAnalysis(BaseModel):
+    """Defines the structure for a valid tool analysis."""
+    primary_function: str = Field(..., description="The main purpose of the tool.")
+    use_cases: List[str] = Field(..., description="Specific use cases for the tool.")
+    trigger_phrases: List[str] = Field(..., description="Phrases that should trigger the tool.")
+    indirect_connections: List[str] = Field(..., description="Non-obvious connections or applications.")
+    complexity_scenarios: List[str] = Field(..., description="Complex scenarios where the tool can be applied.")
+    user_intent_categories: List[str] = Field(..., description="Categories of user intent the tool addresses.")
+    confidence_triggers: Dict[str, float] = Field(..., description="Phrases mapped to confidence scores.")
+    tool_complexity: str = Field(..., description="The complexity of the tool, rated as low, medium, or high.")
+    args_schema: Optional[Dict[str, Any]] = Field(..., description="The schema for the tool's arguments.")
 # ===== CORE NODE IMPLEMENTATIONS =====
 
 class ContextManagerNode(AsyncNodeT):
@@ -658,14 +961,16 @@ class ContextManagerNode(AsyncNodeT):
         try:
             model_to_use = agent_instance.amd.fast_llm_model if agent_instance else "openrouter/anthropic/claude-3-haiku"
 
-            response = await litellm.acompletion(
+            response = await agent_instance.a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,  # Low temperature for consistent compression
-                max_tokens=int(len(text) * 0.4)  # Target 60% reduction
+                max_tokens=int(len(text) * 0.4),  # Target 60% reduction
+                node_name="Context Compression",
+                task_id="compression"
             )
 
-            compressed = response.choices[0].message.content.strip()
+            compressed = response.strip()
             return compressed if compressed else text
 
         except Exception as e:
@@ -750,7 +1055,8 @@ class YAMLFormatterNode(AsyncNodeT):
             "raw_input": raw_input,
             "context": shared.get("formatted_context", {}),
             "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model")
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance")
         }
 
     async def exec_async(self, prep_res):
@@ -803,12 +1109,11 @@ class YAMLFormatterNode(AsyncNodeT):
                 # Use fast model from shared context
                 model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
                 logger.info(f"Using model {model_to_use} for YAML generation")
-                response = await litellm.acompletion(
+                yaml_content = await prep_res["agent_instance"].a_run_llm_completion(
                     model=model_to_use,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1
+                    temperature=0.1, node_name="YAMLFormatterNode", task_id="yaml_format"
                 )
-                yaml_content = response.choices[0].message.content
 
                 # Extract and validate YAML
                 if "```yaml" in yaml_content:
@@ -932,6 +1237,7 @@ class StrategyOrchestratorNode(AsyncNodeT):
             "fast_llm_model": shared.get("fast_llm_model"),
             "complex_llm_model": shared.get("complex_llm_model"),
             "tool_capabilities": tool_capabilities,
+            "agent_instance": agent_instance,
             "available_tools_names": shared.get("available_tools", []),
             "variable_manager": shared.get("variable_manager")
         }
@@ -997,21 +1303,20 @@ You are a strategic AI agent with advanced variable system and tool capabilities
 Respond ONLY with strategy name for the current task:"""
 
         try:
-            response = await litellm.acompletion(
+            response = await prep_res["agent_instance"].a_run_llm_completion(
                 model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=50
+                max_tokens=50, node_name="StrategyOrchestratorNode", task_id="strategy_determination",
             )
-            print("response", response.choices[0].message.content, "#")
-            strategy = response.choices[0].message.content.strip().lower()
+            strategy = response.strip().lower()
             return strategy if strategy in self.strategies else "fast_simple_planning"
 
         except Exception as e:
             logger.error(f"Strategy determination failed: {e}")
             import traceback
             print(traceback.format_exc())
-            return "slow_complex_planning"
+            return "fast_simple_planning"
 
     def _build_tool_awareness_context(self, prep_res: Dict) -> str:
         """Build comprehensive tool context for strategy decisions"""
@@ -1028,7 +1333,7 @@ Respond ONLY with strategy name for the current task:"""
         for tool_name in available_tools:
             if tool_name in tool_capabilities:
                 cap = tool_capabilities[tool_name]
-                context_parts.append(f"\n**{tool_name}:**")
+                context_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
                 context_parts.append(f"- Primary function: {cap.get('primary_function', 'Unknown')}")
                 context_parts.append(f"- Use cases: {', '.join(cap.get('use_cases', [])[:3])}")
                 context_parts.append(f"- Triggers: {', '.join(cap.get('trigger_phrases', [])[:5])}")
@@ -1036,7 +1341,7 @@ Respond ONLY with strategy name for the current task:"""
                 # Add indirect connections
                 indirect = cap.get('indirect_connections', [])
                 if indirect:
-                    context_parts.append(f"- Indirect uses: {', '.join(indirect[:3])}")
+                    context_parts.append(f"- Indirect uses: {', '.join([str(i) for i in indirect[:3]])}")
             else:
                 # Fallback for tools without analysis
                 context_parts.append(f"\n**{tool_name}:** Available but not analyzed")
@@ -1109,6 +1414,18 @@ Respond ONLY with strategy name for the current task:"""
         shared["selected_strategy"] = exec_res["selected_strategy"]
         shared["execution_plan"] = exec_res["execution_plan"]
         shared["strategy_reasoning"] = exec_res["reasoning"]
+        await shared["progress_tracker"].emit_event(ProgressEvent_old(
+            event_type="strategy_selected",
+            timestamp=time.time(),
+            node_name="StrategyOrchestratorNode",
+            node_phase="post",
+            node_duration=0,
+            session_id=shared.get("session_id"),
+            metadata={"strategy": exec_res["selected_strategy"],
+                      "reasoning": exec_res["reasoning"],
+                      "estimated_complexity": exec_res["estimated_complexity"],
+                      "execution_plan": exec_res["execution_plan"]}
+        ))
         return exec_res["selected_strategy"]
 
 
@@ -1130,7 +1447,6 @@ class TaskPlannerNode(AsyncNodeT):
         }
 
     async def exec_async(self, prep_res):
-        print(f"TaskPlannerNode - strategy: {prep_res["strategy"]}")
         if prep_res["strategy"] == "fast_simple_planning":
             return self._create_simple_plan(prep_res)
         else:
@@ -1157,6 +1473,15 @@ class TaskPlannerNode(AsyncNodeT):
             shared["total_tasks_planned"] = len(exec_res.tasks)
 
             logger.info(f"Plan created successfully: {exec_res.name} with {len(exec_res.tasks)} tasks")
+            await shared["progress_tracker"].emit_event(ProgressEvent_old(
+                event_type="plan_created",
+                timestamp=time.time(),
+                node_name="TaskPlannerNode",
+                node_phase="plan_created",
+                node_duration=0,
+                session_id=shared.get("session_id"),
+                metadata={"plan_name": exec_res.name, "task_count": len(exec_res.tasks), "strategy": exec_res.execution_strategy, "full_plan": asdict(exec_res)}
+            ))
             return "planned"
 
         else:
@@ -1242,13 +1567,12 @@ Pick minimal plan type for fastest completion!
     """
 
         try:
-            response = litellm.completion(
+            content = litellm.completion(
                 model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=512
             )
-            content = response.choices[0].message.content
 
             yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
             plan_data = yaml.safe_load(yaml_content)
@@ -1590,14 +1914,13 @@ Generate the adaptive execution plan:
         try:
             model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
 
-            response = await litellm.acompletion(
+            content = await prep_res["agent_instance"].a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=2048
+                max_tokens=2048, node_name="TaskExecutorNode", task_id="adaptive_planning"
             )
 
-            content = response.choices[0].message.content
             if "```yaml" in content:
                 yaml_content = content.split("```yaml")[1].split("```")[0].strip()
             else:
@@ -1663,6 +1986,7 @@ Generate the adaptive execution plan:
         for tool_name, cap in capabilities.items():
             context_parts.append(f"\n**{tool_name}:**")
             context_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
+            context_parts.append(f"- Arguments: {yaml.dump(cap.get('args_schema', 'takes no arguments!'), default_flow_style=False)}")
 
             # Check relevance to current query
             relevance_score = self._calculate_tool_relevance(query, cap)
@@ -1694,21 +2018,18 @@ Generate the adaptive execution plan:
         for trigger in triggers:
             trigger_words = set(trigger.lower().split())
             if trigger_words.intersection(query_words):
-                trigger_score += 0.4
-
+                trigger_score += 0.04
         # Check confidence triggers if available
         conf_triggers = capabilities.get('confidence_triggers', {})
         for phrase, confidence in conf_triggers.items():
             if phrase.lower() in query:
-                trigger_score += confidence
-
+                trigger_score += confidence/10
         # Check indirect connections
         indirect = capabilities.get('indirect_connections', [])
         for connection in indirect:
             connection_words = set(connection.lower().split())
             if connection_words.intersection(query_words):
-                trigger_score += 0.2
-
+                trigger_score += 0.02
         return min(1.0, trigger_score)
 
 
@@ -1724,6 +2045,7 @@ class TaskExecutorNode(AsyncNodeT):
         self.variable_manager = None
         self.fast_llm_model = None
         self.complex_llm_model = None
+        self.progress_tracker = None
 
     async def prep_async(self, shared):
         """Enhanced preparation with unified variable system"""
@@ -1732,6 +2054,7 @@ class TaskExecutorNode(AsyncNodeT):
 
         # Get unified variable manager
         self.variable_manager = shared.get("variable_manager")
+        self.progress_tracker = shared.get("progress_tracker")
         if not self.variable_manager:
             self.variable_manager = VariableManager(shared.get("world_model", {}), shared)
 
@@ -1773,6 +2096,7 @@ class TaskExecutorNode(AsyncNodeT):
             "world_model": shared.get("world_model", {}),
             "results_store": self.results_store,
             "variable_manager": self.variable_manager,
+            "progress_tracker": self.progress_tracker ,
         }
 
     def _find_ready_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
@@ -1935,14 +2259,13 @@ confidence: 0.85
 
             model_to_use = shared.get("complex_llm_model", "openrouter/openai/gpt-4o")
 
-            response = await litellm.acompletion(
+            content = await self.agent_instance.a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=1000, node_name="TaskExecutorNode", task_id="llm_execution_planning"
             )
 
-            content = response.choices[0].message.content
             yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
             yaml_str = yaml_match.group(1) if yaml_match else content.strip()
 
@@ -2279,6 +2602,21 @@ confidence: 0.85
 
     async def _execute_single_task(self, task: Task) -> Dict:
         """Enhanced task execution with unified variable system"""
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="task_start",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                metadata={
+                    "task_type": task.type,
+                    "task_description": task.description,
+                    "priority": task.priority,
+                    "dependencies": task.dependencies
+                }
+            ))
+
+        task_start = time.perf_counter()
         try:
             task.status = "running"
             task.started_at = datetime.now()
@@ -2319,6 +2657,22 @@ confidence: 0.85
                     task.metadata = {}
                 task.metadata["verification"] = verification_result
 
+            task_duration = time.perf_counter() - task_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="task_complete",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    node_duration=task_duration,
+                    metadata={
+                        "success": True,
+                        "result_type": type(result).__name__,
+                        "task_type": task.type
+                    }
+                ))
+
             return {
                 "task_id": task.id,
                 "status": "completed",
@@ -2334,6 +2688,20 @@ confidence: 0.85
             # Store error in unified system
             self._store_task_result(task.id, None, False, str(e))
 
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    node_duration=task_duration,
+                    metadata={
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "task_type": task.type,
+                        "retry_count": task.retry_count
+                    }
+                ))
             logger.error(f"Task {task.id} failed: {e}")
             return {
                 "task_id": task.id,
@@ -2391,11 +2759,44 @@ confidence: 0.85
         agent = self.agent_instance
         if not agent:
             raise ValueError("Agent instance not available for tool execution")
+        tool_start = time.perf_counter()
 
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="tool_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                tool_name=task.tool_name,
+                tool_args=resolved_args,
+                metadata={
+                    "task_type": "ToolTask",
+                    "hypothesis": task.hypothesis,
+                    "validation_criteria": task.validation_criteria
+                }
+            ))
         try:
             logger.info(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
             result = await agent.arun_function(task.tool_name, **resolved_args)
+            tool_duration = time.perf_counter() - tool_start
 
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    tool_name=task.tool_name,
+                    tool_args=resolved_args,
+                    tool_result=result,
+                    tool_duration=tool_duration,
+                    tool_success=True,
+                    metadata={
+                        "task_type": "ToolTask",
+                        "result_type": type(result).__name__,
+                        "result_length": len(str(result))
+                    }
+                ))
             # Store in variable manager if available
             if self.variable_manager:
                 self.variable_manager.set(f"tasks.{task.id}.result", result)
@@ -2403,6 +2804,25 @@ confidence: 0.85
             return result
 
         except Exception as e:
+            tool_duration = time.perf_counter() - tool_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    tool_name=task.tool_name,
+                    tool_args=resolved_args,
+                    tool_duration=tool_duration,
+                    tool_success=False,
+                    tool_error=str(e),
+                    metadata={
+                        "task_type": "ToolTask",
+                        "error_type": type(e).__name__
+                    }
+                ))
+
             logger.error(f"Enhanced tool execution failed for {task.tool_name}: {e}")
             raise
 
@@ -2433,28 +2853,116 @@ confidence: 0.85
             context=context_data
         )
 
-        response = await litellm.acompletion(
-            model=model_to_use,
-            messages=[{"role": "user", "content": final_prompt}],
-            temperature=llm_config.get("temperature", 0.7),
-            max_tokens=llm_config.get("max_tokens", 1024)
-        )
+        llm_start = time.perf_counter()
 
-        result = response.choices[0].message.content
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="llm_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                llm_model=model_to_use,
+                llm_temperature=llm_config.get("temperature", 0.7),
+                metadata={
+                    "task_type": "LLMTask",
+                    "model_preference": model_preference,
+                    "prompt_length": len(final_prompt)
+                }
+            ))
 
-        # Store intermediate result for other tasks
-        self.variable_manager.set(f"tasks.{task.id}.result", result)
+        try:
 
-        # Output schema validation if present
-        if task.output_schema:
-            try:
-                if result.strip().startswith('{') or result.strip().startswith('['):
-                    parsed = json.loads(result)
-                    logger.info(f"LLM output validated against schema for task {task.id}")
-            except json.JSONDecodeError:
-                logger.warning(f"LLM output for task {task.id} is not valid JSON")
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": final_prompt}],
+                temperature=llm_config.get("temperature", 0.7),
+                max_tokens=llm_config.get("max_tokens", 1024)
+            )
 
-        return result
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                            output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=llm_config.get("temperature", 0.7),
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "LLMTask"
+                    }
+                ))
+
+            # Store intermediate result for other tasks
+            self.variable_manager.set(f"tasks.{task.id}.result", result)
+
+            # Output schema validation if present
+            if task.output_schema:
+                stripped = result.strip()
+
+                try:
+                    # Try JSON first if it looks like JSON
+                    if stripped.startswith('{') or stripped.startswith('['):
+                        parsed = json.loads(stripped)
+                    else:
+                        parsed = yaml.safe_load(stripped)
+
+                    # Ensure metadata is a dict before updating
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+
+                    # Save parsed result
+                    task.metadata["parsed_output"] = parsed
+
+                except (json.JSONDecodeError, yaml.YAMLError):
+                    # Save info about failure without logging output
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+                    task.metadata["parsed_output_error"] = "Invalid JSON/YAML format"
+
+                except Exception as e:
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+                    task.metadata["parsed_output_error"] = f"Unexpected error: {str(e)}"
+
+            return result
+        except Exception as e:
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "LLMTask",
+                        "error_type": type(e).__name__
+                    }
+                ))
+
+            raise
 
     async def _execute_decision_task(self, task: DecisionTask) -> str:
         """Erweiterte Decision Task Execution mit dynamischer Plan-Anpassung"""
@@ -2476,86 +2984,156 @@ confidence: 0.85
 
     Your response:"""
 
-        response = await litellm.acompletion(
-            model=model_to_use,
-            messages=[{"role": "user", "content": enhanced_prompt}],
-            temperature=0.1,
-            max_tokens=50
-        )
 
-        decision = response.choices[0].message.content.strip().lower()
+        llm_start = time.perf_counter()
 
-        # Find matching key (case-insensitive)
-        matched_key = None
-        for key in task.routing_map.keys():
-            if key.lower() == decision:
-                matched_key = key
-                break
-
-        if not matched_key:
-            logger.warning(f"Decision '{decision}' not in routing map, using first option")
-            matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
-
-        routing_instruction = task.routing_map.get(matched_key, matched_key)
-
-        # Check if routing instruction is a planning action
-        if isinstance(routing_instruction, dict) and "action" in routing_instruction:
-            # This is a dynamic planning instruction
-            action = routing_instruction["action"]
-
-            if not hasattr(task, 'metadata'):
-                task.metadata = {}
-
-            task.metadata.update({
-                "decision_made": matched_key,
-                "routing_action": action,
-                "routing_instruction": routing_instruction
-            })
-
-            if action == "replan_from_here":
-                # Store replan context for TaskPlannerNode
-                task.metadata["replan_context"] = {
-                    "new_goal": routing_instruction.get("new_goal", "Continue with alternative approach"),
-                    "failure_reason": f"Decision task {task.id} determined: {matched_key}",
-                    "original_task": task.id,
-                    "context": routing_instruction.get("context", "")
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="decision_llm_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                llm_model=model_to_use,
+                llm_temperature=0.1,
+                metadata={
+                    "task_type": "DecisionTask",
+                    "model_preference": "auto",
+                    "prompt_length": len(enhanced_prompt)
                 }
+            ))
 
-            elif action == "append_plan":
-                # Store append context
-                task.metadata["append_context"] = {
-                    "new_goal": routing_instruction.get("new_goal", "Continue with additional steps"),
-                    "extend_from": task.id
-                }
 
-            # Return the action for executor routing
-            self.variable_manager.set(f"tasks.{task.id}.result", {
-                "decision": matched_key,
-                "action": action,
-                "instruction": routing_instruction
-            })
+        try:
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": enhanced_prompt}],
+                temperature=0.1,
+                max_tokens=50
+            )
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
 
-            return action  # This triggers special handling in post_async
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
 
-        else:
-            # Traditional routing to task ID
-            next_task_id = routing_instruction if isinstance(routing_instruction, str) else str(routing_instruction)
+            call_cost = self.progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                                 output_tokens) if self.progress_tracker else 0.0
 
-            if not hasattr(task, 'metadata'):
-                task.metadata = {}
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="decision_llm_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=0.1,
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "DecisionTask"
+                    }
+                ))
 
-            task.metadata.update({
-                "decision_made": matched_key,
-                "next_task_id": next_task_id,
-                "routing_action": "route_to_task"
-            })
+            decision = response.choices[0].message.content.strip().lower()
 
-            self.variable_manager.set(f"tasks.{task.id}.result", {
-                "decision": matched_key,
-                "next_task": next_task_id
-            })
+            # Find matching key (case-insensitive)
+            matched_key = None
+            for key in task.routing_map.keys():
+                if key.lower() == decision:
+                    matched_key = key
+                    break
 
-            return matched_key
+            if not matched_key:
+                logger.warning(f"Decision '{decision}' not in routing map, using first option")
+                matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
+
+            routing_instruction = task.routing_map.get(matched_key, matched_key)
+
+            # Check if routing instruction is a planning action
+            if isinstance(routing_instruction, dict) and "action" in routing_instruction:
+                # This is a dynamic planning instruction
+                action = routing_instruction["action"]
+
+                if not hasattr(task, 'metadata'):
+                    task.metadata = {}
+
+                task.metadata.update({
+                    "decision_made": matched_key,
+                    "routing_action": action,
+                    "routing_instruction": routing_instruction
+                })
+
+                if action == "replan_from_here":
+                    # Store replan context for TaskPlannerNode
+                    task.metadata["replan_context"] = {
+                        "new_goal": routing_instruction.get("new_goal", "Continue with alternative approach"),
+                        "failure_reason": f"Decision task {task.id} determined: {matched_key}",
+                        "original_task": task.id,
+                        "context": routing_instruction.get("context", "")
+                    }
+
+                elif action == "append_plan":
+                    # Store append context
+                    task.metadata["append_context"] = {
+                        "new_goal": routing_instruction.get("new_goal", "Continue with additional steps"),
+                        "extend_from": task.id
+                    }
+
+                # Return the action for executor routing
+                self.variable_manager.set(f"tasks.{task.id}.result", {
+                    "decision": matched_key,
+                    "action": action,
+                    "instruction": routing_instruction
+                })
+
+                return action  # This triggers special handling in post_async
+
+            else:
+                # Traditional routing to task ID
+                next_task_id = routing_instruction if isinstance(routing_instruction, str) else str(routing_instruction)
+
+                if not hasattr(task, 'metadata'):
+                    task.metadata = {}
+
+                task.metadata.update({
+                    "decision_made": matched_key,
+                    "next_task_id": next_task_id,
+                    "routing_action": "route_to_task"
+                })
+
+                self.variable_manager.set(f"tasks.{task.id}.result", {
+                    "decision": matched_key,
+                    "next_task": next_task_id
+                })
+
+                return matched_key
+        except Exception as e:
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "DecisionTask",
+                        "error_type": type(e).__name__
+                    }
+                ))
+
+            raise
 
     async def _verify_tool_result_enhanced(self, task: ToolTask) -> Dict[str, Any]:
         """Erweiterte Verifikation mit strukturierter Bewertung"""
@@ -2595,6 +3173,23 @@ confidence: 0.85
       - "Specific suggestion 2"
     ```"""
 
+        llm_start = time.perf_counter()
+
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="verification_llm_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                llm_model=self.fast_llm_model,
+                llm_temperature=0.1,
+                metadata={
+                    "task_type": "VerificationTask",
+                    "model_preference": "auto",
+                    "prompt_length": len(prompt)
+                }
+            ))
+
         try:
             # Get model from task metadata or use default
             model_to_use = self.fast_llm_model
@@ -2605,6 +3200,38 @@ confidence: 0.85
                 temperature=0.2,
                 max_tokens=800
             )
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                                 output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="verification_llm_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=0.1,
+                    metadata={
+                        "success": True,
+                        "result": result,
+                        "result_length": len(result),
+                        "task_type": "VerificationTask"
+                    }
+                ))
 
             content = response.choices[0].message.content
             yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
@@ -2622,6 +3249,22 @@ confidence: 0.85
 
         except Exception as e:
             logger.error(f"Enhanced tool verification failed: {e}")
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=self.fast_llm_model,
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "VerificationTask",
+                        "error_type": type(e).__name__
+                    }
+                ))
             import traceback
             print(traceback.format_exc())
 
@@ -2818,7 +3461,22 @@ confidence: 0.85
             return f"Completed: {description}"
 
         prompt = f"Complete this task: {description}"
+        llm_start = time.perf_counter()
 
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="generic_task",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                task_id=task.id,
+                llm_model=self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                llm_temperature=0.7,
+                metadata={
+                    "task_type": "Task",
+                    "model_preference": "fast",
+                    "prompt_length": len(prompt)
+                }
+            ))
         try:
             response = await litellm.acompletion(
                 model=self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
@@ -2826,105 +3484,59 @@ confidence: 0.85
                 temperature=0.7,
                 max_tokens=1024
             )
+            llm_duration = time.perf_counter() - llm_start
             result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"), input_tokens,
+                                                                 output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="generic_task",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=0.7,
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "Task"
+                    }
+                ))
             self.variable_manager.set(f"tasks.{task.id}.result", result)
             return result
 
         except Exception as e:
             logger.error(f"Generic task execution failed: {e}")
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "Task",
+                        "error_type": type(e).__name__
+                    }
+                ))
             return f"Task completed with basic processing: {description}"
-
-    async def optimize_future_executions(self, shared: Dict) -> Dict[str, Any]:
-        """LLM-basierte Optimierung für zukünftige Ausführungen"""
-
-        if not LITELLM_AVAILABLE or not self.execution_history:
-            return {"status": "no_optimization", "reason": "No LLM or history available"}
-
-        stats = self.get_execution_statistics()
-
-        prompt = f"""
-Du bist ein Performance-Optimierungsexperte für Task-Execution. Analysiere die Ausführungshistorie und gib Optimierungsempfehlungen.
-
-## Aktuelle Performance-Statistiken
-{yaml.safe_dump(stats, indent=2)}
-
-## Letzte Ausführungen
-{yaml.safe_dump(self.execution_history[-5:], indent=2)}
-
-## Aufgabe
-Basierend auf den Daten, identifiziere:
-1. Leistungsengpässe
-2. Optimierungspotentiale
-3. Strategieempfehlungen
-4. Resource-Optimierungen
-
-Antworte mit YAML:
-
-```yaml
-analysis:
-  performance_trend: "improving" | "declining" | "stable"
-  bottlenecks:
-    - type: "parallel_overhead"
-      description: "Too much parallelization causing overhead"
-      impact: "medium"
-  strengths:
-    - "Tool tasks execute efficiently"
-    - "Sequential LLM tasks work well"
-
-optimizations:
-  - category: "strategy"
-    recommendation: "Use hybrid execution for mixed workloads"
-    expected_improvement: "15% faster execution"
-    confidence: 0.8
-  - category: "resource"
-    recommendation: "Reduce parallel limit for tool-heavy tasks"
-    expected_improvement: "Better resource utilization"
-    confidence: 0.9
-
-future_strategy_preferences:
-  - condition: "mostly_tool_tasks"
-    preferred_strategy: "parallel"
-    max_parallel: 2
-  - condition: "mixed_workload"
-    preferred_strategy: "hybrid"
-    max_parallel: 3
-
-confidence: 0.75
-```"""
-
-        try:
-            model_to_use = shared.get("complex_llm_model", "openrouter/openai/gpt-4o")
-
-            response = await litellm.acompletion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000
-            )
-
-            content = response.choices[0].message.content
-            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
-            yaml_str = yaml_match.group(1) if yaml_match else content.strip()
-
-            optimization = yaml.safe_load(yaml_str)
-
-            # Speichere Optimierungsempfehlungen
-            if not hasattr(self, 'optimization_recommendations'):
-                self.optimization_recommendations = []
-
-            self.optimization_recommendations.append({
-                "timestamp": datetime.now().isoformat(),
-                "optimization": optimization
-            })
-
-            logger.info(
-                f"Execution optimization analysis completed with confidence {optimization.get('confidence', 0.0)}")
-            return optimization
-
-        except Exception as e:
-            logger.error(f"Execution optimization failed: {e}")
-            return {"status": "optimization_failed", "error": str(e)}
-
 
 class PlanReflectorNode(AsyncNodeT):
     """Unified Adaptive Plan Reflection and Dynamic Adjustment"""
@@ -2969,7 +3581,8 @@ class PlanReflectorNode(AsyncNodeT):
             "append_context": append_context,
             # Additional context
             "plan_adaptations": shared.get("plan_adaptations", 0),
-            "execution_performance": shared.get("executor_performance", {})
+            "execution_performance": shared.get("executor_performance", {}),
+            "agent_instance": shared.get("agent_instance")
         }
 
     async def exec_async(self, prep_res):
@@ -3365,7 +3978,7 @@ class PlanReflectorNode(AsyncNodeT):
 
         if not LITELLM_AVAILABLE:
             return {"action": "CONTINUE", "reason": "No LLM available for decision making"}
-# TODO add context
+
         prompt = f"""
 Du bist ein Plan-Reflexionssystem. Analysiere die Task-Ergebnisse und entscheide über die nächste Aktion.
 
@@ -3403,14 +4016,13 @@ adaptation_suggestions:
         try:
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
-            response = await litellm.acompletion(
+            content = await prep_res["agent_instance"].a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=600
+                max_tokens=600, node_name="PlanReflectionNode", task_id="plan_reflection"
             )
 
-            content = response.choices[0].message.content
             yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
             yaml_str = yaml_match.group(1) if yaml_match else content.strip()
 
@@ -3586,6 +4198,7 @@ class LLMToolNode(AsyncNodeT):
             "task_context": context.get("task_context", ""),
             "fast_llm_model": shared.get("fast_llm_model"),
             "complex_llm_model": shared.get("complex_llm_model"),
+            "progress_tracker": shared.get("progress_tracker"),
             "tool_call_count": 0
         }
 
@@ -3594,16 +4207,21 @@ class LLMToolNode(AsyncNodeT):
         if not LITELLM_AVAILABLE:
             return await self._fallback_response(prep_res)
 
+        progress_tracker = prep_res.get("progress_tracker")
+
         conversation_history = []
         tool_call_count = 0
         final_response = None
+        total_llm_calls = 0
+        total_cost = 0.0
+        total_tokens = 0
 
         # Initial system message with tool awareness
         system_message = self._build_tool_aware_system_message(prep_res)
 
         # Initial user prompt with variable resolution
         initial_prompt = self._build_context_aware_prompt(prep_res)
-        conversation_history.append({"role": "user", "content": initial_prompt})
+        conversation_history.append({"role": "user", "content":  prep_res["variable_manager"].format_text(initial_prompt)})
         runs = 0
         while tool_call_count < self.max_tool_calls:
             runs += 1
@@ -3612,6 +4230,20 @@ class LLMToolNode(AsyncNodeT):
 
             model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
 
+            llm_start = time.perf_counter()
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name="LLMToolNode",
+                    llm_model=model_to_use,
+                    session_id=prep_res.get("session_id"),
+                    metadata={
+                        "call_number": total_llm_calls + 1,
+                        "conversation_turns": len(conversation_history),
+                        "system_message_length": len(system_message),
+                    }
+                ))
             try:
                 response = await litellm.acompletion(
                     model=model_to_use,
@@ -3620,15 +4252,55 @@ class LLMToolNode(AsyncNodeT):
                     max_tokens=2048
                 )
 
+                llm_duration = time.perf_counter() - llm_start
+                total_llm_calls += 1
+
+                # Extract token usage and calculate cost
+                usage = response.usage
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                total_tokens_call = usage.total_tokens if usage else 0
+
+                # Calculate cost (simplified)
+                call_cost = progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                                output_tokens) if progress_tracker else 0.0
+                total_cost += call_cost
+                total_tokens += total_tokens_call
+
                 llm_response = response.choices[0].message.content
                 if not llm_response:
                     final_response = "I encountered an error while processing your request."
                     break
-                llm_response = prep_res["variable_manager"].format_text(llm_response)
-                conversation_history.append({"role": "assistant", "content": llm_response})
+
 
                 # Check for tool calls
                 tool_calls = self._extract_tool_calls(llm_response)
+
+                llm_response = prep_res["variable_manager"].format_text(llm_response)
+                conversation_history.append({"role": "assistant", "content": llm_response})
+
+                # Track successful LLM call
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent_old(
+                        event_type="llm_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        llm_model=model_to_use,
+                        llm_prompt_tokens=input_tokens,
+                        llm_completion_tokens=output_tokens,
+                        llm_total_tokens=total_tokens_call,
+                        llm_cost=call_cost,
+                        llm_duration=llm_duration,
+                        llm_temperature=0.7,
+                        session_id=prep_res.get("session_id"),
+                        metadata={
+                            "success": True,
+                            "response_length": len(llm_response),
+                            "call_number": total_llm_calls,
+                            "response": llm_response,
+                        }
+                    ))
+
 
                 if not tool_calls:
                     # No more tool calls, this is the final response
@@ -3649,6 +4321,18 @@ class LLMToolNode(AsyncNodeT):
                 self._update_variables_with_results(tool_results, prep_res["variable_manager"])
 
             except Exception as e:
+                llm_duration = time.perf_counter() - llm_start
+
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent_old(
+                        event_type="error",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        llm_model=model_to_use,
+                        llm_duration=llm_duration,
+                        session_id=prep_res.get("session_id"),
+                        metadata={"error": str(e), "call_number": total_llm_calls + 1}
+                    ))
                 logger.error(f"LLM tool execution failed: {e}")
                 final_response = f"I encountered an error while processing: {str(e)}"
                 import traceback
@@ -3662,21 +4346,30 @@ class LLMToolNode(AsyncNodeT):
             "final_response": final_response or "I was unable to complete the request.",
             "tool_calls_made": tool_call_count,
             "conversation_history": conversation_history,
-            "model_used": model_to_use
+            "model_used": model_to_use,
+            "llm_statistics": {
+                "total_calls": total_llm_calls,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens
+            }
         }
 
     def _build_tool_aware_system_message(self, prep_res: Dict) -> str:
-        """Build system message with tool awareness and variable context"""
+        """Build a unified intelligent, tool-aware system message with context and relevance analysis."""
+
+        # Base system message
         base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
         available_tools = prep_res.get("available_tools", [])
         tool_capabilities = prep_res.get("tool_capabilities", {})
         variable_manager = prep_res.get("variable_manager")
         context = prep_res.get("context", {})
+        agent_instance = prep_res.get("agent_instance")
+        query = prep_res.get('task_description', '').lower()
 
+        # --- Part 1: List available tools & capabilities ---
         if available_tools:
             base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
 
-            # Add tool descriptions
             for tool_name in available_tools:
                 if tool_name in tool_capabilities:
                     cap = tool_capabilities[tool_name]
@@ -3685,15 +4378,70 @@ class LLMToolNode(AsyncNodeT):
                     if use_cases:
                         base_message += f"\n  Use cases: {', '.join(use_cases[:3])}"
 
-            base_message += "\n\n## Tool Usage\nTo use tools, respond with: TOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
+            base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
 
-        # Add variable context
+        # --- Part 2: Add variable context ---
         if variable_manager:
             var_context = variable_manager.get_llm_variable_context()
             if var_context:
-                base_message += f"\n\n{var_context}"
+                base_message += f"\n\n## Variable Context\n{var_context}"
 
-        return base_message
+        # --- Part 3: Intelligent tool analysis ---
+        if not agent_instance or not hasattr(agent_instance, '_tool_capabilities'):
+            return base_message + "\n\n⚠ No intelligent tool analysis available."
+
+        capabilities = agent_instance._tool_capabilities
+        analysis_parts = ["\n\n## Intelligent Tool Analysis"]
+
+        for tool_name, cap in capabilities.items():
+            analysis_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
+            analysis_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
+
+            # Calculate relevance score
+            relevance_score = self._calculate_tool_relevance(query, cap)
+            analysis_parts.append(f"- Query relevance: {relevance_score:.2f}")
+
+            if relevance_score > 0.65:
+                analysis_parts.append("- ⭐ HIGHLY RELEVANT - SHOULD USE THIS TOOL!")
+
+            # Trigger phrase matching
+            triggers = cap.get('trigger_phrases', [])
+            matched_triggers = [t for t in triggers if t.lower() in query]
+            if matched_triggers:
+                analysis_parts.append(f"- Matched triggers: {matched_triggers}")
+
+            # Show top use cases
+            use_cases = cap.get('use_cases', [])[:3]
+            if use_cases:
+                analysis_parts.append(f"- Use cases: {', '.join(use_cases)}")
+
+        # Combine everything into a final message
+        return base_message + "\n" + "\n".join(analysis_parts)
+
+    def _calculate_tool_relevance(self, query: str, capabilities: Dict) -> float:
+        """Calculate how relevant a tool is to the current query"""
+
+        query_words = set(query.lower().split())
+
+        # Check trigger phrases
+        trigger_score = 0.0
+        triggers = capabilities.get('trigger_phrases', [])
+        for trigger in triggers:
+            trigger_words = set(trigger.lower().split())
+            if trigger_words.intersection(query_words):
+                trigger_score += 0.04
+        # Check confidence triggers if available
+        conf_triggers = capabilities.get('confidence_triggers', {})
+        for phrase, confidence in conf_triggers.items():
+            if phrase.lower() in query:
+                trigger_score += confidence/10
+        # Check indirect connections
+        indirect = capabilities.get('indirect_connections', [])
+        for connection in indirect:
+            connection_words = set(connection.lower().split())
+            if connection_words.intersection(query_words):
+                trigger_score += 0.02
+        return min(1.0, trigger_score)
 
     def _extract_tool_calls(self, text: str) -> List[Dict]:
         """Extract tool calls from LLM response"""
@@ -3720,25 +4468,23 @@ class LLMToolNode(AsyncNodeT):
     def _parse_tool_arguments(self, args_str: str) -> Dict:
         """Parse tool arguments from string"""
         import ast
-
-        try:
-            # Try to evaluate as Python dict
-            if args_str.strip():
-                # Wrap in dict if not already
-                if not args_str.strip().startswith('{'):
-                    args_str = "{"+args_str+"}"
-                return ast.literal_eval(args_str)
-            return {}
-        except:
-            # Fallback: simple key=value parsing
-            args = {}
-            for pair in args_str.split(','):
-                if '=' in pair:
-                    key, value = pair.split('=', 1)
-                    key = key.strip().strip("'")
-                    value = value.strip().strip("'")
-                    args[key] = value
-            return args
+        # Try to evaluate as Python dict
+        if args_str.strip():
+            # Wrap in dict if not already
+            if args_str.strip().startswith('{'):
+                try:
+                    return ast.literal_eval(args_str)
+                except:
+                    pass
+        # Fallback: simple key=value parsing
+        args = {}
+        for pair in args_str.split(','):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                key = key.strip().strip("'")
+                value = value.strip().strip("'")
+                args[key] = value
+        return args
 
     def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
         """Select optimal model based on task complexity and available resources"""
@@ -3778,6 +4524,7 @@ class LLMToolNode(AsyncNodeT):
         """Execute tool calls via agent"""
         agent_instance = prep_res.get("agent_instance")
         variable_manager = prep_res.get("variable_manager")
+        progress_tracker = prep_res.get("progress_tracker")
 
         results = []
 
@@ -3785,9 +4532,22 @@ class LLMToolNode(AsyncNodeT):
             tool_name = tool_call["tool_name"]
             arguments = tool_call["arguments"]
 
+            # Start tool tracking
+            tool_start = time.perf_counter()
+
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="LLMToolNode",
+                    tool_name=tool_name,
+                    tool_args=arguments,
+                    session_id=prep_res.get("session_id"),
+                    metadata={"tool_call_initiated": True}
+                ))
+
             try:
                 # Resolve variables in arguments
-                print(arguments)
                 if variable_manager:
                     resolved_args = {}
                     for key, value in arguments.items():
@@ -3800,7 +4560,24 @@ class LLMToolNode(AsyncNodeT):
 
                 # Execute via agent
                 result = await agent_instance.arun_function(tool_name, **resolved_args)
+                tool_duration = time.perf_counter() - tool_start
                 variable_manager.set(f"results.{tool_name}.data", result)
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent_old(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        tool_name=tool_name,
+                        tool_args=resolved_args,
+                        tool_result=result,
+                        tool_duration=tool_duration,
+                        tool_success=True,
+                        session_id=prep_res.get("session_id"),
+                        metadata={
+                            "result_type": type(result).__name__,
+                            "result_length": len(str(result))
+                        }
+                    ))
                 results.append({
                     "tool_name": tool_name,
                     "arguments": resolved_args,
@@ -3809,6 +4586,21 @@ class LLMToolNode(AsyncNodeT):
                 })
 
             except Exception as e:
+                tool_duration = time.perf_counter() - tool_start
+
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent_old(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        tool_name=tool_name,
+                        tool_args=arguments,
+                        tool_duration=tool_duration,
+                        tool_success=False,
+                        tool_error=str(e),
+                        session_id=prep_res.get("session_id"),
+                        metadata={"error_type": type(e).__name__}
+                    ))
                 logger.error(f"Tool execution failed {tool_name}: {e}")
                 results.append({
                     "tool_name": tool_name,
@@ -4321,14 +5113,13 @@ Erstelle eine finale Antwort:"""
             # Verwende complex model für finale Synthesis
             model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
 
-            response = await litellm.acompletion(
+            synthesized_response = await prep_res["agent_instance"].a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1500
+                max_tokens=1500,
+                node_name="ResultSynthesizerNode", task_id="response_synthesis"
             )
-
-            synthesized_response = response.choices[0].message.content
 
             return {
                 "synthesized_response": synthesized_response,
@@ -4470,7 +5261,8 @@ class ResponseQualityNode(AsyncNodeT):
             "original_query": shared.get("current_query", ""),
             "format_config": self._get_format_config(shared),
             "fast_llm_model": shared.get("fast_llm_model"),
-            "persona_config": shared.get("persona_config")
+            "persona_config": shared.get("persona_config"),
+            "agent_instance": shared.get("agent_instance"),
         }
 
     def _get_format_config(self, shared) -> Optional[FormatConfig]:
@@ -4637,14 +5429,14 @@ Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
         try:
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
-            llm_response = await litellm.acompletion(
+            score_text = await prep_res["agent_instance"].a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=10
-            )
+                max_tokens=10,
+                node_name="QualityAssessmentNode", task_id="format_quality_assessment"
+            ).strip()
 
-            score_text = llm_response.choices[0].message.content.strip()
             return float(score_text)
 
         except Exception as e:
@@ -4744,14 +5536,14 @@ Respond with just a number between 0.0 and 1.0:"""
 
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
-            llm_response = await litellm.acompletion(
+            score_text = await prep_res["agent_instance"].a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
-                max_tokens=10
-            )
+                max_tokens=10,
+                node_name="QualityAssessmentNode", task_id="quality_assessment"
+            ).strip()
 
-            score_text = llm_response.choices[0].message.content.strip()
             return float(score_text)
 
         except:
@@ -4780,7 +5572,8 @@ class ResponseFinalProcessorNode(AsyncNodeT):
             "conversation_history": shared.get("conversation_history", []),
             "persona": shared.get("persona_config"),
             "fast_llm_model": shared.get("fast_llm_model"),
-            "use_fast_response": shared.get("use_fast_response", True)
+            "use_fast_response": shared.get("use_fast_response", True),
+            "agent_instance": shared.get("agent_instance"),
         }
 
     async def exec_async(self, prep_res):
@@ -4843,21 +5636,21 @@ class ResponseFinalProcessorNode(AsyncNodeT):
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
             if prep_res.get("use_fast_response", True):
-                response = await litellm.acompletion(
+                response = await prep_res["agent_instance"].a_run_llm_completion(
                     model=model_to_use,
                     messages=[{"role": "user", "content": style_prompt}],
                     temperature=0.5,
-                    max_tokens=max_tokens
+                    max_tokens=max_tokens, node_name="PersonaStylingNode", task_id="persona_styling_fast"
                 )
             else:
-                response = await litellm.acompletion(
+                response = await prep_res["agent_instance"].a_run_llm_completion(
                     model=model_to_use,
                     messages=[{"role": "user", "content": style_prompt}],
                     temperature=0.6,
-                    max_tokens=max_tokens + 200
+                    max_tokens=max_tokens + 200, node_name="PersonaStylingNode", task_id="persona_styling_ritch"
                 )
 
-            return response.choices[0].message.content.strip()
+            return response.strip()
 
         except Exception as e:
             logger.warning(f"Persona styling failed: {e}")
@@ -5187,6 +5980,7 @@ class FlowAgent:
         enable_pause_resume: bool = True,
         checkpoint_interval: int = 300,  # 5 minutes
         max_parallel_tasks: int = 3,
+        progress_callback: Optional[callable] = None,
         **kwargs
     ):
         self.amd = amd
@@ -5195,6 +5989,7 @@ class FlowAgent:
         self.enable_pause_resume = enable_pause_resume
         self.checkpoint_interval = checkpoint_interval
         self.max_parallel_tasks = max_parallel_tasks
+        self.progress_tracker = ProgressTracker(progress_callback)
 
         # Core state
         self.shared = {
@@ -5205,7 +6000,8 @@ class FlowAgent:
             "session_data": {},
             "performance_metrics": {},
             "conversation_history": [],
-            "available_tools": []
+            "available_tools": [],
+            "progress_tracker": self.progress_tracker
         }
         self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
         # Register default scopes
@@ -5239,12 +6035,99 @@ class FlowAgent:
         # Tool analysis file path
         self.tool_analysis_file = self._get_tool_analysis_path()
 
+        self._tool_capabilities.update(self._load_tool_analysis())
+        if self.amd.budget_manager:
+            self.amd.budget_manager.load_data()
+
         logger.info(f"FlowAgent initialized: {amd.name}")
 
-    async def a_run_llm_completion(self, **kwargs) -> str:
-        kwargs["model"] = self.amd.complex_llm_model
-        res = await litellm.acompletion(**kwargs)
-        return res.choices[0].message.content
+    @property
+    def progress_callback(self):
+        return self.progress_tracker.progress_callback
+
+    @progress_callback.setter
+    def progress_callback(self, value):
+        self.progress_tracker.progress_callback = value
+
+
+    async def a_run_llm_completion(self,node_name="FlowAgent",task_id="unknown",model_preference="fast", **kwargs) -> str:
+        if "model" not in kwargs:
+            kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
+
+        llm_start = time.perf_counter()
+
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="llm_call",
+                timestamp=time.time(),
+                node_name=node_name,
+                task_id=task_id,
+                llm_model=kwargs["model"],
+                llm_temperature=kwargs.get("temperature", 0.7),
+                metadata={
+                    "task_type": "LLMCall",
+                    "model_preference": kwargs.get("model_preference", "fast"),
+                    "prompt_length": len(kwargs.get("messages", [{}])[-1].get("content", ""))
+                }
+            ))
+
+        try:
+
+            response = await litellm.acompletion(**kwargs
+            )
+
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
+                                                            output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    task_id=task_id,
+                    llm_model=kwargs["model"],
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=kwargs.get("temperature", 0.7),
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "LLMCall"
+                    }
+                ))
+
+            return result
+        except Exception as e:
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent_old(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    task_id=task_id,
+                    llm_model=kwargs["model"],
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "LLMCall",
+                        "error_type": type(e).__name__
+                    }
+                ))
+
+            raise
 
     async def a_run(
         self,
@@ -5255,6 +6138,16 @@ class FlowAgent:
         **kwargs
     ) -> str:
         """Main entry point for agent execution"""
+
+        execution_start = self.progress_tracker.start_timer("total_execution")
+
+        await self.progress_tracker.emit_event(ProgressEvent_old(
+            event_type="execution_start",
+            timestamp=time.time(),
+            node_name="FlowAgent",
+            session_id=session_id,
+            metadata={"query": query, "user_id": user_id}
+        ))
 
         try:
             # Set user context variables
@@ -5311,7 +6204,6 @@ class FlowAgent:
 
             # Execute main orchestration flow
             result = await self._orchestrate_execution()
-
             # Add response to history
             self.shared["conversation_history"].append({
                 "role": "assistant",
@@ -5319,6 +6211,19 @@ class FlowAgent:
                 "timestamp": datetime.now().isoformat()
             })
 
+            total_duration = self.progress_tracker.end_timer("total_execution")
+
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="execution_complete",
+                timestamp=time.time(),
+                node_name="FlowAgent",
+                node_duration=total_duration,
+                session_id=session_id,
+                metadata={
+                    "result_length": len(result),
+                    "summary": self.progress_tracker.get_summary()
+                }
+            ))
             # Checkpoint if needed
             if self.enable_pause_resume:
                 await self._maybe_checkpoint()
@@ -5328,12 +6233,25 @@ class FlowAgent:
         except Exception as e:
             logger.error(f"Agent execution failed: {e}", exc_info=True)
             error_response = f"I encountered an error: {str(e)}"
+            import traceback
+            print(traceback.format_exc())
 
             self.shared["conversation_history"].append({
                 "role": "assistant",
                 "content": error_response,
                 "timestamp": datetime.now().isoformat()
             })
+
+            total_duration = self.progress_tracker.end_timer("total_execution")
+
+            await self.progress_tracker.emit_event(ProgressEvent_old(
+                event_type="error",
+                timestamp=time.time(),
+                node_name="FlowAgent",
+                node_duration=total_duration,
+                session_id=session_id,
+                metadata={"error": str(e), "error_type": type(e).__name__}
+            ))
 
             return error_response
 
@@ -5609,11 +6527,18 @@ class FlowAgent:
             self.task_flow.start = advanced_context_manager
 
         # Ensure tool capabilities are loaded
-        for tool_name in self.shared["available_tools"]:
+        # add tqdm prigress bar
+        from tqdm import tqdm
+
+        for tool_name in tqdm(self.shared["available_tools"], desc="Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
                 description = tool_info.get("description", "No description")
                 await self._analyze_tool_capabilities(tool_name, description)
+
+            if tool_name in self._tool_capabilities and self._tool_capabilities[tool_name].get("args_schema") is None:
+                function = self._tool_registry[tool_name]["function"]
+                self._tool_capabilities[tool_name]["args_schema"] = get_args_schema(function)
 
         # Set enhanced system context
         self.shared["system_context"] = {
@@ -5750,7 +6675,7 @@ class FlowAgent:
         summaries = []
         for tool_name, cap in self._tool_capabilities.items():
             primary = cap.get('primary_function', 'Unknown function')
-            summaries.append(f"{tool_name}: {primary}")
+            summaries.append(f"{tool_name}{cap.get('args_schema', '()')}: {primary}")
 
         return f"Enhanced capabilities: {'; '.join(summaries)}"
 
@@ -5830,14 +6755,14 @@ Erkläre in 2-3 Absätzen:
 Schreibe für einen technischen Nutzer, aber verständlich."""
 
         try:
-            response = await litellm.acompletion(
+            response = await self.a_run_llm_completion(
                 model=self.amd.complex_llm_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.5,
-                max_tokens=800
+                max_tokens=800,task_id="reasoning_explanation"
             )
 
-            return response.choices[0].message.content
+            return response
 
         except Exception as e:
             return f"Could not generate reasoning explanation: {e}"
@@ -5879,12 +6804,15 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
     async def _create_checkpoint(self) -> AgentCheckpoint:
         """Create a checkpoint of current state"""
+        self.amd.budget_manager.save_data()
+        amd = self.amd.model_dump()
+        amd['budget_manager'] = None  # Exclude budget manager from checkpoint
         return AgentCheckpoint(
             timestamp=datetime.now(),
             agent_state={
                 "is_running": self.is_running,
                 "is_paused": self.is_paused,
-                "amd": self.amd.model_dump_json(indent=2) if hasattr(self.amd, 'model_dump_json') else str(self.amd)
+                "amd": json.dumps(amd, ensure_ascii=False, default=str, indent=2)
             },
             task_state={
                 task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
@@ -5995,12 +6923,17 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         """Analyze tool capabilities with LLM for smart usage"""
 
         # Try to load existing analysis
-        existing_analysis = await self._load_tool_analysis()
+        existing_analysis = self._load_tool_analysis()
 
         if tool_name in existing_analysis:
-            self._tool_capabilities[tool_name] = existing_analysis[tool_name]
-            logger.info(f"Loaded cached analysis for {tool_name}")
-            return
+            try:
+                # Validate cached data against the Pydantic model
+                ToolAnalysis.model_validate(existing_analysis[tool_name])
+                self._tool_capabilities[tool_name] = existing_analysis[tool_name]
+                logger.info(f"Loaded and validated cached analysis for {tool_name}")
+            except ValidationError as e:
+                logger.warning(f"Cached data for {tool_name} is invalid and will be regenerated: {e}")
+                del self._tool_capabilities[tool_name]
 
         if not LITELLM_AVAILABLE:
             # Fallback analysis
@@ -6035,64 +6968,72 @@ Example for a "get_user_name" tool:
 - Contextual: Any response that could be personalized
 
 Respond in YAML format:
-primary_function: Main purpose of the tool
+Example:
+```yaml
+primary_function: "Retrieves the current user's name."
 use_cases:
-  - Specific use case 1
-  - Specific use case 2
+  - "Responding to 'what is my name?'"
+  - "Personalizing greeting messages."
 trigger_phrases:
-  - Trigger phrase 1
-  - Trigger phrase 2
+  - "my name"
+  - "who am I"
+  - "introduce yourself"
 indirect_connections:
-  - Non-obvious connection 1
-  - Non-obvious connection 2
+  - "User identification in multi-factor authentication."
+  - "Tagging user-generated content."
 complexity_scenarios:
-  - Complex scenario 1
-  - Complex scenario 2
+  - "In a multi-step task, remembering the user's name to personalize the final output."
 user_intent_categories:
-  - Category 1
-  - Category 2
+  - "Personalization"
+  - "User Identification"
 confidence_triggers:
-  phrase: confidence_score
+  "my name": 0.95
+  "who am I": 0.9
 tool_complexity: low/medium/high
+```
 """
 
-        try:
-            response = await litellm.acompletion(
-                model=self.amd.complex_llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000
-            )
+        for i in range(3):
+            try:
+                response = await self.a_run_llm_completion(
+                    model=self.amd.complex_llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=1000,
+                    task_id=f"tool_analysis_{tool_name}"
+                )
 
-            content = response.choices[0].message.content.strip()
+                content = response.strip()
 
-            # Extract JSON
-            if "```yaml" in content:
-                yaml_str = content.split("```yaml")[1].split("```")[0].strip()
-            else:
-                yaml_str = content
+                # Extract JSON
+                if "```yaml" in content:
+                    yaml_str = content.split("```yaml")[1].split("```")[0].strip()
+                else:
+                    yaml_str = content
 
-            analysis = yaml.safe_load(yaml_str)
+                analysis = yaml.safe_load(yaml_str)
 
-            # Store analysis
-            self._tool_capabilities[tool_name] = analysis
+                # Store analysis
+                self._tool_capabilities[tool_name] = analysis
 
-            # Save to cache
-            await self._save_tool_analysis()
+                # Save to cache
+                await self._save_tool_analysis()
 
-            logger.info(f"Generated intelligent analysis for {tool_name}")
+                validated_analysis = ToolAnalysis.model_validate(analysis)
+                logger.info(f"Generated intelligent analysis for {tool_name}")
+                break
 
-        except Exception as e:
-            logger.error(f"Tool analysis failed for {tool_name}: {e}")
-            # Fallback
-            self._tool_capabilities[tool_name] = {
-                "primary_function": description,
-                "use_cases": [description],
-                "trigger_phrases": [tool_name.lower().replace('_', ' ')],
-                "tool_complexity": "medium"
-            }
+            except Exception as e:
+                logger.error(f"Tool analysis failed for {tool_name}: {e}")
+                # Fallback
+                self._tool_capabilities[tool_name] = {
+                    "primary_function": description,
+                    "use_cases": [description],
+                    "trigger_phrases": [tool_name.lower().replace('_', ' ')],
+                    "tool_complexity": "medium"
+                }
 
-    async def _load_tool_analysis(self) -> Dict[str, Any]:
+    def _load_tool_analysis(self) -> Dict[str, Any]:
         """Load tool analysis from cache"""
         try:
             if os.path.exists(self.tool_analysis_file):
@@ -6561,8 +7502,81 @@ tool_complexity: low/medium/high
     def tool_registry(self):
         return self._tool_registry
 
+def get_progress_summary(self) -> Dict[str, Any]:
+    """Get comprehensive progress summary from the agent"""
+    if hasattr(self, 'progress_tracker'):
+        return self.progress_tracker.get_summary()
+    return {"error": "No progress tracker available"}
 
-if __name__ == "__main__":
+import inspect
+import typing
+from typing import Any, Callable
+
+def get_args_schema(func: Callable) -> str:
+    """
+    Generate a string representation of a function's arguments and annotations.
+    Keeps *args and **kwargs indicators and handles modern Python type hints.
+    """
+    sig = inspect.signature(func)
+    parts = []
+
+    for name, param in sig.parameters.items():
+        ann = ""
+        if param.annotation is not inspect._empty:
+            ann = f": {_annotation_to_str(param.annotation)}"
+
+        default = ""
+        if param.default is not inspect._empty:
+            default = f" = {repr(param.default)}"
+
+        prefix = ""
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            prefix = "*"
+        elif param.kind == inspect.Parameter.VAR_KEYWORD:
+            prefix = "**"
+
+        parts.append(f"{prefix}{name}{ann}{default}")
+
+    return f"({', '.join(parts)})"
+
+def _annotation_to_str(annotation: Any) -> str:
+    """
+    Convert any annotation to a nice string, including | union syntax (PEP 604),
+    Optional[T], generics, and forward references.
+    """
+    if isinstance(annotation, str):
+        return annotation  # Forward reference as-is
+
+    # Handle typing.Optional and typing.Union
+    if getattr(annotation, "__origin__", None) is typing.Union:
+        args = annotation.__args__
+        if len(args) == 2 and type(None) in args:
+            non_none = args[0] if args[1] is type(None) else args[1]
+            return f"Optional[{_annotation_to_str(non_none)}]"
+        return " | ".join(_annotation_to_str(a) for a in args)
+
+    # Handle built-in Union syntax (PEP 604)
+    if hasattr(annotation, "__args__") and getattr(annotation, "__origin__", None) is None and "|" in str(annotation):
+        return str(annotation)
+
+    # Handle generics like list[int], dict[str, Any]
+    if getattr(annotation, "__origin__", None):
+        origin = getattr(annotation.__origin__, "__name__", str(annotation.__origin__))
+        args = getattr(annotation, "__args__", None)
+        if args:
+            return f"{origin}[{', '.join(_annotation_to_str(a) for a in args)}]"
+        return origin
+
+    # Handle normal classes and built-ins
+    if hasattr(annotation, "__name__"):
+        return annotation.__name__
+
+    return repr(annotation)
+
+# Add this method to FlowAgent class
+FlowAgent.get_progress_summary = get_progress_summary
+
+if __name__ == "__main__2":
     # Simple test
     async def _agent():
         amd = AgentModelData(
@@ -6606,4 +7620,5 @@ if __name__ == "__main__":
         await agent.close()
 
     asyncio.run(_agent())
+
 
