@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import asyncio
 import hashlib
 import json
@@ -1677,11 +1679,30 @@ class KnowledgeBase:
                     }
                 }
             }
+            b = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+
             if path is None:
-                return dill.dumps(data)
-            # Save to disk using pickle
-            with open(path, 'wb') as f:
-                dill.dump(data, f)
+                return b
+
+            path = Path(path)
+            tmp = path.with_suffix(path.suffix + ".tmp") if path.suffix else path.with_name(path.name + ".tmp")
+
+            try:
+                # Schreibe zuerst in eine temporäre Datei
+                with open(tmp, "wb") as f:
+                    f.write(b)
+                    f.flush()
+                    os.fsync(f.fileno())  # sicherstellen, dass die Daten auf Platte sind
+                # Atomischer Austausch
+                os.replace(tmp, path)
+            finally:
+                # Aufräumen falls tmp noch existiert (bei Fehlern)
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
+            return None
             # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
         except Exception as e:
@@ -1701,13 +1722,32 @@ class KnowledgeBase:
             KnowledgeBase: A fully restored knowledge base instance
         """
         try:
-            if isinstance(path, str):
-                # Load data from disk
-                with open(path, 'rb') as f:
-                    data = dill.load(f)
-            elif isinstance(path, bytes):
-                data = dill.loads(path)
+            if isinstance(path, (bytes, bytearray, memoryview)):
+                data_bytes = bytes(path)
+                try:
+                    data = pickle.loads(data_bytes)
+                except Exception as e:
+                    raise EOFError(f"Fehler beim pickle.loads von bytes: {e}") from e
             else:
+                p = Path(path)
+                if not p.exists():
+                    raise FileNotFoundError(f"{p} existiert nicht")
+                size = p.stat().st_size
+                if size == 0:
+                    raise EOFError(f"{p} ist leer (0 bytes)")
+                try:
+                    with open(p, "rb") as f:
+                        try:
+                            data = pickle.load(f)
+                        except EOFError as e:
+                            # Debug info: erste bytes ausgeben
+                            f.seek(0)
+                            snippet = f.read(128)
+                            raise EOFError(
+                                f"EOFError beim Laden {p} (Größe {size} bytes). Erste 128 bytes: {snippet!r}") from e
+
+                except Exception as e:
+                    raise
                 raise ValueError("Invalid path type")
 
             # Create new knowledge base instance with saved configuration

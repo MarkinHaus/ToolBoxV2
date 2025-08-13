@@ -29,10 +29,9 @@ from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent
+from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent, TaskPlan
 from toolboxv2.mods.isaa.base.Agent.builder import AgentConfig, logger
-from toolboxv2.mods.isaa.extras.terminal_progress import DynamicProgressPrinter, VerbosityMode
-from toolboxv2.mods.isaa.extras.terminal_progress2 import ProgressiveTreePrinter
+from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode, NodeStatus
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Style, remove_styles
 
@@ -65,8 +64,12 @@ def strip_ansi(text: str) -> str:
 class WorkspaceIsaasCli:
     """Advanced ISAA CLI with comprehensive agent tools and enhanced formatting"""
 
-    def __init__(self, app_instance: Any, mode=VerbosityMode.VERBOSE):
+    def __init__(self, app_instance: Any, mode=VerbosityMode.STANDARD):
         self.printer = ProgressiveTreePrinter(mode=mode)
+        self._current_verbosity_mode = mode
+        self._current_realtime_minimal = mode == VerbosityMode.REALTIME
+        self.task_name = None
+
         self.app = app_instance
         self.isaa_tools: Isaatools = app_instance.get_mod("isaa")
         self.isaa_tools.stuf = True #
@@ -76,6 +79,7 @@ class WorkspaceIsaasCli:
         self.workspace_agent: Optional[FlowAgent] = None
         self.worker_agents: Dict[str, FlowAgent] = {}
         self.active_agent: Optional[FlowAgent] = None
+
 
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=print)
         self.active_agent_name = "workspace_supervisor"
@@ -137,8 +141,7 @@ class WorkspaceIsaasCli:
             "*.pyd",
             ".DS_Store"
         }
-        self.agents_registry: Dict[str, FlowAgent] = {}
-        self.agent_configs: Dict[str, AgentConfig] = {}
+
 
 
     def _init_session_stats(self) -> Dict:
@@ -290,7 +293,8 @@ class WorkspaceIsaasCli:
                 "delete": WordCompleter([]), # Wird dynamisch gefüllt
             },
             "/monitor": None,
-            "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None, "backup-infos": None},
+            "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None, "backup-infos": None,
+                        'verbosity': {"MINIMAL":None,"STANDARD":None,"DETAILED":None,"REALTIME":None}},
             "/help": None, "/quit": None, "/clear": None}
         return commands_dict
 
@@ -816,6 +820,78 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "tool_used": tool_used})
 
+    async def get_user_assistant_tool(self, query: str, context: str = ""):
+        """
+        **CRITICAL: USE ONLY WHEN ABSOLUTELY NECESSARY**
+
+        This function directly prompts the user for assistance and should ONLY be used when:
+        1. The agent cannot proceed without human input/clarification
+        2. Critical decision-making requires human judgment
+        3. Ambiguous requirements need user clarification
+        4. Safety-critical operations need user confirmation
+
+        DO NOT USE for:
+        - Information that can be found through other tools
+        - Simple clarifications that can be inferred from context
+        - Routine confirmations
+        - Non-critical decisions
+
+        Args:
+            query (str): The specific question or request for the user
+            context (str): Additional context about why user input is needed
+
+        Returns:
+            str: The user's response
+        """
+        try:
+            # Log the critical user assistance request
+            self.formatter.print_warning("🚨 AGENT REQUESTING USER ASSISTANCE")
+            if context:
+                self.formatter.print_info(f"Context: {context}")
+
+            # Format the query clearly
+            formatted_query = f"\n🤖 Agent Query: {query}\n"
+            self.formatter.print_section("User Input Required", formatted_query)
+
+            # Get user response with special prompt
+            user_response = await self.prompt_session.prompt_async(
+                HTML('<ansired>📝 Your response: </ansired>'),
+                multiline=False
+            )
+
+            if not user_response.strip():
+                return "No response provided by user."
+
+            # Log the interaction for tracking
+            self._log_user_assistance_request(query, context, user_response)
+
+            return user_response.strip()
+
+        except (KeyboardInterrupt, EOFError):
+            return "User cancelled the assistance request."
+        except Exception as e:
+            self.formatter.print_error(f"Error getting user assistance: {e}")
+            return f"Error getting user input: {e}"
+
+    def _log_user_assistance_request(self, query: str, context: str, response: str):
+        """Log user assistance requests for monitoring and optimization"""
+        try:
+            log_entry = {
+                'timestamp': asyncio.get_event_loop().time(),
+                'agent': self.active_agent_name,
+                'query': query,
+                'context': context,
+                'response': response
+            }
+
+            # Store in session stats for review
+            if 'user_assistance_requests' not in self.session_stats:
+                self.session_stats['user_assistance_requests'] = []
+            self.session_stats['user_assistance_requests'].append(log_entry)
+
+        except Exception as e:
+            self.formatter.print_error(f"Error logging user assistance request: {e}")
+
     async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
                                   show_hidden: bool = False, exclude_dirs: Optional[List[str]] = None):
         """
@@ -1022,6 +1098,8 @@ class WorkspaceIsaasCli:
         depends_on: Optional[List[str]] = None,
         session_id: Optional[str] = None,
         priority: str = "normal",
+        notify_supervisor: bool = True,
+        auto_respond_to_user: bool = False
     ):
         """
         Run a task with a specified agent in the background with support for task names and dependencies.
@@ -1033,6 +1111,8 @@ class WorkspaceIsaasCli:
             depends_on (Optional[List[str]], optional): A list of task names that this task depends on.
             session_id (str, optional): The session ID for the task to remember previous context. If not provided, a new one is generated with fresh context.
             priority (str, optional): The priority of the task. Defaults to "normal".
+            notify_supervisor (bool): Whether to notify supervisor when task completes
+            auto_respond_to_user (bool): Whether supervisor should automatically respond to user
         """
         try:
             task_id = task_name
@@ -1072,6 +1152,8 @@ class WorkspaceIsaasCli:
                         'result': res,
                         'status': 'completed'
                     })
+                    if notify_supervisor:
+                        await self._notify_supervisor_of_completion(task_id, res, auto_respond_to_user)
                     return res
                 except Exception as e:
                     self.session_stats["agents"][agent_name]["failed_runs"] += 1
@@ -1080,6 +1162,8 @@ class WorkspaceIsaasCli:
                         'result': f"Agent run failed: {e}",
                         'status': 'failed'
                     })
+                    if notify_supervisor:
+                        await self._notify_supervisor_of_failure(task_id, str(e))
                     raise
 
             task = asyncio.create_task(
@@ -1108,6 +1192,76 @@ class WorkspaceIsaasCli:
             return f"⧖ Background task named: '{task_id}' started with session id '{session_id}' (priority: {priority})"
         except Exception as e:
             return f"❌ Error starting background task: {str(e)}"
+
+    async def _notify_supervisor_of_completion(self, task_id: str, result: str, auto_respond: bool):
+        """Notify supervisor agent when a sub-agent task completes"""
+        try:
+            task_info = self.background_tasks.get(task_id)
+            if not task_info:
+                return
+
+            # Create notification message for supervisor
+            notification_prompt = f"""
+TASK COMPLETION NOTIFICATION:
+
+Task ID: {task_id}
+Agent: {task_info['agent']}
+Original Prompt: {task_info['prompt']}
+Status: COMPLETED
+Result: {result}
+
+Please evaluate this result and decide if the user needs to be informed.
+If the result requires user attention or contains important information, respond accordingly.
+If this is an internal task that doesn't require user notification, acknowledge silently.
+    """
+
+            # Send to supervisor via internal message (not user-facing unless decided by supervisor)
+            if auto_respond:
+                # Supervisor decides and potentially responds to user
+                await self.handle_agent_request(notification_prompt)
+            else:
+                # Just log for supervisor's awareness
+                supervisor_agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                if supervisor_agent and hasattr(supervisor_agent, 'world_model'):
+                    supervisor_agent.world_model.set(f"completed_task_{task_id}", {
+                        'result': result,
+                        'timestamp': asyncio.get_event_loop().time(),
+                        'needs_user_attention': False  # Supervisor can modify this
+                    })
+
+        except Exception as e:
+            self.formatter.print_error(f"Error notifying supervisor: {e}")
+
+    async def _notify_supervisor_of_failure(self, task_id: str, error: str):
+        """Notify supervisor when a sub-agent task fails"""
+        try:
+            task_info = self.background_tasks.get(task_id)
+            if not task_info:
+                return
+
+            notification_prompt = f"""
+TASK FAILURE NOTIFICATION:
+
+Task ID: {task_id}
+Agent: {task_info['agent']}
+Original Prompt: {task_info['prompt']}
+Status: FAILED
+Error: {error}
+
+This task has failed. Please evaluate if recovery actions are needed or if the user should be informed.
+    """
+
+            # Always notify supervisor of failures for potential intervention
+            supervisor_agent = await self.isaa_tools.get_agent(self.active_agent_name)
+            if supervisor_agent and hasattr(supervisor_agent, 'world_model'):
+                supervisor_agent.world_model.set(f"failed_task_{task_id}", {
+                    'error': error,
+                    'timestamp': asyncio.get_event_loop().time(),
+                    'needs_intervention': True
+                })
+
+        except Exception as e:
+            self.formatter.print_error(f"Error notifying supervisor of failure: {e}")
 
     async def get_background_tasks_status_tool(self, show_completed: bool = True):
         """Get detailed status of all background tasks"""
@@ -1180,6 +1334,22 @@ class WorkspaceIsaasCli:
         print(f"📊 Status: {status_info['runtime_status']['status']}")
         print(f"💰 Cost: ${status_info['performance']['total_cost']:.4f}")
         print(f"🔄 Tasks: {status_info['task_execution']['completed_tasks']} completed")
+
+    def set_verbosity_mode(self, mode: VerbosityMode, realtime_minimal: Optional[bool] = None):
+        """Dynamically change verbosity mode during runtime"""
+        self._current_verbosity_mode = mode
+        if realtime_minimal is not None:
+            self._current_realtime_minimal = realtime_minimal
+        else:
+            self._current_realtime_minimal = (mode == VerbosityMode.REALTIME)
+
+        # Update printer settings
+        self.printer.mode = mode
+        self.printer.realtime_minimal = self._current_realtime_minimal
+
+        self.formatter.print_success(f"Verbosity mode changed to: {mode.name}")
+        if realtime_minimal is not None:
+            self.formatter.print_info(f"Realtime minimal set to: {realtime_minimal}")
 
     async def workspace_status_tool(self, include_git: bool = True, max_items_per_type: int = 15):
         """
@@ -1374,9 +1544,6 @@ class WorkspaceIsaasCli:
                 max_parallel_tasks=6,
                 verbose_logging=True
             )
-
-            # Store base configuration
-            self.agent_configs["base"] = base_config
 
             logger.info("FlowAgent builder system initialized")
 
@@ -1585,6 +1752,12 @@ Your purpose is to function reliably for extended periods with minimal oversight
         )
         if not is_worker:
             builder.add_tool(
+                self.get_user_assistant_tool,
+                name="get_user_assistant",
+                description="🚨 **EMERGENCY USE ONLY** - Request direct user input when absolutely necessary for critical decisions or clarifications that cannot be resolved through other means. Use sparingly and only when agent cannot proceed without human judgment."
+            )
+
+            builder.add_tool(
                 self.create_specialized_agent_tool,
                 name="create_specialized_agent",
                 description="🤖 Create a new agent with a specialization like coder, writer, researcher, etc."
@@ -1688,7 +1861,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         now = asyncio.get_event_loop().time()
         total_duration = now - self.session_stats['session_start_time']
 
-        self.printer.print_final_summary()
+        self.printer.print_accumulated_summary()
 
         # Zeit-Statistiken
         self.formatter.print_section("Time Usage", (
@@ -1697,24 +1870,6 @@ Your purpose is to function reliably for extended periods with minimal oversight
             f"Agent Processing: {human_readable_time(self.session_stats['agent_running_time'])}"
         ))
 
-        # Kosten und Token
-        self.formatter.print_section("Resource Usage", (
-            f"Total Estimated Cost: ${self.session_stats['total_cost']:.4f}\n"
-            f"Total Prompt Tokens: {self.session_stats['total_tokens']['prompt']}\n"
-            f"Total Completion Tokens: {self.session_stats['total_tokens']['completion']}"
-        ))
-
-        # Tool-Nutzung
-        tool_stats = self.session_stats["tools"]
-        tool_summary = (
-            f"Total Calls: {tool_stats['total_calls']}\n"
-            f"Failed Calls: {tool_stats['failed_calls']}"
-        )
-        self.formatter.print_section("Tool Calls", tool_summary)
-        if tool_stats['calls_by_name']:
-            headers = ["Tool Name", "Success", "Fail"]
-            rows = [[name, counts['success'], counts['fail']] for name, counts in tool_stats['calls_by_name'].items()]
-            self.formatter.print_table(headers, rows)
 
         # Agenten-spezifische Statistiken
         if self.session_stats['agents']:
@@ -1737,6 +1892,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         Handles requests to the workspace agent, allowing interruption with Ctrl+C.
         This version uses get_app() to reliably access the application instance for UI suspension.
         """
+
         agent_task = None
         agent_name = self.active_agent_name
         start_time = asyncio.get_event_loop().time()
@@ -1785,7 +1941,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         ])))
 
         self.formatter.print_info(Style.GREY("Agent is running... Cancel with Ctrl+C or ESC"))
-
+        self.task_name = None
         if not main_app:
             self.formatter.print_error(
                 "Could not get application instance. Agent will run without clean UI suspension."
@@ -1806,6 +1962,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             async def run_task():
                 nonlocal agent_task
                 try:
+                    self.printer.reset_global_start_time()
                     response = await agent_task
                     await self.formatter.print_agent_response(response)
                     self.session_stats["agents"][agent_name]["successful_runs"] += 1
@@ -1823,6 +1980,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 finally:
                     duration = asyncio.get_event_loop().time() - start_time
                     self.session_stats["agent_running_time"] += duration
+                    self.printer.flush(self.task_name)
                     try:
                         if main_app.is_running:
                             main_app.exit(result=response)
@@ -1849,110 +2007,133 @@ Your purpose is to function reliably for extended periods with minimal oversight
             if main_app:
                 main_app.invalidate()
 
-    async def _update_stats_from_event(self, event: Dict[str, Any]):
-        """Handles all session statistics updates based on an ADK event."""
-        agent_name = event.get("author", getattr(self, 'active_agent_name', 'unknown_agent'))
+    async def _update_stats_from_event(self, event: ProgressEvent):
+        """
+        Verarbeitet alle Sitzungsstatistik-Updates basierend auf einem ProgressEvent.
+        """
+        # Author/Agent-Name aus dem Event holen oder Fallback verwenden
+        agent_name = event.metadata.get("agent_name", getattr(self, 'active_agent_name', 'unknown_agent'))
 
         self._ensure_agent_stats_initialized(agent_name)
+        agent_stats = self.session_stats["agents"][agent_name]
+        tool_stats = self.session_stats["tools"]
 
-        if agent_name not in self.session_stats["agents"]:
-            self.session_stats["agents"][agent_name] = {
-                "cost": 0.0, "tokens": {"prompt": 0, "completion": 0}, "tool_calls": 0
-            }
+        # LLM-spezifische Statistiken aktualisieren
+        if event.event_type == "llm_call" and event.success is not None:
+            if event.llm_total_tokens:
+                prompt_tokens = event.llm_prompt_tokens or 0
+                completion_tokens = event.llm_completion_tokens or 0
 
-        if event.get("content") and event["content"].get("parts"):
-            for part in event["content"]["parts"]:
-                if "function_call" in part:
-                    call_data = part["function_call"]
-                    tool_name = call_data.get("name", "UnknownTool")
-                    stats = self.session_stats["tools"]
-                    stats["total_calls"] += 1
-                    stats["calls_by_name"].setdefault(tool_name, {"success": 0, "fail": 0})
-                    self.session_stats["agents"][agent_name]["tool_calls"] += 1
-
-                if "function_response" in part:
-                    response_data = part["function_response"]
-                    tool_name = response_data.get("name", "UnknownTool")
-                    response_content = response_data.get("response", {})
-                    stats = self.session_stats["tools"]
-
-                    is_error = "error" in response_content
-                    if not is_error and isinstance(response_content.get("result"), str):
-                        try:
-                            result_json = json.loads(response_content["result"])
-                            if isinstance(result_json, dict) and result_json.get("success") is False:
-                                is_error = True
-                        except json.JSONDecodeError:
-                            pass
-
-                    if is_error:
-                        stats["failed_calls"] += 1
-                        stats["calls_by_name"][tool_name]["fail"] += 1
-                    else:
-                        stats["calls_by_name"][tool_name]["success"] += 1
-
-        if "usage_metadata" in event:
-            usage = event["usage_metadata"]
-            prompt_tokens = usage.get("prompt_token_count", 0)
-            completion_tokens = usage.get("candidates_token_count", 0)
-
-            if prompt_tokens > 0 or completion_tokens > 0:
                 self.session_stats["total_tokens"]["prompt"] += prompt_tokens
                 self.session_stats["total_tokens"]["completion"] += completion_tokens
-                self.session_stats["agents"][agent_name]["tokens"]["prompt"] += prompt_tokens
-                self.session_stats["agents"][agent_name]["tokens"]["completion"] += completion_tokens
+                agent_stats["tokens"]["prompt"] += prompt_tokens
+                agent_stats["tokens"]["completion"] += completion_tokens
 
-            try:
-                agent = await self.isaa_tools.get_agent(agent_name)
-                if hasattr(agent, 'total_cost'):
-                    new_cost = agent.total_cost or 0.0
-                    previous_cost = self.session_stats["agents"][agent_name].get("cost", 0.0)
-                    cost_delta = new_cost - previous_cost
-                    if cost_delta > 0:
-                        self.session_stats["agents"][agent_name]["cost"] = new_cost
-                        self.session_stats["total_cost"] += cost_delta
-            except Exception:
-                pass # Ignore if agent not found or other issues
+            if event.llm_cost:
+                agent_stats["cost"] += event.llm_cost
+                self.session_stats["total_cost"] += event.llm_cost
+
+        # Tool-spezifische Statistiken aktualisieren
+        if event.event_type == "tool_call" and event.tool_name:
+            # Initialisiere Tool-Statistiken, falls noch nicht vorhanden
+            tool_stats["calls_by_name"].setdefault(event.tool_name, {"success": 0, "fail": 0})
+
+            # Zähle nur, wenn der Aufruf abgeschlossen ist (erfolgreich oder nicht)
+            if event.tool_success is not None:
+                tool_stats["total_calls"] += 1
+                agent_stats["tool_calls"] += 1
+
+                if event.tool_success:
+                    tool_stats["calls_by_name"][event.tool_name]["success"] += 1
+                else:
+                    tool_stats["failed_calls"] += 1
+                    tool_stats["calls_by_name"][event.tool_name]["fail"] += 1
 
     async def progress_callback(self, event: ProgressEvent):
         """The main progress callback for the interactive CLI, handles printing."""
+        if event.event_type == "plan_created":
+            self.printer.pretty_print_task_plan(event.metadata['full_plan'])
+            self.task_name = event.metadata['full_plan'].name
+
+        if event.event_type == "strategy_selected":
+            self.printer.print_strategy_selection(event.metadata['strategy'], event)
+
+        await self._update_stats_from_event(event)
         await self.printer.progress_callback(event)
-    def create_monitoring_callback(self, task_id):
-        async def monitoring_progress_callback(event: Dict[str, Any]):
-            """A dedicated callback for background tasks to update monitor state."""
+
+    def create_monitoring_callback(self, task_id: str):
+        """
+        Erstellt einen dedizierten Callback für Hintergrund-Tasks, der den Monitor-Zustand
+        basierend auf der neuen ProgressEvent-Struktur aktualisiert.
+        """
+
+        async def monitoring_progress_callback(event: ProgressEvent):
+            """Dieser Callback wird bei jedem ProgressEvent aufgerufen."""
+            # Aktualisiere zuerst die globalen Statistiken
+            if event.event_type == "plan_created":
+                self.printer.pretty_print_task_plan(TaskPlan(**event.metadata['full_plan']))
+            if event.event_type == "strategy_selected":
+                self.printer.print_strategy_selection(event.metadata['strategy'], event)
+
             await self._update_stats_from_event(event)
-            task_info = self.background_tasks[task_id]
-            if task_info:
-                now = asyncio.get_event_loop().time()
-                task_info['last_activity'] = now
-                event_log = {"time": now, "type": "unknown", "content": ""}
 
-                if event.get("content") and event["content"].get("parts"):
-                    for part in event["content"]["parts"]:
-                        if "text" in part and part["text"]:
-                            task_info['agent_state'] = 'Thinking'
-                            task_info['current_tool_name'] = None
-                            task_info['current_tool_input'] = None
-                            event_log = {"time": now, "type": "Thinking", "content": part["text"][:200]}
+            # Hole die spezifischen Task-Informationen
+            task_info = self.background_tasks.get(task_id)
+            if not task_info:
+                return  # Task nicht mehr vorhanden, nichts zu tun
 
-                        if "function_call" in part:
-                            call = part["function_call"]
-                            tool_name = call.get('name')
-                            tool_args = call.get('args', {})
-                            task_info['agent_state'] = 'Using Tool'
-                            task_info['current_tool_name'] = tool_name
-                            task_info['current_tool_input'] = json.dumps(tool_args, ensure_ascii=False)
-                            event_log = {"time": now, "type": "Tool Call", "content": f"{tool_name}({tool_args})"}
+            now = asyncio.get_event_loop().time()
+            task_info['last_activity'] = now
 
-                        if "function_response" in part:
-                            task_info['agent_state'] = 'Processing'
-                            # Werkzeugname bleibt für Kontext sichtbar
-                            response = part["function_response"]
-                            event_log = {"time": now, "type": "Tool Response",
-                                         "content": f"Result for {response.get('name')}"}
+            event_log = {"time": now, "type": "unknown", "content": ""}
 
-                if event_log["type"] != "unknown":
-                    task_info['history'].append(event_log)
+            # Logik basierend auf dem Event-Typ
+            if event.event_type == "llm_call":
+                if event.status == NodeStatus.RUNNING:
+                    task_info['agent_state'] = 'Thinking'
+                    task_info['current_tool_name'] = None
+                    task_info['current_tool_input'] = None
+                    event_log = {"time": now, "type": "Thinking", "content": f"LLM Call to {event.llm_model}"}
+                elif event.status == NodeStatus.COMPLETED and event.success:
+                    task_info['agent_state'] = 'Processing'
+                    event_log = {"time": now, "type": "LLM Response",
+                                 "content": f"Received response from {event.llm_model}"}
+
+            elif event.event_type == "tool_call":
+                if event.status == NodeStatus.RUNNING:
+                    task_info['agent_state'] = 'Using Tool'
+                    task_info['current_tool_name'] = event.tool_name
+                    tool_args_str = json.dumps(event.tool_args, ensure_ascii=False, default=str)
+                    task_info['current_tool_input'] = tool_args_str
+                    event_log = {"time": now, "type": "Tool Call", "content": f"{event.tool_name}({tool_args_str})"}
+                elif event.status == NodeStatus.COMPLETED:
+                    task_info['agent_state'] = 'Processing'
+                    # Werkzeugname bleibt für Kontext sichtbar
+                    if event.success:
+                        event_log = {"time": now, "type": "Tool Response", "content": f"Success from {event.tool_name}"}
+                    else:
+                        event_log = {"time": now, "type": "Tool Error",
+                                     "content": f"Error from {event.tool_name}: {event.tool_error}"}
+
+            elif event.event_type == "node_phase":
+                task_info['agent_state'] = f"Executing Phase: {event.node_phase}"
+                event_log = {"time": now, "type": "Phase Change",
+                             "content": f"Node '{event.node_name}' entering '{event.node_phase}'"}
+
+            elif event.event_type == "error":
+                task_info['agent_state'] = 'Error'
+                error_msg = event.error_details.get('error',
+                                                    'Unknown Error') if event.error_details else 'Unknown Error'
+                event_log = {"time": now, "type": "Error", "content": f"Node '{event.node_name}' failed: {error_msg}"}
+
+            if event_log["type"] != "unknown":
+                if 'history' not in task_info:
+                    task_info['history'] = []
+                task_info['history'].append(event_log)
+                # Begrenze die History, um Speicherüberlauf zu vermeiden
+                if len(task_info['history']) > 100:
+                    task_info['history'] = task_info['history'][-100:]
+
         return monitoring_progress_callback
 
     async def _handle_shell_command(self, command: str):
@@ -2332,13 +2513,10 @@ Your purpose is to function reliably for extended periods with minimal oversight
             if len(args) < 2:
                 self.formatter.print_error("Usage: /tasks view <task_id> [-d]")
                 return
-            try:
-                task_id = int(args[1])
-                if task_id not in self.background_tasks:
-                    self.formatter.print_error(f"Task {task_id} not found")
-                    return
-            except ValueError:
-                self.formatter.print_error("Invalid task ID. Must be a number.")
+
+            task_id = args[1]
+            if task_id not in self.background_tasks:
+                self.formatter.print_error(f"Task {task_id} not found")
                 return
 
             task_info = self.background_tasks[task_id]
@@ -2986,6 +3164,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             ["/system backup [msg]", "Create a workspace backup (Git commit)."],
             ["/system restore [id]", "Restore workspace to a previous backup"],
             ["/system backup-infos", "Show the backup (Git commit) history for the workspace. Alias for /system restore."],
+            ["/system verbosity <mode>", "Change verbosity mode at runtime (MINIMAL|STANDARD|DETAILED|REALTIME)"]
             ["", ""],
             ["General",""],
 
@@ -3002,6 +3181,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             "  - Shell Commands: Start a line with '!' to execute a shell command (e.g., !pip list).\n"
             "  - Autocompletion: Press Tab to autocomplete commands, arguments, and file paths.\n"
             "  - Command History: Use the Up/Down arrow keys to cycle through your previous inputs.\n"
+            "  - Verbosity Control: Use '/system verbosity' to adjust output detail level in real-time.\n"
             "  - Interruption: Press Ctrl+C to interrupt a running agent task."
         )
 
@@ -3025,7 +3205,21 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 return
         self._display_session_summary()
         self.formatter.print_info("Shutting down ISAA Workspace Manager...")
+
+        extra_data = {}
+        for name in self.isaa_tools.config["agents-name-list"]:
+            agent = await self.isaa_tools.get_agent(name)
+            if hasattr(agent, "progress_tracker") and agent.progress_tracker.events:
+                # remove None  values from events dict
+                for e in agent.progress_tracker.events:
+                    for k, v in list(e.__dict__.items()):
+                        if v is None:
+                            del e.__dict__[k]
+                extra_data[f"events_{name}"] =[asdict(e) for e in agent.progress_tracker.events]
         await self.cleanup()
+
+        self.printer.export_accumulated_data(self.workspace_path / "execution_summary.json", extra_data=extra_data)
+        # save save agents all event to file
         exit(0)
 
 
