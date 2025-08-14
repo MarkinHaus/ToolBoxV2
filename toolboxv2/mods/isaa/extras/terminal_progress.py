@@ -2149,9 +2149,8 @@ class ProgressiveTreePrinter:
     def _print_debug_event(self, event: ProgressEvent):
         """Print individual event details in debug mode"""
         timestamp = datetime.fromtimestamp(event.timestamp).strftime("%H:%M:%S.%f")[:-3]
-
         if self.use_rich:
-            debug_text = f"[{timestamp}] {event.event_type.upper()} - {event.node_name}"
+            debug_text = f"[{timestamp}] {event.event_type.upper()} - {event.node_name} ({json.dumps({k: v for k, v in asdict(event).items() if v is not None}, default=str, ensure_ascii=False)})"
             if event.success is not None:
                 success_icon = "✅" if event.success else "❌"
                 debug_text += f" {success_icon}"

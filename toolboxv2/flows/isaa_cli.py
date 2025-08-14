@@ -294,7 +294,7 @@ class WorkspaceIsaasCli:
             },
             "/monitor": None,
             "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None, "backup-infos": None,
-                        'verbosity': {"MINIMAL":None,"STANDARD":None,"DETAILED":None,"REALTIME":None}},
+                        'verbosity': {"MINIMAL":None,"STANDARD":None,"DEBUG":None,"REALTIME":None}},
             "/help": None, "/quit": None, "/clear": None}
         return commands_dict
 
@@ -602,7 +602,6 @@ class WorkspaceIsaasCli:
         except Exception as e:
             return f"❌ Error writing to {file_path}: {str(e)}"
 
-
     async def search_in_files_tool(
         self,
         query: str,
@@ -611,13 +610,11 @@ class WorkspaceIsaasCli:
         search_for: str = "content",
         recursive: bool = True,
         ignore_case: bool = False,
-        exclude_dirs: Optional[List[str]] = None
+        exclude_dirs: Optional[List[str]] = None,
+        max_depth: Optional[int] = None
     ):
         """
-        Finds a string in file contents or searches for filenames using the fastest available tool.
-
-        This tool intelligently uses 'ripgrep' (rg), 'grep', or 'findstr' if available for high-speed
-        content searching, falling back to a Python implementation if they are not found.
+        Highly efficient file search tool optimized for speed with intelligent directory exclusion.
 
         Args:
             query: The string to search for in file content or as part of a filename.
@@ -626,130 +623,250 @@ class WorkspaceIsaasCli:
             search_for: What to search for. Can be 'content' (default) or 'filename'.
             recursive: Whether to search in subdirectories (default: True).
             ignore_case: If the search should be case-insensitive (default: False).
-            exclude_dirs: List of directories to exclude from the search. (default: ['node_modules', '.git', '__pycache__', 'venv', '.venv'])
+            exclude_dirs: List of directories to exclude from the search.
+            max_depth: Maximum depth to search (default: 5 for content, 3 for filename).
         """
-        base_path = self.workspace_path.resolve() / directory
+        # Constants and defaults
+        DEFAULT_MAX_DEPTH_CONTENT = 5
+        DEFAULT_MAX_DEPTH_FILENAME = 3
+
+        # Set up paths and validation
+        base_path = (self.workspace_path / directory).resolve()
         if not base_path.is_dir():
             return json.dumps({"error": f"Directory not found: {directory}"})
 
+        # Handle exclude directories with intelligent defaults
         if exclude_dirs is None:
-            exclude_dirs = ['node_modules', '.git', '__pycache__', 'venv', '.venv']
+            exclude_dirs = self.default_exclude_dirs
+        else:
+            exclude_dirs = set(exclude_dirs).union(self.default_exclude_dirs)
 
-        patterns = [p.strip() for p in file_patterns.split(',')]
+        # Set max depth based on search type
+        if max_depth is None:
+            max_depth = DEFAULT_MAX_DEPTH_CONTENT if search_for.lower() == 'content' else DEFAULT_MAX_DEPTH_FILENAME
+
+        # Parse file patterns
+        patterns = [p.strip() for p in file_patterns.split(',') if p.strip()]
+        if not patterns or patterns == ['*']:
+            patterns = ['*']
+
         query_to_check = query.lower() if ignore_case else query
-        all_files = set()
 
-        # --- Mode 1: Search for files by name ---
+        # ===== FILENAME SEARCH =====
         if search_for.lower() == 'filename':
-            # --- Methode 1: Ripgrep (rg) - Sehr schnell und berücksichtigt .gitignore ---
-            rg_path = shutil.which("rg")
-            if rg_path:
-                try:
-                    command = [rg_path, '--files']
-                    if not recursive:
-                        command.extend(['--depth', '1'])
+            return await self._search_filenames_optimized(
+                base_path, query_to_check, patterns, exclude_dirs, recursive, max_depth, ignore_case
+            )
 
-                    # Glob-Muster für ripgrep hinzufügen
-                    for pattern in patterns:
-                        command.extend(['--glob', pattern])
+        # ===== CONTENT SEARCH =====
+        return await self._search_content_optimized(
+            base_path, query, patterns, exclude_dirs, recursive, max_depth, ignore_case
+        )
 
-                    # Zusätzliche Verzeichnisse ausschließen
-                    for directory in exclude_dirs:
-                        command.extend(['--glob', f'!{directory}'])
+    async def _search_filenames_optimized(
+        self, base_path: Path, query_to_check: str, patterns: List[str],
+        exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
+    ) -> str:
+        """Optimized filename search using generators and efficient tools."""
 
-                    process = subprocess.run(command, cwd=base_path, capture_output=True, text=True, check=True)
+        def _generate_matching_files(current_path: Path, current_depth: int) -> Generator[str, None, None]:
+            """Generator that yields matching filenames efficiently."""
+            if current_depth >= max_depth:
+                return
 
-                    for line in process.stdout.splitlines():
-                        file_path = Path(line)
-                        filename_to_check = file_path.name.lower() if ignore_case else file_path.name
-                        if query_to_check in filename_to_check:
-                            all_files.add(str(file_path))
-
-                    return '\n- '.join(sorted(list(all_files)))
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    # Bei einem Fehler auf die nächste Methode zurückgreifen
-                    pass
-
-            # --- Methode 2: fd - Eine weitere schnelle Alternative ---
-            fd_path = shutil.which("fd")
-            if fd_path:
-                try:
-                    command = [fd_path, '--type', 'f']
-                    if not recursive:
-                        command.extend(['--max-depth', '1'])
-
-                    # Muster anwenden
-                    for pattern in patterns:
-                        command.extend(['--glob', pattern])
-
-                    # Verzeichnisse ausschließen
-                    for directory in exclude_dirs:
-                        command.extend(['--exclude', directory])
-
-                    process = subprocess.run(command, cwd=base_path, capture_output=True, text=True, check=True)
-
-                    for line in process.stdout.splitlines():
-                        file_path = Path(line)
-                        filename_to_check = file_path.name.lower() if ignore_case else file_path.name
-                        if query_to_check in filename_to_check:
-                            all_files.add(str(file_path))
-
-                    return '\n- '.join(sorted(list(all_files)))
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    # Bei einem Fehler auf die nächste Methode zurückgreifen
-                    pass
-
-            # --- Methode 3: Fallback auf optimiertes Python os.walk ---
             try:
-                for root, dirs, files in os.walk(base_path):
-                    # Unerwünschte Verzeichnisse von der weiteren Durchsuchung ausschließen
-                    dirs[:] = [d for d in dirs if d not in exclude_dirs]
+                items = sorted(os.scandir(current_path), key=lambda item: item.name)
+            except (PermissionError, OSError):
+                return
 
-                    for filename in files:
-                        file_path = Path(root) / filename
+            for item in items:
+                # Skip hidden files and excluded directories
+                if item.name.startswith('.') and item.name not in ['.env', '.gitignore']:
+                    continue
 
-                        # Dateimuster überprüfen
-                        if not any(file_path.match(p) for p in patterns):
-                            continue
+                if item.is_dir():
+                    if item.name in exclude_dirs:
+                        continue
+                    if recursive:
+                        yield from _generate_matching_files(Path(item.path), current_depth + 1)
+                else:
+                    # Check if file matches patterns
+                    item_path = Path(item.path)
+                    if not any(item_path.match(pattern) for pattern in patterns):
+                        continue
 
-                        filename_to_check = filename.lower() if ignore_case else filename
-                        if query_to_check in filename_to_check:
-                            all_files.add(str(file_path.relative_to(base_path)))
+                    # Check if filename contains query
+                    filename_to_check = item.name.lower() if ignore_case else item.name
+                    if query_to_check in filename_to_check:
+                        yield str(item_path.relative_to(base_path))
 
-                    if not recursive:
-                        break  # Nur die oberste Ebene durchsuchen
+        # Try native tools first (ripgrep, fd)
+        native_result = await self._try_native_filename_search(
+            base_path, query_to_check, patterns, exclude_dirs, recursive, max_depth
+        )
+        if native_result is not None:
+            return native_result
 
-                return '\n- '.join(sorted(list(all_files)))
-            except Exception as e:
-                return f"Error during filename search: {e}"
-
-
-        # --- Mode 2: Search for content within files ---
-        tool_used = "python"
-        results = []
-
-        # Check for native tools
-        rg_path = shutil.which("rg")
-        grep_path = shutil.which("grep") if not rg_path else None
-        findstr_path = shutil.which(
-            "findstr") if not rg_path and not grep_path and platform.system() == "Windows" else None
-
+        # Fallback to Python generator
         try:
-            # ---- STRATEGY 1: Use ripgrep (rg) - THE BEST AND FASTEST ----
-            if rg_path:
-                tool_used = "ripgrep (rg)"
-                cmd = [rg_path, "--json"]
-                if ignore_case: cmd.append("-i")
-                for p in file_patterns.split(','):
-                    cmd.extend(["--glob", p.strip()])
-                if not recursive: cmd.append("--max-depth=1")
-                cmd.extend([query, str(base_path)])
+            matching_files = sorted(set(_generate_matching_files(base_path, 0)))
+            return '\n- '.join(matching_files) if matching_files else "No matching files found"
+        except Exception as e:
+            return f"Error during filename search: {e}"
 
-                process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE,
-                                                               stderr=asyncio.subprocess.PIPE)
-                stdout, stderr = await process.communicate()
+    async def _search_content_optimized(
+        self, base_path: Path, query: str, patterns: List[str],
+        exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
+    ) -> str:
+        """Optimized content search with multiple fallback strategies."""
+
+        def _generate_searchable_files(current_path: Path, current_depth: int) -> Generator[Path, None, None]:
+            """Generator that yields files to search efficiently."""
+            if current_depth >= max_depth:
+                return
+
+            try:
+                items = sorted(os.scandir(current_path), key=lambda item: item.name)
+            except (PermissionError, OSError):
+                return
+
+            for item in items:
+                # Skip hidden files and excluded directories
+                if item.name.startswith('.') and item.name not in ['.env', '.gitignore']:
+                    continue
+
+                if item.is_dir():
+                    if item.name in exclude_dirs:
+                        continue
+                    if recursive:
+                        yield from _generate_searchable_files(Path(item.path), current_depth + 1)
+                else:
+                    # Check if file matches patterns
+                    item_path = Path(item.path)
+                    if any(item_path.match(pattern) for pattern in patterns):
+                        yield item_path
+
+        # Try native tools (ripgrep, grep, findstr)
+        native_result = await self._try_native_content_search(
+            base_path, query, patterns, exclude_dirs, recursive, max_depth, ignore_case
+        )
+        if native_result is not None:
+            return native_result
+
+        # Python fallback with generator
+        return await self._python_content_search(
+            _generate_searchable_files(base_path, 0), base_path, query, ignore_case
+        )
+
+    async def _try_native_filename_search(
+        self, base_path: Path, query: str, patterns: List[str],
+        exclude_dirs: set, recursive: bool, max_depth: int
+    ) -> Optional[str]:
+        """Try native tools for filename search."""
+
+        # Try ripgrep first
+        if rg_path := shutil.which("rg"):
+            try:
+                cmd = [rg_path, '--files']
+                if not recursive:
+                    cmd.extend(['--max-depth', '1'])
+                else:
+                    cmd.extend(['--max-depth', str(max_depth)])
+
+                # Add patterns
+                for pattern in patterns:
+                    if pattern != '*':
+                        cmd.extend(['--glob', pattern])
+
+                # Exclude directories
+                for exc_dir in exclude_dirs:
+                    cmd.extend(['--glob', f'!{exc_dir}'])
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, cwd=base_path, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
 
                 if process.returncode == 0:
+                    matching_files = []
+                    for line in stdout.decode('utf-8').splitlines():
+                        filename = Path(line).name
+                        if query in filename.lower():
+                            matching_files.append(line)
+                    return '\n- '.join(sorted(matching_files)) if matching_files else "No matching files found"
+
+            except Exception:
+                pass
+
+        # Try fd as fallback
+        if fd_path := shutil.which("fd"):
+            try:
+                cmd = [fd_path, '--type', 'f']
+                if not recursive:
+                    cmd.extend(['--max-depth', '1'])
+                else:
+                    cmd.extend(['--max-depth', str(max_depth)])
+
+                # Add exclusions
+                for exc_dir in exclude_dirs:
+                    cmd.extend(['--exclude', exc_dir])
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, cwd=base_path, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
+
+                if process.returncode == 0:
+                    matching_files = []
+                    for line in stdout.decode('utf-8').splitlines():
+                        if any(Path(line).match(pattern) for pattern in patterns):
+                            filename = Path(line).name
+                            if query in filename.lower():
+                                matching_files.append(line)
+                    return '\n- '.join(sorted(matching_files)) if matching_files else "No matching files found"
+
+            except Exception:
+                pass
+
+        return None
+
+    async def _try_native_content_search(
+        self, base_path: Path, query: str, patterns: List[str],
+        exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
+    ) -> Optional[str]:
+        """Try native tools for content search."""
+
+        # Try ripgrep first
+        if rg_path := shutil.which("rg"):
+            try:
+                cmd = [rg_path, "--json", "--max-count", "1000"]  # Limit results for performance
+                if ignore_case:
+                    cmd.append("-i")
+                if not recursive:
+                    cmd.append("--max-depth=1")
+                else:
+                    cmd.extend(["--max-depth", str(max_depth)])
+
+                # Add patterns
+                for pattern in patterns:
+                    if pattern != '*':
+                        cmd.extend(["--glob", pattern])
+
+                # Exclude directories
+                for exc_dir in exclude_dirs:
+                    cmd.extend(["--glob", f"!{exc_dir}"])
+
+                cmd.extend([query, str(base_path)])
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await process.communicate()
+
+                if process.returncode == 0:
+                    results = []
                     for line in stdout.decode('utf-8').strip().split('\n'):
                         if line:
                             match = json.loads(line)
@@ -759,66 +876,72 @@ class WorkspaceIsaasCli:
                                     "line": match['data']['line_number'],
                                     "content": match['data']['lines']['text'].strip()
                                 })
-                    return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
 
-            # ---- STRATEGY 2: Use grep (Linux/macOS) or findstr (Windows) ----
-            # This part is a fallback if 'rg' is not present
-            if grep_path or findstr_path:
-                cmd_str = ""
-                if grep_path:
-                    tool_used = "grep"
-                    flags = "n"  # n for line number
-                    if recursive: flags += "r"
-                    if ignore_case: flags += "i"
-                    include_flags = " ".join([f"--include='{p.strip()}'" for p in file_patterns.split(',')])
-                    cmd_str = f"grep -{flags} {include_flags} -E '{query}' '{base_path}'"
-                elif findstr_path:
-                    tool_used = "findstr"
-                    flags = "/S /N"  # S for subdirectories, N for line number
-                    if ignore_case: flags += " /I"
-                    path_specs = " ".join([f"'{base_path}\\{p.strip()}'" for p in file_patterns.split(',')])
-                    cmd_str = f'findstr {flags} "{query}" {path_specs}'
+                    return json.dumps({
+                        "tool_used": "ripgrep (rg)",
+                        "matches": results[:100],  # Limit output
+                        "total_matches": len(results)
+                    }, indent=2)
 
-                process = await asyncio.create_subprocess_shell(cmd_str, stdout=asyncio.subprocess.PIPE,
-                                                                stderr=asyncio.subprocess.PIPE)
-                stdout, stderr = await process.communicate()
+            except Exception:
+                pass
 
-                # findstr returns 1 if no matches found, which is not an error for us
-                if process.returncode in [0, 1] and stdout:
-                    for line in stdout.decode('utf-8', errors='replace').strip().split('\n'):
-                        parts = line.split(':', 2)
-                        if len(parts) >= 3:
-                            results.append({
-                                "file": str(Path(parts[0]).relative_to(base_path)),
-                                "line": int(parts[1]) if parts[1].isdigit() else parts[1],
-                                "content": parts[2].strip()
-                            })
-                    return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
+        return None
 
-            # ---- STRATEGY 3: Python Fallback ----
-            # This runs if no native tools are found or they fail unexpectedly
-            search_query = query.lower() if ignore_case else query
-            for p in file_patterns.split(','):
-                glob_pattern = base_path.rglob(p.strip()) if recursive else base_path.glob(p.strip())
-                for file_path in glob_pattern:
-                    if file_path.is_file():
-                        try:
-                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                for line_num, line in enumerate(f, 1):
-                                    line_to_check = line.lower() if ignore_case else line
-                                    if search_query in line_to_check:
-                                        results.append({
-                                            "file": str(file_path.relative_to(base_path)),
-                                            "line": line_num,
-                                            "content": line.strip()
-                                        })
-                        except Exception:
-                            continue  # Skip files that can't be opened
+    async def _python_content_search(
+        self, file_generator: Generator[Path, None, None],
+        base_path: Path, query: str, ignore_case: bool
+    ) -> str:
+        """Python fallback content search using generators."""
 
-            return json.dumps({"tool_used": tool_used, "matches": results}, indent=2)
+        results = []
+        search_query = query.lower() if ignore_case else query
+        files_processed = 0
+
+        try:
+            for file_path in file_generator:
+                files_processed += 1
+                # Limit files processed for performance
+                if files_processed > 1000:
+                    break
+
+                try:
+                    # Skip binary files by checking first few bytes
+                    with open(file_path, 'rb') as f:
+                        chunk = f.read(1024)
+                        if b'\x00' in chunk:  # Likely binary
+                            continue
+
+                    # Search in text file
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line_num, line in enumerate(f, 1):
+                            line_to_check = line.lower() if ignore_case else line
+                            if search_query in line_to_check:
+                                results.append({
+                                    "file": str(file_path.relative_to(base_path)),
+                                    "line": line_num,
+                                    "content": line.strip()[:200]  # Limit content length
+                                })
+
+                            # Limit lines per file for performance
+                            if line_num > 10000:
+                                break
+
+                except Exception:
+                    continue
+
+                # Limit total results for performance
+                if len(results) > 100:
+                    break
 
         except Exception as e:
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "tool_used": tool_used})
+            return json.dumps({"error": f"Python search error: {str(e)}"})
+
+        return json.dumps({
+            "tool_used": "python (fallback)",
+            "matches": results,
+            "files_processed": files_processed
+        }, indent=2)
 
     async def get_user_assistant_tool(self, query: str, context: str = ""):
         """
@@ -907,7 +1030,7 @@ class WorkspaceIsaasCli:
             exclude_dirs = set(exclude_dirs).union(self.default_exclude_dirs)
 
         if file_types:
-            type_filters = [t.strip().lower() for t in file_types.split(",")]
+            type_filters = [t.strip().lower().replace("*", "") for t in file_types.split(",")]
         else:
             type_filters = DEFAULT_FILE_TYPES
 
@@ -2889,7 +3012,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
     async def handle_system_cmd(self, args: list[str]):
         """Verarbeitet Systembefehle, einschließlich Status, Konfiguration, Performance und Git-Backup/Restore."""
         if not args:
-            self.formatter.print_error("Nutzung: /system <branch|config|performance|backup|restore|backup-infos>")
+            self.formatter.print_error("Nutzung: /system <branch|config|performance|backup|restore|backup-infos|verbosity>")
             return
 
         sub_command = args[0].lower()
@@ -2957,7 +3080,30 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 new_branch = repo.create_head(branch_name, base_branch)
                 new_branch.checkout()
                 self.formatter.print_success(f"Branch '{branch_name}' created and checked out successfully.")
+        # Add verbosity control
+        elif sub_command == "verbosity":
+            if len(args) < 2:
+                self.formatter.print_info(f"Current verbosity mode: {self._current_verbosity_mode.name}")
+                self.formatter.print_info(f"Realtime minimal: {self._current_realtime_minimal}")
+                self.formatter.print_info(
+                    "Usage: /system verbosity <MINIMAL|STANDARD|DEBUG|REALTIME> [realtime_minimal=true/false]")
+                return
 
+            try:
+                new_mode = VerbosityMode[args[1].upper()]
+                realtime_minimal = None
+
+                if len(args) > 2 and args[2].lower().startswith('realtime_minimal='):
+                    realtime_minimal = args[2].split('=')[1].lower() == 'true'
+
+                self.set_verbosity_mode(new_mode, realtime_minimal)
+
+            except KeyError:
+                self.formatter.print_error(f"Invalid verbosity mode: {args[1]}")
+                self.formatter.print_info("Available modes: MINIMAL, STANDARD, DEBUG, REALTIME")
+            except Exception as e:
+                self.formatter.print_error(f"Error setting verbosity: {e}")
+            return
 
         elif sub_command == "config":
             config_preview = {k: v for k, v in self.isaa_tools.config.items() if "api_key" not in k.lower() and type(v) in (str, int, float, bool, list, dict)}
@@ -3164,7 +3310,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             ["/system backup [msg]", "Create a workspace backup (Git commit)."],
             ["/system restore [id]", "Restore workspace to a previous backup"],
             ["/system backup-infos", "Show the backup (Git commit) history for the workspace. Alias for /system restore."],
-            ["/system verbosity <mode>", "Change verbosity mode at runtime (MINIMAL|STANDARD|DETAILED|REALTIME)"]
+            ["/system verbosity <mode>", "Change verbosity mode at runtime (MINIMAL|STANDARD|DEBUG|REALTIME)"]
             ["", ""],
             ["General",""],
 
