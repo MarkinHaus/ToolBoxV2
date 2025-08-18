@@ -1,1172 +1,1161 @@
 import asyncio
-import contextlib
 import json
+import yaml
 import logging
 import os
-import threading
-from collections.abc import Awaitable, Callable
+import sys
+import inspect
+import tempfile
+import subprocess
 from pathlib import Path
-from typing import (
-    Any,
-    Literal,
-    Protocol,
-    TypeVar, Optional,
+from typing import Dict, List, Any, Optional, Callable, Union, Type
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
+from dataclasses import asdict
+from datetime import datetime
+import uuid
+
+# Import agent components
+from .agent import (
+    FlowAgent,
+    AgentModelData,
+    PersonaConfig,
+    FormatConfig,
+    ResponseFormat,
+    TextLength,
+    VariableManager,
+    LITELLM_AVAILABLE,
+    A2A_AVAILABLE,
+    MCP_AVAILABLE,
+    OTEL_AVAILABLE
 )
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
+# Framework imports
+if LITELLM_AVAILABLE:
+    from litellm import BudgetManager
+    import litellm
+
+if OTEL_AVAILABLE:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+if MCP_AVAILABLE:
+    from mcp.server.fastmcp import FastMCP
+
+if A2A_AVAILABLE:
+    from python_a2a import A2AServer, AgentCard
 
 from toolboxv2 import get_logger
 
-# Framework Imports & Availability Checks (mirrored from agent.py)
-try: from google.adk.agents import LlmAgent; ADK_AVAILABLE_BLD = True
-except ImportError: LlmAgent = object; ADK_AVAILABLE_BLD = False # Need LlmAgent for isinstance check
-try: from google.adk.tools import BaseTool, FunctionTool, AgentTool; from google.adk.tools.mcp_tool import MCPToolset, StdioServerParameters, SseServerParams; from google.adk.runners import Runner, InMemoryRunner, AsyncWebRunner; from google.adk.sessions import SessionService, InMemorySessionService; from google.adk.code_executors import BaseCodeExecutor as ADKBaseCodeExecutor; from google.adk.planners import BasePlanner; from google.adk.examples import Example
-except ImportError: BaseTool = object; FunctionTool = object; AgentTool = object; MCPToolset = object; Runner = object; InMemoryRunner = object; AsyncWebRunner = object; SessionService = object; InMemorySessionService = object; ADKBaseCodeExecutor = object; BasePlanner = object; Example = object; StdioServerParameters = object; SseServerParams = object
-try: from python_a2a.server import A2AServer; from python_a2a.models import AgentCard; A2A_AVAILABLE_BLD = True
-except ImportError: A2AServer = object; AgentCard = object; A2A_AVAILABLE_BLD = False
-try: from mcp.server.fastmcp import FastMCP; MCP_AVAILABLE_BLD = True
-except ImportError: FastMCP = object; MCP_AVAILABLE_BLD = False
-try: from litellm import BudgetManager; LITELLM_AVAILABLE_BLD = True
-except ImportError: BudgetManager = object; LITELLM_AVAILABLE_BLD = False
-
-# --- Framework Imports & Availability Checks (Copied from EnhancedAgent) ---
-# Google ADK
-try:
-    from google.adk.agents import BaseAgent, LlmAgent
-    from google.adk.agents.callback_context import CallbackContext
-    from google.adk.agents.invocation_context import InvocationContext
-    from google.adk.code_executors import BaseCodeExecutor
-    from google.adk.code_executors.code_execution_utils import (
-        CodeExecutionInput,
-        CodeExecutionResult,
-    )
-    from google.adk.events import Event
-    from google.adk.examples import Example  # For few-shot
-    from google.adk.models import BaseLlm, Gemini
-    from google.adk.models.lite_llm import LiteLlm  # ADK Wrapper for LiteLLM
-    from google.adk.planners import BasePlanner
-    from google.adk.runners import (  # Base SessionService
-        BaseSessionService,
-        InMemoryRunner,
-        Runner,
-    )
-    from google.adk.sessions import Session, State
-    from google.adk.tools import (
-        BaseTool,
-        FunctionTool,
-        LongRunningFunctionTool,
-        ToolContext,
-    )
-    from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-    from google.adk.tools import (
-        built_in_code_execution as adk_built_in_code_execution,  # Secure option
-    )
-    from google.adk.tools import google_search as adk_google_search
-    from google.adk.tools.agent_tool import AgentTool
-    from google.adk.tools.mcp_tool.mcp_toolset import (
-        MCPToolset,
-        SseServerParams,
-        StdioServerParameters,
-    )
-    from google.genai.types import Content, FunctionCall, FunctionResponse, Part
-
-    ADK_AVAILABLE = True
-    ADKBaseCodeExecutor = BaseCodeExecutor # Alias for clarity in builder
-    ADKRunner = Runner
-    ADKSessionService = BaseSessionService
-    ADKBaseTool = BaseTool
-    ADKFunctionTool = FunctionTool
-    ADKExample = Example
-    ADKPlanner = BasePlanner
-    ADKLlmAgent = LlmAgent
-except ImportError:
-    ADK_AVAILABLE = False
-    # Define dummy types for type hinting if ADK is not installed
-    class ADKBaseCodeExecutor: pass
-    class ADKRunner: pass
-    class ADKSessionService: pass
-    class ADKBaseTool: pass
-    class ADKFunctionTool: pass
-    class ADKExample: pass
-    class ADKPlanner: pass
-    class ADKLlmAgent: pass # Use basic object if LlmAgent isn't available for inheritance checks
-    StdioServerParameters = object
-    SseServerParams = object
-    MCPToolset = object # Dummy
-    LlmAgent = object # Dummy for isinstance checks if EnhancedAgent itself needs it
+logger = get_logger()
 
 
-# python-a2a
-try:
-    from python_a2a import A2AClient, A2AServer, AgentCard
-    from python_a2a import run_server as run_a2a_server_func
-    A2A_AVAILABLE = True
-except ImportError:
-    A2A_AVAILABLE = False
-    class A2AServer: pass
-    class A2AClient: pass
-    class AgentCard: pass
-    def run_a2a_server_func(*a, **kw):
-        return None
+# ===== PRODUCTION CONFIGURATION MODELS =====
 
+class MCPConfig(BaseModel):
+    """MCP server and tools configuration"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-# MCP
-try:
-    from mcp.server.fastmcp import FastMCP
-    MCP_AVAILABLE = True
-except ImportError:
-    MCP_AVAILABLE = False
-    class FastMCP: pass
-
-
-# LiteLLM
-try:
-    import litellm
-    from litellm import BudgetManager
-    from litellm.utils import get_max_tokens
-    LITELLM_AVAILABLE = True
-except ImportError:
-    print("CRITICAL ERROR: LiteLLM not found. Agent functionality will be severely limited.")
-    LITELLM_AVAILABLE = False
-    class BudgetManager: pass
-    def get_max_tokens(*a, **kw):
-        return 4096 # Dummy fallback
-
-# OpenTelemetry
-try:
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    OTEL_AVAILABLE = True
-except ImportError:
-    OTEL_AVAILABLE = False
-    class TracerProvider: pass # Dummy
-
-# --- Local Imports ---
-# Assume EnhancedAgent and supporting classes (WorldModel, AgentModelData, etc.)
-# are in the same directory or properly importable
-from toolboxv2.mods.isaa.base.Agent.agent import (
-    A2A_AVAILABLE as AGENT_A2A_AVAILABLE,  # Check agent's view
-)
-from toolboxv2.mods.isaa.base.Agent.agent import (
-    MCP_AVAILABLE as AGENT_MCP_AVAILABLE,  # Check agent's view
-)
-from toolboxv2.mods.isaa.base.Agent.agent import (  # Relative import assuming builder is in same dir/package
-    AgentModelData,
-    EnhancedAgent,
-    SecureCodeExecutorPlaceholder,
-    UnsafeSimplePythonExecutor,
-)
-
-# Local Imports
-
-logger = logging.getLogger("EnhancedAgentBuilder")
-logger.setLevel(get_logger().level)
-
-T = TypeVar('T', bound='EnhancedAgent') # Type variable for the agent being built
-
-
-# --- User Cost Tracking ---
-
-class UserCostTracker(Protocol):
-    """Protocol for tracking costs per user."""
-    def get_cost(self, user_id: str) -> float: ...
-    def add_cost(self, user_id: str, cost: float) -> None: ...
-    def get_all_costs(self) -> dict[str, float]: ...
-    def save(self) -> None: ...
-    def load(self) -> None: ...
-
-class JsonFileUserCostTracker:
-    """Stores user costs persistently in a JSON file."""
-    def __init__(self, filepath: str | Path):
-        self.filepath = Path(filepath)
-        self._costs: dict[str, float] = {}
-        self._lock = threading.Lock()
-        self.load() # Load costs on initialization
-
-    def get_cost(self, user_id: str) -> float:
-        with self._lock:
-            return self._costs.get(user_id, 0.0)
-
-    def add_cost(self, user_id: str, cost: float) -> None:
-        if not user_id:
-            logger.warning("Cost tracking skipped: user_id is missing.")
-            return
-        if cost > 0:
-            with self._lock:
-                self._costs[user_id] = self._costs.get(user_id, 0.0) + cost
-                logger.debug(f"Cost added for user '{user_id}': +{cost:.6f}. New total: {self._costs[user_id]:.6f}")
-            # Optional: Auto-save periodically or based on number of updates
-            # For simplicity, we rely on explicit save() or agent close
-
-    def get_all_costs(self) -> dict[str, float]:
-        with self._lock:
-            return self._costs.copy()
-
-    def save(self) -> None:
-        with self._lock:
-            try:
-                self.filepath.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.filepath, 'w') as f:
-                    json.dump(self._costs, f, indent=2)
-                logger.info(f"User costs saved to {self.filepath}")
-            except OSError as e:
-                logger.error(f"Failed to save user costs to {self.filepath}: {e}")
-
-    def load(self) -> None:
-        with self._lock:
-            if self.filepath.exists():
-                try:
-                    with open(self.filepath) as f:
-                        self._costs = json.load(f)
-                    logger.info(f"User costs loaded from {self.filepath}")
-                except (OSError, json.JSONDecodeError) as e:
-                    logger.error(f"Failed to load user costs from {self.filepath}: {e}. Starting fresh.")
-                    self._costs = {}
-            else:
-                logger.info(f"User cost file not found ({self.filepath}). Starting fresh.")
-                self._costs = {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.save()
-
-
-# --- Builder Configuration Model ---
-
-class BuilderADKConfig(BaseModel):
     enabled: bool = False
-    description: str | None = None
-    runner_class_name: str | None = Field(default="InMemoryRunner", description="ADK Runner class name (e.g., 'InMemoryRunner', 'AsyncWebRunner')")
-    runner_options: dict[str, Any] = Field(default_factory=dict)
-    code_executor_config: Literal["adk_builtin", "unsafe_simple", "secure_placeholder", "custom_instance", "none"] | dict = "none"
-    # Custom instance requires passing instance during build, dict allows config for future executors
-    sync_state: bool = Field(default=False, description="Sync WorldModel <-> ADK Session State")
-    mcp_toolset_configs: list[dict[str, Any]] = Field(default_factory=list, description="Configs for ADK MCPToolset (e.g., {'type': 'stdio', 'command': '...', 'args': []})")
-    planner_config: dict[str, Any] | None = None # For future planner config
-    examples: list[dict[str, Any]] | None = None # For few-shot examples (ADK Example format)
-    output_schema: dict[str, Any] | None = None # For structured output hints
+    config_path: Optional[str] = None  # Path to MCP tools config file
+    server_name: Optional[str] = None
+    host: str = "0.0.0.0"
+    port: int = 8000
+    auto_expose_tools: bool = True
+    tools_from_config: List[Dict[str, Any]] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra='ignore')
 
-    @field_validator('runner_class_name')
-    def check_runner_class(cls, v):
-        # Basic check for known runner types
-        known_runners = {"InMemoryRunner","Runner", "AsyncWebRunner"} # Add more as needed
-        if v not in known_runners:
-            logger.warning(f"ADK Runner class '{v}' not in known list {known_runners}. Ensure it's importable.")
-        return v
+class A2AConfig(BaseModel):
+    """A2A server configuration"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-class BuilderServerConfig(BaseModel):
     enabled: bool = False
     host: str = "0.0.0.0"
-    port: int = 0 # Placeholder, specific defaults below
-    extra_options: dict[str, Any] = Field(default_factory=dict)
+    port: int = 5000
+    agent_name: Optional[str] = None
+    agent_description: Optional[str] = None
+    agent_version: str = "1.0.0"
+    expose_tools_as_skills: bool = True
 
-    model_config = ConfigDict(extra='ignore')
 
-class BuilderA2AConfig(BuilderServerConfig):
-    port: int = 5000 # Default A2A port
-    known_clients: dict[str, str] = Field(default_factory=dict, description="Map name -> URL for A2A clients")
+class TelemetryConfig(BaseModel):
+    """OpenTelemetry configuration"""
+    enabled: bool = False
+    service_name: Optional[str] = None
+    endpoint: Optional[str] = None  # OTLP endpoint
+    console_export: bool = True
+    batch_export: bool = True
+    sample_rate: float = 1.0
 
-class BuilderMCPConfig(BuilderServerConfig):
-    port: int = 8000 # Default MCP port
-    server_name: str | None = None
 
-class BuilderHistoryConfig(BaseModel):
-    max_turns: int | None = 20
-    max_tokens: int | None = None # Takes precedence over turns if set
-    trim_strategy: Literal["litellm", "basic"] = "litellm"
+class CheckpointConfig(BaseModel):
+    """Checkpoint configuration"""
+    enabled: bool = True
+    interval_seconds: int = 300  # 5 minutes
+    max_checkpoints: int = 10
+    checkpoint_dir: str = "./checkpoints"
+    auto_save_on_exit: bool = True
 
-    model_config = ConfigDict(extra='ignore')
 
-class BuilderConfig(BaseModel):
-    """Serializable configuration state for the EnhancedAgentBuilder."""
-    agent_name: str = "UnnamedEnhancedAgent"
-    agent_version: str = "0.1.0"
+class AgentConfig(BaseModel):
+    """Complete agent configuration for loading/saving"""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # Core Model Config (Subset of AgentModelData, as some are instance-specific like BudgetManager)
-    model_identifier: str | None = None
-    formatter_llm_model: str | None = None
-    system_message: str = "You are a helpful AI assistant."
-    temperature: float | None = None
-    top_k: int | None = None
-    top_p: float | None = None
-    max_tokens_output: int | None = None # Max tokens for LLM *generation*
-    max_tokens_input: int | None = None # Max context window (for trimming)
-    api_key_env_var: str | None = None # Store env var name, not the key itself
-    api_base: str | None = None
-    api_version: str | None = None
-    stop_sequence: list[str] | None = None
-    llm_user_id: str | None = None # 'user' param for LLM calls
-    enable_litellm_caching: bool = True
+    # Basic settings
+    name: str = "ProductionAgent"
+    description: str = "Production-ready PocketFlow agent"
+    version: str = "2.0.0"
 
-    # Agent Behavior
-    enable_streaming: bool = False
+    # LLM settings
+    fast_llm_model: str = "openrouter/anthropic/claude-3-haiku"
+    complex_llm_model: str = "openrouter/openai/gpt-4o"
+    system_message: str = """You are a production-ready autonomous agent with advanced capabilities including:
+- Native MCP tool integration for extensible functionality
+- A2A compatibility for agent-to-agent communication
+- Dynamic task planning and execution with adaptive reflection
+- Advanced context management with session awareness
+- Variable system for dynamic content generation
+- Checkpoint/resume capabilities for reliability
+
+Always utilize available tools when they can help solve the user's request efficiently."""
+
+    temperature: float = 0.7
+    max_tokens_output: int = 2048
+    max_tokens_input: int = 32768
+    api_key_env_var: Optional[str] = "OPENROUTER_API_KEY"
+    use_fast_response: bool = True
+
+    # Features
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
+    a2a: A2AConfig = Field(default_factory=A2AConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+
+    # Agent behavior
+    max_parallel_tasks: int = 3
     verbose_logging: bool = False
-    world_model_initial_data: dict[str, Any] | None = None
-    history: BuilderHistoryConfig = Field(default_factory=BuilderHistoryConfig)
 
-    # Framework Integrations
-    adk: BuilderADKConfig = Field(default_factory=BuilderADKConfig)
-    a2a: BuilderA2AConfig = Field(default_factory=BuilderA2AConfig)
-    mcp: BuilderMCPConfig = Field(default_factory=BuilderMCPConfig)
+    # Persona and formatting
+    active_persona: Optional[str] = None
+    persona_profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    default_format_config: Optional[Dict[str, Any]] = None
 
-    # Cost Tracking (Configuration for persistence)
-    cost_tracker_config: dict[str, Any] | None = Field(default={'type': 'json', 'filepath': './user_costs.json'}, description="Config for UserCostTracker (e.g., type, path)")
-
-    # Observability (Configuration)
-    telemetry_config: dict[str, Any] | None = Field(default={'enabled': False, 'service_name': None, 'endpoint': None}, description="Basic OTel config hints")
-
-    model_config = ConfigDict(validate_assignment=True)
-
-    @model_validator(mode='after')
-    def _resolve_names(self) -> 'BuilderConfig':
-        # Ensure service name defaults to agent name if not set
-        if self.telemetry_config and self.telemetry_config.get('enabled') and not self.telemetry_config.get('service_name'):
-            self.telemetry_config['service_name'] = self.agent_name
-        # Ensure MCP server name defaults if not set
-        if self.mcp.enabled and not self.mcp.server_name:
-             self.mcp.server_name = f"{self.agent_name}_MCPServer"
-        return self
+    # Custom variables and world model
+    custom_variables: Dict[str, Any] = Field(default_factory=dict)
+    initial_world_model: Dict[str, Any] = Field(default_factory=dict)
 
 
-# --- Production Builder Class ---
+# ===== PRODUCTION FLOWAGENT BUILDER =====
 
-class EnhancedAgentBuilder:
-    """
-    Fluent builder for configuring and constructing production-ready EnhancedAgent instances.
-    Supports loading configuration from files and provides methods for detailed setup.
-    """
+class FlowAgentBuilder:
+    """Production-ready FlowAgent builder focused on MCP, A2A, and robust deployment"""
 
-    def __init__(self,agent_name: str = "DefaultAgent", config: BuilderConfig | None = None, config_path: str | Path | None = None):
-        """
-        Initialize the builder. Can start with a config object, path, or blank.
+    def __init__(self, config: AgentConfig = None, config_path: str = None):
+        """Initialize builder with configuration"""
 
-        Args:
-            config: An existing BuilderConfig object.
-            config_path: Path to a YAML/JSON configuration file for the builder.
-        """
         if config and config_path:
-            raise ValueError("Provide either config object or config_path, not both.")
+            raise ValueError("Provide either config object or config_path, not both")
 
         if config_path:
-            self.load_config(config_path) # Sets self._config
+            self.config = self.load_config(config_path)
         elif config:
-            self._config = config.copy(deep=True)
+            self.config = config
         else:
-            self._config = BuilderConfig() # Start with defaults
+            self.config = AgentConfig()
 
-        # --- Transient fields (not saved/loaded directly via BuilderConfig JSON) ---
-        # Instances or non-serializable objects provided programmatically.
-        self._adk_tools_transient: list[ADKBaseTool | Callable] = []
-        self._adk_code_executor_instance: ADKBaseCodeExecutor | None = None
-        self._adk_runner_instance: ADKRunner | None = None
-        self._adk_session_service_instance: ADKSessionService | None = None
-        self._adk_planner_instance: ADKPlanner | None = None
-        self._litellm_budget_manager_instance: BudgetManager | None = None
-        self._user_cost_tracker_instance: UserCostTracker | None = None
-        self._otel_trace_provider_instance: TracerProvider | None = None
-        self._callbacks_transient: dict[str, Callable] = {}
-        # Pre-initialized server instances (less common, but possible)
-        self._a2a_server_instance: A2AServer | None = None
-        self._mcp_server_instance: FastMCP | None = None
+        # Runtime components
+        self._custom_tools: Dict[str, tuple[Callable, str]] = {}
+        self._mcp_tools: Dict[str, Dict] = {}
+        self._budget_manager: Optional[BudgetManager] = None
+        self._tracer_provider: Optional[TracerProvider] = None
+        self._mcp_server: Optional[FastMCP] = None
+        self._a2a_server: Optional[Any] = None
 
-        # Set initial log level based on loaded config
-        logger.setLevel(logging.DEBUG if self._config.verbose_logging else logging.INFO)
-        self.with_agent_name(agent_name)
+        # Set logging level
+        if self.config.verbose_logging:
+            logging.getLogger().setLevel(logging.DEBUG)
 
-    # --- Configuration Save/Load ---
+        logger.info(f"FlowAgent Builder initialized: {self.config.name}")
 
-    def save_config(self, path: str | Path, indent: int = 2):
-        """Saves the current builder configuration to a JSON file."""
-        filepath = Path(path)
+    # ===== CONFIGURATION MANAGEMENT =====
+
+    def load_config(self, config_path: str) -> AgentConfig:
+        """Load agent configuration from file"""
+        path = Path(config_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
         try:
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            config_json = self._config.model_dump_json(indent=indent)
-            with open(filepath, 'w') as f:
-                f.write(config_json)
-            logger.info(f"Builder configuration saved to {filepath}")
-        except OSError as e:
-            logger.error(f"Failed to save builder configuration to {filepath}: {e}")
-        except ValidationError as e:
-             logger.error(f"Configuration is invalid, cannot save: {e}")
+            with open(path, 'r', encoding='utf-8') as f:
+                if path.suffix.lower() in ['.yaml', '.yml']:
+                    data = yaml.safe_load(f)
+                else:
+                    data = json.load(f)
+
+            return AgentConfig(**data)
+
         except Exception as e:
-             logger.error(f"An unexpected error occurred during config save: {e}")
-
-
-    def load_config(self, path: str | Path) -> 'EnhancedAgentBuilder':
-        """Loads builder configuration from a JSON file, overwriting current settings."""
-        filepath = Path(path)
-        if not filepath.exists():
-            raise FileNotFoundError(f"Builder configuration file not found: {filepath}")
-        try:
-            with open(filepath) as f:
-                config_data = json.load(f)
-            self._config = BuilderConfig.model_validate(config_data)
-            logger.info(f"Builder configuration loaded from {filepath}")
-            # Reset transient fields, as they are not saved
-            self._reset_transient_fields()
-            logger.warning("Transient fields (callbacks, tool instances, tracker instance, etc.) reset. Re-add them if needed.")
-            # Update logger level based on loaded config
-            logger.setLevel(logging.DEBUG if self._config.verbose_logging else logging.INFO)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to load or parse builder configuration from {filepath}: {e}")
+            logger.error(f"Failed to load config from {config_path}: {e}")
             raise
-        except ValidationError as e:
-             logger.error(f"Loaded configuration data is invalid: {e}")
-             raise
-        return self
 
-    def _reset_transient_fields(self):
-        """Clears fields that are not part of the saved BuilderConfig."""
-        self._adk_tools_transient = []
-        self._adk_code_executor_instance = None
-        self._adk_runner_instance = None
-        self._adk_session_service_instance = None
-        self._adk_planner_instance = None
-        self._litellm_budget_manager_instance = None
-        self._user_cost_tracker_instance = None
-        self._otel_trace_provider_instance = None
-        self._callbacks_transient = {}
-        self._a2a_server_instance = None
-        self._mcp_server_instance = None
+    def save_config(self, config_path: str, format: str = 'yaml'):
+        """Save current configuration to file"""
+        path = Path(config_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-    # --- Fluent Configuration Methods (Modify self._config) ---
+        try:
+            data = self.config.model_dump()
 
-    def with_agent_name(self, name: str) -> 'EnhancedAgentBuilder':
-        self._config.agent_name = name
-        # Update dependent defaults
-        self._config = BuilderConfig.model_validate(self._config.model_dump())
-        return self
-
-    def with_agent_version(self, version: str) -> 'EnhancedAgentBuilder':
-        self._config.agent_version = version
-        return self
-
-    def with_model(self, model_identifier: str) -> 'EnhancedAgentBuilder':
-        self._config.model_identifier = model_identifier
-        # Auto-detect context window if not set
-        if not self._config.max_tokens_input:
-            try:
-                max_input = get_max_tokens(model_identifier)
-                if max_input:
-                    self._config.max_tokens_input = max_input
-                    logger.info(f"Auto-detected max_input_tokens for {model_identifier}: {max_input}")
+            with open(path, 'w', encoding='utf-8') as f:
+                if format.lower() == 'yaml':
+                    yaml.dump(data, f, default_flow_style=False, indent=2)
                 else:
-                     # Default fallback if detection fails
-                    self._config.max_tokens_input = 4096
-                    logger.warning(f"Could not auto-detect max_input_tokens for {model_identifier}, defaulting to 4096.")
-            except Exception as e:
-                 self._config.max_tokens_input = 4096
-                 logger.warning(f"Error auto-detecting max_input_tokens ({e}), defaulting to 4096.")
-        # Auto-configure Ollama base URL
-        if 'ollama/' in model_identifier and not self._config.api_base:
-            self.with_api_base("http://localhost:11434") # Uses the method to log
+                    json.dump(data, f, indent=2)
+
+            logger.info(f"Configuration saved to {config_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save config to {config_path}: {e}")
+            raise
+
+    @classmethod
+    def from_config_file(cls, config_path: str) -> 'FlowAgentBuilder':
+        """Create builder from configuration file"""
+        return cls(config_path=config_path)
+
+    # ===== FLUENT BUILDER API =====
+
+    def with_name(self, name: str) -> 'FlowAgentBuilder':
+        """Set agent name"""
+        self.config.name = name
         return self
 
-    def with_system_message(self, message: str) -> 'EnhancedAgentBuilder':
-        self._config.system_message = message
+    def with_models(self, fast_model: str, complex_model: str = None) -> 'FlowAgentBuilder':
+        """Set LLM models"""
+        self.config.fast_llm_model = fast_model
+        if complex_model:
+            self.config.complex_llm_model = complex_model
         return self
 
-    def with_temperature(self, temp: float) -> 'EnhancedAgentBuilder':
-        self._config.temperature = temp
+    def with_system_message(self, message: str) -> 'FlowAgentBuilder':
+        """Set system message"""
+        self.config.system_message = message
         return self
 
-    def with_max_output_tokens(self, tokens: int) -> 'EnhancedAgentBuilder':
-        self._config.max_tokens_output = tokens
+    def with_temperature(self, temp: float) -> 'FlowAgentBuilder':
+        """Set temperature"""
+        self.config.temperature = temp
         return self
 
-    def with_max_input_tokens(self, tokens: int) -> 'EnhancedAgentBuilder':
-        self._config.max_tokens_input = tokens
-        return self
-
-    def with_stop_sequence(self, stop: list[str]) -> 'EnhancedAgentBuilder':
-        self._config.stop_sequence = stop
-        return self
-
-    def with_api_key_from_env(self, env_var_name: str) -> 'EnhancedAgentBuilder':
-        self._config.api_key_env_var = env_var_name
-        # Quick check if env var exists
-        if not os.getenv(env_var_name):
-            logger.warning(f"API key environment variable '{env_var_name}' is not set.")
-        return self
-
-    def with_api_base(self, base_url: str | None) -> 'EnhancedAgentBuilder':
-        self._config.api_base = base_url
-        logger.info(f"API base set to: {base_url}")
-        return self
-
-    def with_api_version(self, version: str | None) -> 'EnhancedAgentBuilder':
-        self._config.api_version = version
-        return self
-
-    def with_llm_user_id(self, user_id: str) -> 'EnhancedAgentBuilder':
-        self._config.llm_user_id = user_id
-        return self
-
-    def enable_litellm_caching(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.enable_litellm_caching = enable
-        return self
-
-    def enable_streaming(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.enable_streaming = enable
-        return self
-
-    def verbose(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        self._config.verbose_logging = enable
-        logger.setLevel(logging.DEBUG if enable else logging.INFO)
-        os.environ['LITELLM_LOG'] = 'DEBUG' if enable else 'NONE' # Control LiteLLM verbosity too
-        return self
-    def formatter_llm_model(self, model: str) -> 'EnhancedAgentBuilder':
-        self._config.formatter_llm_model = model
-        return self
-
-    def with_initial_world_data(self, data: dict[str, Any]) -> 'EnhancedAgentBuilder':
-        self._config.world_model_initial_data = data
-        return self
-
-    def with_history_options(self, max_turns: int | None = 20, max_tokens: int | None = None, trim_strategy: Literal["litellm", "basic"] = "litellm") -> 'EnhancedAgentBuilder':
-        self._config.history = BuilderHistoryConfig(max_turns=max_turns, max_tokens=max_tokens, trim_strategy=trim_strategy)
-        return self
-
-    # --- ADK Configuration Methods ---
-    def _ensure_adk(self, feature: str):
-        if not ADK_AVAILABLE:
-            logger.warning(f"ADK not available. Cannot configure ADK feature: {feature}.")
-            return False
-        self._config.adk.enabled = True # Mark ADK as enabled if any ADK feature is used
-        return True
-
-    def enable_adk(self, runner_class: type[ADKRunner] = InMemoryRunner, runner_options: dict[str, Any] | None = None) -> 'EnhancedAgentBuilder':
-        """Enables ADK integration with a specified runner."""
-        if not self._ensure_adk("Runner"): return self
-        self._config.adk.runner_class_name = runner_class.__name__
-        self._config.adk.runner_options = runner_options or {}
-        logger.info(f"ADK integration enabled with runner: {self._config.adk.runner_class_name}")
-        return self
-
-    def with_adk_description(self, description: str) -> 'EnhancedAgentBuilder':
-        if not self._ensure_adk("Description"): return self
-        self._config.adk.description = description
-        return self
-
-    def with_adk_tool_instance(self, tool: ADKBaseTool) -> 'EnhancedAgentBuilder':
-        """Adds a pre-initialized ADK Tool instance (transient)."""
-        if not self._ensure_adk("Tool Instance"): return self
-        if not isinstance(tool, ADKBaseTool):
-            raise TypeError(f"Expected ADK BaseTool instance, got {type(tool)}")
-        self._adk_tools_transient.append(tool)
-        return self
-
-    def with_adk_tool_function(self, func: Callable, name: Optional[str] = None,
-                               description: Optional[str] = None) -> 'EnhancedAgentBuilder':
-        """Adds a callable function as an ADK tool (transient)."""
-        if not self._ensure_adk("Tool Function"):
-            return self
-        if not callable(func):
-            raise TypeError(f"Expected callable function for ADK tool, got {type(func)}")
-        if name:
-            func.__name__ = name
-        if description:
-            func.__doc__ = description
-        tool = FunctionTool(func)
-        self._adk_tools_transient.append(tool)
-        return self
-
-    def with_adk_mcp_toolset(self, connection_type: Literal["stdio", "sse"], **kwargs) -> 'EnhancedAgentBuilder':
-        """Configures an ADK MCP Toolset connection (saved in config)."""
-        if not self._ensure_adk("MCP Toolset"): return self
-        if connection_type == "stdio":
-            if "command" not in kwargs: raise ValueError("Stdio MCP toolset requires 'command' argument.")
-            config = {"type": "stdio", "command": kwargs["command"], "args": kwargs.get("args", [])}
-        elif connection_type == "sse":
-            if "url" not in kwargs: raise ValueError("SSE MCP toolset requires 'url' argument.")
-            config = {"type": "sse", "url": kwargs["url"]}
+    def with_budget_manager(self, max_cost: float = 10.0) -> 'FlowAgentBuilder':
+        """Enable budget management"""
+        if LITELLM_AVAILABLE:
+            self._budget_manager = BudgetManager("agent")
+            logger.info(f"Budget manager enabled: ${max_cost}")
         else:
-            raise ValueError(f"Unknown MCP toolset connection type: {connection_type}")
-        self._config.adk.mcp_toolset_configs.append(config)
-        logger.info(f"Configured ADK MCP Toolset: {config}")
+            logger.warning("LiteLLM not available, budget manager disabled")
         return self
 
-    def with_adk_code_executor(self, executor_type: Literal["adk_builtin", "unsafe_simple", "secure_placeholder", "none"]) -> 'EnhancedAgentBuilder':
-        """Configures the type of ADK code executor to use (saved in config)."""
-        if not self._ensure_adk("Code Executor Type"): return self
-        if executor_type == "unsafe_simple":
-            logger.critical("***********************************************************")
-            logger.critical("*** WARNING: Configuring UNSAFE SimplePythonExecutor!   ***")
-            logger.critical("***********************************************************")
-        elif executor_type == "secure_placeholder":
-            logger.warning("Configuring SecureCodeExecutorPlaceholder. Implement actual sandboxing!")
-        elif executor_type == "adk_builtin":
-            if self._config.model_identifier and ("gemini-1.5" not in self._config.model_identifier and "gemini-2" not in self._config.model_identifier) :
-                logger.warning(f"ADK built-in code execution selected, but model '{self._config.model_identifier}' might not support it. Ensure model compatibility.")
-            logger.info("Configuring ADK built-in code execution (tool-based, requires compatible model).")
-
-        self._config.adk.code_executor_config = executor_type
-        self._adk_code_executor_instance = None # Clear any previously set instance
+    def verbose(self, enable: bool = True) -> 'FlowAgentBuilder':
+        """Enable verbose logging"""
+        self.config.verbose_logging = enable
+        if enable:
+            logging.getLogger().setLevel(logging.DEBUG)
         return self
 
-    def with_adk_code_executor_instance(self, executor: ADKBaseCodeExecutor) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized ADK code executor instance (transient)."""
-        if not self._ensure_adk("Code Executor Instance"): return self
-        if not isinstance(executor, ADKBaseCodeExecutor):
-            raise TypeError(f"Expected ADKBaseCodeExecutor instance, got {type(executor)}")
-        self._adk_code_executor_instance = executor
-        self._config.adk.code_executor_config = "custom_instance" # Mark config
-        logger.info(f"Using custom ADK code executor instance: {type(executor).__name__}")
-        return self
+    # ===== MCP INTEGRATION =====
 
-    def enable_adk_state_sync(self, enable: bool = True) -> 'EnhancedAgentBuilder':
-        if not self._ensure_adk("State Sync"): return self
-        self._config.adk.sync_state = enable
-        return self
-
-    # --- Server Configuration Methods ---
-    def enable_a2a_server(self, host: str = "0.0.0.0", port: int = 5000, **extra_options) -> 'EnhancedAgentBuilder':
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not available. Cannot enable A2A server.")
-            self._config.a2a.enabled = False
+    def enable_mcp_server(self, host: str = "0.0.0.0", port: int = 8000,
+                          server_name: str = None) -> 'FlowAgentBuilder':
+        """Enable MCP server"""
+        if not MCP_AVAILABLE:
+            logger.warning("MCP not available, cannot enable server")
             return self
-        self._config.a2a.enabled = True
-        self._config.a2a.host = host
-        self._config.a2a.port = port
-        self._config.a2a.extra_options = extra_options
+
+        self.config.mcp.enabled = True
+        self.config.mcp.host = host
+        self.config.mcp.port = port
+        self.config.mcp.server_name = server_name or f"{self.config.name}_MCP"
+
+        logger.info(f"MCP server enabled: {host}:{port}")
         return self
 
-    def add_a2a_known_client(self, name: str, url: str) -> 'EnhancedAgentBuilder':
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not available. Cannot add known A2A client.")
-            return self
-        # A2A client setup is handled by the agent itself, we just store the config
-        self._config.a2a.known_clients[name] = url
-        logger.info(f"Added known A2A client config: '{name}' -> {url}")
-        return self
+    def _load_mcp_server_tools(self, server_name: str, server_config: Dict[str, Any]):
+        """Load tools from MCP server configuration with actual command execution"""
+        command = server_config.get('command')
+        args = server_config.get('args', [])
+        env = server_config.get('env', {})
 
-    def enable_mcp_server(self, host: str = "0.0.0.0", port: int = 8000, server_name: str | None = None, **extra_options) -> 'EnhancedAgentBuilder':
-         if not MCP_AVAILABLE:
-             logger.warning("MCP library (FastMCP) not available. Cannot enable MCP server.")
-             self._config.mcp.enabled = False
-             return self
-         self._config.mcp.enabled = True
-         self._config.mcp.host = host
-         self._config.mcp.port = port
-         self._config.mcp.server_name = server_name # Will default later if None
-         self._config.mcp.extra_options = extra_options
-         # Re-validate to update default name if needed
-         self._config = BuilderConfig.model_validate(self._config.model_dump())
-         return self
+        if not command:
+            logger.warning(f"No command specified for MCP server {server_name}")
+            return
 
-    # --- Cost Tracking & Budgeting Methods ---
-    def with_cost_tracker(self, tracker: UserCostTracker) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized UserCostTracker instance (transient)."""
-        if not hasattr(tracker, "get_all_costs"): # Check protocol using isinstance
-             raise TypeError("Cost tracker must implement the UserCostTracker protocol.")
-        self._user_cost_tracker_instance = tracker
-        # Clear file config if instance is provided
-        self._config.cost_tracker_config = {'type': 'custom_instance'}
-        logger.info(f"Using custom UserCostTracker instance: {type(tracker).__name__}")
-        return self
+        # Create a tool that can execute the MCP server command
+        async def mcp_server_tool(query: str = "", **kwargs) -> str:
+            """Tool backed by actual MCP server execution"""
+            try:
+                return await self._execute_mcp_server(command, args, env, query, **kwargs)
+            except Exception as e:
+                logger.error(f"MCP server tool {server_name} failed: {e}")
+                return f"Error executing {server_name}: {str(e)}"
 
-    def with_json_cost_tracker(self, filepath: str | Path) -> 'EnhancedAgentBuilder':
-        """Configures the builder to use the JsonFileUserCostTracker (saved in config)."""
-        self._config.cost_tracker_config = {'type': 'json', 'filepath': str(filepath)}
-        self._user_cost_tracker_instance = None # Clear any instance
-        logger.info(f"Configured JsonFileUserCostTracker: {filepath}")
-        return self
+        self._mcp_tools[server_name] = {
+            'function': mcp_server_tool,
+            'command': command,
+            'args': args,
+            'env': env,
+            'description': f"MCP server tool: {server_name}",
+            'server_type': 'command_execution'
+        }
 
-    def with_litellm_budget_manager(self, manager: BudgetManager) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized LiteLLM BudgetManager instance (transient)."""
-        if not LITELLM_AVAILABLE:
-             logger.warning("LiteLLM not available, cannot set BudgetManager.")
-             return self
-        if not isinstance(manager, BudgetManager):
-            raise TypeError("Expected litellm.BudgetManager instance.")
-        self._litellm_budget_manager_instance = manager
-        return self
+        logger.info(f"Registered MCP server tool: {server_name} ({command})")
 
-    # --- Observability Methods ---
-    def enable_telemetry(self, service_name: str | None = None, endpoint: str | None = None) -> 'EnhancedAgentBuilder':
-         if not OTEL_AVAILABLE:
-              logger.warning("OpenTelemetry SDK not available. Cannot enable telemetry.")
-              self._config.telemetry_config = {'enabled': False}
-              return self
-         self._config.telemetry_config = {
-             'enabled': True,
-             'service_name': service_name, # Defaults to agent name later
-             'endpoint': endpoint # For OTLP exporter, e.g. "http://localhost:4317"
-         }
-         # Re-validate to update default name if needed
-         self._config = BuilderConfig.model_validate(self._config.model_dump())
-         return self
-
-    def with_telemetry_provider_instance(self, provider: TracerProvider) -> 'EnhancedAgentBuilder':
-        """Provides a pre-initialized OpenTelemetry TracerProvider instance (transient)."""
-        if not OTEL_AVAILABLE:
-            logger.warning("OpenTelemetry SDK not available. Cannot set TracerProvider.")
-            return self
-        if not isinstance(provider, TracerProvider):
-             raise TypeError("Expected opentelemetry.sdk.trace.TracerProvider instance.")
-        self._otel_trace_provider_instance = provider
-        # Mark telemetry as enabled, but using custom instance
-        self._config.telemetry_config = {'enabled': True, 'type': 'custom_instance'}
-        logger.info("Using custom OpenTelemetry TracerProvider instance.")
-        return self
-
-    # --- Callback Methods (Transient) ---
-    def with_stream_callback(self, func: Callable[[str], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['stream_callback'] = func; return self
-    def with_post_run_callback(self, func: Callable[[str, str, float, str | None], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['post_run_callback'] = func; return self # Added user_id
-    def with_progress_callback(self, func: Callable[[Any], None | Awaitable[None]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['progress_callback'] = func; return self
-    def with_human_in_loop_callback(self, func: Callable[[dict], str | Awaitable[str]]) -> 'EnhancedAgentBuilder':
-        self._callbacks_transient['human_in_loop_callback'] = func; return self
-
-    # --- Build Method ---
-    async def build(self) -> EnhancedAgent:
-        """
-        Constructs and returns the configured EnhancedAgent instance.
-        Handles asynchronous setup like fetching ADK MCP tools.
-        """
-        logger.info(f"--- Building EnhancedAgent: {self._config.agent_name} v{self._config.agent_version} ---")
-
-        # 1. Final Config Validation (Pydantic model handles most)
-        if not self._config.model_identifier:
-            raise ValueError("LLM model identifier is required. Use .with_model()")
-
-        # 2. Resolve API Key
-        api_key = None
-        if self._config.api_key_env_var:
-            api_key = os.getenv(self._config.api_key_env_var)
-            if not api_key:
-                logger.warning(f"API key environment variable '{self._config.api_key_env_var}' is set in config but not found in environment.")
-            # else: logger.debug("API key loaded from environment variable.") # Avoid logging key presence
-
-        # 3. Setup Telemetry Provider (if instance provided)
-        if self._otel_trace_provider_instance and OTEL_AVAILABLE:
-            trace.set_tracer_provider(self._otel_trace_provider_instance)
-            logger.info("Global OpenTelemetry TracerProvider set from provided instance.")
-        elif self._config.telemetry_config.get('enabled') and self._config.telemetry_config.get('type') != 'custom_instance' and OTEL_AVAILABLE:
-             # Basic provider setup from config (can be expanded)
-             logger.info("Setting up basic OpenTelemetry based on config (ConsoleExporter example).")
-             from opentelemetry.sdk.trace.export import (
-                 BatchSpanProcessor,
-                 ConsoleSpanExporter,
-             )
-             provider = TracerProvider()
-             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-             #: Add OTLP exporter based on self._config.telemetry_config['endpoint']
-             trace.set_tracer_provider(provider)
-             self._otel_trace_provider_instance = provider # Store for potential access?
-
-        # 4. Prepare Core Components
-        # Agent Model Data
+    async def _execute_mcp_server(self, command: str, args: List[str], env: Dict[str, str],
+                                  query: str, **kwargs) -> str:
+        """Execute MCP server command and handle communication"""
         try:
-            amd = AgentModelData(
-                name=self._config.agent_name,
-                model=self._config.model_identifier,
-                system_message=self._config.system_message,
-                temperature=self._config.temperature,
-                top_k=self._config.top_k,
-                top_p=self._config.top_p,
-                max_tokens=self._config.max_tokens_output,
-                max_input_tokens=self._config.max_tokens_input,
-                api_key=api_key,
-                api_base=self._config.api_base,
-                api_version=self._config.api_version,
-                stop_sequence=self._config.stop_sequence,
-                user_id=self._config.llm_user_id,
-                budget_manager=self._litellm_budget_manager_instance,
-                caching=self._config.enable_litellm_caching
+            # Prepare environment
+            process_env = os.environ.copy()
+            process_env.update(env)
+
+            # Build full command
+            full_command = [command] + args
+
+            # Create the subprocess
+            process = await asyncio.create_subprocess_exec(
+                *full_command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=process_env,
+                cwd=os.getcwd()
             )
-        except ValidationError as e:
-            logger.error(f"Validation error creating AgentModelData: {e}")
-            raise
 
-        # World Model
-        world_model = self._config.world_model_initial_data or {}
-
-        # User Cost Tracker
-        cost_tracker = self._user_cost_tracker_instance # Use provided instance if available
-        if not cost_tracker and self._config.cost_tracker_config:
-            tracker_type = self._config.cost_tracker_config.get('type')
-            if tracker_type == 'json':
-                filepath = self._config.cost_tracker_config.get('filepath')
-                if filepath:
-                    cost_tracker = JsonFileUserCostTracker(filepath)
-                    logger.info(f"Initialized JsonFileUserCostTracker ({filepath})")
-                else:
-                    logger.warning("JSON cost tracker configured but filepath missing.")
-            elif tracker_type == 'custom_instance':
-                 logger.warning("Cost tracker configured as 'custom_instance' but no instance was provided via .with_cost_tracker().")
-            # Add other tracker types (DB, InMemory) here
-
-        # 5. Prepare ADK Components
-        adk_runner_instance = self._adk_runner_instance
-        adk_session_service = self._adk_session_service_instance
-        adk_planner_instance = self._adk_planner_instance
-        adk_code_executor = self._adk_code_executor_instance # Use provided instance first
-        adk_exit_stack = None
-        processed_adk_tools = list(self._adk_tools_transient) # Start with transient tools
-
-        if ADK_AVAILABLE and self._config.adk.enabled:
-            logger.info("Configuring ADK components...")
-            adk_exit_stack = contextlib.AsyncExitStack()
-
-            # --- ADK Runner & Session Service ---
-            if not adk_runner_instance:
-                runner_cls_name = self._config.adk.runner_class_name
-                runner_opts = self._config.adk.runner_options
-                try:
-                    # Dynamically import/get runner class
-                    if runner_cls_name == "InMemoryRunner": runner_class = InMemoryRunner
-                    elif runner_cls_name == "Runner": runner_class = Runner
-                    elif runner_cls_name == "AsyncWebRunner": runner_class = AsyncWebRunner # If available
-                    else: raise ValueError(f"Unsupported ADK Runner class name: {runner_cls_name}")
-
-                    # Special handling: InMemoryRunner needs agent instance *later*
-                    if runner_class is InMemoryRunner or runner_class is Runner:
-                         logger.debug("Deferring InMemoryRunner creation until after agent instantiation.")
-                         # Store config to create it later
-                         adk_runner_config_for_later = {
-                             "runner_class": runner_class,
-                             "app_name": runner_opts.get("app_name", f"{self._config.agent_name}_ADKApp"),
-                             "session_service": adk_session_service, # Pass service if already created
-                             **runner_opts # Pass other options
-                         }
-                         adk_runner_instance = None # Ensure it's None for now
-                    else: # Other runners might be creatable now
-                         # Need to ensure session service is handled correctly if runner needs it
-                         if not adk_session_service:
-                             # Create default session service if needed by runner
-                             # This part is complex as runners might create their own
-                             logger.info("Using default ADK InMemorySessionService for runner.")
-                             adk_session_service = InMemorySessionService()
-
-                         adk_runner_instance = runner_class(
-                             session_service=adk_session_service,
-                             app_name=runner_opts.get("app_name", f"{self._config.agent_name}_ADKApp"),
-                             **runner_opts # Pass other options
-                         )
-                         logger.info(f"Created ADK Runner instance: {runner_cls_name}")
-
-                except (ImportError, ValueError, TypeError) as e:
-                    logger.error(f"Failed to configure ADK Runner '{runner_cls_name}': {e}", exc_info=True)
-                    raise ValueError(f"Failed to setup ADK Runner: {e}") from e
-
-            # Ensure session service exists if runner created one
-            if adk_runner_instance and hasattr(adk_runner_instance, 'session_service'):
-                 if not adk_session_service:
-                     adk_session_service = adk_runner_instance.session_service
-                 elif adk_session_service is not adk_runner_instance.session_service:
-                     logger.warning("Provided ADK SessionService differs from the one in the provided ADK Runner. Using the runner's service.")
-                     adk_session_service = adk_runner_instance.session_service
-
-            # Fallback: create default session service if none exists by now
-            if not adk_session_service:
-                  logger.info("Using default ADK InMemorySessionService.")
-                  adk_session_service = InMemorySessionService()
-
-
-            # --- ADK Code Executor ---
-            if not adk_code_executor: # If instance wasn't provided directly
-                executor_config = self._config.adk.code_executor_config
-                if executor_config == "unsafe_simple":
-                    adk_code_executor = UnsafeSimplePythonExecutor()
-                    logger.critical("UNSAFE code executor instance created!")
-                elif executor_config == "secure_placeholder":
-                    adk_code_executor = SecureCodeExecutorPlaceholder()
-                    logger.warning("SecureCodeExecutorPlaceholder instance created.")
-                elif executor_config == "adk_builtin":
-                    # This type uses the TOOL, not an executor instance passed to LlmAgent init
-                    adk_code_executor = adk_built_in_code_execution
-                    #if not any(getattr(t, 'func', None) == tool_func for t in processed_adk_tools if isinstance(t, FunctionTool)):
-                    #     tool_func.__name__ = "code_execution"
-                    # processed_adk_tools.append(tool_func)
-                    #     logger.info("Added ADK built-in code execution tool.")
-                    adk_code_executor = None # Ensure no executor instance is passed for this case
-                elif executor_config == "none":
-                    adk_code_executor = None
-                elif executor_config == "custom_instance":
-                    # Should have been provided via .with_adk_code_executor_instance()
-                    logger.error("ADK code executor configured as 'custom_instance' but no instance was provided.")
-                    adk_code_executor = None
-                # Add handling for dict config if needed in the future
-
-            # --- ADK Tools (Wrap callables) ---
-            temp_tools = []
-            for tool_input in processed_adk_tools:
-                 if isinstance(tool_input, ADKBaseTool):
-                     temp_tools.append(tool_input)
-                 elif callable(tool_input):
-                     try:
-                         wrapped = ADKFunctionTool(func=tool_input)
-                         temp_tools.append(wrapped)
-                     except Exception as e: logger.warning(f"Could not wrap callable '{getattr(tool_input, '__name__', 'unknown')}' as ADK tool: {e}")
-                 else: logger.warning(f"Skipping invalid ADK tool input: {type(tool_input)}")
-            processed_adk_tools = temp_tools
-
-            # --- ADK MCP Toolsets ---
-            for mcp_conf in self._config.adk.mcp_toolset_configs:
-                 logger.info(f"Fetching tools from configured MCP Server: {mcp_conf}...")
-                 try:
-                      params = None
-                      if mcp_conf.get("type") == "stdio":
-                          params = StdioServerParameters(command=mcp_conf["command"], args=mcp_conf.get("args", []))
-                      elif mcp_conf.get("type") == "sse":
-                           params = SseServerParams(url=mcp_conf["url"])
-
-                      if params:
-                          mcp_tools, _ = await MCPToolset.from_server(
-                              connection_params=params,
-                              async_exit_stack=adk_exit_stack
-                          )
-                          for tool in mcp_tools: tool._is_mcp_tool = True
-                          processed_adk_tools.extend(mcp_tools)
-                          logger.info(f"Fetched {len(mcp_tools)} tools via ADK MCPToolset ({mcp_conf.get('type')}).")
-                      else:
-                           logger.warning(f"Unsupported MCP config type: {mcp_conf.get('type')}")
-
-                 except Exception as e:
-                      logger.error(f"Failed to fetch tools from MCP server {mcp_conf}: {e}", exc_info=True)
-                      # Decide whether to raise or continue
-
-            # --- ADK Planner, Examples, Output Schema ---
-
-
-
-        # 6. Instantiate EnhancedAgent
-        try:
-            # Base arguments for EnhancedAgent
-            agent_init_kwargs = {
-                'amd': amd,
-                'world_model': world_model,
-                'format_model': self._config.formatter_llm_model if self._config.formatter_llm_model else None, # Example passing extra config
-                'verbose': self._config.verbose_logging,
-                'stream': self._config.enable_streaming,
-                'max_history_turns': self._config.history.max_turns,
-                'max_history_tokens': self._config.history.max_tokens,
-                'trim_strategy': self._config.history.trim_strategy,
-                'sync_adk_state': self._config.adk.sync_state if ADK_AVAILABLE else False,
-                'adk_exit_stack': adk_exit_stack, # Pass stack for cleanup
-                'user_cost_tracker': cost_tracker, # Pass the tracker instance
-                **self._callbacks_transient, # Pass configured callbacks
-                # Pass server instances if provided (less common)
-                'a2a_server': self._a2a_server_instance,
-                'mcp_server': self._mcp_server_instance,
+            # For MCP, we need to send JSON-RPC messages
+            # This is a simplified implementation - in production you'd want full MCP protocol
+            mcp_request = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/call",
+                "params": {
+                    "name": "process_query",
+                    "arguments": {"query": query, **kwargs}
+                }
             }
 
-            # Add ADK-specific arguments if inheriting from LlmAgent
-            agent_class = EnhancedAgent
-            if ADK_AVAILABLE and issubclass(EnhancedAgent, ADKLlmAgent):
-                 logger.debug("Adding ADK LlmAgent specific arguments to init.")
-                 adk_specific_kwargs = {
-                     'name': self._config.agent_name, # Required by LlmAgent
-                     'model': LiteLlm(model=self._config.model_identifier), # LlmAgent needs BaseLlm instance
-                     'description': self._config.adk.description or self._config.system_message,
-                     'instruction': self._config.system_message, # Or dedicated instruction field?
-                     'tools': processed_adk_tools,
-                     'code_executor': adk_code_executor, # Pass the *instance*
-                     'planner': adk_planner_instance,
-                     # Process examples/schema if needed
-                     'examples': [ADKExample(**ex) for ex in self._config.adk.examples] if self._config.adk.examples else None,
-                     'output_schema': self._config.adk.output_schema,
-                     # Pass runner/session service if NOT using InMemoryRunner deferred creation
-                     # If runner is created later, it's assigned post-init
-                     'runner': adk_runner_instance if adk_runner_instance else None, # Pass runner if created now
-                     'session_service': adk_session_service, # Pass session service
-                 }
-                 # Merge, ensuring agent_init_kwargs takes precedence for overlapping basic fields if necessary
-                 # but allow ADK specifics to be added. Be careful with overlaps like 'name'.
-                 # EnhancedAgent init should handle reconciling these if needed.
-                 # A safer merge:
-                 final_kwargs = agent_init_kwargs.copy()
-                 for k, v in adk_specific_kwargs.items():
-                      if k not in final_kwargs: # Only add ADK specifics not already handled
-                          final_kwargs[k] = v
-                      # Handle specific overrides/merges needed for LlmAgent base
-                      elif k == 'tools' and v: # Merge tools
-                          final_kwargs['tools'] = (final_kwargs.get('tools') or []) + v
-                      # Overwrite description/instruction from ADK config if set
-                      elif k in ['description', 'instruction'] and v or k == 'code_executor' or k == 'model':
-                           final_kwargs[k] = v
+            request_json = json.dumps(mcp_request) + "\n"
 
-                 agent_init_kwargs = final_kwargs
+            # Send request and get response
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(input=request_json.encode()),
+                timeout=30.0  # 30 second timeout
+            )
 
+            # Parse response
+            if process.returncode == 0:
+                response_text = stdout.decode().strip()
+                if response_text:
+                    try:
+                        # Try to parse as JSON-RPC response
+                        response_data = json.loads(response_text)
+                        if "result" in response_data:
+                            return str(response_data["result"])
+                        elif "error" in response_data:
+                            return f"MCP Error: {response_data['error']}"
+                        else:
+                            return response_text
+                    except json.JSONDecodeError:
+                        # Return raw output if not valid JSON
+                        return response_text
+                else:
+                    return "MCP server returned empty response"
+            else:
+                error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                return f"MCP server failed (code {process.returncode}): {error_msg}"
 
-            logger.info(f"Final keys for EnhancedAgent init: {list(agent_init_kwargs.keys())}")
-            logger.info(f"Final keys for EnhancedAgent init: {agent_init_kwargs}")
-
-            # --- Instantiate the Agent ---
-            agent = agent_class(**agent_init_kwargs)
-            # --- Agent Instantiated ---
-
-            # If ADK InMemoryRunner creation was deferred, create and assign now
-            if ADK_AVAILABLE and 'adk_runner_config_for_later' in locals():
-                 cfg = locals()['adk_runner_config_for_later']
-                 if not isinstance(cfg['runner_class'], InMemoryRunner) and cfg.get('session_service') is None: cfg['session_service'] = agent.adk_session_service # Ensure service is passed
-                 agent.setup_adk_runner(cfg)
-                 logger.info(f"Created and assigned deferred ADK Runner instance: {agent.adk_runner.__class__.__name__}")
-                 # Ensure agent has runner's session service if it differs
-                 if agent.adk_runner and agent.adk_session_service is not agent.adk_runner.session_service:
-                      logger.warning("Agent session service differs from deferred runner's service. Updating agent's reference.")
-                      agent.adk_session_service = agent.adk_runner.session_service
-            elif ADK_AVAILABLE and adk_runner_instance and not agent.adk_runner:
-                # If runner was created earlier but not passed via LlmAgent init (e.g. non-LlmAgent base)
-                # Or if we want to explicitly assign it
-                 agent.adk_runner = adk_runner_instance
-                 # Ensure session service consistency
-                 if agent.adk_session_service is not agent.adk_runner.session_service:
-                      agent.adk_session_service = agent.adk_runner.session_service
-
-
-        except ValidationError as e:
-            logger.error(f"Pydantic validation error Instantiating EnhancedAgent: {e}", exc_info=True)
-            raise
+        except asyncio.TimeoutError:
+            logger.error(f"MCP server timeout for command: {command}")
+            return "MCP server request timed out"
         except Exception as e:
-            logger.error(f"Unexpected error Instantiating EnhancedAgent: {e}", exc_info=True)
+            logger.error(f"MCP server execution error: {e}")
+            return f"MCP server execution failed: {str(e)}"
+
+    async def _execute_mcp_stdio_server(self, command: str, args: List[str], env: Dict[str, str]) -> Optional[Any]:
+        """Execute MCP server using stdio transport (more robust MCP communication)"""
+        if not MCP_AVAILABLE:
+            logger.warning("MCP not available for stdio server execution")
+            return None
+
+        try:
+            # This would use the actual MCP client to communicate with the server
+            # For now, this is a placeholder for full MCP protocol implementation
+            from mcp.client.stdio import stdio_client
+            from mcp import ClientSession, StdioServerParameters
+
+            # Prepare environment
+            process_env = os.environ.copy()
+            process_env.update(env)
+
+            # Create server parameters
+            server_params = StdioServerParameters(
+                command=command,
+                args=args,
+                env=process_env
+            )
+
+            # This would establish proper MCP communication
+            # Implementation would depend on full MCP client integration
+            logger.info(f"Would establish MCP stdio connection to: {command} {' '.join(args)}")
+
+            return None  # Placeholder - full implementation would return MCP client session
+
+        except Exception as e:
+            logger.error(f"Failed to establish MCP stdio connection: {e}")
+            return None
+
+    def load_mcp_tools_from_config(self, config_path: str) -> 'FlowAgentBuilder':
+        """Enhanced MCP config loading with better error handling and validation"""
+        if not MCP_AVAILABLE:
+            logger.warning("MCP not available, skipping tool loading")
+            return self
+
+        config_path = Path(config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"MCP config not found: {config_path}")
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                if config_path.suffix.lower() in ['.yaml', '.yml']:
+                    mcp_config = yaml.safe_load(f)
+                else:
+                    mcp_config = json.load(f)
+
+            # Parse MCP tools from official config format
+            tools_loaded = 0
+
+            # Handle standard MCP server configuration
+            if 'mcpServers' in mcp_config:
+                for server_name, server_config in mcp_config['mcpServers'].items():
+                    # Validate server config
+                    if not self._validate_mcp_server_config(server_name, server_config):
+                        continue
+
+                    self._load_mcp_server_tools(server_name, server_config)
+                    tools_loaded += 1
+
+                    logger.info(
+                        f"Loaded MCP server: {server_name} - Command: {server_config.get('command')} {' '.join(server_config.get('args', []))}")
+
+            # Handle direct tools configuration
+            elif 'tools' in mcp_config:
+                for tool_config in mcp_config['tools']:
+                    self._load_direct_mcp_tool(tool_config)
+                    tools_loaded += 1
+
+            # Store config path for later use
+            self.config.mcp.config_path = str(config_path)
+            self.config.mcp.tools_from_config = mcp_config.get('tools', [])
+
+            logger.info(f"Successfully loaded {tools_loaded} MCP configurations from {config_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to load MCP config from {config_path}: {e}")
             raise
 
-        # 7. Setup Agent's Internal Server Capabilities (if enabled and not pre-initialized)
-        if self._config.a2a.enabled and not agent.a2a_server:
-            if AGENT_A2A_AVAILABLE:
-                logger.info("Setting up A2A server on agent instance...")
-                agent.setup_a2a_server(
-                    host=self._config.a2a.host,
-                    port=self._config.a2a.port,
-                    **self._config.a2a.extra_options
-                )
-            else: logger.warning("A2A server configured in builder, but A2A not available in agent environment.")
+        return self
 
-        if self._config.mcp.enabled and not agent.mcp_server:
-            if AGENT_MCP_AVAILABLE:
-                logger.info("Setting up MCP server on agent instance...")
-                agent.setup_mcp_server(
-                    host=self._config.mcp.host,
-                    port=self._config.mcp.port,
-                    name=self._config.mcp.server_name, # Already defaulted
-                    **self._config.mcp.extra_options
-                )
-            else: logger.warning("MCP server configured in builder, but MCP not available in agent environment.")
+    @staticmethod
+    def _validate_mcp_server_config(server_name: str, server_config: Dict[str, Any]) -> bool:
+        """Validate MCP server configuration"""
+        command = server_config.get('command')
+        if not command:
+            logger.error(f"MCP server {server_name} missing 'command' field")
+            return False
 
-        # 8. Setup A2A known clients configuration on the agent
-        if self._config.a2a.known_clients:
-             if AGENT_A2A_AVAILABLE:
-                 # The agent likely handles client creation on demand,
-                 # but we can pass the config for it to use.
-                 # Assuming agent has a way to receive this, e.g., during init or a setter
-                 if hasattr(agent, 'set_known_a2a_clients'):
-                     agent.set_known_a2a_clients(self._config.a2a.known_clients)
-                 else:
-                      # Fallback: store on a generic config dict? Less ideal.
-                      # agent.config.a2a_known_clients = self._config.a2a.known_clients
-                      logger.warning("Agent does not have 'set_known_a2a_clients' method. Known client config stored raw.")
-             else:
-                  logger.warning("A2A known clients configured, but A2A not available in agent env.")
+        # Check if command exists and is executable
+        if command in ['npx', 'node', 'python', 'python3', 'docker']:
+            # These are common commands, assume they exist
+            return True
+
+        # For other commands, check if they exist
+        import shutil
+        if not shutil.which(command):
+            logger.warning(f"MCP server {server_name}: command '{command}' not found in PATH")
+            # Don't fail completely, just warn - the command might be available at runtime
+
+        args = server_config.get('args', [])
+        if not isinstance(args, list):
+            logger.error(f"MCP server {server_name}: 'args' must be a list")
+            return False
+
+        env = server_config.get('env', {})
+        if not isinstance(env, dict):
+            logger.error(f"MCP server {server_name}: 'env' must be a dictionary")
+            return False
+
+        logger.debug(f"Validated MCP server config: {server_name}")
+        return True
+
+    def _load_direct_mcp_tool(self, tool_config: Dict[str, Any]):
+        """Load tool from direct configuration"""
+        name = tool_config.get('name')
+        description = tool_config.get('description', '')
+        function_code = tool_config.get('function_code')
+
+        if not name or not function_code:
+            logger.warning(f"Incomplete tool config: {tool_config}")
+            return
+
+        # Create function from code
+        try:
+            namespace = {"__builtins__": __builtins__}
+            exec(function_code, namespace)
+
+            # Find the function
+            func = None
+            for obj in namespace.values():
+                if callable(obj) and not getattr(obj, '__name__', '').startswith('_'):
+                    func = obj
+                    break
+
+            if func:
+                self._mcp_tools[name] = {
+                    'function': func,
+                    'description': description,
+                    'source': 'code'
+                }
+                logger.debug(f"Loaded MCP tool from code: {name}")
+
+        except Exception as e:
+            logger.error(f"Failed to load MCP tool {name}: {e}")
+
+    def add_mcp_tool_from_code(self, name: str, code: str, description: str = "") -> 'FlowAgentBuilder':
+        """Add MCP tool from code string"""
+        tool_config = {
+            'name': name,
+            'description': description,
+            'function_code': code
+        }
+        self._load_direct_mcp_tool(tool_config)
+        return self
+
+    # ===== A2A INTEGRATION =====
+
+    def enable_a2a_server(self, host: str = "0.0.0.0", port: int = 5000,
+                          agent_name: str = None, agent_description: str = None) -> 'FlowAgentBuilder':
+        """Enable A2A server for agent-to-agent communication"""
+        if not A2A_AVAILABLE:
+            logger.warning("A2A not available, cannot enable server")
+            return self
+
+        self.config.a2a.enabled = True
+        self.config.a2a.host = host
+        self.config.a2a.port = port
+        self.config.a2a.agent_name = agent_name or self.config.name
+        self.config.a2a.agent_description = agent_description or self.config.description
+
+        logger.info(f"A2A server enabled: {host}:{port}")
+        return self
+
+    # ===== TELEMETRY INTEGRATION =====
+
+    def enable_telemetry(self, service_name: str = None, endpoint: str = None,
+                         console_export: bool = True) -> 'FlowAgentBuilder':
+        """Enable OpenTelemetry tracing"""
+        if not OTEL_AVAILABLE:
+            logger.warning("OpenTelemetry not available, cannot enable telemetry")
+            return self
+
+        self.config.telemetry.enabled = True
+        self.config.telemetry.service_name = service_name or self.config.name
+        self.config.telemetry.endpoint = endpoint
+        self.config.telemetry.console_export = console_export
+
+        # Initialize tracer provider
+        self._tracer_provider = TracerProvider()
+        trace.set_tracer_provider(self._tracer_provider)
+
+        # Add exporters
+        if console_export:
+            console_exporter = ConsoleSpanExporter()
+            span_processor = BatchSpanProcessor(console_exporter)
+            self._tracer_provider.add_span_processor(span_processor)
+
+        if endpoint:
+            try:
+                otlp_exporter = OTLPSpanExporter(endpoint=endpoint)
+                otlp_processor = BatchSpanProcessor(otlp_exporter)
+                self._tracer_provider.add_span_processor(otlp_processor)
+            except Exception as e:
+                logger.warning(f"Failed to setup OTLP exporter: {e}")
+
+        logger.info(f"Telemetry enabled for service: {service_name}")
+        return self
+
+    # ===== CHECKPOINT CONFIGURATION =====
+
+    def with_checkpointing(self, enabled: bool = True, interval_seconds: int = 300,
+                           checkpoint_dir: str = "./checkpoints", max_checkpoints: int = 10) -> 'FlowAgentBuilder':
+        """Configure checkpointing"""
+        self.config.checkpoint.enabled = enabled
+        self.config.checkpoint.interval_seconds = interval_seconds
+        self.config.checkpoint.checkpoint_dir = checkpoint_dir
+        self.config.checkpoint.max_checkpoints = max_checkpoints
+
+        if enabled:
+            # Ensure checkpoint directory exists
+            Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+            logger.info(f"Checkpointing enabled: {checkpoint_dir} (every {interval_seconds}s)")
+
+        return self
+
+    # ===== TOOL MANAGEMENT =====
+
+    def add_tool(self, func: Callable, name: str = None, description: str = None) -> 'FlowAgentBuilder':
+        """Add custom tool function"""
+        tool_name = name or func.__name__
+        self._custom_tools[tool_name] = (func, description or func.__doc__)
+
+        logger.info(f"Tool added: {tool_name}")
+        return self
+
+    def add_tools_from_module(self, module, prefix: str = "", exclude: List[str] = None) -> 'FlowAgentBuilder':
+        """Add all functions from a module as tools"""
+        exclude = exclude or []
+
+        for name, obj in inspect.getmembers(module, inspect.isfunction):
+            if name in exclude or name.startswith('_'):
+                continue
+
+            tool_name = f"{prefix}{name}" if prefix else name
+            self.add_tool(obj, name=tool_name)
+
+        logger.info(f"Added tools from module {module.__name__}")
+        return self
+
+    # ===== PERSONA MANAGEMENT =====
+
+    def add_persona_profile(self, profile_name: str, name: str, style: str = "professional",
+                            tone: str = "friendly", personality_traits: List[str] = None,
+                            custom_instructions: str = "", response_format: str = None,
+                            text_length: str = None) -> 'FlowAgentBuilder':
+        """Add a persona profile with optional format configuration"""
+
+        if personality_traits is None:
+            personality_traits = ["helpful", "concise"]
+
+        # Create persona config
+        persona_data = {
+            "name": name,
+            "style": style,
+            "tone": tone,
+            "personality_traits": personality_traits,
+            "custom_instructions": custom_instructions,
+            "apply_method": "system_prompt",
+            "integration_level": "light"
+        }
+
+        # Add format config if specified
+        if response_format or text_length:
+            format_config = {
+                "response_format": response_format or "frei-text",
+                "text_length": text_length or "chat-conversation",
+                "custom_instructions": "",
+                "strict_format_adherence": True,
+                "quality_threshold": 0.7
+            }
+            persona_data["format_config"] = format_config
+
+        self.config.persona_profiles[profile_name] = persona_data
+        logger.info(f"Persona profile added: {profile_name}")
+        return self
+
+    def set_active_persona(self, profile_name: str) -> 'FlowAgentBuilder':
+        """Set active persona profile"""
+        if profile_name in self.config.persona_profiles:
+            self.config.active_persona = profile_name
+            logger.info(f"Active persona set: {profile_name}")
+        else:
+            logger.warning(f"Persona profile not found: {profile_name}")
+        return self
+
+    def with_developer_persona(self, name: str = "Senior Developer") -> 'FlowAgentBuilder':
+        """Add and set a pre-built developer persona"""
+        return (self
+                .add_persona_profile(
+            "developer",
+            name=name,
+            style="technical",
+            tone="professional",
+            personality_traits=["precise", "thorough", "security_conscious", "best_practices"],
+            custom_instructions="Focus on code quality, maintainability, and security. Always consider edge cases.",
+            response_format="code-structure",
+            text_length="detailed-indepth"
+        )
+                .set_active_persona("developer"))
+
+    def with_analyst_persona(self, name: str = "Data Analyst") -> 'FlowAgentBuilder':
+        """Add and set a pre-built analyst persona"""
+        return (self
+                .add_persona_profile(
+            "analyst",
+            name=name,
+            style="analytical",
+            tone="objective",
+            personality_traits=["methodical", "insight_driven", "evidence_based"],
+            custom_instructions="Focus on statistical rigor and actionable recommendations.",
+            response_format="with-tables",
+            text_length="detailed-indepth"
+        )
+                .set_active_persona("analyst"))
+
+    def with_assistant_persona(self, name: str = "AI Assistant") -> 'FlowAgentBuilder':
+        """Add and set a pre-built general assistant persona"""
+        return (self
+                .add_persona_profile(
+            "assistant",
+            name=name,
+            style="friendly",
+            tone="helpful",
+            personality_traits=["helpful", "patient", "clear", "adaptive"],
+            custom_instructions="Be helpful and adapt communication to user expertise level.",
+            response_format="with-bullet-points",
+            text_length="chat-conversation"
+        )
+                .set_active_persona("assistant"))
+
+    def with_creative_persona(self, name: str = "Creative Assistant") -> 'FlowAgentBuilder':
+        """Add and set a pre-built creative persona"""
+        return (self
+                .add_persona_profile(
+            "creative",
+            name=name,
+            style="creative",
+            tone="inspiring",
+            personality_traits=["imaginative", "expressive", "innovative", "engaging"],
+            custom_instructions="Think outside the box and provide creative, inspiring solutions.",
+            response_format="md-text",
+            text_length="detailed-indepth"
+        )
+                .set_active_persona("creative"))
+
+    def with_executive_persona(self, name: str = "Executive Assistant") -> 'FlowAgentBuilder':
+        """Add and set a pre-built executive persona"""
+        return (self
+                .add_persona_profile(
+            "executive",
+            name=name,
+            style="professional",
+            tone="authoritative",
+            personality_traits=["strategic", "decisive", "results_oriented", "efficient"],
+            custom_instructions="Provide strategic insights with executive-level clarity and focus on outcomes.",
+            response_format="with-bullet-points",
+            text_length="table-conversation"
+        )
+                .set_active_persona("executive"))
+
+    # ===== VARIABLE MANAGEMENT =====
+
+    def with_custom_variables(self, variables: Dict[str, Any]) -> 'FlowAgentBuilder':
+        """Add custom variables"""
+        self.config.custom_variables.update(variables)
+        return self
+
+    def with_world_model(self, world_model: Dict[str, Any]) -> 'FlowAgentBuilder':
+        """Set initial world model"""
+        self.config.initial_world_model.update(world_model)
+        return self
+
+    # ===== VALIDATION =====
+
+    def validate_config(self) -> Dict[str, List[str]]:
+        """Validate the current configuration"""
+        issues = {"errors": [], "warnings": []}
+
+        # Validate required settings
+        if not self.config.fast_llm_model:
+            issues["errors"].append("Fast LLM model not specified")
+        if not self.config.complex_llm_model:
+            issues["errors"].append("Complex LLM model not specified")
+
+        # Validate MCP configuration
+        if self.config.mcp.enabled and not MCP_AVAILABLE:
+            issues["errors"].append("MCP enabled but MCP not available")
+
+        # Validate A2A configuration
+        if self.config.a2a.enabled and not A2A_AVAILABLE:
+            issues["errors"].append("A2A enabled but A2A not available")
+
+        # Validate telemetry
+        if self.config.telemetry.enabled and not OTEL_AVAILABLE:
+            issues["errors"].append("Telemetry enabled but OpenTelemetry not available")
+
+        # Validate personas
+        if self.config.active_persona and self.config.active_persona not in self.config.persona_profiles:
+            issues["errors"].append(f"Active persona '{self.config.active_persona}' not found in profiles")
+
+        # Validate checkpoint directory
+        if self.config.checkpoint.enabled:
+            try:
+                Path(self.config.checkpoint.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                issues["warnings"].append(f"Cannot create checkpoint directory: {e}")
+
+        return issues
+
+    # ===== MAIN BUILD METHOD =====
+
+    async def build(self) -> FlowAgent:
+        """Build the production-ready FlowAgent"""
+
+        logger.info(f"Building production FlowAgent: {self.config.name}")
+
+        # Validate configuration
+        validation_issues = self.validate_config()
+        if validation_issues["errors"]:
+            error_msg = f"Configuration validation failed: {', '.join(validation_issues['errors'])}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Log warnings
+        for warning in validation_issues["warnings"]:
+            logger.warning(f"Configuration warning: {warning}")
+
+        try:
+            # 1. Setup API configuration
+            api_key = None
+            if self.config.api_key_env_var:
+                api_key = os.getenv(self.config.api_key_env_var)
+                if not api_key:
+                    logger.warning(f"API key env var {self.config.api_key_env_var} not set")
+
+            # 2. Create persona if configured
+            active_persona = None
+            if self.config.active_persona and self.config.active_persona in self.config.persona_profiles:
+                persona_data = self.config.persona_profiles[self.config.active_persona]
+
+                # Create FormatConfig if present
+                format_config = None
+                if "format_config" in persona_data:
+                    fc_data = persona_data.pop("format_config")
+                    format_config = FormatConfig(
+                        response_format=ResponseFormat(fc_data.get("response_format", "frei-text")),
+                        text_length=TextLength(fc_data.get("text_length", "chat-conversation")),
+                        custom_instructions=fc_data.get("custom_instructions", ""),
+                        strict_format_adherence=fc_data.get("strict_format_adherence", True),
+                        quality_threshold=fc_data.get("quality_threshold", 0.7)
+                    )
+
+                active_persona = PersonaConfig(**persona_data)
+                active_persona.format_config = format_config
+
+                logger.info(f"Using persona: {active_persona.name}")
+
+            # 3. Create AgentModelData
+            amd = AgentModelData(
+                name=self.config.name,
+                fast_llm_model=self.config.fast_llm_model,
+                complex_llm_model=self.config.complex_llm_model,
+                system_message=self.config.system_message,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens_output,
+                max_input_tokens=self.config.max_tokens_input,
+                api_key=api_key,
+                budget_manager=self._budget_manager,
+                persona=active_persona,
+                use_fast_response=self.config.use_fast_response
+            )
+
+            # 4. Create FlowAgent
+            agent = FlowAgent(
+                amd=amd,
+                world_model=self.config.initial_world_model.copy(),
+                verbose=self.config.verbose_logging,
+                enable_pause_resume=self.config.checkpoint.enabled,
+                checkpoint_interval=self.config.checkpoint.interval_seconds,
+                max_parallel_tasks=self.config.max_parallel_tasks
+            )
+
+            # 5. Add custom variables
+            for key, value in self.config.custom_variables.items():
+                agent.set_variable(key, value)
+
+            # 6. Add custom tools
+            tools_added = 0
+            for tool_name, (tool_func, tool_description) in self._custom_tools.items():
+                try:
+                    await agent.add_tool(tool_func, tool_name, tool_description)
+                    tools_added += 1
+                except Exception as e:
+                    logger.error(f"Failed to add tool {tool_name}: {e}")
+
+            # 7. Add MCP tools
+            for tool_name, tool_info in self._mcp_tools.items():
+                try:
+                    await agent.add_tool(
+                        tool_info['function'],
+                        tool_name,
+                        tool_info['description']
+                    )
+                    tools_added += 1
+                except Exception as e:
+                    logger.error(f"Failed to add MCP tool {tool_name}: {e}")
+
+            # 8. Setup MCP server
+            if self.config.mcp.enabled and MCP_AVAILABLE:
+                try:
+                    agent.setup_mcp_server(
+                        host=self.config.mcp.host,
+                        port=self.config.mcp.port,
+                        name=self.config.mcp.server_name
+                    )
+                    logger.info("MCP server configured")
+                except Exception as e:
+                    logger.error(f"Failed to setup MCP server: {e}")
+
+            # 9. Setup A2A server
+            if self.config.a2a.enabled and A2A_AVAILABLE:
+                try:
+                    agent.setup_a2a_server(
+                        host=self.config.a2a.host,
+                        port=self.config.a2a.port
+                    )
+                    logger.info("A2A server configured")
+                except Exception as e:
+                    logger.error(f"Failed to setup A2A server: {e}")
+
+            # 10. Initialize enhanced session context
+            try:
+                await agent.initialize_session_context(max_history=200)
+                logger.info("Enhanced session context initialized")
+            except Exception as e:
+                logger.warning(f"Session context initialization failed: {e}")
+
+            # Final summary
+            logger.info(f"ok FlowAgent built successfully!")
+            logger.info(f"   Agent: {agent.amd.name}")
+            logger.info(f"   Tools: {tools_added}")
+            logger.info(f"   MCP: {'ok' if self.config.mcp.enabled else 'F'}")
+            logger.info(f"   A2A: {'ok' if self.config.a2a.enabled else 'F'}")
+            logger.info(f"   Telemetry: {'ok' if self.config.telemetry.enabled else 'F'}")
+            logger.info(f"   Checkpoints: {'ok' if self.config.checkpoint.enabled else 'F'}")
+            logger.info(f"   Persona: {active_persona.name if active_persona else 'Default'}")
+
+            return agent
+
+        except Exception as e:
+            logger.error(f"Failed to build FlowAgent: {e}")
+            raise
+
+    # ===== FACTORY METHODS =====
+
+    @classmethod
+    def create_developer_agent(cls, name: str = "DeveloperAgent",
+                               with_mcp: bool = True, with_a2a: bool = False) -> 'FlowAgentBuilder':
+        """Create a pre-configured developer agent"""
+        builder = (cls()
+                   .with_name(name)
+                   .with_developer_persona()
+                   .with_checkpointing(enabled=True, interval_seconds=300)
+                   .verbose(True))
+
+        if with_mcp:
+            builder.enable_mcp_server(port=8001)
+        if with_a2a:
+            builder.enable_a2a_server(port=5001)
+
+        return builder
+
+    @classmethod
+    def create_analyst_agent(cls, name: str = "AnalystAgent",
+                             with_telemetry: bool = True) -> 'FlowAgentBuilder':
+        """Create a pre-configured data analyst agent"""
+        builder = (cls()
+                   .with_name(name)
+                   .with_analyst_persona()
+                   .with_checkpointing(enabled=True)
+                   .verbose(False))
+
+        if with_telemetry:
+            builder.enable_telemetry(console_export=True)
+
+        return builder
+
+    @classmethod
+    def create_general_assistant(cls, name: str = "AssistantAgent",
+                                 full_integration: bool = True) -> 'FlowAgentBuilder':
+        """Create a general-purpose assistant with full integration"""
+        builder = (cls()
+                   .with_name(name)
+                   .with_assistant_persona()
+                   .with_checkpointing(enabled=True))
+
+        if full_integration:
+            builder.enable_mcp_server()
+            builder.enable_a2a_server()
+            builder.enable_telemetry()
+
+        return builder
+
+    @classmethod
+    def create_creative_agent(cls, name: str = "CreativeAgent") -> 'FlowAgentBuilder':
+        """Create a creative assistant agent"""
+        return (cls()
+                .with_name(name)
+                .with_creative_persona()
+                .with_temperature(0.8)  # More creative
+                .with_checkpointing(enabled=True))
+
+    @classmethod
+    def create_executive_agent(cls, name: str = "ExecutiveAgent",
+                               with_integrations: bool = True) -> 'FlowAgentBuilder':
+        """Create an executive assistant agent"""
+        builder = (cls()
+                   .with_name(name)
+                   .with_executive_persona()
+                   .with_checkpointing(enabled=True))
+
+        if with_integrations:
+            builder.enable_a2a_server()  # Executives need A2A for delegation
+            builder.enable_telemetry()  # Need metrics
+
+        return builder
 
 
-        logger.info(f"--- EnhancedAgent Build Complete: {agent.amd.name} ---")
-        return agent
+# ===== EXAMPLE USAGE =====
 
+async def example_production_usage():
+    """Production usage example with full features"""
 
-# Example Usage (Illustrative)
-async def main_example():
+    logger.info("=== Production FlowAgent Builder Example ===")
 
-    # --- Configure Telemetry (Example: Console Exporter) ---
-    # This should typically happen once at application startup
-    provider = None
-    if OTEL_AVAILABLE:
-        provider = TracerProvider()
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-        # Set the global provider
-        # trace.set_tracer_provider(provider) # Builder will do this if passed
+    # Example 1: Developer agent with full MCP integration
+    logger.info("Creating developer agent with MCP integration...")
 
-    # --- Build the Agent ---
-    builder = EnhancedAgentBuilder(agent_name="ProdAgent007")
+    # Add a custom tool
+    def get_system_info():
+        """Get basic system information"""
+        import platform
+        return {
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "architecture": platform.architecture()
+        }
 
-    agent = await (
-        builder
-        .with_model("gemini/gemini-1.5-flash-latest") # Or "ollama/mistral", "gpt-4o", etc.
-        # .with_api_key(os.getenv("GEMINI_API_KEY")) # Use env vars
-        .with_system_message("You are ProdAgent007, an advanced AI assistant integrating multiple frameworks.")
-        .verbose(True)
-        .enable_streaming(False)
-        .with_history_options(max_tokens=8000, trim_strategy="litellm") # Token-based history
-        .with_initial_world_data({"user_prefs": {"theme": "dark"}, "last_location": None})
+    developer_agent = await (FlowAgentBuilder
+                             .create_developer_agent("ProductionDev", with_mcp=True, with_a2a=True)
+                             .add_tool(get_system_info, "get_system_info", "Get system information")
+                             .enable_telemetry(console_export=True)
+                             .with_custom_variables({
+        "project_name": "FlowAgent Production",
+        "environment": "production"
+    })
+                             .build())
 
-        # --- ADK Features ---
-        .with_adk_code_executor("adk_builtin") # Use ADK's secure executor if possible
-        # .with_unsafe_code_executor() # Uncomment ONLY if you understand the risks
-        .enable_adk_state_sync() # Sync world model with ADK state
-        # Add MCP tools via ADK Toolset
-        # .with_adk_mcp_toolset(StdioServerParameters(command='npx', args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/your/folder"]))
-
-        # --- A2A Features ---
-        .enable_a2a_server(host="127.0.0.1", port=5001) # Agent can receive A2A tasks
-        # .with_a2a_client("http://other-agent:5002") # Pre-configure client for delegation
-
-         # --- MCP Server Feature ---
-        .enable_mcp_server(host="127.0.0.1", port=8001) # Agent can expose capabilities via MCP
-
-        # --- Callbacks & Observability ---
-        .with_post_run_callback(lambda sid, resp, cost, *s: print(f"[Callback] Run Done (Session: {sid}): Cost ${cost:.6f}, s: {s}, Resp: {resp[:50]}..."))
-        .with_telemetry_provider_instance(provider) # Pass configured OTel provider
-
-        .build() # Asynchronous build step
+    # Test the developer agent
+    dev_response = await developer_agent.a_run(
+        "Hello! I'm working on {{ project_name }}. Can you tell me about the system and create a simple Python function?"
     )
+    logger.info(f"Developer agent response: {dev_response[:200]}...")
 
-    # --- Interact with the Agent ---
-    print("\n--- Interacting with Agent ---")
-    response1 = await agent.a_run("Hello there! What can you do?")
-    print("Response 1:", response1)
+    # Example 2: Load from configuration file
+    logger.info("\nTesting configuration save/load...")
 
-    response2 = await agent.a_run("What is the square root of 289?") # Test code execution (if enabled)
-    print("Response 2:", response2)
+    # Save current config
+    config_path = "/tmp/production_agent_config.yaml"
+    builder = FlowAgentBuilder.create_analyst_agent("ConfigTestAgent")
+    builder.save_config(config_path)
 
-    response3 = await agent.a_run("My location is London.", session_id="user123") # Test world model update
-    print("Response 3:", response3)
+    # Load from config
+    loaded_builder = FlowAgentBuilder.from_config_file(config_path)
+    config_agent = await loaded_builder.build()
 
-    response4 = await agent.a_run("What was the location I mentioned?", session_id="user123") # Test world model retrieval
-    print("Response 4:", response4)
+    config_response = await config_agent.a_run("Analyze this data: [1, 2, 3, 4, 5]")
+    logger.info(f"Config-loaded agent response: {config_response[:150]}...")
 
-    # If A2A client configured:
-    # response5 = await agent.a_run("Ask the agent at http://other-agent:5002 about the weather in London.")
-    # print("Response 5:", response5)
+    # Example 3: Agent with MCP tools from config
+    logger.info("\nTesting MCP tools integration...")
 
-    print(agent.total_cost)
+    # Create a sample MCP config
+    mcp_config = {
+        "tools": [
+            {
+                "name": "weather_checker",
+                "description": "Check weather for a location",
+                "function_code": '''
+async def weather_checker(location: str) -> str:
+    """Mock weather checker"""
+    import random
+    conditions = ["sunny", "cloudy", "rainy", "snowy"]
+    temp = random.randint(-10, 35)
+    condition = random.choice(conditions)
+    return f"Weather in {location}: {condition}, {temp}°C"
+'''
+            }
+        ]
+    }
+
+    mcp_config_path = "/tmp/mcp_tools_config.json"
+    with open(mcp_config_path, 'w') as f:
+        json.dump(mcp_config, f, indent=2)
+
+    mcp_agent = await (FlowAgentBuilder()
+                       .with_name("MCPTestAgent")
+                       .with_assistant_persona()
+                       .enable_mcp_server(port=8002)
+                       .load_mcp_tools_from_config(mcp_config_path)
+                       .build())
+
+    mcp_response = await mcp_agent.a_run("What's the weather like in Berlin?")
+    logger.info(f"MCP agent response: {mcp_response[:150]}...")
+
+    # Show agent status
+    logger.info("\n=== Agent Status ===")
+    status = developer_agent.status(pretty_print=False)
+    logger.info(f"Developer agent tools: {len(status['capabilities']['tool_names'])}")
+    logger.info(f"MCP agent tools: {len(mcp_agent.shared.get('available_tools', []))}")
+
+    # Cleanup
+    await developer_agent.close()
+    await config_agent.close()
+    await mcp_agent.close()
+
+    logger.info("Production example completed successfully!")
 
 
-    # --- Cleanup ---
-    await agent.close()
+async def example_quick_start():
+    """Quick start examples for common scenarios"""
 
-    # --- Run Servers (Example - requires separate processes/tasks usually) ---
-    # These are blocking calls, typically run separately
-    # if agent.a2a_server:
-    #     print("\nStarting A2A Server (Blocking)... Press Ctrl+C to stop.")
-    #     # agent.run_a2a_server() # Run in separate thread/process
-    # if agent.mcp_server:
-    #      print("\nStarting MCP Server (Blocking)... Press Ctrl+C to stop.")
-         # agent.run_mcp_server() # Run in separate thread/process
+    logger.info("=== Quick Start Examples ===")
+
+    # 1. Simple developer agent
+    dev_agent = await FlowAgentBuilder.create_developer_agent("QuickDev").build()
+    response1 = await dev_agent.a_run("Create a Python function to validate email addresses")
+    logger.info(f"Quick dev response: {response1[:100]}...")
+    await dev_agent.close()
+
+    # 2. Analyst with custom data
+    analyst_agent = await (FlowAgentBuilder
+                           .create_analyst_agent("QuickAnalyst")
+                           .with_custom_variables({"dataset": "sales_data_2024"})
+                           .build())
+    response2 = await analyst_agent.a_run("Analyze the trends in {{ dataset }}")
+    logger.info(f"Quick analyst response: {response2[:100]}...")
+    await analyst_agent.close()
+
+    # 3. Creative assistant
+    creative_agent = await FlowAgentBuilder.create_creative_agent("QuickCreative").build()
+    response3 = await creative_agent.a_run("Write a creative story about AI agents collaborating")
+    logger.info(f"Quick creative response: {response3[:100]}...")
+    await creative_agent.close()
+
+    logger.info("Quick start examples completed!")
 
 
 if __name__ == "__main__":
-    # Note: Running the example might require setting up environment variables (API keys)
-    # and potentially running dependent services (like other A2A/MCP agents).
-    try:
-        asyncio.run(main_example())
-    except Exception as main_e:
-         print(f"\n--- Example execution failed: {main_e} ---")
-         # Print traceback for debugging
-         import traceback
-         traceback.print_exc()
+    # Run production example
+    asyncio.run(example_production_usage())
 
+    # Run quick start examples
+    asyncio.run(example_quick_start())

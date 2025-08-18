@@ -224,6 +224,9 @@ def run_with_hot_reload():
     except subprocess.CalledProcessError as e:
         print(f"Hot reload execution failed: {e}")
         return False
+    except KeyboardInterrupt:
+        print(f"Exiting hot reload: KeyboardInterrupt")
+        return False
 
 
 def run_in_debug_mode():

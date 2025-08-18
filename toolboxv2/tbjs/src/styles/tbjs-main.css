@@ -101,7 +101,7 @@
     /* Default to Light Theme */
     --theme-bg: #f8f9fa;
     --theme-text: #181823;
-    --theme-primary: #3a5fcd; /* Slightly modern blue */
+    --theme-primary: #1e53f1;
     --theme-secondary: #537FE7; /* Existing secondary, maybe adjust */
     --theme-accent: #045fab;
     --theme-border: rgba(0, 0, 0, 0.1);

@@ -221,6 +221,16 @@ def handle_start_peer(args):
         "forward_to_address": args.forward,
         "target_peer_id": args.target
     }
+    
+    if args.forward:
+        from toolboxv2.mods.P2PRPCServer import start_rpc_server
+        from toolboxv2 import get_app
+        import asyncio
+        app = get_app("P2P_RPC_Server_Starter")
+        host, port = args.forward.split(':')
+        asyncio.create_task(start_rpc_server(app, host, int(port)))
+        print(f"Starting P2P RPC Server on {args.forward}")
+
     manager.start(executable_path, "peer", config)
 
 

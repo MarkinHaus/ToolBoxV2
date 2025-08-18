@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import asyncio
 import hashlib
 import json
@@ -10,7 +12,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, NamedTuple
-
+import dill
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
@@ -606,7 +608,7 @@ class KnowledgeBase:
     def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "FaissVectorStore",
+                 vis_class:str | None = "FastVectorStoreO",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -836,7 +838,7 @@ class KnowledgeBase:
     async def add_data(
         self,
         texts: list[str],
-        metadata: list[dict[str, Any]] | None = None,
+        metadata: list[dict[str, Any]] | None = None, direct:bool = False
     ) -> tuple[int, int]:
         """Enhanced version with smart splitting and clustering"""
         if isinstance(texts, str):
@@ -847,13 +849,15 @@ class KnowledgeBase:
             metadata = [metadata]
         if len(texts) != len(metadata):
             raise ValueError("Length of texts and metadata must match")
-        if len(texts) == 1 and len(texts[0]) < 10_000:
-            if len(self.sto) < self.batch_size and len(texts) == 1:
-                self.sto.append((texts[0], metadata[0]))
-                return -1, -1
-            if len(self.sto) >= self.batch_size:
-                _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
-                self.sto = []
+
+        if not direct:
+            if len(texts) == 1 and len(texts[0]) < 10_000:
+                if len(self.sto) < self.batch_size and len(texts) == 1:
+                    self.sto.append((texts[0], metadata[0]))
+                    return -1, -1
+                if len(self.sto) >= self.batch_size:
+                    _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
+                    self.sto = []
 
         # Split large texts
         split_texts = []
@@ -906,7 +910,7 @@ class KnowledgeBase:
         """Enhanced retrieval with connected information"""
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
-        k = min(k, len(self.vdb.chunks)-1)
+        k = min(k, len(self.vdb.chunks))
         if k <= 0:
             return []
         initial_results = self.vdb.search(query_embedding, k, min_similarity)
@@ -964,7 +968,6 @@ class KnowledgeBase:
             self.vdb.chunks = relevant_chunks
             self.existing_hashes = {chunk.content_hash for chunk in self.vdb.chunks}
             self.vdb.rebuild_index()
-
 
             return initial_count - len(self.vdb.chunks)
 
@@ -1676,12 +1679,31 @@ class KnowledgeBase:
                     }
                 }
             }
+            b = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+
             if path is None:
-                return pickle.dumps(data)
-            # Save to disk using pickle
-            with open(path, 'wb') as f:
-                pickle.dump(data, f)
-            print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
+                return b
+
+            path = Path(path)
+            tmp = path.with_suffix(path.suffix + ".tmp") if path.suffix else path.with_name(path.name + ".tmp")
+
+            try:
+                # Schreibe zuerst in eine temporäre Datei
+                with open(tmp, "wb") as f:
+                    f.write(b)
+                    f.flush()
+                    os.fsync(f.fileno())  # sicherstellen, dass die Daten auf Platte sind
+                # Atomischer Austausch
+                os.replace(tmp, path)
+            finally:
+                # Aufräumen falls tmp noch existiert (bei Fehlern)
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
+            return None
+            # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
         except Exception as e:
             print(f"Error saving knowledge base: {str(e)}")
@@ -1700,13 +1722,32 @@ class KnowledgeBase:
             KnowledgeBase: A fully restored knowledge base instance
         """
         try:
-            if isinstance(path, str):
-                # Load data from disk
-                with open(path, 'rb') as f:
-                    data = pickle.load(f)
-            elif isinstance(path, bytes):
-                data = pickle.loads(path)
+            if isinstance(path, (bytes, bytearray, memoryview)):
+                data_bytes = bytes(path)
+                try:
+                    data = pickle.loads(data_bytes)
+                except Exception as e:
+                    raise EOFError(f"Fehler beim pickle.loads von bytes: {e}") from e
             else:
+                p = Path(path)
+                if not p.exists():
+                    raise FileNotFoundError(f"{p} existiert nicht")
+                size = p.stat().st_size
+                if size == 0:
+                    raise EOFError(f"{p} ist leer (0 bytes)")
+                try:
+                    with open(p, "rb") as f:
+                        try:
+                            data = pickle.load(f)
+                        except EOFError as e:
+                            # Debug info: erste bytes ausgeben
+                            f.seek(0)
+                            snippet = f.read(128)
+                            raise EOFError(
+                                f"EOFError beim Laden {p} (Größe {size} bytes). Erste 128 bytes: {snippet!r}") from e
+
+                except Exception as e:
+                    raise
                 raise ValueError("Invalid path type")
 
             # Create new knowledge base instance with saved configuration
@@ -1749,7 +1790,7 @@ class KnowledgeBase:
                 )
                 kb.concept_extractor.concept_graph.add_concept(concept)
 
-            print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
+            # print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
         except Exception as e:
@@ -1902,5 +1943,5 @@ async def math():
 if __name__ == "__main__":
     get_app(name="main2")
 
-    asyncio.run(math())
+    asyncio.run(main())
 

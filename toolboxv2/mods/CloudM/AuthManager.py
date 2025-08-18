@@ -131,6 +131,49 @@ def db_helper_delete_user(app: App, username: str, uid: str, matching=False):
                        get_results=True)
 
 
+@export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
+def delete_user(app: App, username: str):
+    """Deletes a user and all their data."""
+    if not db_helper_test_exist(app, username):
+        return Result.default_user_error(f"User '{username}' not found.")
+
+    # This will delete all entries matching the user
+    result = db_helper_delete_user(app, username, '*', matching=True)
+
+    if result.is_ok():
+        # Also remove the local private key file if it exists
+        app.config_fh.remove_key_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
+        return Result.ok(f"User '{username}' deleted successfully.")
+    else:
+        return Result.default_internal_error(f"Failed to delete user '{username}'.", data=result)
+
+
+@export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
+def list_users(app: App):
+    """Lists all registered users."""
+    keys_result = app.run_any(TBEF.DB.GET, query="USER::*::*", get_results=True)
+    if keys_result.is_error():
+        return keys_result
+
+    user_keys = keys_result.get()
+    if not user_keys:
+        return Result.ok("No users found.")
+
+    users = []
+    for key in user_keys:
+        if isinstance(key, bytes):
+            key = key.decode()
+        # Extract username from the key USER::username::uid
+        parts = key.split('::')
+        if len(parts) > 1 and parts[1] not in [u['username'] for u in users]:
+            user_res = get_user_by_name(app, parts[1])
+            if user_res.is_ok():
+                user_data = user_res.get()
+                users.append({"username": user_data.name, "email": user_data.email, "level": user_data.level})
+
+    return Result.ok(data=users)
+
+
 # jwt helpers
 
 
@@ -562,17 +605,28 @@ def crate_local_account(app: App, username: str, email: str = '', invitation: st
 async def local_login(app: App, username: str) -> Result:
     if app is None:
         app = get_app(Name + '.local_login')
+
+    is_remote_instance = os.getenv("TOOLBOXV2_IS_REMOTE_INSTANCE", "false").lower() == "true"
+
     user_pri = app.config_fh.get_file_handler("Pk" + Code.one_way_hash(username, "dvp-k")[:8])
     if user_pri is None:
         return Result.ok(info="No User registered on this device")
 
-    s = await get_to_sing_data(app, username=username)
-
-    signature = Code.create_signature(s.as_result().get('challenge'), user_pri
-                                      , row=True)
-
-    res = await jwt_get_claim(app, username, signature, web=False)
-    res = res.as_result()
+    if is_remote_instance:
+        # Running on the remote server, use original local authentication
+        app.print("Performing local authentication on remote instance.")
+        s = await get_to_sing_data(app, username=username)
+        signature = Code.create_signature(s.as_result().get('challenge'), user_pri, row=True)
+        res = await jwt_get_claim(app, username, signature, web=False)
+        res = res.as_result()
+    else:
+        # Running locally, call the remote server for authentication
+        app.print("Performing remote authentication from local instance.")
+        remote_session = app.session
+        s = await remote_session.fetch(f"/api/CloudM.AuthManager/get_to_sing_data?username={username}", method="POST")
+        challenge = s.get('challenge')
+        signature = Code.create_signature(challenge, user_pri, row=True)
+        res = await remote_session.fetch(f"/api/CloudM.AuthManager/jwt_get_claim", method="POST", data={'username': username, 'signature': signature})
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user login failed!", exec_code=res.info.exec_code)
@@ -580,11 +634,17 @@ async def local_login(app: App, username: str) -> Result:
     return Result.ok(info="Success", data=res.get())
 
 
-@export(mod_name=Name, api=True, test=False)
-async def get_to_sing_data(app: App, username, personal_key: Any = False):  # Use Any for personal_key initially
-    t0 = time.perf_counter()
+@export(mod_name=Name, api=True, test=False, request_as_kwarg=True)
+async def get_to_sing_data(app: App, username=None, personal_key: Any = False, data=None, request=None):  # Use Any for personal_key initially
+    t0 = time.time()
     if app is None:
         app = get_app(from_=Name + '.get_to_sing_data')
+
+    is_remote_instance = os.getenv("TOOLBOXV2_IS_REMOTE_INSTANCE", "false").lower() == "true"
+
+    if username is None:
+        username = data.get("username")
+        personal_key = data.get("personal_key")
 
     user_result = get_user_by_name(app, username)
     if user_result.is_error() or not user_result.is_data():

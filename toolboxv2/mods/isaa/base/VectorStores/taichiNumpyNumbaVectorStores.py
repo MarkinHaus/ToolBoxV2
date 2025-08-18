@@ -7,6 +7,7 @@ except ImportError:
         return None
     numba.jit =lambda **_:lambda x:x
     numba.njit =lambda **_:lambda x:x
+    print("numba not found, using fallback")
 import contextlib
 import json
 import os
@@ -21,6 +22,14 @@ import torch
 
 try:
     import taichi as ti
+
+    use_gpu = False
+    ti.init(arch=ti.gpu if use_gpu else ti.cpu)
+except ImportError:
+    ti = None
+
+try:
+
     @ti.kernel
     def batch_normalize(
         vectors: ti.types.ndarray(dtype=ti.f32),
@@ -69,8 +78,8 @@ class NumpyVectorStore(AbstractVectorStore):
         self.embeddings = np.empty((0, 0))
         self.chunks = []
         # Initialize Taich
-        import taichi as ti
-        ti.init(arch=ti.gpu if use_gpu else ti.cpu)
+
+
         self.normalized_embeddings = None
 
     def add_embeddings(self, embeddings: np.ndarray, chunks: list[Chunk]) -> None:
@@ -103,7 +112,7 @@ class NumpyVectorStore(AbstractVectorStore):
         # Enhanced Taichi kernel for similarity computation
         n = len(self.chunks)
         similarities = np.zeros(n, dtype=np.float32)
-        import taichi as ti
+
         @ti.kernel
         def compute_similarities_optimized(
             query: ti.types.ndarray(dtype=ti.f32),
@@ -223,7 +232,7 @@ class VectorStoreConfig:
     use_gpu: bool = False
 
 try:
-    import taichi as ti
+
     @ti.kernel
     def batch_normalize(
         vectors: ti.types.ndarray(dtype=ti.f32),
@@ -288,7 +297,7 @@ class EnhancedVectorStore(AbstractVectorStore):
         self.hard = False
         self.config = config or VectorStoreConfig(max_memory_mb=4096)
         self.lock = threading.Lock()
-        import taichi as ti
+
         # Initialize Taichi with appropriate backend
         ti.init(arch=ti.cuda if self.config.use_gpu else ti.cpu)
         import hnswlib
@@ -966,8 +975,8 @@ class FastVectorStore1(AbstractVectorStore):
 class FastVectorStore2(AbstractVectorStore):
     def __init__(self, embedding_size=768, initial_buffer_size=1000000, use_gpu=False):
         # Initialize Taichi with GPU if available
-        import taichi as ti
-        ti.init(arch=ti.gpu if use_gpu else ti.cpu)
+
+
 
         self.embedding_size = embedding_size
         self.initial_buffer_size = initial_buffer_size
@@ -988,7 +997,7 @@ class FastVectorStore2(AbstractVectorStore):
         self._compile_kernels()
 
     def _compile_kernels(self):
-        import taichi as ti
+
         # Taichi kernels for GPU-accelerated operations
         @ti.kernel
         def normalize_batch_gpu_FastVectorStore2(

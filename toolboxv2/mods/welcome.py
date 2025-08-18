@@ -596,8 +596,6 @@ def ali1():
 
 def printc(str_):
     if 'unittest' in sys.argv[0]:
-        print(f"{__name__=} {sys.argv=}")
-        print("unsupported chars unittest")
         return
     try:
         print(colorize_ascii_art(str_))

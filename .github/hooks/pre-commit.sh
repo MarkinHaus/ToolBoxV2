@@ -15,6 +15,7 @@ HOOK_DIR=$(dirname "$0")
 
 # === Konfiguration ===
 REPORT_DIR_NAME="local-reports" # Relative to project root
+REPORT_DIR_NAME="local-reports" # Relative to project root
 LATEST_REPORT_NAME="latest-report.txt"
 
 # Determine project root and report directory

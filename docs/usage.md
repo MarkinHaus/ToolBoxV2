@@ -219,7 +219,7 @@ def process_with_validation(user_input):
         processed_data = process_data(user_input)
         return Result.ok(data=processed_data)
     except Exception as e:
-        return Result.default_sys_error(
+        return Result.default_internal_error(
             info=f"Processing error: {str(e)}",
             exec_code=500
         )

@@ -548,16 +548,12 @@ mod peer {
                 remote_writer.write_u32(encrypted.len() as u32).await?;
                 remote_writer.write_all(&encrypted).await?;
             }
-            // GEÄNDERT: Explizite Typ-Annotation, um E0282 zu beheben.
             Ok::<(), anyhow::Error>(())
         };
 
         let remote_to_client = async {
             loop {
-                let mut len_buf = [0; 4];
-                remote_reader.read_exact(&mut len_buf).await?;
-                let len = u32::from_be_bytes(len_buf) as usize;
-
+                let len = remote_reader.read_u32().await? as usize;
                 if len > MAX_MSG_SIZE * 2 { return Err(anyhow!("Verschlüsselte Nachricht zu groß")); }
 
                 let mut encrypted_buf = vec![0; len];

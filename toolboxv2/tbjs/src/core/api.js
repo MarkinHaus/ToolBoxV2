@@ -84,7 +84,7 @@ const Api = {
      * @param {boolean} [isSpecialAuthRoute=false] - Indicates if this is a special auth route that might have different token handling.
      * @returns {Promise<Result>} - A promise resolving to a Result object.
      */
-    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'never', isSpecialAuthRoute = false) => {
+    request: async (moduleName, functionName, payload = null, method = 'POST', useTauri = 'never', isSpecialAuthRoute = false, retryCount = 0) => {
         let command = `${moduleName}.${functionName}`; // For Tauri invoke
         let isFullPath = moduleName.startsWith('/');
         const isFormDataPayload = payload instanceof FormData;
@@ -243,6 +243,22 @@ const Api = {
             }
 
             if (!response.ok) {
+                // --- Session Refresh Logic ---
+                if (response.status === 401 && retryCount === 0) {
+                    logger.warn(`[API] Received 401 Unauthorized for ${url}. Attempting session refresh...`);
+                    try {
+                        await TB.user._refreshToken(); // This will update TB.state.get('user.token')
+                        logger.info(`[API] Session refreshed. Retrying original request for ${url}.`);
+                        // Retry the original request with the new token (retryCount = 1)
+                        return Api.request(moduleName, functionName, payload, method, useTauri, isSpecialAuthRoute, 1);
+                    } catch (refreshError) {
+                        logger.error(`[API] Session refresh failed for ${url}.`, refreshError);
+                        // If refresh fails, it means the user is logged out by _refreshToken.
+                        // So, we just return the original 401 error.
+                    }
+                }
+                // --- End Session Refresh Logic ---
+
                 logger.error(`[API] HTTP error ${response.status} for ${url}:`, responseData);
                 const errorPayload = (responseData && typeof responseData === 'object') ? responseData : {};
                 return wrapApiResponse({

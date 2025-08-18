@@ -1,2215 +1,7433 @@
-import asyncio
-import contextlib
-import io
-import json
-import logging
 import os
 import re
-import threading
-import time
-import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from dataclasses import field as dataclass_field
 from enum import Enum
-from importlib.metadata import version
-from inspect import iscoroutinefunction
-from typing import (
-    Any,
-    Literal, Optional,
-)
+import asyncio
+import yaml
+import json
+import logging
+import pickle
+import threading
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Callable, Union, Type
+from dataclasses import dataclass, asdict, field
+from pydantic import BaseModel, Field, create_model, ValidationError
+from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
+import uuid
+import time
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    SkipValidation,
-    TypeAdapter,
-    ValidationError,
-    model_validator,
-)
+# PocketFlow imports
+from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
 
-from toolboxv2 import get_logger
-
-# --- Framework Imports with Availability Checks ---
-
-# Google ADK
-try:
-    from google.adk.agents import BaseAgent, LlmAgent
-    from google.adk.agents.callback_context import CallbackContext
-    from google.adk.agents.invocation_context import InvocationContext
-    from google.adk.code_executors import BaseCodeExecutor
-    from google.adk.code_executors.code_execution_utils import (
-        CodeExecutionInput,
-        CodeExecutionResult,
-    )
-    from google.adk.events import Event
-    from google.adk.examples import Example  # For few-shot
-    from google.adk.models import BaseLlm, Gemini
-    from google.adk.models.lite_llm import LiteLlm  # ADK Wrapper for LiteLLM
-    from google.adk.planners import BasePlanner
-    from google.adk.runners import (  # Base SessionService
-        BaseSessionService,
-        InMemoryRunner,
-        Runner,
-    )
-    from google.adk.sessions import Session, State
-    from google.adk.tools import (
-        BaseTool,
-        FunctionTool,
-        LongRunningFunctionTool,
-        ToolContext,
-    )
-    try:
-        from google.adk.tools import VertexAiSearchTool as AdkVertexAiSearchTool
-        from google.adk.tools import (
-            built_in_code_execution as adk_built_in_code_execution,  # Secure option
-        )
-        from google.adk.tools import google_search as adk_google_search
-    except ImportError:
-        print("WARN: google.adk.tools.google_search not found. Google Search tool not available.")
-        def adk_built_in_code_execution():
-            return None  # Dummy
-        def adk_google_search():
-            return None  # Dummy
-    from google.adk.tools.agent_tool import AgentTool
-    from google.adk.tools.mcp_tool.mcp_toolset import (
-        MCPToolset,
-        SseServerParams,
-        StdioServerParameters,
-    )
-
-    # ADK Artifacts (Optional, for advanced use cases)
-    # from google.adk.artifacts import ArtifactService, InMemoryArtifactService
-    from google.genai.types import Content, FunctionCall, FunctionResponse, Part
-
-    ADK_AVAILABLE = True
-    print("INFO: Google ADK components found. ADK features enabled. version", version("google.adk"))
-except ImportError as e:
-    print(f"WARN: Google ADK components not found or import error ({e}). ADK features disabled.")
-    ADK_AVAILABLE = False
-
-    # Define dummy types for type hinting if ADK is not installed
-    class BaseAgent(BaseModel): pass
-    class LlmAgent(BaseAgent): pass
-    class BaseTool: pass
-    class FunctionTool(BaseTool): pass
-    class LongRunningFunctionTool(BaseTool): pass
-    class ToolContext: pass
-    class CallbackContext: pass
-    class BaseCodeExecutor: pass
-    class CodeExecutionResult: pass
-    class CodeExecutionInput: pass
-    class InvocationContext: pass
-    class BasePlanner: pass
-    class BaseLlm: pass
-    class Gemini(BaseLlm): pass
-    class LiteLlm(BaseLlm): pass # Dummy
-    class Runner: pass
-    class InMemoryRunner(Runner): pass
-    class BaseSessionService: pass
-    class Session: pass
-    class State(dict): pass # ADK State is dict-like
-    class Event: pass
-    class Content: pass
-    class Part: pass
-    class Example: pass
-    class MCPToolset: pass # Dummy
-    class StdioServerParameters: pass # Dummy
-    class SseServerParams: pass # Dummy
-    def adk_built_in_code_execution(): return None # Dummy
-    def adk_google_search(): return None # Dummy
-    class AdkVertexAiSearchTool: pass # Dummy
+from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
 
-# core/agent.py
 
-# ... (Imports remain the same, including A2A imports) ...
-# Make sure the dummy types for A2A are updated if needed
-# Specifically, ensure dummy Task includes 'id' field for cancellation example.
-try:
-    from python_a2a import (
-        A2AClient,
-        A2AServer,
-        Message,
-        MessageRole,
-        Task,
-        TaskState,
-        TaskStatus,
-        TextContent,
-    )
-    from python_a2a import agent as a2a_agent_decorator
-    from python_a2a import run_server as run_a2a_server_func
-    from python_a2a import skill as a2a_skill_decorator
-    # Attempt to import potential cancel/error types - adjust if needed
-    # from python_a2a.error import A2AError, TaskNotFoundError, TaskNotCancelableError
-    # from python_a2a.jsonrpc import JSONRPCResponse, JSONRPCError
-
-    A2A_AVAILABLE = True
-    print("INFO: python-a2a components found. A2A features enabled. version", version("python_a2a"))
-
-except ImportError as e:
-    print(f"WARN: python-a2a components not found or import error ({e}). A2A features disabled.")
-    A2A_AVAILABLE = False
-
-    # Define dummy types... (ensure Task has id)
-    class A2AClient: pass
-    class A2AServer: pass
-    def a2a_agent_decorator(**kwargs): return lambda cls: cls
-    def a2a_skill_decorator(**kwargs): return lambda func: func
-    def run_a2a_server_func(*args, **kwargs): pass
-    class Task(BaseModel): # Pydantic dummy for type hints
-        id: str = "dummy_task"
-        status: Any | None = None
-        message: Any | None = None
-        artifacts: list[Any] | None = None
-        model_config = ConfigDict(extra='allow')
-    class TaskStatus(BaseModel): state: Any = None; message: Any | None=None; timestamp: str=""
-    class TaskState(Enum): SUBMITTED="SUBMITTED"; WORKING="WORKING"; COMPLETED="COMPLETED"; FAILED="FAILED"; CANCELLED="CANCELLED"; UNKNOWN="UNKNOWN"; INPUT_REQUIRED="INPUT_REQUIRED"
-    class Message: pass
-    class TextContent: pass
-    class MessageRole: pass
-    # Dummy error types if needed for type hints later
-    # class TaskNotFoundError(Exception): pass
-    # class TaskNotCancelableError(Exception): pass
-
-
-# Model Context Protocol (MCP) - Only used if building MCP servers directly
-# If using ADK's MCPToolset, explicit MCP imports might not be needed here.
-try:
-    import mcp.server.stdio
-    import mcp.types as mcp_types  # For building MCP servers
-    from google.adk.tools.mcp_tool.conversion_utils import (
-        adk_to_mcp_tool_type,  # If building MCP server from ADK tools
-    )
-    from mcp import ClientSession
-    from mcp.client.sse import sse_client as mcp_sse_client
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.lowlevel import NotificationOptions
-    from mcp.server.lowlevel import Server as MCPServerBase
-    from mcp.server.models import InitializationOptions
-
-    MCP_AVAILABLE = True
-    print("INFO: MCP components found. MCP features enabled (primarily for server building).")
-except ImportError as e:
-    print(f"WARN: MCP components not found or import error ({e}). MCP features disabled (client usage relies on ADK's MCPToolset).")
-    MCP_AVAILABLE = False
-    def adk_to_mcp_tool_type(*a, **k):
-        return None
-    # Define dummy types
-    class ClientSession: pass
-    class FastMCP: pass
-    class MCPServerBase: pass
-    def mcp_sse_client(*args, **kwargs): pass
-    def mcp_types():
-        return None
-
-
-    class TextContent(BaseModel):
-        """Text content for a message."""
-
-        type: Literal["text"]
-        text: str
-        """The text content of the message."""
-        annotations: Any | None = None
-        model_config = ConfigDict(extra="allow")
-
-
-    mcp_types.TextContent = TextContent
-
-# LiteLLM
+# Framework imports with graceful degradation
 try:
     import litellm
-    from litellm import BudgetManager, acompletion, completion_cost, token_counter
-    from litellm.exceptions import (
-        APIConnectionError,
-        BadRequestError,
-        InternalServerError,
-        RateLimitError,
-    )
-    from litellm.utils import get_max_tokens, trim_messages
-    litellm_version = version("litellm")
-    print(f"INFO: LiteLLM version {litellm_version} found.")
+    from litellm import BudgetManager, Usage
+    from litellm.utils import get_max_tokens
+    LITELLM_AVAILABLE = True
 except ImportError:
-    print("CRITICAL ERROR: LiteLLM not found. Agent cannot function without LiteLLM.")
-    # Define dummy types/functions to avoid runtime errors later if LiteLLM is missing
+    LITELLM_AVAILABLE = False
     class BudgetManager: pass
-    async def acompletion(**kwargs): raise ImportError("LiteLLM not installed")
-    def completion_cost(**kwargs): return 0.0
-    def token_counter(**kwargs): return 0
-    class BadRequestError(Exception): pass
-    class InternalServerError(Exception): pass
-    class RateLimitError(Exception): pass
-    class APIConnectionError(Exception): pass
-    def trim_messages(messages, **kwargs): return messages
-    def get_max_tokens(model): return None
+    def get_max_tokens(*a, **kw): return 4096
 
+try:
+    from python_a2a import A2AClient, A2AServer, AgentCard
+    from python_a2a import run_server as run_a2a_server_func
+    A2A_AVAILABLE = True
+except ImportError:
+    A2A_AVAILABLE = False
+    class A2AServer: pass
+    class A2AClient: pass
+    class AgentCard: pass
 
-# OpenTelemetry (Optional, for Observability)
+try:
+    from mcp.server.fastmcp import FastMCP
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    class FastMCP: pass
+
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import (  # Example exporter
-        BatchSpanProcessor,
-        ConsoleSpanExporter,
-    )
-    # Add other exporters (OTLP, Jaeger, etc.) as needed
     OTEL_AVAILABLE = True
-    print("INFO: OpenTelemetry SDK found. Basic tracing enabled (requires configuration).")
 except ImportError:
-    print("WARN: OpenTelemetry SDK not found. Distributed tracing/observability disabled.")
     OTEL_AVAILABLE = False
-    # Dummy tracer
-    class DummyTracer:
-        def start_as_current_span(self, *args, **kwargs):
-            return contextlib.nullcontext() # No-op context manager
-    trace.set_tracer_provider(trace.NoOpTracerProvider()) # Use NoOp if SDK absent
-    tracer = DummyTracer()
+    class TracerProvider: pass
 
-# --- Logging Setup ---
-# Configure root logger level for libraries
+from toolboxv2 import get_logger
+from toolboxv2.mods.isaa.base.Agent.types import *
 
-logging.basicConfig(level=get_logger().level)
-# Configure LiteLLM logging level specifically if needed
-logging.getLogger("LiteLLM").setLevel(get_logger().level)
-# Agent-specific logger
-logger = logging.getLogger("EnhancedAgent")
-logger.setLevel(get_logger().level) # Default level, builder can override via 'verbose'
+logger = get_logger()
+litllm_logger = logging.getLogger("LiteLLM")
+litllm_logger.setLevel(logging.CRITICAL)
+git_logger = logging.getLogger("git")
+git_logger.setLevel(logging.CRITICAL) #(get_logger().level)
+mcp_logger = logging.getLogger("mcp")
+mcp_logger.setLevel(logging.CRITICAL)
+
+TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
 
-# --- Helper Classes ---
-
-@dataclass
-class WorldModel:
-    """Thread-safe persistent understanding of the world for the agent."""
-    data: dict[str, Any] = dataclass_field(default_factory=dict)
-    _lock: SkipValidation[threading.Lock] = dataclass_field(default_factory=threading.Lock, init=False, repr=False)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        with self._lock:
-            return self.data.get(key, default)
-
-    def set(self, key: str, value: Any):
-        with self._lock:
-            logger.debug(f"WorldModel SET: {key} = {value}")
-            self.data[key] = value
-
-    def remove(self, key: str):
-        with self._lock:
-            if key in self.data:
-                logger.debug(f"WorldModel REMOVE: {key}")
-                del self.data[key]
-
-    def show(self) -> str:
-        with self._lock:
-            if not self.data:
-                return "[empty]"
-            try:
-                items = [f"- {k}: {json.dumps(v, indent=None, ensure_ascii=False, default=str)}"
-                         for k, v in self.data.items()]
-                return "\n".join(items)
-            except Exception:
-                items = [f"- {k}: {str(v)}" for k, v in self.data.items()]
-                return "\n".join(items)
-
-    def to_dict(self) -> dict[str, Any]:
-        with self._lock:
-            return self.data.copy()
-
-    def update_from_dict(self, data_dict: dict[str, Any]):
-        with self._lock:
-            self.data.update(data_dict)
-            logger.debug(f"WorldModel updated from dict: {list(data_dict.keys())}")
-
-    def sync_from_adk_state(self, adk_state: State):
-        """Updates the WorldModel from an ADK Session State."""
-        if not ADK_AVAILABLE or not isinstance(adk_state, State):
-            return
-        with self._lock:
-            # Simple overwrite strategy, could be more sophisticated (merge, etc.)
-            self.data = adk_state.to_dict() # ADK State is dict-like
-            logger.debug(f"WorldModel synced FROM ADK state. Keys: {list(self.data.keys())}")
-
-    def sync_to_adk_state(self, adk_state: State):
-        """Updates an ADK Session State from the WorldModel."""
-        if not ADK_AVAILABLE or not isinstance(adk_state, State):
-            return
-        with self._lock:
-            # Update the ADK state dictionary directly
-            adk_state.update(self.data)
-            logger.debug(f"WorldModel synced TO ADK state. Keys: {list(adk_state.keys())}")
+import functools
+import time
 
 
-class AgentModelData(BaseModel):
-    """Configuration for the LLM model and API settings via LiteLLM."""
-    name: str | None = Field(default=None, description="Agent's internal name, often derived from builder.")
-    model: str = Field(..., description="Primary LiteLLM model identifier (e.g., 'gemini/gemini-1.5-flash-latest', 'ollama/mistral').")
-    provider: str | None = Field(default=None, description="LiteLLM provider override if needed.")
-    system_message: str = Field(default="You are a helpful AI assistant.", description="Base system prompt.")
+# Annahme: Die folgenden Klassen sind bereits definiert
+# from your_project import AsyncNode, ProgressEvent, NodeStatus
 
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0) # Use LiteLLM defaults if None
-    top_k: int | None = Field(default=None, ge=1)
-    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
-    max_tokens: int | None = Field(default=None, ge=1, description="Max tokens for LLM generation.")
-    max_input_tokens: int | None = Field(default=None, ge=1, description="Max context window size (for trimming).")
-
-    api_key: str | None = Field(default=None, description="API key (use env vars in production).")
-    api_base: str | None = Field(default=None, description="API base URL (for local models/proxies).")
-    api_version: str | None = Field(default=None, description="API version (e.g., Azure).")
-
-    stop_sequence: list[str] | None = Field(default=None, alias="stop") # Alias for LiteLLM
-    presence_penalty: float | None = Field(default=None)
-    frequency_penalty: float | None = Field(default=None)
-
-    user_id: str | None = Field(default=None, description="User identifier for LLM calls ('user' param).")
-    budget_manager: BudgetManager | None = Field(default=None, description="LiteLLM BudgetManager instance.")
-    caching: bool | None = Field(default=True, description="Enable/disable LiteLLM caching.")
-
-    # Model config for Pydantic v2
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        extra='ignore', # Ignore extra fields from builder/ADK init
-        populate_by_name=True # Allow using 'stop' alias
-    )
-
-@dataclass
-class LLMMessage:
-    """Represents a message in a conversation, compatible with LiteLLM."""
-    role: Literal["user", "assistant", "system", "tool"]
-    content: str | list[dict[str, Any]] # String or multimodal content (LiteLLM format)
-    tool_call_id: Optional[str] = None # For tool responses
-    name: Optional[str] = None # For tool calls/responses (function name)
-
-    # Add tool_calls for assistant messages requesting tool use (LiteLLM format)
-    tool_calls: list[dict[str, Any]] | None = None # e.g., [{"id": "call_123", "function": {"name": "...", "arguments": "{...}"}}]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Converts to dict suitable for LiteLLM."""
-        d = {
-            "role": self.role,
-            "content": self.content,
-        }
-        if self.tool_call_id: d["tool_call_id"] = self.tool_call_id
-        if self.name: d["name"] = self.name
-        if self.tool_calls: d["tool_calls"] = self.tool_calls
-        return d
-
-
-# Agent State Enum
-class InternalAgentState(Enum):
-    IDLE = "idle"
-    PROCESSING = "processing"
-    WAITING_FOR_TOOL = "waiting_for_tool" # If using long-running tools/A2A polling
-    ERROR = "error"
-
-# Processing Strategy Enum
-class ProcessingStrategy(Enum):
-    DIRECT_LLM = "direct_llm"
-    ADK_RUN = "adk_run" # Includes ADK planning, tool calls, code exec etc.
-    A2A_CALL = "a2a_call"
-    # MCP_CALL is removed - MCP tools are handled via ADK_RUN + MCPToolset
-
-
-# --- Secure Code Executor Placeholder ---
-# Implement a real sandboxed executor (Docker, Firecracker, RestrictedPython) for production
-if ADK_AVAILABLE:
-    class SecureCodeExecutorPlaceholder(BaseCodeExecutor):
-        """ Placeholder for a secure code execution environment. """
-        def execute_code(self, invocation_context: InvocationContext,
-                         code_execution_input: CodeExecutionInput) -> CodeExecutionResult:
-            logger.critical("Attempted to execute code with SecureCodeExecutorPlaceholder. "
-                           "This is NOT a secure implementation. Implement sandboxing.")
-            # In a real scenario, delegate to a secure sandbox service
-            # add live codeing (agent excution part)
-            # result_from_sandbox = call_sandbox_service(code_execution_input.code)
-            #eturn CodeExecutionResult(result=result_from_sandbox)
-            return CodeExecutionResult(result="Error: Secure code execution not implemented.")
-
-    class UnsafeSimplePythonExecutor(BaseCodeExecutor):
-        """
-        UNSAFE executor using Python's exec(). FOR TESTING/DEVELOPMENT ONLY.
-        Requires explicit enabling via builder.
-        """
-        def execute_code(self, invocation_context: InvocationContext,
-                         code_execution_input: CodeExecutionInput) -> CodeExecutionResult:
-            logger.warning(f"Executing code with UNSAFE UnsafeSimplePythonExecutor! Code: ```\n{code_execution_input.code}\n```")
-            local_vars = {}
-            stdout_capture = io.StringIO()
-            stderr_capture = io.StringIO()
-            result_str = ""
-            try:
-                with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-                    exec(code_execution_input.code, globals(), local_vars) # <<< UNSAFE!
-                stdout = stdout_capture.getvalue().strip()
-                stderr = stderr_capture.getvalue().strip()
-                if stderr:
-                    result_str = f"Execution Error:\n```\n{stderr}\n```"
-                elif stdout:
-                    result_str = f"Execution Output:\n```\n{stdout}\n```"
-                else:
-                    result_str = "Execution completed with no output."
-            except Exception as e:
-                result_str = f"Execution Exception: {type(e).__name__}: {e}"
-                logger.error(f"Unsafe code execution failed: {e}", exc_info=True)
-            finally:
-                stdout_capture.close()
-                stderr_capture.close()
-            return CodeExecutionResult(result=result_str)
-else: # Dummy executors if ADK not available
-    class SecureCodeExecutorPlaceholder: pass
-    class UnsafeSimplePythonExecutor: pass
-
-
-# --- Main Agent Class ---
-
-_AgentBaseClass = (LlmAgent, BaseModel) if ADK_AVAILABLE else (BaseModel, )
-
-
-class EnhancedAgent(*_AgentBaseClass):
+# --- Dies ist der wiederverwendbare "Autohook"-Dekorator ---
+def with_progress_tracking(cls):
     """
-    Enhanced, production-oriented Unified Agent integrating LiteLLM, ADK, A2A, and MCP (via ADK).
+    Ein Klassendekorator, der die Methoden run_async, prep_async, exec_async,
+    und exec_fallback_async automatisch mit umfassendem Progress-Tracking umwickelt.
     """
-    # --- Core Configuration ---
-    amd: AgentModelData # Primary model config
-    format_model: str | None = Field(default=None, description="Optional separate model for JSON formatting (a_format_class).")
-    format_model_: str | None = Field(default=None, description="helper var for format_model", exclude=True)
-    world_model: WorldModel = Field(default_factory=WorldModel)
-    verbose: bool = Field(default=False)
-    internal_state: InternalAgentState = Field(default=InternalAgentState.IDLE)
 
-    # --- LiteLLM Specific ---
-    stream: bool = Field(default=False, description="Whether LLM calls should stream chunks.")
-    # Use a simple dict for history for now, can be replaced with persistent store interface
-    # Keyed by session_id
-    message_history: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
-    max_history_tokens: int | None = Field(default=None, description="Alternative to max_turns for history trimming based on token count.")
-    max_history_turns: int = Field(default=20, description="Max conversation turns (user+assistant) for history.") # Used if max_history_tokens is None
-    trim_strategy: Literal["litellm", "basic"] = Field(default="litellm")
-    total_cost: float = Field(default=0.0, description="Accumulated cost tracked via LiteLLM.")
+    # --- Wrapper für run_async ---
+    original_run = getattr(cls, 'run_async', None)
+    if original_run:
+        @functools.wraps(original_run)
+        async def wrapped_run_async(self, shared):
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
 
-    # --- Framework Components (Initialized via Builder/Setup) ---
-    # ADK
-    adk_runner: Runner | None = Field(default=None, description="ADK Runner instance if enabled.")
-    adk_session_service: BaseSessionService | None = Field(default=None, description="ADK Session Service (often from runner).")
-    sync_adk_state: bool = Field(default=True, description="Sync WorldModel with ADK Session.state.")
-    # Exit stack to manage lifecycles of components like MCPToolset connections
-    # CRITICAL FIX: Use contextlib.AsyncExitStack type hint
-    adk_exit_stack: contextlib.AsyncExitStack | None = Field(default=None, description="AsyncExitStack for managing ADK toolset lifecycles.")
+            if not progress_tracker:
+                return await original_run(self, shared)
 
-    # MCP Server (Agent acts AS an MCP Server)
-    mcp_server: FastMCP | None = Field(default=None, description="MCP server instance if agent exposes MCP capabilities.")
-    # A2A Server (Agent acts AS an A2A Server)
-    a2a_server: A2AServer | None = Field(default=None, description="A2A server instance if agent exposes A2A capabilities.")
-    # A2A Client (Agent acts AS an A2A Client)
-    a2a_clients: dict[str, A2AClient] = Field(default_factory=dict, description="Cached A2A clients for target agents.")
-    a2a_client_lock: asyncio.Lock = Field(default_factory=asyncio.Lock, description="Lock for A2A client cache access.")
-    a2a_poll_interval: float = Field(default=2.0, description="Polling interval for A2A task results (seconds).")
-    a2a_poll_timeout: float = Field(default=60.0, description="Max time to wait for A2A task completion.")
+            timer_key = f"{node_name}_total"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_enter",
+                timestamp=time.time(),
+                node_name=node_name,
+                session_id=shared.get("session_id"),
+                task_id=shared.get("current_task_id"),
+                plan_id=shared.get("current_plan", TaskPlan(id="none", name="none", description="none")).id if shared.get("current_plan") else None,
+                status=NodeStatus.RUNNING,
+                success=None
+            ))
 
-    # --- Callbacks ---
-    stream_callback: Callable[[str], None | Awaitable[None]] | None = Field(default=None, description="Callback for each LLM stream chunk.")
-    post_run_callback: Callable[[str, str, float], None | Awaitable[None]] | None = Field(default=None, description="Callback after a_run completes (session_id, final_response, turn_cost).")
-    progress_callback: Callable[[Any], None | Awaitable[None]] | None = Field(default=None, description="Callback for progress updates (e.g., tool execution, A2A polling).")
-    human_in_loop_callback: Callable[[dict], str | Awaitable[str]] | None = Field(default=None, description="Callback for HIL intervention points.")
-
-    # --- Observability ---
-    tracer: Any | None = Field(default=None, description="OpenTelemetry Tracer instance.") # Type hint depends on OTel setup
-
-    # --- Internal State ---
-    last_llm_result: Any | None = Field(default=None, description="Raw result from the last LiteLLM call.")
-
-    # Model config
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        extra='ignore' # Critical for compatibility with ADK LlmAgent init
-    )
-
-    @model_validator(mode='after')
-    def _enhanced_agent_post_init(self) -> 'EnhancedAgent':
-        """
-        Performs initialization steps after Pydantic has validated fields.
-        """
-        # --- (Existing post_init logic remains the same) ---
-        logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
-        os.environ['LITELLM_LOG'] = 'DEBUG' if self.verbose else 'NONE'
-        logger.debug(f"Verbose logging {'enabled' if self.verbose else 'disabled'} for agent {self.amd.name}")
-        self._setup_telemetry()
-        if ADK_AVAILABLE and isinstance(self, LlmAgent):
-            logger.debug(f"Running post-init logic for ADK agent '{self.amd.name}'")
-            self._ensure_internal_adk_tools() # Ensure tools are added *after* Pydantic init
-            if self.adk_runner and hasattr(self.adk_runner, 'session_service'):
-                self.adk_session_service = self.adk_runner.session_service
-                logger.debug("Associated ADK session service from runner.")
-        if 'default' not in self.message_history:
-            self.message_history['default'] = []
-        logger.info(
-            f"EnhancedAgent '{self.amd.name}' initialized. Model: {self.amd.model}. "
-            f"Capabilities: ADK({ADK_AVAILABLE}), A2A({A2A_AVAILABLE}), MCP({MCP_AVAILABLE})"
-        )
-        self.model =  LiteLlm(model=self.amd.model)
-        return self
-
-    # --- ADK Post Init (Called automatically by Pydantic if method exists in base) ---
-    # This method name is expected by ADK's BaseModel integration.
-    # Pydantic v2 runs validators based on MRO, so if LlmAgent has this, it runs.
-    # We don't strictly need to define it here unless overriding LlmAgent's version.
-    # def model_post_init(self, __context: Any) -> None:
-    #     """ADK post-initialization (if inheriting from ADK BaseModel)."""
-    #     # Call super() if overriding LlmAgent's method
-    #     # super().model_post_init(__context) # If LlmAgent has this method
-    #     logger.debug(f"ADK model_post_init for Agent '{self.amd.name}' (EnhancedAgent)")
-    #     # Add post-init logic specific to ADK features here, AFTER ADK's own init
-    #     self._ensure_internal_adk_tools()
-    #     if self.adk_runner:
-    #         self.adk_session_service = self.adk_runner.session_service
-
-
-    # --- Telemetry Setup ---
-    def _setup_telemetry(self):
-        """Initializes the OpenTelemetry tracer."""
-        if OTEL_AVAILABLE and not self.tracer:
-            # Get tracer from global provider (needs to be configured elsewhere)
-            # In a real app, you'd configure the TracerProvider with exporters
-            # provider = TracerProvider() # Example: basic provider
-            # provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter())) # Example: console output
-            # trace.set_tracer_provider(provider)
-            self.tracer = trace.get_tracer("enhanced_agent", "0.1.0")
-            logger.info("OpenTelemetry tracer initialized.")
-        elif not OTEL_AVAILABLE:
-            self.tracer = DummyTracer() # Use NoOp tracer if OTel not installed
-            logger.debug("OpenTelemetry not available, using NoOp tracer.")
-
-
-    # --- Setup Methods (Called by Builder) ---
-
-    def setup_mcp_server(self, host="0.0.0.0", port=8000, **mcp_kwargs):
-        """Initialize and configure the MCP server capabilities *for this agent*.
-           This agent will ACT AS an MCP Server.
-        """
-        if not MCP_AVAILABLE:
-            logger.warning("MCP library not installed. Cannot setup MCP server.")
-            return None
-        if self.mcp_server:
-            logger.warning("MCP server already initialized.")
-            return self.mcp_server
-        name = mcp_kwargs.get("name")
-        del mcp_kwargs["name"]
-        self.mcp_server = FastMCP(name=name or f"{self.amd.name}-mcp-server",
-                                  description=f"MCP interface for EnhancedAgent {self.amd.name}",
-                                  **mcp_kwargs)
-        logger.info(f"Setting up MCP server for agent '{self.amd.name}' on {host}:{port}")
-
-        # --- Register Agent's core functionalities as MCP services ---
-        # Example: Expose World Model (Read-only for safety)
-        @self.mcp_server.resource(f"agent://{self.amd.name}/world_model")
-        def mcp_get_world_model_resource() -> dict[str, Any]:
-            """Gets the agent's world model."""
-            logger.debug(f"[MCP Resource] agent://{self.amd.name}/world_model accessed")
-            return self.world_model.to_dict()
-
-        # Example: Expose a simple query tool via MCP
-        @self.mcp_server.tool(name="simple_llm_query")
-        async def mcp_simple_query(prompt: str) -> str:
-            """Sends a simple prompt to the agent's LLM (non-persistent run)."""
-            logger.debug(f"[MCP Tool] simple_llm_query called: {prompt[:50]}...")
-            # Use a minimal, non-persistent run, disable recursive calls
-            response = await self.a_run(
-                prompt, session_id=f"mcp_query_{uuid.uuid4()}",
-                persist_history=False, strategy_override=ProcessingStrategy.DIRECT_LLM
-            )
-            return response
-
-        # If ADK tools exist, potentially expose them via MCP automatically?
-        if ADK_AVAILABLE and isinstance(self, LlmAgent) and self.tools:
-             logger.info("Attempting to expose ADK tools via MCP server...")
-             for adk_tool in self.tools:
-                 if adk_tool.name in ["code_execution", "adk_tool_a2a_send_and_wait", "adk_tool_a2a_send_no_wait", "adk_tool_a2a_get_task_status", "adk_tool_a2a_cancel_task"]:
-                     continue
-                 if not isinstance(adk_tool, BaseTool): continue
-                 try:
-                     mcp_schema = adk_to_mcp_tool_type(adk_tool)
-
-                     # Define the MCP tool handler dynamically
-                     async def mcp_tool_handler(tool_name=adk_tool.name, **kwargs):
-                         logger.info(f"[MCP Tool via ADK] Calling {tool_name} with {kwargs}")
-                         # ADK tools expect ToolContext, which we don't have here.
-                         # We might need to simulate it or adapt the tool execution.
-                         # This simple version calls the tool's underlying function if possible.
-                         # WARNING: This bypasses ADK's standard tool execution flow.
-                         if hasattr(adk_tool, 'func') and callable(adk_tool.func):
-                             # This assumes the function doesn't need ToolContext
-                             result = await adk_tool.func(**kwargs)
-                             # Convert result to MCP content (e.g., TextContent)
-                             if isinstance(result, str):
-                                 return [mcp_types.TextContent(type="text", text=result)]
-                             else:
-                                 try:
-                                     return [mcp_types.TextContent(type="text", text=json.dumps(result))]
-                                 except:
-                                     return [mcp_types.TextContent(type="text", text=str(result))]
-                         else:
-                             logger.warning(f"Cannot directly call ADK tool {tool_name} via MCP.")
-                             return [mcp_types.TextContent(type="text", text=f"Error: Cannot execute ADK tool {tool_name} directly.")]
-
-                     # Register the dynamic handler with the MCP server
-                     self.mcp_server.tool(name=mcp_schema.name)(mcp_tool_handler)
-                     logger.info(f"Exposed ADK tool '{adk_tool.name}' as MCP tool '{mcp_schema.name}'.")
-
-                 except Exception as e:
-                     logger.warning(f"Failed to expose ADK tool '{adk_tool.name}' via MCP: {e}")
-
-
-        logger.info(f"MCP server setup complete for agent '{self.amd.name}'. Run `agent.run_mcp_server()` to start.")
-        return self.mcp_server
-
-    def run_mcp_server(self, transport='sse', **kwargs):
-        """Starts the MCP server (blocking)."""
-        if not self.mcp_server:
-            logger.error("MCP server not initialized. Call setup_mcp_server first.")
-            return
-        if not MCP_AVAILABLE:
-             logger.error("MCP library not available. Cannot run MCP server.")
-             return
-        logger.info(f"Starting MCP server for agent '{self.amd.name}' using {transport} transport...")
-        # This is blocking, run in a separate process/thread for a long-running agent
-        try:
-            self.mcp_server.run(transport=transport, **kwargs)
-        except Exception as e:
-            logger.error(f"MCP server failed to run: {e}", exc_info=True)
-
-    # MCP Client Setup is now handled by ADK's MCPToolset via the Builder
-
-
-    def setup_a2a_server(self, host="0.0.0.0", port=5000, **a2a_server_options):
-        """
-        Initialize and configure the A2A server capabilities using python-a2a.
-        This dynamically creates a server class with the agent's capabilities.
-        """
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not installed. Cannot setup A2A server.")
-            return None
-        if self.a2a_server:
-            logger.warning("A2A server already initialized.")
-            return self.a2a_server
-
-        logger.info(f"Setting up A2A server for agent '{self.amd.name}' on {host}:{port}")
-
-        agent_instance = self # Reference to the current EnhancedAgent instance
-
-        # Define the A2A Server class dynamically using the decorator
-        @a2a_agent_decorator(
-            name=self.amd.name or "EnhancedAgent",
-            description=f"Enhanced Agent '{self.amd.name}' - Capabilities: ADK({ADK_AVAILABLE}), MCP({MCP_AVAILABLE}), A2A({A2A_AVAILABLE})",
-            version="1.0.0",
-            # Other AgentCard fields...
-        )
-        class DynamicA2AServer(A2AServer):
-            bound_agent: EnhancedAgent = agent_instance
-
-            def handle_task(self, task: Task) -> Task:
-                """ Handles incoming A2A tasks by calling the EnhancedAgent's async logic. """
-                # --- (handle_task implementation remains the same as before) ---
-                logger.info(f"[A2A Server {self.bound_agent.amd.name}] Received task: {task.id}")
-                async def run_agent_async():
-                    # ... (logic to extract prompt, call a_run, update task) ...
-                    try:
-                        user_prompt = ""
-                        # ... (extract user_prompt from task.message) ...
-                        if task.message and task.message.get("content"):
-                            content = task.message["content"]
-                            if isinstance(content, dict) and content.get("type") == "text":
-                                user_prompt = content.get("text", "").strip()
-                            elif isinstance(content, str):
-                                user_prompt = content.strip()
-
-                        if not user_prompt:
-                            raise ValueError("Task message has no text content.")
-
-                        session_id = task.message.get("session_id", task.id)
-                        agent_response = await self.bound_agent.a_run(
-                            user_prompt,
-                            session_id=session_id,
-                            persist_history=False,
-                            a2a_task_id=task.id
-                        )
-                        task.artifacts = [{"parts": [{"type": "text", "text": str(agent_response)}]}]
-                        task.status = TaskStatus(state=TaskState.COMPLETED)
-                    except Exception as e:
-                        # ... (error handling) ...
-                        logger.error(f"[A2A Task {task.id}] Error during processing: {e}", exc_info=True)
-                        error_msg = f"Internal agent error: {str(e)}"
-                        task.artifacts = [{"parts": [{"type": "text", "text": error_msg}]}]
-                        task.status = TaskStatus(state=TaskState.FAILED, message={"role": "agent", "content": {"type": "text", "text": error_msg}})
-                    return task
-                try:
-                    updated_task = asyncio.run(run_agent_async())
-                    return updated_task
-                except RuntimeError as e:
-                    # ... (handle RuntimeError) ...
-                    logger.error(f"RuntimeError calling asyncio.run in handle_task: {e}.")
-                    task.status = TaskStatus(state=TaskState.FAILED, message={"role": "agent", "content": {"type": "text", "text": "Internal Server Error processing task asynchronously."}})
-                    return task
-                # --- (end of handle_task logic) ---
-
-
-            # --- Expose Skills ---
-            @a2a_skill_decorator(
-                name="General Query",
-                description="Process general natural language queries using the agent's primary LLM.",
-                examples=["What is the capital of France?", "Summarize the plot of Hamlet."]
-            )
-            def general_query_skill(self, query: str) -> str:
-                """Handles general queries via the skill mechanism by calling a_run."""
-                logger.info(f"[A2A Skill] Received general_query: {query[:50]}...")
-                async def run_skill_async():
-                    # Call a_run, forcing direct LLM strategy for simple queries
-                    response = await self.bound_agent.a_run(
-                        query,
-                        a2a_task_id=f"skill_query_{uuid.uuid4()}",
-                        strategy_override=ProcessingStrategy.DIRECT_LLM,
-                        persist_history=False
-                        )
-                    return response
-                try:
-                    # Bridge sync skill call to async agent logic
-                    return asyncio.run(run_skill_async())
-                except RuntimeError:
-                     logger.error("RuntimeError calling asyncio.run in general_query_skill.")
-                     return "Error: Could not process skill asynchronously."
-
-            # --- FIXED: Generic Skill for ADK Tools ---
-            if ADK_AVAILABLE and isinstance(agent_instance, LlmAgent) and agent_instance.tools:
-                # Check if there are any ADK tools to expose
-                adk_tool_list = [t for t in agent_instance.tools if isinstance(t, BaseTool)]
-                if adk_tool_list:
-                    logger.info(f"Exposing {len(adk_tool_list)} ADK tools via 'execute_adk_tool' A2A skill.")
-
-                    @a2a_skill_decorator(
-                        name="execute_adk_tool",
-                        description=f"Executes a registered ADK tool. Available tools: {', '.join([t.name for t in adk_tool_list])}",
-                        examples=["Execute tool 'some_tool_name' with argument 'arg1'='value1'"] # Generic example
-                    )
-                    def execute_adk_tool_skill(self, tool_name: str, arguments: dict[str, Any]) -> str:
-                        """Generic skill to execute an ADK tool by name with arguments."""
-                        logger.info(f"[A2A Skill] Request to execute ADK tool: {tool_name} with args: {arguments}")
-
-                        # Find the ADK tool instance on the bound agent
-                        tool_to_call: BaseTool | None = None
-                        for tool in self.bound_agent.tools:
-                            if isinstance(tool, BaseTool) and tool.name == tool_name:
-                                tool_to_call = tool
-                                break
-
-                        if not tool_to_call:
-                            logger.warning(f"[A2A Skill] ADK tool '{tool_name}' not found.")
-                            return f"Error: ADK tool '{tool_name}' not found on this agent."
-
-                        # --- Bridge sync skill call to async ADK tool execution ---
-                        async def run_adk_tool_async():
-                            try:
-                                # ADK tools require ToolContext. We can provide a minimal one or None.
-                                # Providing None might limit tool functionality.
-                                # Let's try providing None for simplicity first.
-                                adk_tool_context = None
-
-                                # Check if the tool has an async run method (most ADK tools should)
-                                if hasattr(tool_to_call, 'run_async') and iscoroutinefunction(tool_to_call.run_async):
-                                    # Pass arguments directly to run_async
-                                    result = await tool_to_call.run_async(args=arguments, tool_context=adk_tool_context)
-                                    # Convert result to string for A2A response
-                                    if isinstance(result, str): return result
-                                    try: return json.dumps(result)
-                                    except: return str(result)
-                                elif hasattr(tool_to_call, 'run') and callable(tool_to_call.run):
-                                    # Fallback to synchronous run in thread pool
-                                    logger.warning(f"ADK tool '{tool_name}' has no run_async, using synchronous run in thread.")
-                                    result = await asyncio.to_thread(tool_to_call.run, args=arguments, tool_context=adk_tool_context)
-                                    if isinstance(result, str): return result
-                                    try: return json.dumps(result)
-                                    except: return str(result)
-                                else:
-                                     return f"Error: ADK tool '{tool_name}' has no callable run or run_async method."
-
-                            except Exception as e:
-                                logger.error(f"[A2A Skill] Error executing ADK tool '{tool_name}': {e}", exc_info=True)
-                                return f"Error executing ADK tool {tool_name}: {e}"
-
-                        # Execute the async tool runner
-                        try:
-                            return asyncio.run(run_adk_tool_async())
-                        except RuntimeError:
-                            logger.error(f"RuntimeError calling asyncio.run in execute_adk_tool_skill for tool {tool_name}.")
-                            return "Error: Could not execute ADK tool asynchronously."
-
-            # --- End of Skill Definitions ---
-
-        # Instantiate the dynamic server class
-        try:
-             self.a2a_server = DynamicA2AServer(**a2a_server_options)
-             logger.info(f"A2A server instance created for agent '{self.amd.name}'.")
-             return self.a2a_server
-        except Exception as e:
-             logger.error(f"Failed to instantiate dynamic A2A Server: {e}", exc_info=True)
-             return None
-
-
-    def run_a2a_server(self, host="0.0.0.0", port=5000, **kwargs):
-        """Starts the A2A server (blocking) using the python-a2a run_server function."""
-        if not self.a2a_server:
-            logger.error("A2A server not initialized. Call setup_a2a_server first.")
-            return
-        if not A2A_AVAILABLE:
-            logger.error("python-a2a library not available. Cannot run A2A server.")
-            return
-
-        # Get effective host/port from server instance if set, otherwise use args
-        effective_host = getattr(self.a2a_server, 'host', host)
-        effective_port = getattr(self.a2a_server, 'port', port)
-
-        logger.info(f"Starting A2A server for agent '{self.amd.name}' via run_server_func on {effective_host}:{effective_port}...")
-        try:
-            # Call the imported run_server function, passing the agent instance
-            run_a2a_server_func(self.a2a_server, host=effective_host, port=effective_port, **kwargs) # This blocks
-        except Exception as e:
-            logger.error(f"A2A server failed to run: {e}", exc_info=True)
-
-    async def setup_a2a_client(self, target_agent_url: str) -> A2AClient | None:
-        """Gets or creates an A2A client for a specific target agent URL using python-a2a."""
-        if not A2A_AVAILABLE:
-            logger.warning("python-a2a library not installed. Cannot setup A2A client.")
-            return None
-
-        async with self.a2a_client_lock:
-            if target_agent_url in self.a2a_clients:
-                logger.debug(f"Reusing cached A2A client for {target_agent_url}")
-                return self.a2a_clients[target_agent_url]
-
-            logger.info(f"Setting up A2A client for target: {target_agent_url}")
             try:
-                # python-a2a client likely fetches card on init or first call
-                client = A2AClient(base_url=target_agent_url) # Pass the URL directly
-                # Verify connection implicitly by getting card (optional, client might do lazy loading)
-                # agent_card = await client.get_agent_card() # If method exists
-                # logger.info(f"Successfully connected A2A client to agent: {agent_card.name}")
-                self.a2a_clients[target_agent_url] = client
-                logger.info(f"A2A client created for target: {target_agent_url}")
-                return client
+                # Hier wird die ursprüngliche Methode aufgerufen
+                result = await original_run(self, shared)
+
+                total_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_exit",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    node_duration=total_duration,
+                    routing_decision=result,
+                    session_id=shared.get("session_id"),
+                    task_id=shared.get("current_task_id"),
+                    metadata={"success": True}
+                ))
+
+                return result
             except Exception as e:
-                logger.error(f"Failed to setup A2A client for {target_agent_url}: {e}", exc_info=True)
-                return None
+                total_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=total_duration,
+                    session_id=shared.get("session_id"),
+                    metadata={"error": str(e), "error_type": type(e).__name__}
+                ))
+                raise
 
-    async def close_a2a_clients(self):
-        """Closes all cached A2A client connections."""
-        async with self.a2a_client_lock:
-            logger.info(f"Closing {len(self.a2a_clients)} A2A clients.")
-            # A2AClient may manage underlying httpx clients automatically.
-            # If explicit close needed in future versions, add here.
-            # for client in self.a2a_clients.values():
-            #     await client.close() # If available
-            self.a2a_clients.clear()
+        setattr(cls, 'run_async', wrapped_run_async)
 
-    def setup_adk_runner(self, runner_options: dict[str, Any] | None = None):
-        """Initializes an ADK runner for this agent (if ADK enabled)."""
-        if not ADK_AVAILABLE:
-            logger.warning("ADK not available. Cannot setup ADK runner.")
-            return None
-        if not isinstance(self, LlmAgent):
-            logger.error("Agent must inherit from LlmAgent to use ADK runner directly.")
-            return None
-        if self.adk_runner:
-            logger.warning("ADK runner already initialized.")
-            return self.adk_runner
+    # --- Wrapper für prep_async ---
+    original_prep = getattr(cls, 'prep_async', None)
+    if original_prep:
+        @functools.wraps(original_prep)
+        async def wrapped_prep_async(self, shared):
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
 
-        runner_opts = runner_options or {}
-        runner_class = runner_opts.pop("runner_class", InMemoryRunner) # Default to InMemory
-        app_name = runner_opts.pop("app_name", f"{self.amd.name}_ADKApp")
+            if not progress_tracker:
+                return await original_prep(self, shared)
+            timer_key = f"{node_name}_total_p"
+            progress_tracker.start_timer(timer_key)
+            timer_key = f"{node_name}_prep"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.STARTING,
+                node_phase="prep",
+                session_id=shared.get("session_id")
+            ))
 
-        if runner_class == InMemoryRunner:
-            runner_opts = {}
-
-        logger.info(f"Setting up ADK Runner ({runner_class.__name__}) for app '{app_name}'...")
-
-        try:
-             # Pass the agent instance and other options to the runner constructor
-            self.adk_runner = runner_class(agent=self, app_name=app_name, **runner_opts)
-            self.adk_session_service = self.adk_runner.session_service # Store session service
-            logger.info(f"ADK {runner_class.__name__} setup complete for agent '{self.amd.name}'.")
-            return self.adk_runner
-        except Exception as e:
-            logger.error(f"Failed to setup ADK runner: {e}", exc_info=True)
-            self.adk_runner = None
-            self.adk_session_service = None
-            return None
-
-
-    # --- Core Agent Logic (`a_run`) ---
-
-    async def a_run(self,
-                    user_input: str,
-                    session_id: Optional[str] = None,
-                    persist_history: bool = True,
-                    strategy_override: ProcessingStrategy | None = None,
-                    kwargs_override: dict[str, Any] | None = None, # For fine-grained control
-                    a2a_task_id: Optional[str] = None # Context if called from A2A task
-                    ) -> str:
-        """
-        Main asynchronous execution logic for the agent turn.
-
-        Orchestrates world model updates, state sync, strategy selection,
-        execution, cost tracking, and callbacks.
-        """
-        self.internal_state = InternalAgentState.PROCESSING
-        start_time = time.monotonic()
-        session_id = session_id or "default" # Use 'default' if none provided
-        response = "Error: Processing failed." # Default error
-        turn_cost = 0.0
-        span = None # OTel span
-
-        if not self.tracer: self._setup_telemetry() # Ensure tracer exists
-
-        try:
-            with self.tracer.start_as_current_span(f"Agent Run: {self.amd.name}", attributes={"session_id": session_id}) as span:
-
-                # Ensure session history list exists
-                if session_id not in self.message_history:
-                    logger.debug(f"Initializing history for session: {session_id}")
-                    self.message_history[session_id] = []
-
-                logger.info(f"--- Agent Run Start (Session: {session_id}) ---")
-                span.add_event("Agent run started")
-                logger.info(f"User Input: {user_input[:100]}...")
-                span.set_attribute("user_input", user_input[:500]) # Log truncated input
-
-                # 0. Get ADK Session State (if ADK enabled and syncing)
-                adk_session_state = None
-                if self.sync_adk_state and self.adk_session_service:
-                    try:
-                        # ADK SessionService methods are typically synchronous
-                        # Run in threadpool to avoid blocking
-                        adk_session = await asyncio.to_thread(
-                             self.adk_session_service.get_session,
-                             app_name=self.adk_runner.app_name, # Assuming runner is set if syncing
-                             user_id=self.amd.user_id or "adk_user", # Needs consistent user ID
-                             session_id=session_id
-                        )
-                        if adk_session:
-                            adk_session_state = adk_session.state
-                        else:
-                            logger.warning(f"ADK Session '{session_id}' not found for state sync.")
-                            # Optionally create session here? Be careful about race conditions.
-                    except Exception as sync_e:
-                        logger.error(f"Error getting ADK session state for sync: {sync_e}")
-
-                # 1. Update World Model & Sync State (Run *before* strategy selection)
-                # flow_world_model is now responsible for syncing *from* ADK state initially
-                await self.flow_world_model(user_input, session_id, adk_session_state)
-                span.add_event("World model updated")
-
-                # 2. Prepare message history for this turn
-                current_turn_messages = self._prepare_llm_messages(user_input, session_id)
-                span.set_attribute("history_length", len(current_turn_messages) -1) # Exclude current input
-
-                # 3. Determine Processing Strategy
-                if strategy_override:
-                    strategy = strategy_override
-                    strategy_reasoning = "Strategy overridden by caller."
-                    logger.info(f"Strategy forced by override: {strategy.value}")
-                else:
-                    strategy, strategy_reasoning = self._determine_strategy_heuristic(user_input, current_turn_messages)
-                    logger.info(f"Strategy Selected: {strategy.value} (Reason: {strategy_reasoning})")
-                span.set_attribute("selected_strategy", strategy.value)
-                span.set_attribute("strategy_reasoning", strategy_reasoning)
-
-
-                # --- Prepare kwargs for execution based on strategy ---
-                exec_kwargs = kwargs_override or {}
-                exec_kwargs['session_id'] = session_id
-                exec_kwargs['user_input'] = user_input
-                exec_kwargs['current_turn_messages'] = current_turn_messages
-                exec_kwargs['adk_session_state'] = adk_session_state # Pass state for potential use/update
-
-
-                # 4. Execute Selected Strategy
-                logger.info(f"Executing strategy: {strategy.value}")
-                if strategy == ProcessingStrategy.ADK_RUN:
-                    if ADK_AVAILABLE and self.adk_runner:
-                        response = await self._execute_adk_run(**exec_kwargs)
-                    else:
-                        logger.warning("ADK_RUN strategy selected, but ADK runner not available/configured. Falling back.")
-                        # Fallback strategy? Maybe DIRECT_LLM?
-                        strategy = ProcessingStrategy.DIRECT_LLM
-                        response = await self._execute_direct_llm(**exec_kwargs)
-
-                elif strategy == ProcessingStrategy.A2A_CALL:
-                    if A2A_AVAILABLE:
-                        response = await self._execute_a2a_call(**exec_kwargs)
-                    else:
-                        logger.warning("A2A_CALL strategy selected, but A2A not available. Falling back.")
-                        strategy = ProcessingStrategy.DIRECT_LLM
-                        response = await self._execute_direct_llm(**exec_kwargs)
-
-                else: # Default: DIRECT_LLM
-                    response = await self._execute_direct_llm(**exec_kwargs)
-
-                span.set_attribute("raw_response_length", len(response))
-                span.add_event("Strategy execution complete")
-
-                # 5. Persist History (if successful and enabled)
-                # Add assistant response to history
-                if persist_history and not response.startswith("Error:"):
-                     self._add_to_history(session_id, LLMMessage(role="assistant", content=response).to_dict())
-
-                # 6. Sync World Model *back* to ADK State (if changed and enabled)
-                if self.sync_adk_state and adk_session_state is not None:
-                    try:
-                        self.world_model.sync_to_adk_state(adk_session_state)
-                        span.add_event("ADK state synchronized and updated")
-                    except Exception as sync_e:
-                         logger.error(f"Error syncing/updating ADK session state: {sync_e}")
-                         span.record_exception(sync_e)
-
-                # 7. Track Cost (using last_llm_result if available)
-                if self.last_llm_result:
-                    try:
-                        cost = completion_cost(completion_response=self.last_llm_result, model=self.amd.model)
-                        if cost:
-                            turn_cost = cost
-                            self.total_cost += turn_cost
-                            logger.info(f"Turn Cost: ${turn_cost:.6f}, Total Cost: ${self.total_cost:.6f}")
-                            span.set_attribute("llm_cost", turn_cost)
-                            span.set_attribute("total_agent_cost", self.total_cost)
-                        self.last_llm_result = None # Clear after use
-                    except Exception as cost_e:
-                        logger.warning(f"Failed to calculate cost: {cost_e}")
-                        span.add_event("Cost calculation failed", attributes={"error": str(cost_e)})
-
-
-                # 8. Run Post Callback
-                if self.post_run_callback and not response.startswith("Error:"):
-                    try:
-                        if iscoroutinefunction(self.post_run_callback):
-                            await self.post_run_callback(session_id, response, turn_cost)
-                        else:
-                            self.post_run_callback(session_id, response, turn_cost)
-                        span.add_event("Post-run callback executed")
-                    except Exception as cb_e:
-                        logger.error(f"Post-run callback failed: {cb_e}", exc_info=True)
-                        span.record_exception(cb_e)
-
-
-                logger.info(f"Agent Run finished in {time.monotonic() - start_time:.2f}s. Response: {response[:100]}...")
-
-        except Exception as e:
-            logger.error(f"Error during agent run (Session: {session_id}): {e}", exc_info=True)
-            self.internal_state = InternalAgentState.ERROR
-            response = f"Error: An internal error occurred during processing: {str(e)}"
-            if span:
-                 span.set_status(trace.Status(trace.StatusCode.ERROR, f"Agent run failed: {e}"))
-                 span.record_exception(e)
-        finally:
-            self.internal_state = InternalAgentState.IDLE
-            if span: span.end() # Ensure span is closed
-            logger.info(f"--- Agent Run End (Session: {session_id}) ---")
-
-        return str(response) # Ensure string output
-
-    def run(self, user_input: str, session_id: Optional[str] = None, **kwargs) -> str:
-        """Synchronous wrapper for a_run."""
-        try:
-            # get_event_loop() is deprecated in 3.10+, use get_running_loop() or new_event_loop()
             try:
-                asyncio.get_running_loop()
-                # If loop is running, cannot use asyncio.run. Need to schedule and wait.
-                # This is complex to get right universally (e.g., in notebooks vs servers).
-                # Simplest approach for sync call from sync context is asyncio.run()
-                # If called from async context, user should await a_run() directly.
-                logger.warning("Synchronous 'run' called from a running event loop. "
-                               "This might block the loop. Consider using 'await a_run'.")
-                # Fallback to basic run, may error if loop is running
-                return asyncio.run(self.a_run(user_input, session_id=session_id, **kwargs))
-            except RuntimeError: # No running event loop
-                 return asyncio.run(self.a_run(user_input, session_id=session_id, **kwargs))
-        except Exception as e:
-            logger.error(f"Error in synchronous run wrapper: {e}", exc_info=True)
-            return f"Error: Failed to execute synchronous run: {e}"
+                result = await original_prep(self, shared)
 
-    # --- Strategy Determination ---
-
-    def _determine_strategy_heuristic(self, user_input: str, messages: list[dict]) -> tuple[ProcessingStrategy, str]:
-        """Determines the processing strategy using heuristics (faster than LLM)."""
-        # 1. Check for keywords indicating specific needs
-        input_lower = user_input.lower()
-        # Example Keywords:
-        code_keywords = {"execute", "run code", "python", "calculate", "script"}
-        search_keywords = {"search", "google", "find information", "what is", "who is"}
-        agent_keywords = {"ask agent", "tell agent", "delegate to"} # Keywords for A2A/MCP delegation
-        tool_keywords = {"use tool", "run tool"} # Keywords for specific tool use
-
-        # 2. Check Agent Capabilities (Tools, Servers, Clients)
-        has_adk_tools = ADK_AVAILABLE and isinstance(self, LlmAgent) and bool(self.tools)
-        has_adk_code_executor = ADK_AVAILABLE and isinstance(self, LlmAgent) and self.code_executor is not None
-        can_do_adk_search = any(isinstance(t, type(adk_google_search) | AdkVertexAiSearchTool) for t in getattr(self, 'tools', []))
-        can_do_a2a = A2A_AVAILABLE and bool(self.a2a_clients) # Check if clients configured
-        # MCP check relies on tools being added via MCPToolset in ADK
-        has_adk_tools and any(isinstance(t, BaseTool) and getattr(t, '_is_mcp_tool', False) for t in self.tools) # Heuristic
-
-
-        # --- Strategy Logic ---
-        # Priority: ADK (if tools/code/search needed) > A2A (if delegation requested) > Direct LLM
-
-        # ADK: If code execution or search is explicitly requested or implied, or specific ADK tools mentioned
-        if ADK_AVAILABLE and self.adk_runner:
-            if has_adk_code_executor and any(kw in input_lower for kw in code_keywords):
-                return ProcessingStrategy.ADK_RUN, "Input suggests code execution, using ADK."
-            if can_do_adk_search and any(kw in input_lower for kw in search_keywords):
-                 return ProcessingStrategy.ADK_RUN, "Input suggests web/data search, using ADK."
-            # Check if input mentions names of specific ADK tools
-            if has_adk_tools:
-                tool_names = {t.name.lower() for t in self.tools}
-                if any(f" {name} " in input_lower for name in tool_names) or any(kw in input_lower for kw in tool_keywords):
-                     return ProcessingStrategy.ADK_RUN, "Input mentions specific ADK tool or requests tool use."
-            # General ADK case: If ADK is primary mode and input isn't trivial
-            if len(user_input.split()) > 5: # Simple heuristic for non-trivial input
-                # If ADK tools exist, assume ADK might be needed for planning
-                if has_adk_tools:
-                    return ProcessingStrategy.ADK_RUN, "Complex input and ADK tools available, using ADK planning."
-                # If only basic LLM agent, still might use ADK runner for session mgmt? Check config.
-                # Defaulting to DIRECT_LLM if no specific ADK features seem required.
-
-        # A2A: If delegation is requested and A2A clients are available
-        if can_do_a2a and any(kw in input_lower for kw in agent_keywords):
-             # : Could use LLM here to extract target agent if multiple clients exist
-            return ProcessingStrategy.A2A_CALL, "Input suggests delegating to another agent."
-
-        # Fallback: Direct LLM
-        return ProcessingStrategy.DIRECT_LLM, "Input seems suitable for direct LLM processing."
-
-
-    # --- Strategy Execution Helpers ---
-
-    def _prepare_llm_messages(self, user_input: str, session_id: str) -> list[dict]:
-        """Prepares the list of messages for the LLM call, including history and system prompts."""
-        session_history = self.message_history.get(session_id, [])
-
-        # Construct message list
-        messages: list[dict] = []
-        messages.extend(self.construct_initial_prompts()) # System/world model/tool prompts
-        # Add history (ensure alternating roles if possible, handle potential issues)
-        messages.extend(session_history)
-        # Add current user input
-        messages.append(LLMMessage(role="user", content=user_input).to_dict())
-
-        # Trim messages based on token count or turn limit
-        trimmed_messages = self._trim_messages(messages)
-
-        # Add user input to persistent history *before* LLM call
-        # Note: assistant response added *after* successful call in a_run
-        self._add_to_history(session_id, LLMMessage(role="user", content=user_input).to_dict())
-
-        return trimmed_messages
-
-    async def _execute_direct_llm(self, current_turn_messages: list[dict], session_id: str, **kwargs) -> str:
-        """Executes a direct call to the LLM using LiteLLM."""
-        logger.debug("Executing direct LLM call...")
-        if not current_turn_messages: return "Error: No messages prepared for LLM."
-        try:
-            response_content = await self.a_run_llm_completion(current_turn_messages)
-            return response_content
-        except Exception as e:
-            logger.error(f"Direct LLM execution failed: {e}", exc_info=True)
-            return f"Error during LLM generation: {e}"
-
-    async def _execute_adk_run(self, user_input: str, session_id: str, adk_session_state: State | None, **kwargs) -> str:
-        """Executes the agent's logic using the configured ADK runner."""
-        if not self.adk_runner or not self.adk_session_service:
-            return "Error: ADK Runner or Session Service is not configured for this agent."
-
-        logger.debug(f"Executing ADK run for session {session_id}...")
-        final_response_text = "Error: ADK processing did not yield a final textual response."
-        # Use user_id from AMD if available, default otherwise
-        user_id = self.amd.user_id or "adk_user"
-        app_name = self.adk_runner.app_name
-
-        try:
-            # 1. Ensure ADK session exists
-            try:
-                # Check and potentially create session (synchronous, run in thread)
-                session_exists = await asyncio.to_thread(
-                    self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id
-                )
-                if not session_exists:
-                     logger.info(f"Creating ADK session {session_id} for user {user_id} in app {app_name}")
-                     # Pass initial state from World Model if syncing
-                     initial_state = self.world_model.to_dict() if self.sync_adk_state else {}
-                     await asyncio.to_thread(
-                         self.adk_session_service.create_session,
-                         app_name=app_name, user_id=user_id, session_id=session_id,
-                         state=initial_state
-                     )
-                elif adk_session_state is None and self.sync_adk_state:
-                    # If session existed but we couldn't get state earlier, try again
-                     session = await asyncio.to_thread(self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id)
-                     if session: adk_session_state = session.state
-
-            except Exception as session_e:
-                logger.error(f"Failed to ensure ADK session {session_id}: {session_e}", exc_info=True)
-                return f"Error setting up ADK session: {session_e}"
-
-            # 2. Prepare ADK input (handle multi-modal later)
-            # Assuming user_input is text for now
-            adk_input_content = Content(role='user', parts=[Part(text=user_input)])
-
-            # 3. Execute ADK run_async
-            all_events_str = [] # For logging/debugging
-            async for event in self.adk_runner.run_async(
-                user_id=user_id, session_id=session_id, new_message=adk_input_content):
-
-                # Log event details (optional, can be verbose)
-                try:
-                    event_dict = event.model_dump(exclude_none=True)
-                    all_events_str.append(json.dumps(event_dict, default=str)) # Serialize complex types
-                    logger.debug(f"ADK Event ({event.author}): {all_events_str[-1]}")
-                except Exception as log_e:
-                    logger.debug(f"ADK Event ({event.author}): [Error logging event details: {log_e}]")
-
-                # Call progress callback
-                if self.progress_callback:
-                     try:
-                         progress_data = {"type": "adk_event", "event": event.model_dump(exclude_none=True)}
-                         if iscoroutinefunction(self.progress_callback): await self.progress_callback(progress_data)
-                         else: self.progress_callback(progress_data)
-                     except Exception as cb_e: logger.warning(f"Progress callback failed for ADK event: {cb_e}")
-
-                # Check for Human-in-Loop triggers (example)
-                #if event.actions and event.actions.request_human_input:
-                #     if self.human_in_loop_callback:
-                #         logger.info(f"ADK requesting human input: {event.actions.request_human_input.reason}")
-                         # This needs a mechanism to pause and resume the run_async loop
-                         # HIL is complex with async generators. Placeholder for now.
-                         # human_response = await self.human_in_loop_callback(...)
-                         # Need to inject response back into ADK runner - not straightforward
-               #          logger.warning("Human-in-Loop requested by ADK, but interaction is not implemented.")
-                         # Could potentially send an error response back?
-               #      else:
-               #         logger.warning("ADK requested human input, but no HIL callback is configured.")
-
-
-                # Extract final textual response
-                if event.is_final_response():
-                    # Prioritize text part
-                    if event.content and event.content.parts:
-                        text_parts = [p.text for p in event.content.parts if hasattr(p, 'text')]
-                        if text_parts:
-                            final_response_text = "\n".join(text_parts).strip()
-                        else: # Handle other content types if needed (e.g., function call results as final)
-                            # For now, just serialize the first part if no text found
-                            final_response_text = str(event.content.parts[0]) if event.content.parts else "ADK finished with non-text content."
-                    elif event.actions and event.actions.escalate:
-                        final_response_text = f"Error: Agent escalated: {event.error_message or 'No specific message.'}"
-                    elif event.error_message:
-                         final_response_text = f"Error: ADK processing failed: {event.error_message}"
-                    else:
-                         final_response_text = "ADK processing finished without a clear textual response."
-                    break # Stop processing events
-
-            # 4. Update World Model from final ADK state (if syncing)
-            # This happens *after* the run completes, the sync in a_run updates the persisted state.
-            if self.sync_adk_state and adk_session_state is not None:
-                 # Fetch potentially updated state after run completion
-                 try:
-                     final_session = await asyncio.to_thread(self.adk_session_service.get_session, app_name=app_name, user_id=user_id, session_id=session_id)
-                     if final_session:
-                         self.world_model.sync_from_adk_state(final_session.state)
-                     else:
-                         logger.warning(f"Could not fetch final ADK state for session {session_id} after run.")
-                 except Exception as sync_e:
-                     logger.error(f"Error fetching final ADK state: {sync_e}")
-
-
-            logger.debug("ADK run finished.")
-            return final_response_text
-
-        except Exception as e:
-            logger.error(f"ADK execution failed: {e}", exc_info=True)
-            # Return partial events log on error for debugging
-            events_preview = "\n".join(all_events_str[:5])
-            return f"Error during ADK processing: {e}\nFirst Events:\n{events_preview}"
-
-    async def _execute_a2a_call(self, user_input: str, session_id: str, **kwargs) -> str:
-        """Executes a call to another agent via A2A using python-a2a and waits for the result."""
-
-        client = None
-        task_id = None
-
-        if not A2A_AVAILABLE: return "Error: python-a2a library not available."
-
-        logger.debug("Executing A2A call...")
-
-        target_agent_url = kwargs.get('target_a2a_agent_url')
-        task_prompt = kwargs.get('a2a_task_prompt', user_input)
-
-        if not target_agent_url:
-            if len(self.a2a_clients) == 1:
-                target_agent_url = list(self.a2a_clients.keys())[0]
-                logger.info(f"Using only available A2A client target: {target_agent_url}")
-            else:
-                 return "Error: Target A2A agent URL not specified and multiple clients configured."
-        try:
-            client = await self.setup_a2a_client(target_agent_url)
-            if not client:
-                return f"Error: Could not connect to A2A agent at {target_agent_url}"
-
-            task_id = str(uuid.uuid4())
-            a2a_session_id = f"a2a_{session_id}_{task_id[:8]}"
-
-            logger.info(f"Sending A2A task '{task_id}' to {target_agent_url}...")
-
-            # --- Call python-a2a client's task sending method ---
-            # The library might have a high-level `create_task` or similar.
-            # Let's assume a `send_task` method exists that takes message content.
-            # We construct the message payload expected by the library.
-            # This structure might need adjustment based on python-a2a's specifics.
-            message_payload = {
-                "role": "user", # Assuming MessageRole.USER maps to "user"
-                "content": {
-                    "type": "text", # Assuming TextContent maps to this
-                    "text": task_prompt
-                 }
-            }
-            # The client method might take id/sessionId separately or as part of a task object
-            # Assuming a method signature like: send_task(message: Dict, task_id: str, session_id: str)
-            # This is an *assumption* based on typical A2A needs.
-            if hasattr(client, 'send_task'):
-                initial_task_info = await client.send_task(
-                    message=message_payload,
-                    task_id=task_id,
-                    session_id=a2a_session_id
-                ) # Adjust call based on actual method signature
-            elif hasattr(client, 'create_task'): # Alternative common pattern
-                 initial_task_info = await client.create_task(
-                     message=message_payload,
-                     task_id=task_id,
-                     session_id=a2a_session_id
-                 )
-            else:
-                 # Fallback to 'ask' if specific task methods are unavailable (less control)
-                 logger.warning("A2A client lacks specific send_task/create_task method, using high-level 'ask'. Polling might not work.")
-                 # 'ask' likely blocks and returns the final result directly
-                 response_text = await client.ask(task_prompt, session_id=a2a_session_id)
-                 return response_text
-
-
-            # --- Process initial response and Poll ---
-            # Check the structure of initial_task_info (might be a Task object, dict, etc.)
-            # Extract initial state if possible
-            initial_state = TaskState.SUBMITTED # Default if state not returned immediately
-            if isinstance(initial_task_info, dict) and initial_task_info.get('status'):
-                initial_state_val = initial_task_info['status'].get('state')
-                if initial_state_val: initial_state = TaskState(initial_state_val) # Convert string to Enum
-            elif hasattr(initial_task_info, 'status') and hasattr(initial_task_info.status, 'state'):
-                 initial_state = initial_task_info.status.state
-
-            logger.info(f"A2A task submitted (ID: {task_id}). Initial State: {initial_state}")
-
-            # Don't poll if initial state is already final (unlikely but possible)
-            if initial_state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED):
-                 logger.warning(f"A2A task {task_id} already in final state {initial_state} after submission.")
-                 # Need to extract result from initial_task_info here
-                 # ... logic to extract result based on initial_task_info structure ...
-                 return f"Task finished immediately with state {initial_state}." # Placeholder
-
-            self.internal_state = InternalAgentState.WAITING_FOR_TOOL
-            final_result = await self._poll_a2a_task(client, task_id, target_agent_url)
-            self.internal_state = InternalAgentState.PROCESSING
-            return final_result
-
-        except TimeoutError:
-             logger.error(f"A2A task {task_id} timed out after {self.a2a_poll_timeout}s.")
-             # Attempt cancellation?
-             cancel_response = "No clinet"
-             if client:
-                cancel_response = await client.cancel_task(task_id=task_id)
-             return f"Error: A2A task timed out waiting for result from {target_agent_url} {cancel_response}."
-        except Exception as e:
-            logger.error(f"A2A execution failed: {e}", exc_info=True)
-            return f"Error during A2A call: {e}"
-
-    async def _poll_a2a_task(self, client: A2AClient, task_id: str, target_url: str) -> str:
-        """Polls the GetTask endpoint using python-a2a client until a final state."""
-        if not hasattr(client, 'get_task'):
-             raise NotImplementedError(f"A2A client for {target_url} does not support 'get_task' for polling.")
-
-        logger.debug(f"Polling A2A task {task_id} on {target_url}...")
-        start_time = time.monotonic()
-
-        while time.monotonic() - start_time < self.a2a_poll_timeout:
-            try:
-                # Assume get_task takes task_id (and potentially historyLength)
-                task_details = await client.get_task(task_id=task_id, history_length=1)
-
-                # --- Parse the response (structure depends on python-a2a implementation) ---
-                current_state = TaskState.UNKNOWN
-                final_text = f"A2A Task {task_id} finished."
-                error_message = None
-
-                # Example parsing assuming task_details is dict-like or object-like
-                status_info = None
-                if isinstance(task_details, dict):
-                    status_info = task_details.get('status')
-                elif hasattr(task_details, 'status'):
-                    status_info = task_details.status
-
-                if status_info:
-                    state_val = status_info.get('state') if isinstance(status_info, dict) else getattr(status_info, 'state', None)
-                    if state_val:
-                        try:
-                            current_state = TaskState(state_val) # Convert string to Enum
-                        except ValueError:
-                             logger.warning(f"Received unknown task state '{state_val}' for task {task_id}")
-
-                    logger.debug(f"A2A task {task_id} current state: {current_state}")
-
-                    # Call progress callback
-                    if self.progress_callback:
-                         # ... (progress callback logic remains the same) ...
-                        pass
-
-                    # Check for final state
-                    if current_state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED):
-                        logger.info(f"A2A task {task_id} reached final state: {current_state}")
-
-                        # Extract final result from artifacts
-                        artifacts = task_details.get('artifacts') if isinstance(task_details, dict) else getattr(task_details, 'artifacts', None)
-                        if artifacts and isinstance(artifacts, list) and artifacts:
-                            # Simple extraction: assume first artifact, first part is text
-                            try:
-                                parts = artifacts[0].get('parts') if isinstance(artifacts[0], dict) else getattr(artifacts[0], 'parts', [])
-                                if parts and isinstance(parts, list) and parts:
-                                    text_part = parts[0].get('text') if isinstance(parts[0], dict) else getattr(parts[0], 'text', None)
-                                    if text_part:
-                                        final_text = str(text_part).strip()
-                            except Exception as parse_e:
-                                logger.warning(f"Could not parse artifacts for task {task_id}: {parse_e}")
-                                final_text = "[Could not parse final artifact]"
-
-                        # Handle failed/cancelled states
-                        if current_state == TaskState.FAILED:
-                            # Try to extract error message from status
-                            status_message_info = status_info.get('message') if isinstance(status_info, dict) else getattr(status_info, 'message', None)
-                            if status_message_info:
-                                # Assuming message content is similar structure to artifacts
-                                try:
-                                     err_content = status_message_info.get('content') if isinstance(status_message_info, dict) else getattr(status_message_info, 'content', None)
-                                     if err_content:
-                                         error_message = err_content.get('text') if isinstance(err_content, dict) else getattr(err_content, 'text', 'Unknown error')
-                                except: pass # Ignore parsing errors here
-                            return f"Error: A2A task failed on {target_url}: {error_message or final_text}"
-                        elif current_state == TaskState.CANCELLED:
-                            return f"Info: A2A task was cancelled on {target_url}."
-                        else: # Completed
-                            return final_text
-
-                else:
-                    logger.warning(f"A2A get_task for {task_id} returned no status info: {task_details}")
-
-            except APIConnectionError as conn_e:
-                 logger.warning(f"Connection error polling A2A task {task_id}: {conn_e}. Retrying...")
+                prep_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_phase",
+                    timestamp=time.time(),
+                    status=NodeStatus.RUNNING,
+                    success=True,
+                    node_name=node_name,
+                    node_phase="prep_complete",
+                    node_duration=prep_duration,
+                    session_id=shared.get("session_id")
+                ))
+                return result
             except Exception as e:
-                logger.error(f"Error polling A2A task {task_id}: {e}", exc_info=True)
-                return f"Error polling A2A task status: {e}"
+                progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    metadata={"error": str(e), "error_type": type(e).__name__},
+                    node_phase="prep_failed"
+                ))
+                raise
 
-            await asyncio.sleep(self.a2a_poll_interval)
 
-        raise TimeoutError(f"Polling A2A task {task_id} timed out.")
+        setattr(cls, 'prep_async', wrapped_prep_async)
 
-    # --- Internal Helper Methods ---
+    # --- Wrapper für exec_async ---
+    original_exec = getattr(cls, 'exec_async', None)
+    if original_exec:
+        @functools.wraps(original_exec)
+        async def wrapped_exec_async(self, prep_res):
+            progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+            node_name = self.__class__.__name__
 
-    def construct_initial_prompts(self) -> list[dict]:
-        """Constructs the initial system/context messages for the LLM prompt."""
-        messages = []
-        # Base System Prompt
-        if self.amd.system_message:
-            messages.append(LLMMessage("system", self.amd.system_message).to_dict())
+            if not progress_tracker:
+                return await original_exec(self, prep_res)
 
-        # World Model Context
-        wm_repr = self.world_model.show()
-        if wm_repr != "[empty]":
-            messages.append(LLMMessage("system", f"Current World State:\n{wm_repr}").to_dict())
+            timer_key = f"{node_name}_exec"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.RUNNING,
+                node_phase="exec",
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
 
-        # Capabilities Overview (ADK specific parts depend on LlmAgent inheritance)
-        caps = ["LiteLLM (Core LLM access)"]
-        if ADK_AVAILABLE and isinstance(self, LlmAgent):
-            if self.tools: caps.append("ADK Tools (including potential MCP/A2A wrappers)")
-            if self.code_executor: caps.append("ADK Code Execution")
-            if any(isinstance(t, type(adk_google_search) | AdkVertexAiSearchTool) for t in getattr(self, 'tools', [])):
-                 caps.append("ADK Search")
-        if A2A_AVAILABLE and self.a2a_clients: caps.append("A2A Client (delegate to other agents)")
-        if self.mcp_server: caps.append("MCP Server (exposes capabilities)")
-        if self.a2a_server: caps.append("A2A Server (receives tasks)")
+            # In exec gibt es normalerweise keine Fehlerbehandlung, da diese von run_async übernommen wird
+            result = await original_exec(self, prep_res)
 
-        messages.append(LLMMessage("system", f"Your Capabilities: {', '.join(caps)}.").to_dict())
+            exec_duration = progress_tracker.end_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.RUNNING,
+                success=True,
+                node_phase="exec_complete",
+                node_duration=exec_duration,
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
+            return result
 
-        # ADK Tool Instructions (if ADK enabled and tools exist)
-        if ADK_AVAILABLE and isinstance(self, LlmAgent) and self.tools:
+        setattr(cls, 'exec_async', wrapped_exec_async)
+
+    # --- Wrapper für post_async ---
+    original_post = getattr(cls, 'post_async', None)
+    if original_post:
+        @functools.wraps(original_post)
+        async def wrapped_post_async(self, shared, prep_res, exec_res):
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
+
+            if not progress_tracker:
+                return await original_post(self, shared, prep_res, exec_res)
+
+            timer_key_post = f"{node_name}_post"
+            progress_tracker.start_timer(timer_key_post)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.COMPLETING,  # Neue Phase "completing"
+                node_phase="post",
+                session_id=shared.get("session_id")
+            ))
+
             try:
-                # Use ADK's internal method to get schema if possible, otherwise basic list
-                tool_schemas = getattr(self, 'tool_schemas', None) # ADK might populate this
-                if tool_schemas:
-                     tool_list_str = json.dumps(tool_schemas, indent=2)
-                     messages.append(LLMMessage("system", f"You have access to the following tools (use FunctionCall format):\n{tool_list_str}").to_dict())
-                else: # Fallback to basic list
-                    tool_list = "\n".join([f"- {tool.name}: {tool.description or 'No description'}" for tool in self.tools])
-                    messages.append(LLMMessage("system", f"You can use the following tools:\n{tool_list}\nRespond with a FunctionCall to use a tool.").to_dict())
+                # Die eigentliche post_async Methode aufrufen
+                result = await original_post(self, shared, prep_res, exec_res)
+
+                post_duration = progress_tracker.end_timer(timer_key_post)
+                total_duration = progress_tracker.end_timer(f"{node_name}_total_p")  # Gesamtdauer stoppen
+
+                # Sende das entscheidende "node_exit" Event nach erfolgreicher post-Phase
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_exit",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    node_duration=total_duration,
+                    routing_decision=result,
+                    session_id=shared.get("session_id"),
+                    task_id=shared.get("current_task_id"),
+                    metadata={
+                        "success": True,
+                        "post_duration": post_duration
+                    }
+                ))
+
+                return result
             except Exception as e:
-                 logger.warning(f"Could not generate detailed ADK tool instructions: {e}")
+                # Fehler in der post-Phase
+                post_duration = progress_tracker.end_timer(timer_key_post)
+                total_duration = progress_tracker.end_timer(f"{node_name}_total")
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=total_duration,
+                    metadata={"error": str(e), "error_type": type(e).__name__, "phase": "post"},
+                    node_phase="post_failed"
+                ))
+                raise
 
+        setattr(cls, 'post_async', wrapped_post_async)
 
-        # Add specific instructions for A2A delegation if needed
-        if A2A_AVAILABLE and self.a2a_clients:
-             client_names = list(self.a2a_clients.keys()) # Target URLs act as names here
-             messages.append(LLMMessage("system", f"You can delegate tasks to other agents via A2A using their URLs (e.g., {client_names[0]} if available). Indicate clearly if you want to delegate.").to_dict())
+    # --- Wrapper für exec_fallback_async ---
+    original_fallback = getattr(cls, 'exec_fallback_async', None)
+    if original_fallback:
+        @functools.wraps(original_fallback)
+        async def wrapped_fallback_async(self, prep_res, exc):
+            progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+            node_name = self.__class__.__name__
 
-        return messages
+            if progress_tracker:
+                timer_key = f"{node_name}_exec"
+                exec_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_phase",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    node_phase="exec_fallback",
+                    node_duration=exec_duration,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None,
+                    metadata={"error": str(exc), "error_type": type(exc).__name__},
+                ))
 
-    def _add_to_history(self, session_id: str, message: dict[str, Any]):
-         """Adds a message to the session history, respecting limits."""
-         if session_id not in self.message_history:
-              self.message_history[session_id] = []
-         self.message_history[session_id].append(message)
+            return await original_fallback(self, prep_res, exc)
 
-         # Apply trimming immediately after adding (simpler than doing it before call)
-         self.message_history[session_id] = self._trim_messages(self.message_history[session_id])
+        setattr(cls, 'exec_fallback_async', wrapped_fallback_async)
 
+    return cls
 
-    def _trim_messages(self, messages: list[dict]) -> list[dict]:
-        """Trims message list based on configured strategy (tokens or turns)."""
-        if self.max_history_tokens and self.amd.model:
-            # Token-based trimming
-            max_tokens = self.max_history_tokens
-            if self.trim_strategy == "litellm":
-                try:
-                    trimmed = trim_messages(messages, model=self.amd.model, max_tokens=max_tokens)
-                    if len(trimmed) < len(messages):
-                        logger.debug(f"Trimmed history from {len(messages)} to {len(trimmed)} messages using LiteLLM token strategy ({max_tokens} tokens).")
-                    return trimmed
-                except Exception as e:
-                    logger.warning(f"LiteLLM trimming failed ({e}), falling back to basic token trim.")
-                    # Fallthrough to basic token trim
-            # Basic token trim (keep system, remove oldest convo pairs)
-            system_msgs = [m for m in messages if m.get('role') == 'system']
-            convo_msgs = [m for m in messages if m.get('role') != 'system']
-            current_tokens = token_counter(messages=messages, model=self.amd.model)
-            while current_tokens > max_tokens and len(convo_msgs) >= 2:
-                 convo_msgs = convo_msgs[2:] # Remove oldest pair
-                 current_tokens = token_counter(messages=system_msgs + convo_msgs, model=self.amd.model)
-            final_messages = system_msgs + convo_msgs
-            if len(final_messages) < len(messages):
-                 logger.debug(f"Trimmed history from {len(messages)} to {len(final_messages)} messages using basic token strategy ({max_tokens} tokens).")
-            return final_messages
+# ===== CORE NODE IMPLEMENTATIONS =====
+@with_progress_tracking
+class ContextManagerNode(AsyncNode):
+    """Advanced context management with intelligent splitting"""
 
-        elif self.max_history_turns > 0:
-            # Turn-based trimming
-            system_msgs = [m for m in messages if m.get('role') == 'system']
-            convo_msgs = [m for m in messages if m.get('role') != 'system']
-            # Keep last N turns (each turn = user + assistant = 2 messages)
-            max_convo_messages = self.max_history_turns * 2
-            if len(convo_msgs) > max_convo_messages:
-                trimmed_convo = convo_msgs[-max_convo_messages:]
-                logger.debug(f"Trimmed history from {len(convo_msgs)//2} to {len(trimmed_convo)//2} turns.")
-                return system_msgs + trimmed_convo
-            else:
-                return messages # No trimming needed
-        else:
-            # No trimming configured or possible
-            logger.warning("History trimming not configured or possible (missing max_tokens/model or max_turns).")
-            return messages
+    def __init__(self, max_tokens: int = 8000, compression_threshold: float = 0.76, **kwargs):
+        super().__init__(**kwargs)
+        self.max_tokens = max_tokens
+        self.compression_threshold = compression_threshold
+        self.session_managers = {}  # Chat session instances
 
+    async def prep_async(self, shared):
+        agent_instance = shared.get("agent_instance")
+        session_id = shared.get("session_id", "default")
+        current_query = shared.get("current_query", "")
 
-    async def a_run_llm_completion(self, llm_messages: list[dict]=None, **kwargs) -> str:
-        """Core wrapper around LiteLLM acompletion with error handling, streaming, and cost tracking."""
-        if not llm_messages:
-            if "messages" in kwargs:
-                llm_messages = kwargs.pop("messages")
-            if "llm_messages" in kwargs:
-                llm_messages = kwargs.pop("llm_messages")
-            if not llm_messages:
-                logger.warning("a_run_llm_completion called with empty message list.")
-                return "Error: No message provided to the model."
+        # Initialize or get chat session
+        session_manager = await self._get_session_manager(agent_instance, session_id)
 
-        self.print_verbose(f"Running model '{self.amd.model}' with {len(llm_messages)} messages.")
-        # self.print_verbose("Messages:", json.dumps(llm_messages, indent=2)) # Very verbose
-
-        # Prepare LiteLLM parameters from AgentModelData and kwargs overrides
-        params = {
-            'model': self.format_model or self.amd.model,
-            'messages': llm_messages,
-            'temperature': self.amd.temperature,
-            'top_p': self.amd.top_p,
-            'top_k': self.amd.top_k,
-            'max_tokens': self.amd.max_tokens,
-            'stream': self.stream,
-            'stop': self.amd.stop_sequence,
-            'user': self.amd.user_id,
-            'api_base': self.amd.api_base,
-            'api_version': self.amd.api_version,
-            'api_key': self.amd.api_key,
-            'presence_penalty': self.amd.presence_penalty,
-            'frequency_penalty': self.amd.frequency_penalty,
-            'caching': self.amd.caching,
-            'response_format': kwargs.get('response_format'), # For a_format_class
-            'tools': kwargs.get('tools'), # For LiteLLM function calling (less common now with ADK)
+        return {
+            "session_manager": session_manager,
+            "current_query": current_query,
+            "agent_instance": agent_instance,
+            "tasks": shared.get("tasks", {}),
+            "world_model": shared.get("world_model", {}),
+            "results_store": shared.get("results_store", {}),
+            "conversation_history": shared.get("conversation_history", []),
+            "max_tokens": self.max_tokens,
+            "compression_threshold": self.compression_threshold
         }
-        # Filter out None values as LiteLLM prefers absence over None for some params
-        params = {k: v for k, v in params.items() if v is not None}
 
-        # Add budget manager if present
-        if self.amd.budget_manager: params['budget_manager'] = self.amd.budget_manager
+    async def _get_session_manager(self, agent_instance, session_id: str):
+        """Get or create ChatSession for this session"""
+        if session_id not in self.session_managers:
+            from toolboxv2 import get_app
+            from toolboxv2.mods.isaa.extras.session import ChatSession
 
-        full_response_content = ""
-        tool_calls_requested = None # Store tool calls if generated
+            memory_instance = get_app().get_mod("isaa").get_memory()
+            space_name = f"ChatSession/ContextManager/{agent_instance.amd.name}/{session_id}"
 
-        try:
-            response_object = await acompletion(**params)
+            self.session_managers[session_id] = ChatSession(
+                memory_instance,
+                space_name=space_name,
+                max_length=200  # Keep more history for context
+            )
 
-            if self.stream:
-                collected_chunks = []
-                async for chunk in response_object:
-                    # Store raw chunk for potential analysis or replay
-                    collected_chunks.append(chunk)
-                    # Extract text delta
-                    chunk_delta = chunk.choices[0].delta.content or ""
-                    if chunk_delta:
-                        full_response_content += chunk_delta
-                        if self.stream_callback:
-                             try:
-                                 # Provide only the new text chunk
-                                 if iscoroutinefunction(self.stream_callback): await self.stream_callback(chunk_delta)
-                                 else: self.stream_callback(chunk_delta)
-                             except Exception as cb_e:
-                                 logger.warning(f"Stream callback failed: {cb_e}")
-                    # Check for tool call deltas (less common in streaming)
-                    tool_deltas = chunk.choices[0].delta.tool_calls
-                    if tool_deltas:
-                         logger.warning("Received tool call delta during streaming - handling may be incomplete.")
-                         # : Implement robust handling of streaming tool calls if needed
+        return self.session_managers[session_id]
 
-                # After stream, construct a final response object mimicking non-streaming one for cost tracking
-                # This is an approximation, LiteLLM might offer better ways.
-                final_choice = {"message": {"role": "assistant", "content": full_response_content}}
-                # If tool calls were detected during streaming, add them (complex to reconstruct accurately)
-                # if reconstructed_tool_calls: final_choice["message"]["tool_calls"] = reconstructed_tool_calls
-                self.last_llm_result = {
-                    "choices": [{"message": final_choice["message"]}],
-                    "model": self.amd.model, # Needed for cost tracking
-                    # Usage stats are often missing or zero in streaming chunks, need final value if available
-                    "usage": getattr(collected_chunks[-1], 'usage', {"prompt_tokens": 0, "completion_tokens": 0})
-                }
+    async def exec_async(self, prep_res):
+        session_manager = prep_res["session_manager"]
+        current_query = prep_res["current_query"]
 
-            else: # Non-streaming
-                self.last_llm_result = response_object # Store the full response
-                # Extract content and potential tool calls
-                message = response_object.choices[0].message
-                full_response_content = message.content or ""
-                tool_calls_requested = message.tool_calls # List of ToolCall objects
+        # Build comprehensive context parts
+        context_parts = await self._build_three_part_context(prep_res)
 
-                # Check if LiteLLM did function/tool calling (different from ADK tools)
-                # This path is less likely if using ADK, but supported by LiteLLM
-                if tool_calls_requested:
-                    logger.info(f"LiteLLM requested {len(tool_calls_requested)} tool calls.")
-                    # This requires a separate mechanism to execute these LiteLLM-requested tools
-                    # and send back 'tool' role messages in the next turn.
-                    # Not implemented here as focus is on ADK/A2A tools.
-                    # For now, return a message indicating tool call request.
-                    calls_repr = ", ".join([f"{tc.function.name}" for tc in tool_calls_requested])
-                    return f"Info: LLM requested tool calls ({calls_repr}). Direct execution not implemented."
+        # Calculate token usage
+        total_tokens = self._estimate_total_tokens(context_parts)
+        usage_ratio = total_tokens / prep_res["max_tokens"]
 
+        # Automatic compression if needed
+        if usage_ratio >= prep_res["compression_threshold"]:
+            context_parts = await self._compress_context_intelligently(context_parts, prep_res)
+            total_tokens = self._estimate_total_tokens(context_parts)
+            usage_ratio = total_tokens / prep_res["max_tokens"]
 
-            self.print_verbose(f"Model Response: {full_response_content[:100]}...")
-            return full_response_content
-
-        except RateLimitError as e:
-            logger.error(f"Rate limit error from {self.amd.model}: {e}")
-            # Implement backoff/retry? For now, re-raise.
-            raise
-        except (BadRequestError, APIConnectionError, InternalServerError) as e:
-            logger.error(f"API/Server error during LiteLLM call for {self.amd.model}: {e}", exc_info=True)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error during LiteLLM completion: {e}", exc_info=True)
-            raise
-
-    async def a_format_class(self,
-                             pydantic_model: type[BaseModel],
-                             prompt: str,
-                             message_context: list[dict] | None = None,
-                             max_retries: int = 2) -> dict[str, Any]:
-        """Uses LiteLLM's response_format feature to get structured JSON output, with retries."""
-        logger.debug(f"Formatting prompt for Pydantic model: {pydantic_model.__name__}")
-        model_schema = pydantic_model.model_json_schema()
-
-        messages = message_context or []
-        # System prompt explaining the task and schema
-        messages.append({
-            "role": "system",
-            "content": f"Your task is to analyze the user's request and extract information into a JSON object.\n"
-                       f"Strictly adhere to the following Pydantic schema:\n"
-                       f"```json\n{json.dumps(model_schema, indent=2)}\n```\n"
-                       f"Guidelines:\n"
-                       f"- Analyze the request carefully.\n"
-                       f"- Output *only* the JSON object, nothing else (no explanations, apologies, or markdown).\n"
-                       f"- Ensure the JSON is valid and conforms exactly to the schema.\n"
-                       f"- Omit optional fields if the information is not present in the request."
+        # Store current interaction for future reference
+        await session_manager.add_message({
+            'role': 'user',
+            'content': current_query
         })
-        messages.append({"role": "user", "content": prompt})
 
-        # Use LiteLLM's JSON mode (requires compatible model/provider)
-        response_format_config = {"type": "json_object"}
-        # Some providers might need the schema explicitly even in json_object mode
-        # response_format_config = {"type": "json_object", "schema": model_schema}
+        return {
+            "recent_interaction": context_parts["recent_interaction"],
+            "session_summary": context_parts["session_summary"],
+            "task_context": context_parts["task_context"],
+            "total_tokens": total_tokens,
+            "usage_ratio": usage_ratio,
+            "compression_applied": usage_ratio >= prep_res["compression_threshold"],
+            "session_manager": session_manager
+        }
 
-        original_stream_state = self.stream
-        self.stream = False # Ensure streaming is off for structured output
+    async def _build_three_part_context(self, prep_res) -> Dict[str, str]:
+        """Build the 3-part context system"""
+        session_manager = prep_res["session_manager"]
+        current_query = prep_res["current_query"]
+
+        # Part 1: Recent Interaction (latest exchanges)
+        recent_interaction = await self._build_recent_interaction(session_manager, current_query)
+
+        # Part 2: Session Summary (compressed history + logger insights)
+        session_summary = await self._build_session_summary(session_manager, prep_res)
+
+        # Part 3: Task Context (current agent state and tasks)
+        task_context = await self._build_task_context(prep_res)
+
+        return {
+            "recent_interaction": recent_interaction,
+            "session_summary": session_summary,
+            "task_context": task_context
+        }
+
+    async def _build_recent_interaction(self, session_manager, current_query: str) -> str:
+        """Latest conversation context"""
+        # Get last few exchanges from session
+        recent_history = session_manager.get_past_x(6)  # Last 3 exchanges
+
+        formatted_recent = []
+        for entry in recent_history:
+            role = entry.get('role', 'unknown')
+            content = entry.get('content', '')
+            formatted_recent.append(f"{role}: {content}")
+
+        recent_context = "## Recent Interaction\n"
+        if formatted_recent:
+            recent_context += "\n".join(formatted_recent)
+
+        recent_context += f"\nCurrent: user: {current_query}"
+
+        return recent_context
+
+    async def _build_session_summary(self, session_manager, prep_res) -> str:
+        """Compressed session history with insights"""
+        # Get relevant historical context using memory search
+        context_query = prep_res["current_query"]
+        relevant_refs = await session_manager.get_reference(context_query, top_k=5, to_str=True)
+
+        summary = "## Session Summary\n"
+
+        if relevant_refs:
+            summary += f"Relevant previous interactions:\n{relevant_refs}\n"
+
+        # Add world model insights
+        world_model = prep_res.get("world_model", {})
+        if world_model:
+            key_facts = []
+            for key, value in list(world_model.items())[:10]:  # Top 10 facts
+                if self._is_context_relevant(key, context_query):
+                    key_facts.append(f"- {key}: {value}")
+
+            if key_facts:
+                summary += f"\nKnown context:\n" + "\n".join(key_facts)
+
+        return summary
+
+    async def _build_task_context(self, prep_res) -> str:
+        """Current agent task state and capabilities"""
+        tasks = prep_res.get("tasks", {})
+        results_store = prep_res.get("results_store", {})
+        agent_instance = prep_res.get("agent_instance")
+
+        context = "## Current Task Context\n"
+
+        # Active/recent tasks
+        active_tasks = [t for t in tasks.values() if t.status in ["running", "completed"]]
+        if active_tasks:
+            context += "Recent task activity:\n"
+            for task in active_tasks[-5:]:  # Last 5 tasks
+                status_emoji = "✓" if task.status == "completed" else "⚙️"
+                context += f"{status_emoji} {task.description} ({task.status})\n"
+
+        # Key results
+        if results_store:
+            context += "\nKey findings:\n"
+            for task_id, result in list(results_store.items())[-3:]:  # Last 3 results
+                if result.get("metadata", {}).get("success", False):
+                    data_preview = str(result.get("data", ""))[:100] + "..."
+                    context += f"- {task_id}: {data_preview}\n"
+
+        # Agent capabilities
+        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
+            available_tools = list(agent_instance._tool_capabilities.keys())[:5]
+            context += f"\nAvailable tools: {', '.join(available_tools)}"
+
+        return context
+
+    async def _compress_context_intelligently(self, context_parts: Dict[str, str], prep_res) -> Dict[str, str]:
+        """Intelligent context compression using LLM"""
+        if not LITELLM_AVAILABLE:
+            return self._fallback_compression(context_parts)
+
+        # Compress session summary (most compressible)
+        session_summary = context_parts["session_summary"]
+        if len(session_summary) > 1000:  # Only compress if substantial
+            compressed_summary = await self._llm_compress_text(
+                session_summary,
+                "session context",
+                prep_res.get("agent_instance")
+            )
+            context_parts["session_summary"] = compressed_summary
+
+        # Compress task context if still too large
+        total_tokens = self._estimate_total_tokens(context_parts)
+        if total_tokens > prep_res["max_tokens"] * 0.9:
+            task_context = context_parts["task_context"]
+            compressed_task = await self._llm_compress_text(
+                task_context,
+                "task context",
+                prep_res.get("agent_instance")
+            )
+            context_parts["task_context"] = compressed_task
+
+        return context_parts
+
+    async def _llm_compress_text(self, text: str, context_type: str, agent_instance) -> str:
+        """Compress text using LLM while preserving key information"""
+        if len(text) < 200:  # Don't compress short texts
+            return text
+
+        prompt = f"""
+    Compress this {context_type} while preserving ALL key information and relationships.
+    Focus on removing redundancy and verbose explanations, keep facts and data intact.
+
+    Original text:
+    {text}
+
+    Compressed version (aim for 60% reduction):"""
+
         try:
-            last_exception = None
-            for attempt in range(max_retries + 1):
-                try:
-                    logger.debug(f"Attempt {attempt + 1}/{max_retries + 1} to get structured JSON.")
-                    # Use a potentially faster/cheaper model optimized for JSON tasks if configured?
-                    self.format_model = self.format_model_
-                    response_text = await self.a_run_llm_completion(messages, response_format=response_format_config)
-                    self.format_model = None
-                    # Clean and parse the JSON response
-                    try:
-                         # Basic cleaning: remove potential markdown fences
-                        cleaned_response = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.MULTILINE)
+            model_to_use = agent_instance.amd.fast_llm_model if agent_instance else "openrouter/anthropic/claude-3-haiku"
 
-                         # Try parsing using Pydantic's TypeAdapter for direct validation
-                        adapter = TypeAdapter(pydantic_model)
-                        validated_obj = adapter.validate_json(cleaned_response)
-                        result_dict = validated_obj.model_dump(mode='json') # Get dict representation
+            response = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,  # Low temperature for consistent compression
+                max_tokens=int(len(text) * 0.4),  # Target 60% reduction
+                node_name="Context Compression",
+                task_id="compression"
+            )
 
-                        logger.debug(f"Successfully formatted and validated JSON: {result_dict}")
-                        return result_dict
+            compressed = response.strip()
+            return compressed if compressed else text
 
-                    except (json.JSONDecodeError, ValidationError) as e:
-                        logger.warning(f"Attempt {attempt + 1} failed: Invalid JSON or schema mismatch. Error: {e}. Response: {response_text[:500]}")
-                        last_exception = ValueError(f"LLM response did not match schema after cleaning. Error: {e}. Response: '{response_text[:200]}...'")
-                        # Add feedback to the model for retry
-                        messages.append({"role": "assistant", "content": response_text}) # Show previous attempt
-                        messages.append({"role": "system", "content": f"Your previous response was invalid ({e}). Please try again, ensuring you output *only* valid JSON matching the schema."})
+        except Exception as e:
+            logger.warning(f"LLM compression failed: {e}")
+            return self._simple_text_compression(text)
 
-                except Exception as e:
-                    logger.error(f"Error during a_format_class (attempt {attempt + 1}): {e}", exc_info=True)
-                    last_exception = e
-                    # Don't retry on non-parsing errors immediately, could be API issue
+    def _fallback_compression(self, context_parts: Dict[str, str]) -> Dict[str, str]:
+        """Simple fallback compression without LLM"""
+        # Compress by truncating less important parts
+        if len(context_parts["session_summary"]) > 800:
+            lines = context_parts["session_summary"].split('\n')
+            context_parts["session_summary"] = '\n'.join(lines[:15]) + "\n[...compressed...]"
+
+        if len(context_parts["task_context"]) > 600:
+            lines = context_parts["task_context"].split('\n')
+            context_parts["task_context"] = '\n'.join(lines[:12]) + "\n[...compressed...]"
+
+        return context_parts
+
+    def _simple_text_compression(self, text: str) -> str:
+        """Simple text compression by removing redundancy"""
+        lines = text.split('\n')
+
+        # Remove empty lines and duplicates
+        compressed_lines = []
+        seen_lines = set()
+
+        for line in lines:
+            line = line.strip()
+            if line and line not in seen_lines:
+                compressed_lines.append(line)
+                seen_lines.add(line)
+
+        # Keep first 75% of unique lines
+        keep_count = int(len(compressed_lines) * 0.75)
+        return '\n'.join(compressed_lines[:keep_count])
+
+    def _is_context_relevant(self, key: str, query: str) -> bool:
+        """Check if world model key is relevant to current query"""
+        query_words = set(query.lower().split())
+        key_words = set(key.lower().split())
+
+        # Simple relevance scoring
+        intersection = query_words.intersection(key_words)
+        relevance_score = len(intersection) / max(len(query_words), 1)
+
+        return relevance_score > 0.1
+
+    def _estimate_total_tokens(self, context_parts: Dict[str, str]) -> int:
+        """Estimate total token count for all context parts"""
+        total_chars = sum(len(part) for part in context_parts.values())
+        return total_chars // 4  # Rough token estimation
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["formatted_context"] = exec_res
+        shared["context_tokens"] = exec_res["total_tokens"]
+        shared["context_usage_ratio"] = exec_res["usage_ratio"]
+        shared["context_compression_applied"] = exec_res["compression_applied"]
+
+        # Store session manager for other nodes
+        shared["session_manager"] = exec_res["session_manager"]
+
+        return "context_ready"
+
+@with_progress_tracking
+class YAMLFormatterNode(AsyncNode):
+    """Enhanced YAML formatter with schema-based generation"""
+
+    def __init__(self, schema_class: Optional[Type[BaseModel]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.schema_class = schema_class
+
+    async def prep_async(self, shared):
+        task_description = shared.get("current_task_description", "")
+        schema_mode = shared.get("yaml_format_mode", "general")
+        custom_schema = shared.get("custom_schema", {})
+        raw_input = shared.get("raw_llm_output", "")
+
+        return {
+            "task_description": task_description,
+            "schema_mode": schema_mode,
+            "custom_schema": custom_schema,
+            "raw_input": raw_input,
+            "context": shared.get("formatted_context", {}),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance")
+        }
+
+    async def exec_async(self, prep_res):
+        if prep_res["raw_input"]:
+            # Parse existing LLM output into YAML
+            return await self._parse_to_yaml(prep_res)
+        else:
+            # Generate new YAML based on schema
+            return await self._generate_yaml_from_schema(prep_res)
+
+    async def _parse_to_yaml(self, prep_res):
+        raw_input = prep_res["raw_input"]
+
+        try:
+            # Try to extract YAML from markdown code blocks
+            if "```yaml" in raw_input:
+                yaml_content = raw_input.split("```yaml")[1].split("```")[0].strip()
+            elif "```" in raw_input:
+                yaml_content = raw_input.split("```")[1].split("```")[0].strip()
+            else:
+                yaml_content = raw_input
+
+            parsed = yaml.safe_load(yaml_content)
+            return {
+                "success": True,
+                "data": parsed,
+                "raw_yaml": yaml_content
+            }
+        except Exception as e:
+            logger.error(f"Failed to parse YAML: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "fallback": {"raw_content": raw_input}
+            }
+
+    async def _generate_yaml_from_schema(self, prep_res):
+        schema_mode = prep_res["schema_mode"]
+
+        if self.schema_class:
+            schema = self.schema_class.model_json_schema()
+        else:
+            schema = self._get_default_schema(schema_mode)
+
+        # Generate LLM prompt to create YAML based on schema
+        prompt = self._build_schema_prompt(schema, prep_res)
+
+        if LITELLM_AVAILABLE:
+            try:
+                # Use fast model from shared context
+                model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+                logger.info(f"Using model {model_to_use} for YAML generation")
+                agent_instance = prep_res["agent_instance"]
+                yaml_content = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1, node_name="YAMLFormatterNode", task_id="yaml_format"
+                )
+
+                # Extract and validate YAML
+                if "```yaml" in yaml_content:
+                    yaml_str = yaml_content.split("```yaml")[1].split("```")[0].strip()
+                else:
+                    yaml_str = yaml_content.strip()
+
+                parsed = yaml.safe_load(yaml_str)
+                return {
+                    "success": True,
+                    "data": parsed,
+                    "raw_yaml": yaml_str
+                }
+            except Exception as e:
+                logger.error(f"LLM YAML generation failed: {e}")
+                return self._generate_fallback_yaml(prep_res)
+        else:
+            return self._generate_fallback_yaml(prep_res)
+
+    def _get_default_schema(self, mode: str) -> Dict:
+        schemas = {
+            "task_plan": {
+                "type": "object",
+                "properties": {
+                    "plan_name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "description": {"type": "string"},
+                                "priority": {"type": "integer"},
+                                "dependencies": {"type": "array", "items": {"type": "string"}}
+                            }
+                        }
+                    }
+                }
+            },
+            "action": {
+                "type": "object",
+                "properties": {
+                    "action_type": {"type": "string"},
+                    "parameters": {"type": "object"},
+                    "reasoning": {"type": "string"}
+                }
+            },
+            "analysis": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "key_points": {"type": "array", "items": {"type": "string"}},
+                    "recommendations": {"type": "array", "items": {"type": "string"}}
+                }
+            }
+        }
+        return schemas.get(mode, schemas["analysis"])
+
+    def _build_schema_prompt(self, schema: Dict, prep_res: Dict) -> str:
+        return f"""
+Generate a YAML structure based on the following schema and context:
+
+## Task Description
+{prep_res['task_description']}
+
+## Required Schema
+```yaml
+{yaml.safe_dump(schema, indent=2)}
+```
+Context
+{prep_res.get('context', {})}
+Generate valid YAML that conforms to this schema.
+Wrap your response in one
+```yaml
+```
+code block!.
+"""
+    def _generate_fallback_yaml(self, prep_res):
+        fallback = {
+            "task_description": prep_res["task_description"],
+            "schema_mode": prep_res["schema_mode"],
+            "timestamp": datetime.now().isoformat()
+        }
+        return {
+            "success": True,
+            "data": fallback,
+            "raw_yaml": yaml.dump(fallback)
+        }
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["formatted_yaml"] = exec_res
+        if exec_res["success"]:
+            shared["structured_data"] = exec_res["data"]
+        return "formatted" if exec_res["success"] else "format_failed"
+
+@with_progress_tracking
+class StrategyOrchestratorNode(AsyncNode):
+    """Strategic orchestration with meta-reasoning"""
+    def __init__(self, strategies: Dict[str, Dict] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.strategies = strategies or self._get_default_strategies()
+
+    async def prep_async(self, shared):
+        current_query = shared.get("current_query", "")
+        task_stack = shared.get("tasks", {})
+        world_model = shared.get("world_model", {})
+        system_status = shared.get("system_status", "idle")
+        recent_performance = shared.get("performance_metrics", {})
+
+        agent_instance = shared.get("agent_instance")
+        tool_capabilities = {}
+        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
+            tool_capabilities = agent_instance._tool_capabilities
+
+        return {
+            "query": current_query,
+            "tasks": task_stack,
+            "world_model": world_model,
+            "system_status": system_status,
+            "performance": recent_performance,
+            "available_strategies": list(self.strategies.keys()),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "tool_capabilities": tool_capabilities,
+            "agent_instance": agent_instance,
+            "available_tools_names": shared.get("available_tools", []),
+            "variable_manager": shared.get("variable_manager")
+        }
+
+    async def exec_async(self, prep_res):
+        # LLM-basierte Strategieauswahl
+        strategy = await self._determine_strategy_llm(prep_res)
+
+        # Generate execution plan
+        execution_plan = await self._create_execution_plan(strategy, prep_res)
+
+        return {
+            "selected_strategy": strategy,
+            "execution_plan": execution_plan,
+            "reasoning": self._get_strategy_reasoning(strategy, prep_res),
+            "estimated_complexity": self._estimate_complexity(prep_res)
+        }
+
+    async def _determine_strategy_llm(self, prep_res) -> str:
+        """Enhanced strategy determination with variable awareness"""
+        if not LITELLM_AVAILABLE:
+            return "direct_response"
+
+        variable_manager = prep_res.get("variable_manager")
+        tool_context = self._build_tool_awareness_context(prep_res)
+
+        # Variable-aware context
+        var_context = ""
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+
+        prompt = f"""
+You are a strategic AI agent with advanced variable system and tool capabilities.
+
+## User Query
+{prep_res['query']}
+
+## Your Capabilities & Context
+{tool_context}
+
+{var_context}
+
+## System Variables Available
+- User context: {{ user.name }}, {{ user.session }}, {{ user.id }}
+- System state: {{ system.timestamp }}, {{ agent.name }}
+- Previous results: {{ results.* }} (if any exist)
+- World knowledge: {{ world.* }} (learned facts)
+
+## Available Strategies:
+## Available Strategies:
+- direct_response: Simple LLM flow with optional tool calls
+- fast_simple_planning: Simple multi-step plan with tool orchestration
+- slow_complex_planning: Complex task breakdown with tool orchestration, use for tasks with mor then 2 'and' words.
+- research_and_analyze: Information gathering with variable integration
+- creative_generation: Content creation with personalization
+- problem_solving: Analysis with tool validation
+
+## Decision Criteria:
+1. Check if tools can directly answer the query
+2. Consider variable/personalization opportunities
+3. Evaluate complexity and multi-step needs
+4. Look for context dependencies
+
+Respond ONLY with strategy name for the current task:"""
+
+        try:
+            agent_instance = prep_res["agent_instance"]
+            response = await agent_instance.a_run_llm_completion(
+                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=50, node_name="StrategyOrchestratorNode", task_id="strategy_determination",
+            )
+            strategy = response.strip().lower()
+            return strategy if strategy in self.strategies else "fast_simple_planning"
+
+        except Exception as e:
+            logger.error(f"Strategy determination failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return "fast_simple_planning"
+
+    def _build_tool_awareness_context(self, prep_res: Dict) -> str:
+        """Build comprehensive tool context for strategy decisions"""
+
+        tool_capabilities = prep_res.get("tool_capabilities", {})
+        available_tools = prep_res.get("available_tools_names", [])
+
+        if not available_tools:
+            return "No tools available."
+
+        context_parts = []
+        context_parts.append("### Available Tools:")
+
+        for tool_name in available_tools:
+            if tool_name in tool_capabilities:
+                cap = tool_capabilities[tool_name]
+                context_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
+                context_parts.append(f"- Primary function: {cap.get('primary_function', 'Unknown')}")
+                context_parts.append(f"- Use cases: {', '.join(cap.get('use_cases', [])[:3])}")
+                context_parts.append(f"- Triggers: {', '.join(cap.get('trigger_phrases', [])[:5])}")
+
+                # Add indirect connections
+                indirect = cap.get('indirect_connections', [])
+                if indirect:
+                    context_parts.append(f"- Indirect uses: {', '.join([str(i) for i in indirect[:3]])}")
+            else:
+                # Fallback for tools without analysis
+                context_parts.append(f"\n**{tool_name}:** Available but not analyzed")
+
+        return "\n".join(context_parts)
+
+    async def _create_execution_plan(self, strategy: str, prep_res: Dict) -> Dict:
+        strategy_config = self.strategies[strategy]
+
+        plan = {
+            "strategy": strategy,
+            "phases": strategy_config["phases"],
+            "parallel_capable": strategy_config.get("parallel_capable", False),
+            "estimated_steps": len(strategy_config["phases"]),
+            "resource_requirements": strategy_config.get("resources", {}),
+            "success_criteria": strategy_config.get("success_criteria", [])
+        }
+
+        return plan
+
+    def _get_default_strategies(self) -> Dict[str, Dict]:
+        return {
+            "direct_response": {
+                "phases": ["context_prep", "llm_call", "response_format"],
+                "parallel_capable": False,
+                "resources": {"llm_calls": 1, "complexity": "low"}
+            },
+            "fast_simple_planning": {
+                "phases": ["context_prep", "tool_llm_call", "result_synthesis"],
+                "parallel_capable": True,
+                "resources": {"llm_calls": "multiple", "complexity": "low"}
+            },
+            "slow_complex_planning": {
+                "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
+                "parallel_capable": True,
+                "resources": {"llm_calls": "multiple", "complexity": "high"}
+            },
+            "research_and_analyze": {
+                "phases": ["query_expansion", "information_gathering", "analysis", "synthesis"],
+                "parallel_capable": True,
+                "resources": {"llm_calls": "multiple", "tools": ["search", "analysis"]}
+            },
+            "creative_generation": {
+                "phases": ["ideation", "structure_planning", "content_generation", "refinement"],
+                "parallel_capable": False,
+                "resources": {"llm_calls": "multiple", "complexity": "medium"}
+            },
+            "problem_solving": {
+                "phases": ["problem_analysis", "solution_exploration", "implementation_planning", "validation"],
+                "parallel_capable": True,
+                "resources": {"llm_calls": "multiple", "tools": ["code_execution", "testing"]}
+            }
+        }
+
+    def _get_strategy_reasoning(self, strategy: str, prep_res: Dict) -> str:
+        return f"Selected '{strategy}' based on query analysis and current system state"
+
+    def _estimate_complexity(self, prep_res: Dict) -> str:
+        task_count = len(prep_res["tasks"])
+        query_length = len(prep_res["query"].split())
+
+        if task_count > 5 or query_length > 100:
+            return "high"
+        elif task_count > 2 or query_length > 20:
+            return "medium"
+        else:
+            return "low"
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["selected_strategy"] = exec_res["selected_strategy"]
+        shared["execution_plan"] = exec_res["execution_plan"]
+        shared["strategy_reasoning"] = exec_res["reasoning"]
+        progress_tracker = shared.get("progress_tracker")
+        if progress_tracker:
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="strategy_selected",
+                timestamp=time.time(),
+                node_name="StrategyOrchestratorNode",
+                status=NodeStatus.COMPLETED,
+                session_id=shared.get("session_id"),
+                metadata={"strategy": exec_res["selected_strategy"],
+                          "reasoning": exec_res["reasoning"],
+                          "estimated_complexity": exec_res["estimated_complexity"],
+                          "execution_plan": exec_res["execution_plan"]}
+            ))
+        return exec_res["selected_strategy"]
+
+@with_progress_tracking
+class TaskPlannerNode(AsyncNode):
+    """Erweiterte Aufgabenplanung mit dynamischen Referenzen und Tool-Integration"""
+
+    async def prep_async(self, shared):
+        return {
+            "query": shared.get("current_query", ""),
+            "tasks": shared.get("tasks", {}),
+            "system_status": shared.get("system_status", "idle"),
+            "tool_capabilities": shared.get("tool_capabilities", {}),
+            "available_tools_names": shared.get("available_tools", []),
+            "strategy": shared.get("selected_strategy", "direct_response"),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance"),
+            "variable_manager": shared.get("variable_manager"),
+        }
+
+    async def exec_async(self, prep_res):
+        if prep_res["strategy"] == "fast_simple_planning":
+            return await self._create_simple_plan(prep_res)
+        else:
+            return await self._advanced_llm_decomposition(prep_res)
+
+    async def post_async(self, shared, prep_res, exec_res):
+        """Post-processing nach Plan-Erstellung"""
+
+        if exec_res is None:
+            shared["planning_error"] = "Plan creation returned None"
+            return "planning_failed"
+
+        if isinstance(exec_res, TaskPlan):
+
+            progress_tracker = shared.get("progress_tracker")
+            if progress_tracker:
+                e = ProgressEvent(
+                    event_type="plan_created",
+                    timestamp=time.time(),
+                    status=NodeStatus.COMPLETING,
+                    node_name="TaskPlannerNode",
+                    node_phase="plan_created",
+                    session_id=shared.get("session_id"),
+                    metadata={"plan_name": exec_res.name, "task_count": len(exec_res.tasks),
+                              "strategy": exec_res.execution_strategy, "full_plan": exec_res}
+                )
+                await progress_tracker.emit_event(e)
+                await asyncio.sleep(0.1)
+
+            # Erfolgreicher Plan
+            shared["current_plan"] = exec_res
+
+            # Tasks in shared state für Executor verfügbar machen
+            task_dict = {task.id: task for task in exec_res.tasks}
+            shared["tasks"].update(task_dict)
+
+            # Plan-Metadaten setzen
+            shared["plan_created_at"] = datetime.now().isoformat()
+            shared["plan_strategy"] = exec_res.execution_strategy
+            shared["total_tasks_planned"] = len(exec_res.tasks)
+
+            logger.info(f"Plan created successfully: {exec_res.name} with {len(exec_res.tasks)} tasks")
+            return "planned"
+
+        else:
+            # Plan creation failed
+            shared["planning_error"] = "Invalid plan format returned"
+            shared["current_plan"] = None
+            logger.error("Plan creation failed - invalid format")
+            return "planning_failed"
+
+    async def _create_simple_plan(self, prep_res) -> TaskPlan:
+        """Fast lightweight planning for direct or simple multi-step queries."""
+        taw = self._build_tool_intelligence(prep_res) # TODO contet and var injection
+        logger.info("You are a FAST "+ taw)
+        prompt = f"""
+You are a FAST abstract pattern recognizer and task planner.
+Identify if the query needs a **single-step LLM answer** or a **simple 2–3 task plan** using available tools.
+Output ONLY YAML.
+
+## User Query
+{prep_res['query']}
+
+## Available Tools
+{taw}
+
+## Pattern Recognition (Internal Only)
+- Detect if query is informational, action-based, or tool-eligible.
+- Map to minimal plan type: "direct_llm" or "simple_tool_plus_llm".
+
+## YAML Schema
+```yaml
+plan_name: string
+description: string
+execution_strategy: "sequential" | "parallel"
+tasks:
+  - id: string
+    type: "LLMTask" | "ToolTask"
+    description: string
+    priority: int
+    dependencies: [list]
+Example 1 — Direct LLM
+```yaml
+plan_name: "Direct Response"
+description: "Quick answer from LLM"
+execution_strategy: "sequential"
+tasks:
+  - id: "answer"
+    type: "LLMTask"
+    description: "Respond to query"
+    priority: 1
+    dependencies: []
+    prompt_template: "Respond concisely to: {prep_res['query']}"
+    llm_config:
+      model_preference: "fast"
+      temperature: 0.3
+```
+Example 2 — Tool + LLM
+```yaml
+plan_name: "Fetch and Answer"
+description: "Get info from tool and summarize"
+execution_strategy: "sequential"
+tasks:
+  - id: "fetch_info"
+    type: "ToolTask"
+    description: "Get required data"
+    priority: 1
+    dependencies: []
+    tool_name: "info_api"
+    arguments:
+      query: "{{ prep_res['query'] }}"
+  - id: "summarize"
+    type: "LLMTask"
+    description: "Summarize fetched data"
+    priority: 2
+    dependencies: ["fetch_info"]
+    prompt_template: "Summarize: {{ results.fetch_info.data }}"
+    llm_config:
+      model_preference: "fast"
+      temperature: 0.3
+```
+Output Requirements
+Use ONLY YAML for the final output
+Pick minimal plan type for fastest completion!
+    """
+
+        try:
+            agent_instance = prep_res["agent_instance"]
+            content = await agent_instance.a_run_llm_completion(
+                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=512,
+                node_name="TaskPlannerNode", task_id="fast_simple_planning"
+            )
+
+            yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
+            plan_data = yaml.safe_load(yaml_content)
+            # print("Simple", json.dumps(plan_data, indent=2))
+            return TaskPlan(
+                id=str(uuid.uuid4()),
+                name=plan_data.get("plan_name", "Generated Plan"),
+                description=plan_data.get("description", f"Plan for: {prep_res['query']}"),
+                tasks=[
+                    [LLMTask, ToolTask, DecisionTask, CompoundTask, Task][["LLMTask", "ToolTask", "DecisionTask", "CompoundTask", "Task"].index(t.get("type"))](**t)
+                    for t in plan_data.get("tasks", [])
+                ],
+                execution_strategy=plan_data.get("execution_strategy", "sequential")
+            )
+
+        except Exception as e:
+            logger.error(f"Simple plan creation failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return TaskPlan(
+                id=str(uuid.uuid4()),
+                name="Fallback Plan",
+                description="Direct response only",
+                tasks=[
+                    LLMTask(
+                        id="fast_simple_planning",
+                        type="LLMTask",
+                        description="Generate direct response",
+                        priority=1,
+                        dependencies=[],
+                        prompt_template=f"Respond to the query: {prep_res['query']}",
+                        llm_config={"model_preference": "fast"}
+                    )
+                ]
+            )
+
+    async def _advanced_llm_decomposition(self, prep_res) -> TaskPlan:
+        """Erweiterte LLM-basierte Dekomposition mit dynamischer Plan-Anpassung"""
+        variable_manager = prep_res.get("variable_manager")
+        tool_intelligence = self._build_tool_intelligence(prep_res)
+
+        # Check for replan context from failed DecisionTask
+        replan_context = prep_res.get("replan_context", {})
+        is_replanning = bool(replan_context)
+
+        # Get variable context for planning
+        var_suggestions = ""
+        if variable_manager:
+            suggestions = variable_manager.get_variable_suggestions(prep_res['query'])
+            if suggestions:
+                var_suggestions = f"\n## Suggested Variables\n{', '.join(suggestions)}"
+
+        # Build context-aware prompt
+        base_query = prep_res['query']
+        if is_replanning:
+            context_info = f"""
+    ## REPLANNING CONTEXT
+    Original Query: {base_query}
+    Previous Failure: {replan_context.get('failure_reason', 'Unknown')}
+    New Goal: {replan_context.get('new_goal', 'Continue with refined approach')}
+    Failed Approach: {replan_context.get('avoid_approaches', [])}
+
+    Focus on the NEW GOAL and avoid the failed approaches."""
+            effective_query = replan_context.get('new_goal', base_query)
+        else:
+            context_info = ""
+            effective_query = base_query
+
+        prompt = f"""
+You are an expert **task planner** with **dynamic adaptation capabilities**.
+Create intelligent, adaptive execution plans that can modify themselves during execution.
+
+## User Query
+{effective_query}
+
+{context_info}
+
+## Your Available Tools & Intelligence
+{tool_intelligence}
+
+{variable_manager.get_llm_variable_context() if variable_manager else ""}
+{var_suggestions}
+
+
+## TASK TYPES (Dataclass-Aligned)
+- **LLMTask**: Step that uses a language model.
+- **ToolTask**: Step that calls an available tool.
+- **DecisionTask**: Step that decides routing between tasks. or triggers plan modifications.
+- **CompoundTask**: Step grouping sub-tasks.
+
+## YAML SCHEMA
+```yaml
+plan_name: string
+description: string
+execution_strategy: "sequential" | "parallel" | "mixed"
+tasks:
+  - id: string
+    type: "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
+    description: string
+    priority: int
+    dependencies: [list of task ids]
+    # Additional fields depending on type:
+    # LLMTask: prompt_template, llm_config, context_keys
+    # ToolTask: tool_name, arguments, hypothesis, validation_criteria, expectation
+    # DecisionTask: decision_prompt, routing_map, decision_model
+    # CompoundTask: sub_task_ids, execution_strategy, success_criteria
+```
+
+DecisionTasks can now trigger **plan modifications** during execution:
+
+### Routing Map Options:
+```yaml
+routing_map:
+  # Classical routing to existing task
+  "success":
+    action: "route_to_task"
+    task_id: "next_task_id"
+
+  # Complete replan from this point
+  "failure":
+    action: "replan_from_here"
+    new_goal: "Specific new objective based on failure"
+    context: "What went wrong and why"
+
+  # Append new tasks to existing plan
+  "partial_success":
+    action: "append_plan"
+    new_goal: "Extended objective requiring additional steps"
+```
+PLANNING STRATEGY
+
+For uncertain outcomes (web searches, API calls, data analysis):
+Use DecisionTask with "replan_from_here" for failure cases
+Include specific new_goal based on potential failure modes
+
+For multi-stage workflows:
+Use "append_plan" when intermediate results may require different next steps
+
+For critical path dependencies:
+Plan alternative routes using DecisionTask routing
+
+ENHANCED EXAMPLES
+Adaptive Web Research Pattern:
+<reasoning>
+The logic ensures that subsequent steps are chosen depending on the sufficiency of the retrieved information.
+It’s a decision-making scaffold for research workflows.
+</reasoning>
+```yaml
+tasks:
+  - id: "web_search"
+    type: "ToolTask"
+    tool_name: "search_web"
+    description: "Get required data"
+    priority: 1
+    dependencies: []
+    arguments:
+      query: "{{ user.query }}"
+
+  - id: "evaluate_results"
+    type: "DecisionTask"
+    priority: 2
+    dependencies: ["web_search"]
+    description: "Evaluate search results and decide on next steps"
+    decision_prompt: "Are the search results sufficient?\nQuery: {{ user.query }}\nResults:\n{{ results.web_search.data }}\nEnd of Results\n Answer 'good', 'poor', or 'empty'"
+    routing_map:
+      "good":
+        action: "route_to_task"
+        task_id: "analyze_findings"
+      "poor":
+        action: "replan_from_here"
+        new_goal: "Search results were poor quality. Analyze the query '{{ user.query }}' and create a refined, more specific search strategy."
+      "empty":
+        action: "replan_from_here"
+        new_goal: "No search results found for '{{ user.query }}'. Try alternative search terms or different information sources."
+```
+Dynamic Tool Selection Pattern:
+<reasoning>
+By offering multiple branching paths
+(direct search, analysis-first, or multi-source), it maximizes adaptability for
+diverse data retrieval contexts. The routing logic ensures that each branch aligns
+with the complexity and reliability requirements of the query.
+</reasoning>
+```yaml
+tasks:
+...
+  - id: "choose_approach"
+    type: "DecisionTask"
+    priority: 2
+    dependencies: ["xyz"]
+    description: "Evaluate results and decide on next steps"
+    decision_prompt: "For query '{{ results.xyz.data }}', should we use 'direct_search', 'analysis_first', or 'multi_source'?"
+    routing_map:
+      "direct_search":
+        action: "append_plan"
+        new_goal: "Execute direct search approach for: {{ results.xyz.data }}"
+      "analysis_first":
+        action: "append_plan"
+        new_goal: "First analyze the query structure, then plan appropriate search strategy"
+      "multi_source":
+        action: "append_plan"
+        new_goal: "Use multiple information sources and cross-reference results"
+```
+Example 2 — Tool + LLM
+<reasoning>
+The separation of concerns—data acquisition
+first, followed by language model summarization—ensures.
+This is effective for scenarios where raw data must be condensed.
+</reasoning>
+```yaml
+plan_name: "Fetch and Answer"
+description: "Get info from tool and summarize"
+execution_strategy: "sequential"
+tasks:
+  - id: "fetch_info"
+    type: "ToolTask"
+    description: "Get required data"
+    priority: 1
+    dependencies: []
+    tool_name: "info_api"
+    arguments:
+      query: "{{ user.query }}"
+  - id: "summarize"
+    type: "LLMTask"
+    description: "Summarize fetched data"
+    priority: 2
+    dependencies: ["fetch_info"]
+    prompt_template: "Summarize: {{ results.fetch_info.data }}"
+    llm_config:
+      model_preference: "fast"
+      temperature: 0.3
+```
+Example: Complex Research with CompoundTask
+<reasoning>
+CompoundTask groups related sub-tasks that should be executed together as a logical unit.
+In this research case, we need to gather information from multiple sources simultaneously,
+then analyze all results together.
+The CompoundTask ensures that all data collection tasks are completed before moving to analysis,
+while allowing parallel execution within the compound task.
+</reasoning>
+```yaml
+plan_name: "Multi-Source Research Analysis"
+description: "Research topic from multiple sources and provide comprehensive analysis"
+execution_strategy: "sequential"
+tasks:
+  - id: "research_compound"
+    type: "CompoundTask"
+    description: "Gather information from multiple sources"
+    priority: 1
+    dependencies: []
+    sub_task_ids: ["web_search", "academic_search", "news_search"]
+    execution_strategy: "parallel"
+    success_criteria: "At least 2 out of 3 searches return useful data"
+
+  - id: "web_search"
+    type: "ToolTask"
+    description: "Search web for general information"
+    priority: 1
+    dependencies: []
+    tool_name: "search_web"
+    arguments:
+      query: "{{ user.query }}"
+      max_results: 5
+    hypothesis: "Web search will provide current general information"
+    validation_criteria: "Results should contain relevant recent information"
+
+  - id: "academic_search"
+    type: "ToolTask"
+    description: "Search academic sources"
+    priority: 1
+    dependencies: []
+    tool_name: "search_academic"
+    arguments:
+      query: "{{ user.query }}"
+      max_results: 3
+    hypothesis: "Academic search will provide authoritative sources"
+    validation_criteria: "Results should contain peer-reviewed content"
+
+  - id: "news_search"
+    type: "ToolTask"
+    description: "Search recent news"
+    priority: 1
+    dependencies: []
+    tool_name: "search_news"
+    arguments:
+      query: "{{ user.query }}"
+      timeframe: "last_month"
+    hypothesis: "News search will provide latest developments"
+    validation_criteria: "Results should contain recent updates"
+
+  - id: "analyze_all_sources"
+    type: "LLMTask"
+    description: "Analyze and synthesize information from all sources"
+    priority: 2
+    dependencies: ["research_compound"]
+    prompt_template: |
+      Analyze and synthesize the following research results for: {{ user.query }}
+
+      Web Results: {{ results.web_search.data }}
+      Academic Results: {{ results.academic_search.data }}
+      News Results: {{ results.news_search.data }}
+
+      Provide a comprehensive analysis covering:
+      1. Key findings from each source type
+      2. Consensus and contradictions
+      3. Most reliable information
+      4. Recent developments
+    llm_config:
+      model_preference: "complex"
+      temperature: 0.3
+
+  - id: "final_report"
+    type: "LLMTask"
+    description: "Create final user-friendly report"
+    priority: 3
+    dependencies: ["analyze_all_sources"]
+    prompt_template: |
+      Create a user-friendly report based on this analysis: {{ results.analyze_all_sources.data }}
+
+      Structure the response with:
+      - Executive summary
+      - Key findings
+      - Sources used
+      - Confidence levels
+    llm_config:
+      model_preference: "fast"
+      temperature: 0.4
+```
+OUTPUT REQUIREMENTS
+
+For complex/uncertain queries: Include at least one DecisionTask with replan_from_here
+Use specific, actionable new_goal descriptions
+Include failure context in routing decisions
+Maintain logical task dependencies
+Output ONLY YAML and wrap it in ```yaml``` tags.
+Provide high-level reasoning before in <reasoning> tags, independent from the YAML code.
+
+Generate the adaptive execution plan:
+"""
+        try:
+            model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+            agent_instance = prep_res["agent_instance"]
+            content = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2048, node_name="TaskExecutorNode", task_id="adaptive_planning"
+            )
+
+            if "```yaml" in content:
+                yaml_content = content.split("```yaml")[1].split("```")[0].strip()
+            else:
+                yaml_content = content
+
+            plan_data = yaml.safe_load(yaml_content)
+            # print("Advanced", json.dumps(plan_data, indent=2))
+
+            # Create specialized tasks with enhanced DecisionTask support
+            tasks = []
+            for task_data in plan_data.get("tasks", []):
+                task_type = task_data.pop("type", "generic")
+
+                if task_type == "DecisionTask" or task_type == "decision":
+                    # Enhanced DecisionTask with dynamic capabilities
+                    task = DecisionTask(
+                        id=task_data.get("id", str(uuid.uuid4())),
+                        type="decision",
+                        description=task_data.get("description", ""),
+                        priority=task_data.get("priority", 1),
+                        dependencies=task_data.get("dependencies", []),
+                        decision_prompt=task_data.get("decision_prompt", ""),
+                        routing_map=task_data.get("routing_map", {}),
+                        decision_model=task_data.get("decision_model", "fast"),
+                        critical=True
+                    )
+                else:
+                    task = create_task(task_type, **task_data)
+
+                tasks.append(task)
+
+            plan = TaskPlan(
+                id=str(uuid.uuid4()),
+                name=plan_data.get("plan_name", "Adaptive Plan"),
+                description=plan_data.get("description", f"Adaptive plan for: {effective_query}"),
+                tasks=tasks,
+                execution_strategy=plan_data.get("execution_strategy", "sequential"),
+                metadata={"is_replan": is_replanning, "replan_context": replan_context}
+            )
+
+            logger.info(f"Created adaptive plan with {len(tasks)} tasks (replanning: {is_replanning})")
+            return plan
+
+        except Exception as e:
+            logger.error(f"Advanced adaptive planning failed: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return await self._create_simple_plan(prep_res)
+
+    def _build_tool_intelligence(self, prep_res: Dict) -> str:
+        """Build detailed tool intelligence for planning"""
+
+        agent_instance = prep_res.get("agent_instance")
+        if not agent_instance or not hasattr(agent_instance, '_tool_capabilities'):
+            return "No tool intelligence available."
+
+        capabilities = agent_instance._tool_capabilities
+        query = prep_res.get('query', '').lower()
+
+        context_parts = []
+        context_parts.append("### Intelligent Tool Analysis:")
+
+        for tool_name, cap in capabilities.items():
+            context_parts.append(f"\n**{tool_name}:**")
+            context_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
+            context_parts.append(f"- Arguments: {yaml.dump(cap.get('args_schema', 'takes no arguments!'), default_flow_style=False)}")
+
+            # Check relevance to current query
+            relevance_score = self._calculate_tool_relevance(query, cap)
+            context_parts.append(f"- Query relevance: {relevance_score:.2f}")
+
+            if relevance_score > 0.4:
+                context_parts.append("- ⭐ HIGHLY RELEVANT - SHOULD USE THIS TOOL!")
+
+            # Show trigger analysis
+            triggers = cap.get('trigger_phrases', [])
+            matched_triggers = [t for t in triggers if t.lower() in query]
+            if matched_triggers:
+                context_parts.append(f"- Matched triggers: {matched_triggers}")
+
+            # Show use cases
+            use_cases = cap.get('use_cases', [])[:3]
+            context_parts.append(f"- Use cases: {', '.join(use_cases)}")
+
+        return "\n".join(context_parts)
+
+    def _calculate_tool_relevance(self, query: str, capabilities: Dict) -> float:
+        """Calculate how relevant a tool is to the current query"""
+
+        query_words = set(query.lower().split())
+
+        # Check trigger phrases
+        trigger_score = 0.0
+        triggers = capabilities.get('trigger_phrases', [])
+        for trigger in triggers:
+            trigger_words = set(trigger.lower().split())
+            if trigger_words.intersection(query_words):
+                trigger_score += 0.04
+        # Check confidence triggers if available
+        conf_triggers = capabilities.get('confidence_triggers', {})
+        for phrase, confidence in conf_triggers.items():
+            if phrase.lower() in query:
+                trigger_score += confidence/10
+        # Check indirect connections
+        indirect = capabilities.get('indirect_connections', [])
+        for connection in indirect:
+            connection_words = set(connection.lower().split())
+            if connection_words.intersection(query_words):
+                trigger_score += 0.02
+        return min(1.0, trigger_score)
+
+@with_progress_tracking
+class TaskExecutorNode(AsyncNode):
+    """Vollständige Task-Ausführung als unabhängige Node mit LLM-unterstützter Planung"""
+
+    def __init__(self, max_parallel: int = 3, **kwargs):
+        super().__init__(**kwargs)
+        self.max_parallel = max_parallel
+        self.results_store = {}  # Für {{ }} Referenzen
+        self.execution_history = []  # Für LLM-basierte Optimierung
+        self.agent_instance = None  # Wird gesetzt vom FlowAgent
+        self.variable_manager = None
+        self.fast_llm_model = None
+        self.complex_llm_model = None
+        self.progress_tracker = None
+
+    async def prep_async(self, shared):
+        """Enhanced preparation with unified variable system"""
+        current_plan = shared.get("current_plan")
+        tasks = shared.get("tasks", {})
+
+        # Get unified variable manager
+        self.variable_manager = shared.get("variable_manager")
+        self.progress_tracker = shared.get("progress_tracker")
+        if not self.variable_manager:
+            self.variable_manager = VariableManager(shared.get("world_model", {}), shared)
+
+        # Register all necessary scopes
+        self.variable_manager.set_results_store(self.results_store)
+        self.variable_manager.set_tasks_store(tasks)
+        self.variable_manager.register_scope('user', shared.get('user_context', {}))
+        self.variable_manager.register_scope('system', {
+            'timestamp': datetime.now().isoformat(),
+            'agent_name': shared.get('agent_instance', {}).amd.name if shared.get('agent_instance') else 'unknown'
+        })
+
+        # Stelle sicher, dass Agent-Referenz verfügbar ist
+        if not self.agent_instance:
+            self.agent_instance = shared.get("agent_instance")
+
+        if not current_plan:
+            return {"error": "No active plan", "tasks": tasks}
+
+        # Rest of existing prep_async logic...
+        ready_tasks = self._find_ready_tasks(current_plan, tasks)
+        blocked_tasks = self._find_blocked_tasks(current_plan, tasks)
+
+        execution_plan = await self._create_intelligent_execution_plan(
+            ready_tasks, blocked_tasks, current_plan, shared
+        )
+        self.complex_llm_model = shared.get("complex_llm_model")
+        self.fast_llm_model = shared.get("fast_llm_model")
+
+        return {
+            "plan": current_plan,
+            "ready_tasks": ready_tasks,
+            "blocked_tasks": blocked_tasks,
+            "all_tasks": tasks,
+            "execution_plan": execution_plan,
+            "fast_llm_model": self.fast_llm_model,
+            "complex_llm_model": self.complex_llm_model,
+            "available_tools": shared.get("available_tools", []),
+            "world_model": shared.get("world_model", {}),
+            "results_store": self.results_store,
+            "variable_manager": self.variable_manager,
+            "progress_tracker": self.progress_tracker ,
+        }
+
+    def _find_ready_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
+        """Finde Tasks die zur Ausführung bereit sind"""
+        ready = []
+        for task in plan.tasks:
+            if task.status == "pending" and self._dependencies_satisfied(task, all_tasks):
+                ready.append(task)
+        return ready
+
+    def _find_blocked_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
+        """Finde blockierte Tasks für Analyse"""
+        blocked = []
+        for task in plan.tasks:
+            if task.status == "pending" and not self._dependencies_satisfied(task, all_tasks):
+                blocked.append(task)
+        return blocked
+
+    def _dependencies_satisfied(self, task: Task, all_tasks: Dict[str, Task]) -> bool:
+        """Prüfe ob alle Dependencies erfüllt sind"""
+        for dep_id in task.dependencies:
+            if dep_id in all_tasks:
+                dep_task = all_tasks[dep_id]
+                if dep_task.status not in ["completed"]:
+                    return False
+            else:
+                # Dependency existiert nicht - könnte Problem sein
+                logger.warning(f"Task {task.id} has missing dependency: {dep_id}")
+                return False
+        return True
+
+    async def _create_intelligent_execution_plan(
+        self,
+        ready_tasks: List[Task],
+        blocked_tasks: List[Task],
+        plan: TaskPlan,
+        shared: Dict
+    ) -> Dict[str, Any]:
+        """LLM-unterstützte intelligente Ausführungsplanung"""
+
+        if not ready_tasks:
+            return {
+                "strategy": "waiting",
+                "reason": "No ready tasks",
+                "blocked_count": len(blocked_tasks),
+                "recommendations": []
+            }
+
+        # Einfache Planung für wenige Tasks
+        if len(ready_tasks) <= 2 and not LITELLM_AVAILABLE:
+            return self._create_simple_execution_plan(ready_tasks, plan)
+
+        # LLM-basierte intelligente Planung
+        return await self._llm_execution_planning(ready_tasks, blocked_tasks, plan, shared)
+
+    def _create_simple_execution_plan(self, ready_tasks: List[Task], plan: TaskPlan) -> Dict[str, Any]:
+        """Einfache heuristische Ausführungsplanung"""
+
+        # Prioritäts-basierte Sortierung
+        sorted_tasks = sorted(ready_tasks, key=lambda t: (t.priority, t.created_at))
+
+        # Parallelisierbare Tasks identifizieren
+        parallel_groups = []
+        current_group = []
+
+        for task in sorted_tasks:
+            # ToolTasks können oft parallel laufen
+            if isinstance(task, ToolTask) and len(current_group) < self.max_parallel:
+                current_group.append(task)
+            else:
+                if current_group:
+                    parallel_groups.append(current_group)
+                    current_group = []
+                current_group.append(task)
+
+        if current_group:
+            parallel_groups.append(current_group)
+
+        strategy = "parallel" if len(parallel_groups) > 1 or len(parallel_groups[0]) > 1 else "sequential"
+
+        return {
+            "strategy": strategy,
+            "execution_groups": parallel_groups,
+            "total_groups": len(parallel_groups),
+            "reasoning": "Simple heuristic: priority-based with tool parallelization",
+            "estimated_duration": self._estimate_duration(sorted_tasks)
+        }
+
+    async def _llm_execution_planning(
+        self,
+        ready_tasks: List[Task],
+        blocked_tasks: List[Task],
+        plan: TaskPlan,
+        shared: Dict
+    ) -> Dict[str, Any]:
+        """Erweiterte LLM-basierte Ausführungsplanung"""
+
+        try:
+            # Erstelle detaillierte Task-Analyse für LLM
+            task_analysis = self._analyze_tasks_for_llm(ready_tasks, blocked_tasks)
+            execution_context = self._build_execution_context(shared)
+
+            prompt = f"""
+Du bist ein Experte für Task-Ausführungsplanung. Analysiere die verfügbaren Tasks und erstelle einen optimalen Ausführungsplan.
+
+## Verfügbare Tasks zur Ausführung
+{task_analysis['ready_tasks_summary']}
+
+## Blockierte Tasks (zur Information)
+{task_analysis['blocked_tasks_summary']}
+
+## Ausführungskontext
+- Max parallele Tasks: {self.max_parallel}
+- Plan-Strategie: {plan.execution_strategy}
+- Verfügbare Tools: {', '.join(shared.get('available_tools', []))}
+- Bisherige Ergebnisse: {len(self.results_store)} Tasks abgeschlossen
+- Execution History: {len(self.execution_history)} vorherige Zyklen
+
+## Bisherige Performance
+{execution_context}
+
+## Aufgabe
+Erstelle einen optimierten Ausführungsplan. Berücksichtige:
+1. Task-Abhängigkeiten und Prioritäten
+2. Parallelisierungsmöglichkeiten
+3. Resource-Optimierung (Tools, LLM-Aufrufe)
+4. Fehlerwahrscheinlichkeit und Retry-Strategien
+5. Dynamische Argument-Auflösung zwischen Tasks
+
+Antworte mit YAML:
+
+```yaml
+strategy: "parallel"  # "parallel" | "sequential" | "hybrid"
+execution_groups:
+  - group_id: 1
+    tasks: ["task_1", "task_2"]  # Task IDs
+    execution_mode: "parallel"
+    priority: "high"
+    estimated_duration: 30  # seconds
+    risk_level: "low"  # low | medium | high
+    dependencies_resolved: true
+  - group_id: 2
+    tasks: ["task_3"]
+    execution_mode: "sequential"
+    priority: "medium"
+    estimated_duration: 15
+    depends_on_groups: [1]
+reasoning: "Detailed explanation of the execution strategy"
+optimization_suggestions:
+  - "Specific optimization 1"
+  - "Specific optimization 2"
+risk_mitigation:
+  - risk: "Tool timeout"
+    mitigation: "Use shorter timeout for parallel calls"
+  - risk: "Argument resolution failure"
+    mitigation: "Validate references before execution"
+total_estimated_duration: 45
+confidence: 0.85
+```"""
+
+            model_to_use = shared.get("complex_llm_model", "openrouter/openai/gpt-4o")
+
+            content = await self.agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1000, node_name="TaskExecutorNode", task_id="llm_execution_planning"
+            )
+
+            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
+            yaml_str = yaml_match.group(1) if yaml_match else content.strip()
+
+            execution_plan = yaml.safe_load(yaml_str)
+
+            # Validiere und erweitere den Plan
+            validated_plan = self._validate_execution_plan(execution_plan, ready_tasks)
+
+            logger.info(
+                f"LLM execution plan created: {validated_plan.get('strategy')} with {len(validated_plan.get('execution_groups', []))} groups")
+            return validated_plan
+
+        except Exception as e:
+            logger.error(f"LLM execution planning failed: {e}")
+            return self._create_simple_execution_plan(ready_tasks, plan)
+
+    def _analyze_tasks_for_llm(self, ready_tasks: List[Task], blocked_tasks: List[Task]) -> Dict[str, str]:
+        """Analysiere Tasks für LLM-Prompt"""
+
+        ready_summary = []
+        for task in ready_tasks:
+            task_info = f"- {task.id} ({task.type}): {task.description}"
+            if hasattr(task, 'priority'):
+                task_info += f" [Priority: {task.priority}]"
+            if isinstance(task, ToolTask):
+                task_info += f" [Tool: {task.tool_name}]"
+                if task.arguments:
+                    # Zeige dynamische Referenzen
+                    dynamic_refs = [arg for arg in task.arguments.values() if isinstance(arg, str) and "{{" in arg]
+                    if dynamic_refs:
+                        task_info += f" [Dynamic refs: {len(dynamic_refs)}]"
+            ready_summary.append(task_info)
+
+        blocked_summary = []
+        for task in blocked_tasks:
+            deps = ", ".join(task.dependencies) if task.dependencies else "None"
+            blocked_summary.append(f"- {task.id}: waiting for [{deps}]")
+
+        return {
+            "ready_tasks_summary": "\n".join(ready_summary) or "No ready tasks",
+            "blocked_tasks_summary": "\n".join(blocked_summary) or "No blocked tasks"
+        }
+
+    def _build_execution_context(self, shared: Dict) -> str:
+        """Baue Kontext für LLM-Planung"""
+        context_parts = []
+
+        # Performance der letzten Executions
+        if self.execution_history:
+            recent = self.execution_history[-3:]  # Last 3 executions
+            avg_duration = sum(h.get("duration", 0) for h in recent) / len(recent)
+            success_rate = sum(1 for h in recent if h.get("success", False)) / len(recent)
+            context_parts.append(f"Recent performance: {avg_duration:.1f}s avg, {success_rate:.1%} success rate")
+
+        # Resource utilization
+        if self.results_store:
+            tool_usage = {}
+            for task_result in self.results_store.values():
+                metadata = task_result.get("metadata", {})
+                task_type = metadata.get("task_type", "unknown")
+                tool_usage[task_type] = tool_usage.get(task_type, 0) + 1
+            context_parts.append(f"Resource usage: {tool_usage}")
+
+        return "\n".join(context_parts) if context_parts else "No previous execution history"
+
+    def _validate_execution_plan(self, plan: Dict, ready_tasks: List[Task]) -> Dict:
+        """Validiere und korrigiere LLM-generierten Ausführungsplan"""
+
+        # Standard-Werte setzen
+        validated = {
+            "strategy": plan.get("strategy", "sequential"),
+            "execution_groups": [],
+            "reasoning": plan.get("reasoning", "LLM-generated plan"),
+            "total_estimated_duration": plan.get("total_estimated_duration", 60),
+            "confidence": min(1.0, max(0.0, plan.get("confidence", 0.5)))
+        }
+
+        # Validiere execution groups
+        task_ids_available = [t.id for t in ready_tasks]
+
+        for group_data in plan.get("execution_groups", []):
+            group_tasks = group_data.get("tasks", [])
+            # Filtere nur verfügbare Tasks
+            valid_tasks = [tid for tid in group_tasks if tid in task_ids_available]
+
+            if valid_tasks:
+                validated["execution_groups"].append({
+                    "group_id": group_data.get("group_id", len(validated["execution_groups"]) + 1),
+                    "tasks": valid_tasks,
+                    "execution_mode": group_data.get("execution_mode", "sequential"),
+                    "priority": group_data.get("priority", "medium"),
+                    "estimated_duration": group_data.get("estimated_duration", 30),
+                    "risk_level": group_data.get("risk_level", "medium")
+                })
+
+        # Falls keine validen Groups, erstelle Fallback
+        if not validated["execution_groups"]:
+            validated["execution_groups"] = [{
+                "group_id": 1,
+                "tasks": task_ids_available[:self.max_parallel],
+                "execution_mode": "parallel",
+                "priority": "high"
+            }]
+
+        return validated
+
+    def _estimate_duration(self, tasks: List[Task]) -> int:
+        """Schätze Ausführungsdauer in Sekunden"""
+        duration = 0
+        for task in tasks:
+            if isinstance(task, ToolTask):
+                duration += 10  # Tool calls meist schneller
+            elif isinstance(task, LLMTask):
+                duration += 20  # LLM calls brauchen länger
+            else:
+                duration += 15  # Standard
+        return duration
+
+    async def exec_async(self, prep_res):
+        """Hauptausführungslogik mit intelligentem Routing"""
+
+        if "error" in prep_res:
+            return {"error": prep_res["error"]}
+
+        execution_plan = prep_res["execution_plan"]
+
+        if execution_plan["strategy"] == "waiting":
+            return {
+                "status": "waiting",
+                "message": execution_plan["reason"],
+                "blocked_count": execution_plan.get("blocked_count", 0)
+            }
+
+        # Starte Ausführung basierend auf Plan
+        execution_start = datetime.now()
+
+        try:
+            if execution_plan["strategy"] == "parallel":
+                results = await self._execute_parallel_plan(execution_plan, prep_res)
+            elif execution_plan["strategy"] == "sequential":
+                results = await self._execute_sequential_plan(execution_plan, prep_res)
+            else:  # hybrid
+                results = await self._execute_hybrid_plan(execution_plan, prep_res)
+
+            execution_duration = (datetime.now() - execution_start).total_seconds()
+
+            # Speichere Execution-History für LLM-Optimierung
+            self.execution_history.append({
+                "timestamp": execution_start.isoformat(),
+                "strategy": execution_plan["strategy"],
+                "duration": execution_duration,
+                "tasks_executed": len(results),
+                "success": all(r.get("status") == "completed" for r in results),
+                "plan_confidence": execution_plan.get("confidence", 0.5)
+            })
+
+            # Behalte nur letzte 10 Executions
+            if len(self.execution_history) > 10:
+                self.execution_history = self.execution_history[-10:]
+
+            return {
+                "status": "executed",
+                "results": results,
+                "execution_duration": execution_duration,
+                "strategy_used": execution_plan["strategy"],
+                "completed_tasks": len([r for r in results if r.get("status") == "completed"]),
+                "failed_tasks": len([r for r in results if r.get("status") == "failed"])
+            }
+
+        except Exception as e:
+            logger.error(f"Execution plan failed: {e}")
+            return {
+                "status": "execution_failed",
+                "error": str(e),
+                "results": []
+            }
+
+    async def _execute_parallel_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+        """Führe Plan mit parallelen Gruppen aus"""
+        all_results = []
+
+        for group in plan["execution_groups"]:
+            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
+
+            if group.get("execution_mode") == "parallel":
+                # Parallele Ausführung innerhalb der Gruppe
+                batch_results = await self._execute_parallel_batch(group_tasks)
+            else:
+                # Sequenzielle Ausführung innerhalb der Gruppe
+                batch_results = await self._execute_sequential_batch(group_tasks)
+
+            all_results.extend(batch_results)
+
+            # Prüfe ob kritische Tasks fehlgeschlagen sind
+            critical_failures = [
+                r for r in batch_results
+                if r.get("status") == "failed" and self._is_critical_task(r.get("task_id"), prep_res)
+            ]
+
+            if critical_failures:
+                logger.error(f"Critical task failures in group {group['group_id']}, stopping execution")
+                break
+
+        return all_results
+
+    async def _execute_sequential_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+        """Führe Plan sequenziell aus"""
+        all_results = []
+
+        for group in plan["execution_groups"]:
+            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
+            batch_results = await self._execute_sequential_batch(group_tasks)
+            all_results.extend(batch_results)
+
+            # Stoppe bei kritischen Fehlern
+            critical_failures = [
+                r for r in batch_results
+                if r.get("status") == "failed" and self._is_critical_task(r.get("task_id"), prep_res)
+            ]
+
+            if critical_failures:
+                break
+
+        return all_results
+
+    async def _execute_hybrid_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+        """Hybride Ausführung - Groups parallel, innerhalb je nach Mode"""
+
+        # Führe Gruppen parallel aus (wenn möglich)
+        group_tasks_list = []
+        for group in plan["execution_groups"]:
+            group_tasks = self._get_tasks_by_ids(group["tasks"], prep_res)
+            group_tasks_list.append((group, group_tasks))
+
+        # Führe bis zu max_parallel Gruppen parallel aus
+        batch_size = min(len(group_tasks_list), self.max_parallel)
+        all_results = []
+
+        for i in range(0, len(group_tasks_list), batch_size):
+            batch = group_tasks_list[i:i + batch_size]
+
+            # Erstelle Coroutines für jede Gruppe
+            group_coroutines = []
+            for group, tasks in batch:
+                if group.get("execution_mode") == "parallel":
+                    coro = self._execute_parallel_batch(tasks)
+                else:
+                    coro = self._execute_sequential_batch(tasks)
+                group_coroutines.append(coro)
+
+            # Führe Gruppen-Batch parallel aus
+            batch_results = await asyncio.gather(*group_coroutines, return_exceptions=True)
+
+            # Flache Liste der Ergebnisse
+            for result_group in batch_results:
+                if isinstance(result_group, Exception):
+                    logger.error(f"Group execution failed: {result_group}")
+                    continue
+                all_results.extend(result_group)
+
+        return all_results
+
+    def _get_tasks_by_ids(self, task_ids: List[str], prep_res: Dict) -> List[Task]:
+        """Hole Task-Objekte basierend auf IDs"""
+        all_tasks = prep_res["all_tasks"]
+        return [all_tasks[tid] for tid in task_ids if tid in all_tasks]
+
+    def _is_critical_task(self, task_id: str, prep_res: Dict) -> bool:
+        """Prüfe ob Task kritisch ist"""
+        task = prep_res["all_tasks"].get(task_id)
+        if not task:
+            return False
+        return getattr(task, 'critical', False) or task.priority == 1
+
+    async def _execute_parallel_batch(self, tasks: List[Task]) -> List[Dict]:
+        """Führe Tasks parallel aus"""
+        if not tasks:
+            return []
+
+        # Limitiere auf max_parallel
+        batch_size = min(len(tasks), self.max_parallel)
+        batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+
+        all_results = []
+        for batch in batches:
+            batch_results = await asyncio.gather(
+                *[self._execute_single_task(task) for task in batch],
+                return_exceptions=True
+            )
+
+            # Handle exceptions
+            processed_results = []
+            for i, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.error(f"Task {batch[i].id} failed with exception: {result}")
+                    processed_results.append({
+                        "task_id": batch[i].id,
+                        "status": "failed",
+                        "error": str(result)
+                    })
+                else:
+                    processed_results.append(result)
+
+            all_results.extend(processed_results)
+
+        return all_results
+
+    async def _execute_sequential_batch(self, tasks: List[Task]) -> List[Dict]:
+        """Führe Tasks sequenziell aus"""
+        results = []
+
+        for task in tasks:
+            try:
+                result = await self._execute_single_task(task)
+                results.append(result)
+
+                # Stoppe bei kritischen Fehlern in sequenzieller Ausführung
+                if result.get("status") == "failed" and getattr(task, 'critical', False):
+                    logger.error(f"Critical task {task.id} failed, stopping sequential execution")
                     break
 
-                # Wait before retrying
-                if attempt < max_retries:
-                     await asyncio.sleep(1.5 ** attempt) # Exponential backoff
+            except Exception as e:
+                logger.error(f"Sequential task {task.id} failed: {e}")
+                results.append({
+                    "task_id": task.id,
+                    "status": "failed",
+                    "error": str(e)
+                })
 
-            # If all retries fail
-            logger.error(f"Failed to get valid structured JSON after {max_retries + 1} attempts.")
-            raise last_exception or ValueError("Failed to get structured JSON response from LLM.")
+                if getattr(task, 'critical', False):
+                    break
+
+        return results
+
+    async def _execute_single_task(self, task: Task) -> Dict:
+        """Enhanced task execution with unified LLMToolNode usage"""
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="task_start",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                status=NodeStatus.RUNNING,
+                task_id=task.id,
+                metadata={
+                    "task_type": task.type,
+                    "task_description": task.description,
+                    "priority": task.priority,
+                    "dependencies": task.dependencies
+                }
+            ))
+
+        task_start = time.perf_counter()
+        try:
+            task.status = "running"
+            task.started_at = datetime.now()
+
+            # Ensure metadata is initialized
+            if not hasattr(task, 'metadata') or task.metadata is None:
+                task.metadata = {}
+
+            # Pre-process task with variable resolution
+            if isinstance(task, ToolTask):
+                resolved_args = self._resolve_task_variables(task.arguments)
+                result = await self._execute_tool_task_with_validation(task, resolved_args)
+            elif isinstance(task, LLMTask):
+                # Use LLMToolNode for LLM tasks instead of direct execution
+                result = await self._execute_llm_via_llmtool(task)
+            elif isinstance(task, DecisionTask):
+                # Enhanced decision task with context awareness
+                result = await self._execute_decision_task_enhanced(task)
+            else:
+                # Use LLMToolNode for generic tasks as well
+                result = await self._execute_generic_via_llmtool(task)
+
+            # Store result in unified system
+            self._store_task_result(task.id, result, True)
+
+            task.result = result
+            task.status = "completed"
+            task.completed_at = datetime.now()
+
+            task_duration = time.perf_counter() - task_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="task_complete",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    node_duration=task_duration,
+                    metadata={
+                        "success": True,
+                        "result_type": type(result).__name__,
+                        "task_type": task.type
+                    }
+                ))
+
+            return {
+                "task_id": task.id,
+                "status": "completed",
+                "result": result
+            }
+
+        except Exception as e:
+            task.error = str(e)
+            task.status = "failed"
+            task.retry_count += 1
+
+            # Store error in unified system
+            self._store_task_result(task.id, None, False, str(e))
+            task_duration = time.perf_counter() - task_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=task_duration,
+                    metadata={
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "task_type": task.type,
+                        "retry_count": task.retry_count
+                    }
+                ))
+
+            logger.error(f"Task {task.id} failed: {e}")
+            return {
+                "task_id": task.id,
+                "status": "failed",
+                "error": str(e),
+                "retry_count": task.retry_count
+            }
+
+    async def _resolve_dynamic_arguments(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhanced dynamic argument resolution with full variable system"""
+        resolved = {}
+
+        for key, value in arguments.items():
+            if isinstance(value, str):
+                # FIXED: Use unified variable manager for all resolution
+                resolved_value = self.variable_manager.format_text(value)
+
+                # Log if variables weren't resolved (debugging)
+                if "{{" in resolved_value and "}}" in resolved_value:
+                    logger.warning(f"Unresolved variables in argument '{key}': {resolved_value}")
+
+                resolved[key] = resolved_value
+            else:
+                resolved[key] = value
+
+        return resolved
+
+    async def _execute_tool_task_with_validation(self, task: ToolTask, resolved_args: Dict[str, Any]) -> Any:
+        """Tool execution with improved error detection and validation"""
+
+        if not task.tool_name:
+            raise ValueError(f"ToolTask {task.id} missing tool_name")
+
+        agent = self.agent_instance
+        if not agent:
+            raise ValueError("Agent instance not available for tool execution")
+
+        tool_start = time.perf_counter()
+
+        # Track tool call start
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="tool_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                status=NodeStatus.RUNNING,
+                task_id=task.id,
+                tool_name=task.tool_name,
+                tool_args=resolved_args,
+                metadata={
+                    "task_type": "ToolTask",
+                    "hypothesis": task.hypothesis,
+                    "validation_criteria": task.validation_criteria
+                }
+            ))
+
+        try:
+            logger.info(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
+
+            # Execute tool with timeout and retry logic
+            result = await self._execute_tool_with_retries(task.tool_name, resolved_args, agent)
+
+            tool_duration = time.perf_counter() - tool_start
+
+            # Validate result before marking as success
+            is_valid_result = self._validate_tool_result(result, task)
+
+            if not is_valid_result:
+                raise ValueError(f"Tool {task.tool_name} returned invalid result: {type(result).__name__}")
+
+            # Track successful tool call
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.COMPLETED,
+                    tool_name=task.tool_name,
+                    tool_args=resolved_args,
+                    tool_result=result,
+                    tool_duration=tool_duration,
+                    tool_success=True,
+                    metadata={
+                        "task_type": "ToolTask",
+                        "result_type": type(result).__name__,
+                        "result_length": len(str(result)),
+                        "validation_passed": is_valid_result
+                    }
+                ))
+
+            # FIXED: Store in variable manager with correct path structure
+            if self.variable_manager:
+                self.variable_manager.set(f"results.{task.id}.data", result)
+                self.variable_manager.set(f"tasks.{task.id}.result", result)
+
+            return result
+
+        except Exception as e:
+            tool_duration = time.perf_counter() - tool_start
+
+            # Detailed error tracking
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.FAILED,
+                    tool_name=task.tool_name,
+                    tool_args=resolved_args,
+                    tool_duration=tool_duration,
+                    tool_success=False,
+                    tool_error=str(e),
+                    metadata={
+                        "task_type": "ToolTask",
+                        "error_type": type(e).__name__,
+                        "retry_attempted": hasattr(self, '_retry_count')
+                    }
+                ))
+
+            logger.error(f"Tool execution failed for {task.tool_name}: {e}")
+            raise
+    async def _execute_llm_via_llmtool(self, task: LLMTask) -> Any:
+        """Execute LLM task via LLMToolNode for consistency"""
+
+        # Prepare context for LLMToolNode
+        llm_shared = {
+            "current_task_description": task.description,
+            "formatted_context": {
+                "recent_interaction": f"Executing LLM task: {task.description}",
+                "session_summary": "",
+                "task_context": f"Task ID: {task.id}, Priority: {task.priority}"
+            },
+            "variable_manager": self.variable_manager,
+            "agent_instance": self.agent_instance,
+            "available_tools": [],  # No tools for LLM-only tasks
+            "tool_capabilities": {},
+            "fast_llm_model": self.fast_llm_model,
+            "complex_llm_model": self.complex_llm_model,
+            "progress_tracker": self.progress_tracker,
+            "session_id": getattr(self, 'session_id', 'task_executor'),
+            "use_fast_response": task.llm_config.get("model_preference", "fast") == "fast"
+        }
+
+        # Create LLMToolNode instance
+        llm_node = LLMToolNode()
+
+        # Execute via LLMToolNode
+        try:
+            result = await llm_node.run_async(llm_shared)
+            # shared["current_response"]
+            # shared["tool_calls_made"]
+            # shared["llm_tool_conversation"]
+            # shared["synthesized_response"]
+            return llm_shared["current_response"]
+        except Exception as e:
+            logger.error(f"LLMToolNode execution failed for task {task.id}: {e}")
+            # Fallback to direct execution
+            import traceback
+            print(traceback.format_exc())
+            return await self._execute_llm_task_enhanced(task)
+
+    async def _execute_llm_task_enhanced(self, task: LLMTask) -> Any:
+        """Enhanced LLM task execution with unified variable system"""
+        if not LITELLM_AVAILABLE:
+            raise Exception("LiteLLM not available for LLM tasks")
+
+        # Get model preference with variable support
+        llm_config = task.llm_config
+        model_preference = llm_config.get("model_preference", "fast")
+
+        if model_preference == "complex":
+            model_to_use = self.variable_manager.get("system.complex_llm_model", "openrouter/openai/gpt-4o")
+        else:
+            model_to_use = self.variable_manager.get("system.fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+
+        # Build context for prompt
+        context_data = {}
+        for context_key in task.context_keys:
+            value = self.variable_manager.get(context_key)
+            if value is not None:
+                context_data[context_key] = value
+
+        # Resolve prompt template with full variable system
+        final_prompt = self.variable_manager.format_text(
+            task.prompt_template,
+            context=context_data
+        )
+
+        llm_start = time.perf_counter()
+
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="llm_call",
+                timestamp=time.time(),
+                node_name="TaskExecutorNode",
+                status=NodeStatus.RUNNING,
+                task_id=task.id,
+                llm_model=model_to_use,
+                llm_temperature=llm_config.get("temperature", 0.7),
+                metadata={
+                    "task_type": "LLMTask",
+                    "model_preference": model_preference,
+                    "prompt_length": len(final_prompt)
+                }
+            ))
+
+        try:
+
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": final_prompt}],
+                temperature=llm_config.get("temperature", 0.7),
+                max_tokens=llm_config.get("max_tokens", 1024)
+            )
+
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                                 output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.COMPLETED,
+                    llm_model=model_to_use,
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=llm_config.get("temperature", 0.7),
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "LLMTask"
+                    }
+                ))
+
+            # Store intermediate result for other tasks
+            self.variable_manager.set(f"tasks.{task.id}.result", result)
+
+            # Output schema validation if present
+            if task.output_schema:
+                stripped = result.strip()
+
+                try:
+                    # Try JSON first if it looks like JSON
+                    if stripped.startswith('{') or stripped.startswith('['):
+                        parsed = json.loads(stripped)
+                    else:
+                        parsed = yaml.safe_load(stripped)
+
+                    # Ensure metadata is a dict before updating
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+
+                    # Save parsed result
+                    task.metadata["parsed_output"] = parsed
+
+                except (json.JSONDecodeError, yaml.YAMLError):
+                    # Save info about failure without logging output
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+                    task.metadata["parsed_output_error"] = "Invalid JSON/YAML format"
+
+                except Exception as e:
+                    if not isinstance(task.metadata, dict):
+                        task.metadata = {}
+                    task.metadata["parsed_output_error"] = f"Unexpected error: {str(e)}"
+
+            return result
+        except Exception as e:
+            llm_duration = time.perf_counter() - llm_start
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    status=NodeStatus.FAILED,
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    llm_model=model_to_use,
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "LLMTask",
+                        "error_type": type(e).__name__
+                    }
+                ))
+
+            raise
+
+    async def _execute_decision_task_enhanced(self, task: DecisionTask) -> str:
+        """Enhanced DecisionTask with intelligent replan assessment"""
+
+        if not LITELLM_AVAILABLE:
+            raise Exception("LiteLLM not available for decision tasks")
+
+        # Build comprehensive context for decision
+        decision_context = self._build_decision_context(task)
+
+        # Enhanced decision prompt with full context
+        enhanced_prompt = f"""
+    You are making a critical routing decision for task execution. Analyze all context carefully.
+
+    ## Current Situation
+    {task.decision_prompt}
+
+    ## Execution Context
+    {decision_context}
+
+    ## Available Routing Options
+    {json.dumps(task.routing_map, indent=2)}
+
+    ## Decision Guidelines
+    1. Only trigger "replan_from_here" if there's a genuine failure that cannot be recovered
+    2. Use "route_to_task" for normal flow continuation
+    3. Consider the full context, not just immediate results
+    4. Be conservative with replanning - it's expensive and can cause loops
+
+    Based on ALL the context above, what is your decision?
+    Respond with EXACTLY one of these options: {', '.join(task.routing_map.keys())}
+
+    Your decision:"""
+
+        model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
+
+        try:
+            response = await litellm.acompletion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": enhanced_prompt}],
+                temperature=0.1,
+                max_tokens=50
+            )
+
+            decision = response.choices[0].message.content.strip().lower()
+
+            # Find matching key (case-insensitive)
+            matched_key = None
+            for key in task.routing_map.keys():
+                if key.lower() == decision:
+                    matched_key = key
+                    break
+
+            if not matched_key:
+                logger.warning(f"Decision '{decision}' not in routing map, using first option")
+                matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
+
+            routing_instruction = task.routing_map.get(matched_key, matched_key)
+
+            # Enhanced metadata with decision reasoning
+            if not hasattr(task, 'metadata'):
+                task.metadata = {}
+
+            task.metadata.update({
+                "decision_made": matched_key,
+                "routing_instruction": routing_instruction,
+                "decision_context": decision_context,
+                "replan_justified": self._assess_replan_necessity(matched_key, routing_instruction, decision_context)
+            })
+
+            # Handle dynamic planning instructions
+            if isinstance(routing_instruction, dict) and "action" in routing_instruction:
+                action = routing_instruction["action"]
+
+                if action == "replan_from_here":
+                    # Add extensive context for replanning
+                    task.metadata["replan_context"] = {
+                        "new_goal": routing_instruction.get("new_goal", "Continue with alternative approach"),
+                        "failure_reason": f"Decision task {task.id} determined: {matched_key}",
+                        "original_task": task.id,
+                        "context": routing_instruction.get("context", ""),
+                        "execution_history": self._get_execution_history_summary(),
+                        "failed_approaches": self._identify_failed_approaches(),
+                        "success_indicators": self._identify_success_patterns()
+                    }
+
+                self.variable_manager.set(f"tasks.{task.id}.result", {
+                    "decision": matched_key,
+                    "action": action,
+                    "instruction": routing_instruction,
+                    "confidence": self._calculate_decision_confidence(decision_context)
+                })
+
+                return action
+
+            else:
+                # Traditional routing
+                next_task_id = routing_instruction if isinstance(routing_instruction, str) else str(routing_instruction)
+
+                task.metadata.update({
+                    "next_task_id": next_task_id,
+                    "routing_action": "route_to_task"
+                })
+
+                self.variable_manager.set(f"tasks.{task.id}.result", {
+                    "decision": matched_key,
+                    "next_task": next_task_id
+                })
+
+                return matched_key
+
+        except Exception as e:
+            logger.error(f"Enhanced decision task failed: {e}")
+            raise
+
+    async def post_async(self, shared, prep_res, exec_res):
+        """Erweiterte Post-Processing mit dynamischer Plan-Anpassung"""
+
+        # Results store in shared state integrieren
+        shared["results_store"] = self.results_store
+
+        if exec_res is None or "error" in exec_res:
+            shared["executor_performance"] = {"status": "error", "last_error": exec_res.get("error")}
+            return "execution_error"
+
+        if exec_res["status"] == "waiting":
+            shared["executor_status"] = "waiting_for_dependencies"
+            return "waiting"
+
+        # Performance-Metriken speichern
+        performance_data = {
+            "execution_duration": exec_res.get("execution_duration", 0),
+            "strategy_used": exec_res.get("strategy_used", "unknown"),
+            "completed_tasks": exec_res.get("completed_tasks", 0),
+            "failed_tasks": exec_res.get("failed_tasks", 0),
+            "success_rate": exec_res.get("completed_tasks", 0) / max(len(exec_res.get("results", [])), 1),
+            "timestamp": datetime.now().isoformat()
+        }
+        shared["executor_performance"] = performance_data
+
+        # Check for dynamic planning actions
+        planning_action_detected = False
+
+        for result in exec_res.get("results", []):
+            task_id = result["task_id"]
+            if task_id in shared["tasks"]:
+                task = shared["tasks"][task_id]
+                task.status = result["status"]
+
+                if result["status"] == "completed":
+                    task.result = result["result"]
+
+                    # Check for planning actions from DecisionTasks
+                    if hasattr(task, 'metadata') and task.metadata:
+                        routing_action = task.metadata.get("routing_action")
+
+                        if routing_action == "replan_from_here":
+                            shared["needs_dynamic_replan"] = True
+                            shared["replan_context"] = task.metadata.get("replan_context", {})
+                            planning_action_detected = True
+                            logger.info(f"Dynamic replan triggered by task {task_id}")
+
+                        elif routing_action == "append_plan":
+                            shared["needs_plan_append"] = True
+                            shared["append_context"] = task.metadata.get("append_context", {})
+                            planning_action_detected = True
+                            logger.info(f"Plan append triggered by task {task_id}")
+
+                    # Store verification results if available
+                    if result.get("verification"):
+                        if not hasattr(task, 'metadata'):
+                            task.metadata = {}
+                        task.metadata["verification"] = result["verification"]
+
+                elif result["status"] == "failed":
+                    task.error = result.get("error", "Unknown error")
+
+        # Return appropriate status based on planning actions
+        if planning_action_detected:
+            if shared.get("needs_dynamic_replan"):
+                return "needs_dynamic_replan"  # Goes to PlanReflectorNode
+            elif shared.get("needs_plan_append"):
+                return "needs_plan_append"  # Goes to PlanReflectorNode
+
+        # Regular completion checking
+        current_plan = shared["current_plan"]
+        if current_plan:
+            all_finished = all(
+                shared["tasks"][task.id].status in ["completed", "failed"]
+                for task in current_plan.tasks
+            )
+
+            if all_finished:
+                current_plan.status = "completed"
+                shared["plan_completion_time"] = datetime.now().isoformat()
+                logger.info(f"Plan {current_plan.id} finished")
+                return "plan_completed"
+            else:
+                ready_tasks = [
+                    task for task in current_plan.tasks
+                    if shared["tasks"][task.id].status == "pending"
+                ]
+
+                if ready_tasks:
+                    return "continue_execution"
+                else:
+                    return "waiting"
+
+        return "execution_complete"
+
+    def get_execution_statistics(self) -> Dict[str, Any]:
+        """Erhalte detaillierte Ausführungsstatistiken"""
+        if not self.execution_history:
+            return {"message": "No execution history available"}
+
+        history = self.execution_history
+
+        return {
+            "total_executions": len(history),
+            "average_duration": sum(h["duration"] for h in history) / len(history),
+            "success_rate": sum(1 for h in history if h["success"]) / len(history),
+            "strategy_usage": {
+                strategy: sum(1 for h in history if h["strategy"] == strategy)
+                for strategy in set(h["strategy"] for h in history)
+            },
+            "total_tasks_executed": sum(h["tasks_executed"] for h in history),
+            "average_confidence": sum(h["plan_confidence"] for h in history) / len(history),
+            "recent_performance": history[-3:] if len(history) >= 3 else history
+        }
+
+    def _resolve_task_variables(self, data):
+        """Unified variable resolution for any task data"""
+        if isinstance(data, str):
+            res = self.variable_manager.format_text(data)
+            return res
+        elif isinstance(data, dict):
+            resolved = {}
+            for key, value in data.items():
+                resolved[key] = self._resolve_task_variables(value)
+            return resolved
+        elif isinstance(data, list):
+            return [self._resolve_task_variables(item) for item in data]
+        else:
+            return data
+
+    def _store_task_result(self, task_id: str, result: Any, success: bool, error: str = None):
+        """Store task result in unified variable system"""
+        result_data = {
+            "data": result,
+            "metadata": {
+                "task_type": "task",
+                "completed_at": datetime.now().isoformat(),
+                "success": success
+            }
+        }
+
+        if error:
+            result_data["error"] = error
+            result_data["metadata"]["success"] = False
+
+        # Store in results_store and update variable manager
+        self.results_store[task_id] = result_data
+        self.variable_manager.set_results_store(self.results_store)
+
+        # FIXED: Store actual result data, not the wrapper object
+        self.variable_manager.set(f"results.{task_id}.data", result)
+        self.variable_manager.set(f"results.{task_id}.metadata", result_data["metadata"])
+        if error:
+            self.variable_manager.set(f"results.{task_id}.error", error)
+
+    def _build_decision_context(self, task: DecisionTask) -> str:
+        """Build comprehensive context for decision making"""
+
+        context_parts = []
+
+        # Recent execution results
+        recent_results = []
+        for task_id, result_data in list(self.results_store.items())[-3:]:
+            success = result_data.get("metadata", {}).get("success", False)
+            status = "✓" if success else "✗"
+            data_preview = str(result_data.get("data", ""))[:100] + "..."
+            recent_results.append(f"{status} {task_id}: {data_preview}")
+
+        if recent_results:
+            context_parts.append("Recent Results:\n" + "\n".join(recent_results))
+
+        # Variable context
+        if self.variable_manager:
+            available_vars = list(self.variable_manager.get_available_variables().keys())[:10]
+            context_parts.append(f"Available Variables: {', '.join(available_vars)}")
+
+        # Execution history
+        execution_summary = self._get_execution_history_summary()
+        if execution_summary:
+            context_parts.append(f"Execution Summary: {execution_summary}")
+
+        # Current world model insights
+        world_insights = self._get_world_model_insights()
+        if world_insights:
+            context_parts.append(f"Known Facts: {world_insights}")
+
+        return "\n\n".join(context_parts)
+
+    def _assess_replan_necessity(self, decision: str, routing_instruction: Any, context: str) -> bool:
+        """Assess if replanning is truly necessary"""
+
+        if not isinstance(routing_instruction, dict):
+            return False
+
+        action = routing_instruction.get("action", "")
+        if action != "replan_from_here":
+            return False
+
+        # Check if we have genuine failures
+        genuine_failures = "error" in context.lower() or "failed" in context.lower()
+        alternative_available = len(self.results_store) > 0  # Have some results to work with
+
+        # Be conservative - only replan if really necessary
+        return genuine_failures and not alternative_available
+
+    async def _execute_tool_with_retries(self, tool_name: str, args: Dict, agent, max_retries: int = 2) -> Any:
+        """Execute tool with retry logic"""
+
+        last_exception = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                result = await agent.arun_function(tool_name, **args)
+
+                # Additional validation - check if result indicates success
+                if self._is_tool_result_success(result):
+                    return result
+                elif attempt < max_retries:
+                    logger.warning(f"Tool {tool_name} returned unclear result, retrying...")
+                    continue
+                else:
+                    return result
+
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries:
+                    logger.warning(f"Tool {tool_name} failed (attempt {attempt + 1}), retrying: {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive delay
+                else:
+                    logger.error(f"Tool {tool_name} failed after {max_retries + 1} attempts")
+
+        if last_exception:
+            raise last_exception
+        else:
+            raise RuntimeError(f"Tool {tool_name} failed without exception")
+
+    def _validate_tool_result(self, result: Any, task: ToolTask) -> bool:
+        """Validate tool result to prevent false failures"""
+
+        # Basic validation
+        if result is None:
+            return False
+
+        # Check for common error indicators
+        if isinstance(result, str):
+            error_indicators = ["error", "failed", "exception", "timeout", "not found"]
+            result_lower = result.lower()
+
+            # If result contains error indicators but also has substantial content, it might still be valid
+            has_errors = any(indicator in result_lower for indicator in error_indicators)
+            has_content = len(result.strip()) > 20
+
+            if has_errors and not has_content:
+                return False
+
+        # Check against expectation if provided
+        if hasattr(task, 'expectation') and task.expectation:
+            expectation_keywords = task.expectation.lower().split()
+            result_text = str(result).lower()
+
+            # At least one expectation keyword should be present
+            if not any(keyword in result_text for keyword in expectation_keywords):
+                logger.warning(f"Tool result doesn't match expectation: {task.expectation}")
+
+        return True
+
+    def _is_tool_result_success(self, result: Any) -> bool:
+        """Determine if a tool result indicates success"""
+
+        if result is None:
+            return False
+
+        if isinstance(result, bool):
+            return result
+
+        if isinstance(result, (list, dict)):
+            return len(result) > 0
+
+        if isinstance(result, str):
+            # Check for explicit success/failure indicators
+            result_lower = result.lower()
+
+            success_indicators = ["success", "completed", "found", "retrieved", "generated"]
+            failure_indicators = ["error", "failed", "not found", "timeout", "exception"]
+
+            has_success = any(indicator in result_lower for indicator in success_indicators)
+            has_failure = any(indicator in result_lower for indicator in failure_indicators)
+
+            if has_success and not has_failure:
+                return True
+            elif has_failure and not has_success:
+                return False
+            else:
+                # Ambiguous - assume success if there's substantial content
+                return len(result.strip()) > 10
+
+        # For other types, assume success if not None
+        return True
+
+    def _get_execution_history_summary(self) -> str:
+        """Get concise execution history summary"""
+
+        if not hasattr(self, 'execution_history') or not self.execution_history:
+            return "No execution history"
+
+        recent = self.execution_history[-3:]  # Last 3 executions
+        summaries = []
+
+        for hist in recent:
+            status = "Success" if hist.get("success", False) else "Failed"
+            duration = hist.get("duration", 0)
+            strategy = hist.get("strategy", "Unknown")
+            summaries.append(f"{strategy}: {status} ({duration:.1f}s)")
+
+        return "; ".join(summaries)
+
+    def _identify_failed_approaches(self) -> List[str]:
+        """Identify approaches that have consistently failed"""
+
+        failed_approaches = []
+
+        # Analyze failed tasks
+        for task_id, result_data in self.results_store.items():
+            if not result_data.get("metadata", {}).get("success", True):
+                error = result_data.get("error", "")
+                if "tool" in error.lower():
+                    failed_approaches.append("direct_tool_approach")
+                elif "search" in error.lower():
+                    failed_approaches.append("search_based_approach")
+                elif "llm" in error.lower():
+                    failed_approaches.append("llm_direct_approach")
+
+        return list(set(failed_approaches))
+
+    def _identify_success_patterns(self) -> List[str]:
+        """Identify patterns that have led to success"""
+
+        success_patterns = []
+
+        # Analyze successful tasks
+        successful_results = [
+            r for r in self.results_store.values()
+            if r.get("metadata", {}).get("success", False)
+        ]
+
+        if successful_results:
+            # Identify common patterns
+            if len(successful_results) > 1:
+                success_patterns.append("multi_step_approach")
+
+            for result in successful_results:
+                data = result.get("data", "")
+                if isinstance(data, str) and len(data) > 100:
+                    success_patterns.append("detailed_information_retrieval")
+
+        return list(set(success_patterns))
+
+    def _get_world_model_insights(self) -> str:
+        """Get relevant insights from world model"""
+
+        if not self.variable_manager:
+            return ""
+
+        world_data = self.variable_manager.scopes.get("world", {})
+        if not world_data:
+            return "No world model data"
+
+        # Get most recent or relevant facts
+        recent_facts = []
+        for key, value in list(world_data.items())[:5]:  # Top 5 facts
+            recent_facts.append(f"{key}: {str(value)[:50]}...")
+
+        return "; ".join(recent_facts)
+
+    def _calculate_decision_confidence(self, context: str) -> float:
+        """Calculate confidence in decision based on context"""
+
+        # Simple heuristic based on context richness
+        base_confidence = 0.5
+
+        # Boost confidence if we have rich context
+        if len(context) > 200:
+            base_confidence += 0.2
+
+        # Boost if we have recent results
+        if "Recent Results:" in context:
+            base_confidence += 0.2
+
+        # Reduce if there are many failures
+        failure_count = context.lower().count("failed") + context.lower().count("error")
+        base_confidence -= min(failure_count * 0.1, 0.3)
+
+        return max(0.1, min(1.0, base_confidence))
+
+@with_progress_tracking
+class PlanReflectorNode(AsyncNode):
+    """Unified Adaptive Plan Reflection and Dynamic Adjustment"""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    async def prep_async(self, shared):
+        current_plan = shared.get("current_plan")
+        tasks = shared.get("tasks", {})
+        results_store = shared.get("results_store", {})
+
+        # Standard reflection on recently completed tasks
+        recently_completed = [
+            task for task in (current_plan.tasks if current_plan else [])
+            if task.status == "completed" and
+               task.completed_at and
+               (datetime.now() - task.completed_at).seconds < 300  # Last 5 minutes
+        ]
+
+        # Dynamic replanning context (triggered by DecisionTasks)
+        needs_dynamic_replan = shared.get("needs_dynamic_replan", False)
+        replan_context = shared.get("replan_context", {})
+
+        # Plan append context (triggered by DecisionTasks)
+        needs_plan_append = shared.get("needs_plan_append", False)
+        append_context = shared.get("append_context", {})
+
+        return {
+            "current_plan": current_plan,
+            "tasks": tasks,
+            "results_store": results_store,
+            "recently_completed": recently_completed,
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance"),
+            "original_query": shared.get("current_query", ""),
+            # Dynamic planning contexts
+            "needs_dynamic_replan": needs_dynamic_replan,
+            "replan_context": replan_context,
+            "needs_plan_append": needs_plan_append,
+            "append_context": append_context,
+            # Additional context
+            "plan_adaptations": shared.get("plan_adaptations", 0),
+            "execution_performance": shared.get("executor_performance", {}),
+            "agent_instance": shared.get("agent_instance")
+        }
+
+    async def exec_async(self, prep_res):
+        """Unified execution handling all reflection scenarios"""
+
+        # Priority 1: Handle dynamic replanning (triggered by DecisionTask)
+        if prep_res["needs_dynamic_replan"]:
+            logger.info("Handling dynamic replan request")
+            return await self._handle_dynamic_replan(prep_res)
+
+        # Priority 2: Handle plan append (triggered by DecisionTask)
+        if prep_res["needs_plan_append"]:
+            logger.info("Handling plan append request")
+            return await self._handle_plan_append(prep_res)
+
+        # Priority 3: Standard reflection on completed tasks
+        if prep_res["recently_completed"]:
+            logger.info("Analyzing recently completed tasks")
+            return await self._handle_standard_reflection(prep_res)
+
+        # Priority 4: Check execution performance issues
+        performance = prep_res["execution_performance"]
+        if performance.get("status") == "error" or performance.get("success_rate", 1.0) < 0.3:
+            logger.info("Handling performance issues")
+            return await self._handle_performance_issues(prep_res)
+
+        # Default: Continue normal execution
+        return {
+            "action": "CONTINUE",
+            "reason": "No reflection triggers detected, continuing normal execution"
+        }
+
+    async def _handle_dynamic_replan(self, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced dynamic replanning with extensive context validation"""
+
+        replan_context = prep_res.get("replan_context", {})
+        current_plan = prep_res["current_plan"]
+
+        # Find the triggering task and validate replan necessity
+        triggering_task_id = replan_context.get("original_task")
+        triggering_task = prep_res["tasks"].get(triggering_task_id) if triggering_task_id else None
+
+        # Enhanced validation - check if replan is actually necessary
+        replan_justification = self._validate_replan_necessity(triggering_task, replan_context, prep_res)
+
+        if not replan_justification["is_necessary"]:
+            logger.info(f"Replan request rejected: {replan_justification['reason']}")
+            return {
+                "action": "CONTINUE",
+                "reason": f"Replan not necessary: {replan_justification['reason']}",
+                "alternative_action": replan_justification.get("alternative", "continue_execution")
+            }
+
+        # Extract comprehensive learned context
+        completed_tasks = [t for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"]
+        learned_context = self._extract_comprehensive_context(completed_tasks, prep_res)
+
+        # Build enhanced replan context with failure analysis
+        enhanced_replan_context = {
+            "original_query": prep_res.get("original_query", ""),
+            "new_goal": replan_context.get("new_goal", ""),
+            "failure_reason": replan_context.get("failure_reason", ""),
+            "learned_context": learned_context,
+            "completed_task_ids": [t.id for t in completed_tasks],
+            "triggering_decision": replan_context.get("context", ""),
+            "avoid_approaches": replan_context.get("failed_approaches", []),
+            "success_patterns": replan_context.get("success_indicators", []),
+            "execution_history": replan_context.get("execution_history", ""),
+            "variable_context": self._build_variable_context_for_replanning(prep_res),
+            "confidence_factors": self._analyze_confidence_factors(prep_res),
+            "dynamic_replan": True,
+            "justification": replan_justification
+        }
+
+        logger.info(f"Dynamic replan approved: {replan_context.get('new_goal', 'No goal specified')}")
+
+        return {
+            "action": "DYNAMIC_REPLAN_TRIGGERED",
+            "replan_context": enhanced_replan_context,
+            "reason": f"DecisionTask {triggering_task_id} triggered justified replanning",
+            "previous_plan_id": current_plan.id,
+            "preserve_completed": True,
+            "priority": "high",  # Reduced from critical to high
+            "confidence": replan_justification["confidence"]
+        }
+
+    def _validate_replan_necessity(self, triggering_task: Task, replan_context: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Validate whether replanning is actually necessary"""
+
+        validation = {
+            "is_necessary": False,
+            "reason": "",
+            "confidence": 0.0,
+            "alternative": "continue_execution"
+        }
+
+        # Check if we have genuine failure indicators
+        failure_reason = replan_context.get("failure_reason", "")
+        new_goal = replan_context.get("new_goal", "")
+
+        # Analyze completed tasks for alternative solutions
+        completed_count = len([t for t in prep_res["tasks"].values() if t.status == "completed"])
+        failed_count = len([t for t in prep_res["tasks"].values() if t.status == "failed"])
+
+        # Decision factors
+        has_alternatives = completed_count > 0
+        failure_is_critical = "critical" in failure_reason.lower() or "error" in failure_reason.lower()
+        goal_is_specific = len(new_goal.split()) > 3
+
+        # Conservative validation - only replan if really necessary
+        if failure_is_critical and not has_alternatives and goal_is_specific:
+            validation.update({
+                "is_necessary": True,
+                "reason": "Critical failure with no alternatives and specific recovery goal",
+                "confidence": 0.8
+            })
+        elif failed_count > completed_count and goal_is_specific:
+            validation.update({
+                "is_necessary": True,
+                "reason": "More failures than successes, specific recovery needed",
+                "confidence": 0.6
+            })
+        else:
+            # Suggest alternatives instead of replanning
+            if has_alternatives:
+                validation.update({
+                    "reason": "Existing results can be used instead of replanning",
+                    "alternative": "synthesize_from_existing",
+                    "confidence": 0.7
+                })
+            else:
+                validation.update({
+                    "reason": "Failure not critical enough to warrant full replan",
+                    "alternative": "continue_with_fallback",
+                    "confidence": 0.5
+                })
+
+        return validation
+
+    def _extract_comprehensive_context(self, completed_tasks: List[Task], prep_res: Dict) -> str:
+        """Extract comprehensive context including variable state"""
+
+        context_parts = []
+        results_store = prep_res["results_store"]
+
+        # Successful task results
+        for task in completed_tasks:
+            result_data = results_store.get(task.id, {})
+            if result_data.get("metadata", {}).get("success", False):
+                task_context = f"Task {task.id} ({task.type}): {task.description}"
+
+                data_preview = str(result_data.get("data", ""))
+                if len(data_preview) > 200:
+                    data_preview = data_preview[:200] + "..."
+
+                task_context += f"\nResult: {data_preview}"
+
+                # Add verification if available
+                if hasattr(task, 'metadata') and task.metadata and "verification" in task.metadata:
+                    verification = task.metadata["verification"]
+                    if isinstance(verification, dict):
+                        confidence = verification.get("confidence", 0.0)
+                        task_context += f"\nVerification confidence: {confidence:.2f}"
+
+                context_parts.append(task_context)
+
+        # Current variable state
+        if hasattr(prep_res.get("agent_instance"), "variable_manager"):
+            vm = prep_res["agent_instance"].variable_manager
+            var_summary = []
+
+            for scope_name, scope_data in vm.scopes.items():
+                if isinstance(scope_data, dict) and scope_data:
+                    var_summary.append(f"{scope_name}: {len(scope_data)} variables")
+
+            if var_summary:
+                context_parts.append("Variable state: " + ", ".join(var_summary))
+
+        return "\n\n".join(context_parts) if context_parts else "No significant context available"
+
+    def _build_variable_context_for_replanning(self, prep_res: Dict) -> Dict[str, Any]:
+        """Build variable context specifically for replanning"""
+
+        variable_context = {}
+
+        agent_instance = prep_res.get("agent_instance")
+        if agent_instance and hasattr(agent_instance, "variable_manager"):
+            vm = agent_instance.variable_manager
+
+            # Get key variables that might be useful for replanning
+            variable_context["available_scopes"] = list(vm.scopes.keys())
+            variable_context["results_available"] = len(vm.scopes.get("results", {}))
+            variable_context["world_facts"] = len(vm.scopes.get("world", {}))
+
+            # Get user context
+            user_data = vm.scopes.get("user", {})
+            if user_data:
+                variable_context["user_context"] = {
+                    "session": user_data.get("session", "unknown"),
+                    "query": user_data.get("query", "")[:100] + "..." if len(
+                        user_data.get("query", "")) > 100 else user_data.get("query", "")
+                }
+
+        return variable_context
+
+    def _analyze_confidence_factors(self, prep_res: Dict) -> Dict[str, float]:
+        """Analyze various confidence factors for replanning decision"""
+
+        confidence_factors = {}
+
+        # Task completion rate
+        tasks = prep_res["tasks"]
+        if tasks:
+            completed = len([t for t in tasks.values() if t.status == "completed"])
+            total = len(tasks)
+            confidence_factors["completion_rate"] = completed / total
+
+        # Result quality (based on verification scores)
+        results_store = prep_res["results_store"]
+        verification_scores = []
+
+        for result_data in results_store.values():
+            if "verification" in result_data.get("metadata", {}):
+                verification = result_data["metadata"]["verification"]
+                if isinstance(verification, dict) and "confidence" in verification:
+                    verification_scores.append(verification["confidence"])
+
+        if verification_scores:
+            confidence_factors["average_verification"] = sum(verification_scores) / len(verification_scores)
+
+        # Information richness
+        total_result_length = sum(len(str(r.get("data", ""))) for r in results_store.values())
+        confidence_factors["information_richness"] = min(total_result_length / 1000, 1.0)  # Normalize
+
+        return confidence_factors
+
+    async def _handle_plan_append(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle plan append operation triggered by DecisionTask"""
+
+        append_context = prep_res.get("append_context", {})
+        current_plan = prep_res["current_plan"]
+
+        # Create append-specific planning context
+        append_planning_context = {
+            "original_query": prep_res.get("original_query", ""),
+            "append_goal": append_context.get("new_goal", ""),
+            "extend_from_task": append_context.get("extend_from", ""),
+            "completed_tasks": [t.id for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"],
+            "current_results": self._summarize_current_results(prep_res),
+            "append_operation": True  # Flag for TaskPlannerNode
+        }
+
+        logger.info(f"Plan append triggered: {append_context.get('new_goal', 'No goal specified')}")
+
+        return {
+            "action": "PLAN_APPEND_TRIGGERED",
+            "append_context": append_planning_context,
+            "reason": f"DecisionTask requested plan extension",
+            "current_plan_id": current_plan.id,
+            "preserve_existing": True,
+            "priority": "high"
+        }
+
+    async def _handle_standard_reflection(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle standard reflection on recently completed tasks"""
+
+        # Analyze recent completions
+        reflection_result = await self._analyze_recent_completions(prep_res)
+
+        # Decide on next action using LLM
+        action_decision = await self._decide_next_action(reflection_result, prep_res)
+
+        # Execute the decided action
+        if action_decision["action"] == "ADAPT":
+            adaptation_result = await self._adapt_plan(action_decision, prep_res)
+            return adaptation_result
+        elif action_decision["action"] == "REPLAN":
+            replan_result = await self._trigger_standard_replanning(action_decision, prep_res)
+            return replan_result
+        elif action_decision["action"] == "HALT_FAILURE":
+            return {
+                "action": "HALT_FAILURE",
+                "reason": action_decision.get("reasoning", "Critical failure detected"),
+                "halt_details": action_decision,
+                "priority": "critical"
+            }
+        else:
+            return action_decision
+
+    async def _handle_performance_issues(self, prep_res: Dict) -> Dict[str, Any]:
+        """Handle execution performance issues"""
+
+        performance = prep_res["execution_performance"]
+
+        if performance.get("success_rate", 1.0) < 0.3:
+            return {
+                "action": "PERFORMANCE_REPLAN",
+                "reason": f"Low success rate: {performance.get('success_rate', 0.0):.1%}",
+                "performance_context": {
+                    "failed_tasks": performance.get("failed_tasks", 0),
+                    "completed_tasks": performance.get("completed_tasks", 0),
+                    "strategy_used": performance.get("strategy_used", "unknown")
+                },
+                "priority": "high"
+            }
+        else:
+            return {
+                "action": "CONTINUE",
+                "reason": "Performance issues detected but not critical"
+            }
+
+    def _summarize_current_results(self, prep_res: Dict) -> str:
+        """Summarize current results for context"""
+
+        results_store = prep_res["results_store"]
+        current_plan = prep_res["current_plan"]
+
+        summary_items = []
+
+        for task in current_plan.tasks:
+            if prep_res["tasks"][task.id].status == "completed":
+                result = results_store.get(task.id, {})
+                data_preview = str(result.get("data", ""))[:100]
+                summary_items.append(f"{task.id}: {data_preview}...")
+
+        return "; ".join(summary_items) if summary_items else "No results yet"
+
+    async def _analyze_recent_completions(self, prep_res) -> Dict[str, Any]:
+        """Analyze recently completed tasks for issues and successes"""
+
+        recently_completed = prep_res["recently_completed"]
+        results_store = prep_res["results_store"]
+
+        analysis = {
+            "successful_tasks": [],
+            "problematic_tasks": [],
+            "verification_issues": [],
+            "unexpected_results": [],
+            "dynamic_decisions": []  # Track DecisionTask outcomes
+        }
+
+        for task in recently_completed:
+            task_analysis = await self._analyze_single_task(task, results_store)
+
+            if task_analysis["status"] == "successful":
+                analysis["successful_tasks"].append(task_analysis)
+            elif task_analysis["status"] == "problematic":
+                analysis["problematic_tasks"].append(task_analysis)
+            elif task_analysis["status"] == "unexpected":
+                analysis["unexpected_results"].append(task_analysis)
+            elif task_analysis["status"] == "dynamic_decision":
+                analysis["dynamic_decisions"].append(task_analysis)
+
+        return analysis
+
+    async def _analyze_single_task(self, task: Task, results_store: Dict) -> Dict[str, Any]:
+        """Enhanced single task analysis including DecisionTask dynamics"""
+
+        task_result = results_store.get(task.id, {})
+        verification = task.metadata.get("verification", {}) if hasattr(task, 'metadata') else {}
+
+        # Enhanced DecisionTask analysis
+        if isinstance(task, DecisionTask):
+            if hasattr(task, 'metadata') and task.metadata:
+                routing_action = task.metadata.get("routing_action")
+                decision_made = task.metadata.get("decision_made", "")
+
+                if routing_action in ["replan_from_here", "append_plan"]:
+                    return {
+                        "task_id": task.id,
+                        "status": "dynamic_decision",
+                        "action": routing_action,
+                        "decision": decision_made,
+                        "details": task.metadata.get("routing_instruction", {})
+                    }
+                elif decision_made and decision_made in task.routing_map:
+                    return {
+                        "task_id": task.id,
+                        "status": "successful",
+                        "decision": decision_made,
+                        "routing_action": routing_action or "route_to_task"
+                    }
+
+            return {
+                "task_id": task.id,
+                "status": "problematic",
+                "issue": "decision_task_incomplete",
+                "decision": task.metadata.get("decision_made", "") if hasattr(task, 'metadata') else ""
+            }
+
+        # ToolTask analysis (existing logic)
+        elif isinstance(task, ToolTask) and task.hypothesis:
+            hypothesis_score = verification.get("hypothesis_score", 0.5)
+            criteria_score = verification.get("criteria_score", 0.5)
+
+            if hypothesis_score < 0.3 or criteria_score < 0.3:
+                return {
+                    "task_id": task.id,
+                    "status": "problematic",
+                    "issue": "hypothesis_not_met",
+                    "details": {
+                        "hypothesis": task.hypothesis,
+                        "hypothesis_score": hypothesis_score,
+                        "criteria_score": criteria_score,
+                        "tool_name": task.tool_name
+                    }
+                }
+            elif 0.3 <= hypothesis_score < 0.7 or 0.3 <= criteria_score < 0.7:
+                return {
+                    "task_id": task.id,
+                    "status": "unexpected",
+                    "issue": "partial_success",
+                    "details": {
+                        "hypothesis": task.hypothesis,
+                        "actual_result": task_result.get("data", ""),
+                        "verification": verification
+                    }
+                }
+            else:
+                return {
+                    "task_id": task.id,
+                    "status": "successful",
+                    "details": verification
+                }
+
+        # Standard Task analysis
+        else:
+            if task.result and not task.error:
+                return {"task_id": task.id, "status": "successful"}
+            else:
+                return {
+                    "task_id": task.id,
+                    "status": "problematic",
+                    "issue": "execution_error",
+                    "error": task.error
+                }
+
+    async def _trigger_standard_replanning(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Trigger standard replanning (not dynamic)"""
+
+        original_query = prep_res.get("original_query", "")
+        learned_context = self._extract_learned_context(prep_res)
+
+        replan_context = {
+            "original_query": original_query,
+            "previous_attempt_failed": True,
+            "learned_context": learned_context,
+            "failure_reason": decision.get("reasoning", ""),
+            "avoid_approaches": self._extract_failed_approaches(prep_res),
+            "standard_replan": True
+        }
+
+        return {
+            "action": "STANDARD_REPLAN_TRIGGERED",
+            "replan_context": replan_context,
+            "reason": decision.get("reasoning", ""),
+            "previous_plan_id": prep_res["current_plan"].id if prep_res["current_plan"] else None
+        }
+
+    # Helper methods for dynamic replanning
+    def _extract_learned_context_from_tasks(self, completed_tasks: List[Task], results_store: Dict) -> str:
+        """Extract learned context from completed tasks for replanning"""
+
+        context_items = []
+
+        for task in completed_tasks:
+            result_data = results_store.get(task.id, {})
+
+            if isinstance(task, ToolTask):
+                if result_data.get("metadata", {}).get("success", False):
+                    context_items.append(f"Tool {task.tool_name}: {str(result_data.get('data', ''))[:150]}...")
+
+            elif isinstance(task, LLMTask):
+                if task.result:
+                    context_items.append(f"Analysis result: {str(task.result)[:100]}...")
+
+            elif isinstance(task, DecisionTask):
+                decision = task.metadata.get("decision_made") if hasattr(task, 'metadata') else None
+                if decision:
+                    context_items.append(f"Decision made: {decision}")
+
+        return "\n".join(context_items) if context_items else "No significant context from previous tasks"
+
+    def _extract_failed_approaches_from_context(self, replan_context: Dict) -> List[str]:
+        """Extract failed approaches to avoid in replanning"""
+
+        failed_approaches = []
+
+        failure_reason = replan_context.get("failure_reason", "")
+        if "search" in failure_reason.lower():
+            failed_approaches.append("initial_search_approach")
+
+        if "tool" in failure_reason.lower():
+            failed_approaches.append("direct_tool_usage")
+
+        # Add context-specific failures
+        context = replan_context.get("context", "")
+        if context:
+            failed_approaches.append(f"approach_described_as: {context[:50]}...")
+
+        return failed_approaches
+
+    async def post_async(self, shared, prep_res, exec_res):
+        """Unified post-processing with complete action spectrum"""
+
+        action = exec_res.get("action", "CONTINUE")
+
+        # Clear trigger flags
+        shared["needs_dynamic_replan"] = False
+        shared["needs_plan_append"] = False
+        shared["replan_context"] = {}
+        shared["append_context"] = {}
+
+        # Handle all possible actions
+        if action == "DYNAMIC_REPLAN_TRIGGERED":
+            shared["replan_context"] = exec_res.get("replan_context", {})
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "PLAN_APPEND_TRIGGERED":
+            shared["append_context"] = exec_res.get("append_context", {})
+            shared["needs_plan_extension"] = True
+            return "needs_plan_append"
+
+        elif action == "STANDARD_REPLAN_TRIGGERED":
+            shared["replan_context"] = exec_res.get("replan_context", {})
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "PERFORMANCE_REPLAN":
+            shared["replan_context"] = {
+                "performance_failure": True,
+                "performance_context": exec_res.get("performance_context", {}),
+                "original_query": shared.get("current_query", "")
+            }
+            shared["needs_replanning"] = True
+            return "needs_replan"
+
+        elif action == "ADAPT_COMPLETED":
+            shared["plan_adaptations"] = shared.get("plan_adaptations", 0) + 1
+            shared["last_adaptation"] = datetime.now()
+            return "adapted"
+
+        elif action == "HALT_FAILURE":
+            shared["plan_halted"] = True
+            shared["halt_reason"] = exec_res.get("reason", "Critical failure")
+            shared["halt_details"] = exec_res.get("halt_details", {})
+            return "plan_halted"
+
+        elif action == "CONTINUE":
+            return "continue"
+
+        else:
+            # Unknown action - default to continue
+            logger.warning(f"Unknown reflection action: {action}")
+            return "continue"
+
+    async def _decide_next_action(self, reflection_result: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """LLM-basierte Entscheidung über nächste Aktionen"""
+
+        if not LITELLM_AVAILABLE:
+            return {"action": "CONTINUE", "reason": "No LLM available for decision making"}
+
+        prompt = f"""
+Du bist ein Plan-Reflexionssystem. Analysiere die Task-Ergebnisse und entscheide über die nächste Aktion.
+
+## Analyse der kürzlich abgeschlossenen Tasks
+Erfolgreiche Tasks: {len(reflection_result['successful_tasks'])}
+Problematische Tasks: {len(reflection_result['problematic_tasks'])}
+Unerwartete Ergebnisse: {len(reflection_result['unexpected_results'])}
+
+## Detaillierte Probleme
+{self._format_analysis_for_prompt(reflection_result)}
+
+## Verfügbare Aktionen
+- CONTINUE: Alles läuft nach Plan, weitermachen
+- ADAPT: Plan um zusätzliche Tasks erweitern (für unerwartete Ergebnisse)
+- REPLAN: Kompletter Neustart der Planung (bei kritischen Fehlern)
+- HALT_FAILURE: Plan abbrechen (bei unüberwindbaren Problemen)
+
+## Entscheidung
+Antworte mit YAML:
+
+```yaml
+action: "ADAPT"  # Eine der obigen Aktionen
+confidence: 0.85  # Wie sicher ist diese Entscheidung?
+reasoning: "Brief explanation of the decision"
+priority: "high"  # high | medium | low
+adaptation_suggestions:
+  - task_type: "tool_call"
+    description: "Additional search with refined query"
+    reason: "Original search didn't find expected information"
+  - task_type: "llm_call"
+    description: "Analyze alternative data sources"
+    reason: "Need to explore different approaches"
+```"""
+
+        try:
+            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+            agent_instance = prep_res["agent_instance"]
+            content = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=600, node_name="PlanReflectionNode", task_id="plan_reflection"
+            )
+
+            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
+            yaml_str = yaml_match.group(1) if yaml_match else content.strip()
+
+            decision = yaml.safe_load(yaml_str)
+
+            # Validierung
+            valid_actions = ["CONTINUE", "ADAPT", "REPLAN", "HALT_FAILURE"]
+            if decision.get("action") not in valid_actions:
+                decision["action"] = "CONTINUE"
+
+            logger.info(
+                f"Plan reflection decision: {decision.get('action')} (confidence: {decision.get('confidence', 0.0)})")
+            return decision
+
+        except Exception as e:
+            logger.error(f"Plan reflection decision failed: {e}")
+            return {"action": "CONTINUE", "reason": f"Decision error: {e}"}
+
+    def _format_analysis_for_prompt(self, reflection_result: Dict) -> str:
+        """Formatiere Analyse-Ergebnisse für LLM-Prompt"""
+        formatted = []
+
+        for problematic in reflection_result.get("problematic_tasks", []):
+            formatted.append(f"PROBLEM - Task {problematic['task_id']}: {problematic.get('issue', 'Unknown')}")
+
+        for unexpected in reflection_result.get("unexpected_results", []):
+            formatted.append(f"UNEXPECTED - Task {unexpected['task_id']}: {unexpected.get('issue', 'Unknown')}")
+
+        return "\n".join(formatted) if formatted else "No significant issues detected."
+
+    async def _adapt_plan(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Führe Plan-Adaptation aus basierend auf Entscheidung"""
+
+        current_plan = prep_res["current_plan"]
+        agent_instance = prep_res["agent_instance"]
+
+        adaptation_suggestions = decision.get("adaptation_suggestions", [])
+        new_tasks = []
+
+        for suggestion in adaptation_suggestions:
+            # Erstelle neue Tasks basierend auf Suggestions
+            task_id = f"adapt_{str(uuid.uuid4())[:8]}"
+
+            if suggestion.get("task_type") == "tool_call":
+                new_task = ToolTask(
+                    id=task_id,
+                    type="tool_call",
+                    description=suggestion.get("description", ""),
+                    priority=2,  # Mittlere Priorität für adaptive Tasks
+                    dependencies=[],  # Können sofort ausgeführt werden
+                    tool_name=self._infer_tool_name(suggestion, agent_instance),
+                    arguments=self._generate_tool_arguments(suggestion),
+                    hypothesis=f"This adaptation will address: {suggestion.get('reason', '')}",
+                    validation_criteria="Results should provide the missing information"
+                )
+            elif suggestion.get("task_type") == "llm_call":
+                new_task = LLMTask(
+                    id=task_id,
+                    type="llm_call",
+                    description=suggestion.get("description", ""),
+                    priority=2,
+                    dependencies=[],
+                    prompt_template=f"Analyze the situation: {suggestion.get('reason', '')}",
+                    llm_config={"model_preference": "fast"}
+                )
+            else:
+                new_task = create_task("generic",
+                                       id=task_id,
+                                       description=suggestion.get("description", ""),
+                                       priority=2
+                                       )
+
+            new_tasks.append(new_task)
+
+        # Füge neue Tasks zum Plan hinzu
+        current_plan.tasks.extend(new_tasks)
+
+        # Update shared state
+        task_dict = {task.id: task for task in new_tasks}
+        prep_res["tasks"].update(task_dict)
+
+        logger.info(f"Plan adapted with {len(new_tasks)} additional tasks")
+
+        return {
+            "action": "ADAPT_COMPLETED",
+            "new_tasks": [task.id for task in new_tasks],
+            "reason": decision.get("reasoning", ""),
+            "total_tasks": len(current_plan.tasks)
+        }
+
+    def _infer_tool_name(self, suggestion: Dict, agent_instance) -> str:
+        """Inferiere Tool-Name basierend auf Suggestion"""
+        description = suggestion.get("description", "").lower()
+        available_tools = getattr(agent_instance, 'shared', {}).get("available_tools", [])
+
+        # Simple Heuristik für Tool-Auswahl
+        if "search" in description and any("search" in tool for tool in available_tools):
+            return next(tool for tool in available_tools if "search" in tool)
+        elif "analyze" in description and any("analy" in tool for tool in available_tools):
+            return next(tool for tool in available_tools if "analy" in tool)
+        else:
+            return available_tools[0] if available_tools else "generic_tool"
+
+    def _generate_tool_arguments(self, suggestion: Dict) -> Dict[str, Any]:
+        """Generiere Tool-Argumente basierend auf Suggestion"""
+        description = suggestion.get("description", "")
+        reason = suggestion.get("reason", "")
+
+        # Basis-Argumente basierend auf Kontext
+        if "search" in description.lower():
+            return {
+                "query": f"refined search based on: {reason}",
+                "max_results": 5
+            }
+        elif "analyze" in description.lower():
+            return {
+                "text": "{{ results.previous_task.data }}",
+                "analysis_type": "comprehensive"
+            }
+        else:
+            return {"input": f"{description} - {reason}"}
+
+    def _extract_learned_context(self, prep_res: Dict) -> str:
+        """Extrahiere gelernten Kontext aus bisherigen Ergebnissen"""
+        results_store = prep_res.get("results_store", {})
+        learned_facts = []
+
+        for task_id, result in results_store.items():
+            if result.get("metadata", {}).get("success", False):
+                learned_facts.append(f"Task {task_id} discovered: {str(result.get('data', ''))[:100]}...")
+
+        return "\\n".join(learned_facts)
+
+    def _extract_failed_approaches(self, prep_res: Dict) -> List[str]:
+        """Extrahiere fehlgeschlagene Ansätze um sie zu vermeiden"""
+        failed_approaches = []
+        tasks = prep_res.get("tasks", {})
+
+        for task in tasks.values():
+            if task.status == "failed" and isinstance(task, ToolTask):
+                failed_approaches.append(f"Tool {task.tool_name} with args {task.arguments}")
+
+        return failed_approaches
+
+@with_progress_tracking
+class LLMToolNode(AsyncNode):
+    """Enhanced LLM tool with automatic tool calling and agent loop integration"""
+
+    def __init__(self, model: str = None, max_tool_calls: int = 5, **kwargs):
+        super().__init__(**kwargs)
+        self.model = model or os.getenv("DEFAULTMODELST", "openrouter/qwen/qwen3-code")
+        self.max_tool_calls = max_tool_calls
+        self.call_log = []
+
+    async def prep_async(self, shared):
+        context = shared.get("formatted_context", {})
+        task_description = shared.get("current_task_description", shared.get("current_query", ""))
+
+        # Variable Manager integration
+        variable_manager = shared.get("variable_manager")
+        agent_instance = shared.get("agent_instance")
+
+        if shared.get("progress_tracker"):
+            await shared.get("progress_tracker").emit_event(ProgressEvent(
+                event_type="llm_call",
+                timestamp=time.time(),
+                node_name="LLMToolNode",
+                status=NodeStatus.STARTING,
+                llm_model="auto",
+                session_id=shared.get("session_id"),
+            ))
+
+        return {
+            "task_description": task_description,
+            "context": context,
+            "session_id": shared.get("session_id"),
+            "variable_manager": variable_manager,
+            "agent_instance": agent_instance,
+            "available_tools": shared.get("available_tools", []),
+            "tool_capabilities": shared.get("tool_capabilities", {}),
+            "persona_config": shared.get("persona_config"),
+            "base_system_message": variable_manager.format_text(agent_instance.amd.get_system_message_with_persona()),
+            "recent_interaction": context.get("recent_interaction", ""),
+            "session_summary": context.get("session_summary", ""),
+            "task_context": context.get("task_context", ""),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "progress_tracker": shared.get("progress_tracker"),
+            "tool_call_count": 0
+        }
+
+    async def exec_async(self, prep_res):
+        """Main execution with tool calling loop"""
+        if not LITELLM_AVAILABLE:
+            return await self._fallback_response(prep_res)
+
+        progress_tracker = prep_res.get("progress_tracker")
+
+        conversation_history = []
+        tool_call_count = 0
+        final_response = None
+        total_llm_calls = 0
+        total_cost = 0.0
+        total_tokens = 0
+
+        # Initial system message with tool awareness
+        system_message = self._build_tool_aware_system_message(prep_res)
+
+        # Initial user prompt with variable resolution
+        initial_prompt = self._build_context_aware_prompt(prep_res)
+        conversation_history.append({"role": "user", "content":  prep_res["variable_manager"].format_text(initial_prompt)})
+        runs = 0
+        while tool_call_count < self.max_tool_calls:
+            runs += 1
+            # Get LLM response
+            messages = [{"role": "system", "content": system_message}] + conversation_history
+
+            model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
+
+            llm_start = time.perf_counter()
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name="LLMToolNode",
+                    status=NodeStatus.RUNNING,
+                    llm_model=model_to_use,
+                    session_id=prep_res.get("session_id"),
+                    metadata={
+                        "call_number": total_llm_calls + 1,
+                        "conversation_turns": len(conversation_history),
+                        "system_message_length": len(system_message),
+                    }
+                ))
+            try:
+                response = await litellm.acompletion(
+                    model=model_to_use,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2048
+                )
+
+                llm_duration = time.perf_counter() - llm_start
+                total_llm_calls += 1
+
+                # Extract token usage and calculate cost
+                usage = response.usage
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                total_tokens_call = usage.total_tokens if usage else 0
+
+                # Calculate cost (simplified)
+                call_cost = progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
+                                                                output_tokens) if progress_tracker else 0.0
+                total_cost += call_cost
+                total_tokens += total_tokens_call
+
+                llm_response = response.choices[0].message.content
+                if not llm_response:
+                    final_response = "I encountered an error while processing your request."
+                    break
+
+
+                # Check for tool calls
+                tool_calls = self._extract_tool_calls(llm_response)
+
+                llm_response = prep_res["variable_manager"].format_text(llm_response)
+                conversation_history.append({"role": "assistant", "content": llm_response})
+
+                # Track successful LLM call
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="llm_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        llm_model=model_to_use,
+                        status=NodeStatus.COMPLETED,
+                        llm_prompt_tokens=input_tokens,
+                        llm_completion_tokens=output_tokens,
+                        llm_total_tokens=total_tokens_call,
+                        llm_cost=call_cost,
+                        llm_duration=llm_duration,
+                        llm_temperature=0.7,
+                        session_id=prep_res.get("session_id"),
+                        metadata={
+                            "success": True,
+                            "response_length": len(llm_response),
+                            "call_number": total_llm_calls,
+                            "response": llm_response,
+                        }
+                    ))
+
+
+                if not tool_calls:
+                    # No more tool calls, this is the final response
+                    final_response = llm_response
+                    if not (runs == 1 and '{{' in llm_response):
+                        break
+
+                # Execute tool calls
+                tool_results = await self._execute_tool_calls(tool_calls, prep_res)
+                tool_call_count += len(tool_calls)
+
+                # Add tool results to conversation
+                tool_results_text = self._format_tool_results(tool_results)
+                conversation_history.append({"role": "user",
+                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue or provide your final response."})
+
+                # Update variable manager with tool results
+                self._update_variables_with_results(tool_results, prep_res["variable_manager"])
+
+            except Exception as e:
+                llm_duration = time.perf_counter() - llm_start
+
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="error",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.FAILED,
+                        llm_model=model_to_use,
+                        llm_duration=llm_duration,
+                        session_id=prep_res.get("session_id"),
+                        metadata={"error": str(e), "call_number": total_llm_calls + 1}
+                    ))
+                logger.error(f"LLM tool execution failed: {e}")
+                final_response = f"I encountered an error while processing: {str(e)}"
+                import traceback
+                print(traceback.format_exc())
+                break
+
+
+        # Apply persona if needed
+        if progress_tracker:
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="success",
+                timestamp=time.time(),
+                node_name="LLMToolNode",
+                status=NodeStatus.COMPLETED,
+                success=True,
+                llm_model="auto",
+                session_id=prep_res.get("session_id"),
+            ))
+        return {
+            "success": True,
+            "final_response": final_response or "I was unable to complete the request.",
+            "tool_calls_made": tool_call_count,
+            "conversation_history": conversation_history,
+            "model_used": model_to_use,
+            "llm_statistics": {
+                "total_calls": total_llm_calls,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens
+            }
+        }
+
+    def _build_tool_aware_system_message(self, prep_res: Dict) -> str:
+        """Build a unified intelligent, tool-aware system message with context and relevance analysis."""
+
+        # Base system message
+        base_message = prep_res.get("base_system_message", "You are a helpful AI assistant.")
+        available_tools = prep_res.get("available_tools", [])
+        tool_capabilities = prep_res.get("tool_capabilities", {})
+        variable_manager = prep_res.get("variable_manager")
+        context = prep_res.get("context", {})
+        agent_instance = prep_res.get("agent_instance")
+        query = prep_res.get('task_description', '').lower()
+
+        # --- Part 1: List available tools & capabilities ---
+        if available_tools:
+            base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
+            base_message += "Results will be stored to results.{tool_name}.data"
+
+            for tool_name in available_tools:
+                if tool_name in tool_capabilities:
+                    cap = tool_capabilities[tool_name]
+                    base_message += f"\n**{tool_name}**: {cap.get('primary_function', 'No description')}"
+                    use_cases = cap.get('use_cases', [])
+                    if use_cases:
+                        base_message += f"\n  Use cases: {', '.join(use_cases[:3])}"
+
+            base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
+
+        # --- Part 2: Add variable context ---
+        if variable_manager:
+            var_context = variable_manager.get_llm_variable_context()
+            if var_context:
+                base_message += f"\n\n## Variable Context\n{var_context}"
+
+        # --- Part 3: Intelligent tool analysis ---
+        if not agent_instance or not hasattr(agent_instance, '_tool_capabilities'):
+            return base_message + "\n\n⚠ No intelligent tool analysis available."
+
+        capabilities = agent_instance._tool_capabilities
+        analysis_parts = ["\n\n## Intelligent Tool Analysis"]
+
+        for tool_name, cap in capabilities.items():
+            analysis_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
+            analysis_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
+
+            # Calculate relevance score
+            relevance_score = self._calculate_tool_relevance(query, cap)
+            analysis_parts.append(f"- Query relevance: {relevance_score:.2f}")
+
+            if relevance_score > 0.65:
+                analysis_parts.append("- ⭐ HIGHLY RELEVANT - SHOULD USE THIS TOOL!")
+
+            # Trigger phrase matching
+            triggers = cap.get('trigger_phrases', [])
+            matched_triggers = [t for t in triggers if t.lower() in query]
+            if matched_triggers:
+                analysis_parts.append(f"- Matched triggers: {matched_triggers}")
+
+            # Show top use cases
+            use_cases = cap.get('use_cases', [])[:3]
+            if use_cases:
+                analysis_parts.append(f"- Use cases: {', '.join(use_cases)}")
+
+        # Combine everything into a final message
+        return base_message + "\n"+ "\n".join(analysis_parts)
+
+    def _calculate_tool_relevance(self, query: str, capabilities: Dict) -> float:
+        """Calculate how relevant a tool is to the current query"""
+
+        query_words = set(query.lower().split())
+
+        # Check trigger phrases
+        trigger_score = 0.0
+        triggers = capabilities.get('trigger_phrases', [])
+        for trigger in triggers:
+            trigger_words = set(trigger.lower().split())
+            if trigger_words.intersection(query_words):
+                trigger_score += 0.04
+        # Check confidence triggers if available
+        conf_triggers = capabilities.get('confidence_triggers', {})
+        for phrase, confidence in conf_triggers.items():
+            if phrase.lower() in query:
+                trigger_score += confidence/10
+        # Check indirect connections
+        indirect = capabilities.get('indirect_connections', [])
+        for connection in indirect:
+            connection_words = set(connection.lower().split())
+            if connection_words.intersection(query_words):
+                trigger_score += 0.02
+        return min(1.0, trigger_score)
+
+    def _extract_tool_calls(self, text: str) -> List[Dict]:
+        """Extract tool calls from LLM response"""
+        import re
+
+        tool_calls = []
+        pattern = r'TOOL_CALL:\s*(\w+)\((.*?)\)'
+
+        matches = re.findall(pattern, text, re.MULTILINE)
+
+        for tool_name, args_str in matches:
+            try:
+                # Parse arguments
+                args = self._parse_tool_arguments(args_str)
+                tool_calls.append({
+                    "tool_name": tool_name,
+                    "arguments": args
+                })
+            except Exception as e:
+                logger.warning(f"Failed to parse tool call {tool_name}: {e}")
+
+        return tool_calls
+
+    def _parse_tool_arguments(self, args_str: str) -> Dict:
+        """Parse tool arguments from string"""
+        import ast
+        # Try to evaluate as Python dict
+        if args_str.strip():
+            # Wrap in dict if not already
+            if args_str.strip().startswith('{'):
+                try:
+                    return ast.literal_eval(args_str)
+                except:
+                    pass
+        # Fallback: simple key=value parsing
+        args = {}
+        for pair in args_str.split(','):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                key = key.strip().strip("'")
+                value = value.strip().strip("'")
+                args[key] = value
+        return args
+
+    def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
+        """Select optimal model based on task complexity and available resources"""
+        complexity_score = self._estimate_task_complexity(task_description, prep_res)
+        if complexity_score > 0.7:
+            return prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+        else:
+            return prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+
+    def _estimate_task_complexity(self, task_description: str, prep_res: Dict) -> float:
+        """Estimate task complexity based on description, length, and available tools"""
+        # Simple heuristic: length + keyword matching + tool availability
+        description_length_score = min(len(task_description) / 500, 1.0)  # cap at 1.0
+        keywords = ["analyze", "research", "generate", "simulate", "complex", "deep", "strategy"]
+        keyword_score = sum(1 for k in keywords if k in task_description.lower()) / len(keywords)
+        tool_score = min(len(prep_res.get("available_tools", [])) / 10, 1.0)
+
+        # Weighted sum
+        complexity_score = (0.5 * description_length_score) + (0.3 * keyword_score) + (0.2 * tool_score)
+        return round(complexity_score, 2)
+
+    async def _fallback_response(self, prep_res: Dict) -> Dict:
+        """Fallback response if LiteLLM is not available"""
+        logger.warning("LiteLLM not available — using fallback response.")
+        return {
+            "success": False,
+            "final_response": (
+                "I'm unable to process this request fully right now because the LLM interface "
+                "is not available. Please try again later or check system configuration."
+            ),
+            "tool_calls_made": 0,
+            "conversation_history": [],
+            "model_used": None
+        }
+
+    async def _execute_tool_calls(self, tool_calls: List[Dict], prep_res: Dict) -> List[Dict]:
+        """Execute tool calls via agent"""
+        agent_instance = prep_res.get("agent_instance")
+        variable_manager = prep_res.get("variable_manager")
+        progress_tracker = prep_res.get("progress_tracker")
+
+        results = []
+
+        for tool_call in tool_calls:
+            tool_name = tool_call["tool_name"]
+            arguments = tool_call["arguments"]
+
+            # Start tool tracking
+            tool_start = time.perf_counter()
+
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="tool_call",
+                    timestamp=time.time(),
+                    status=NodeStatus.RUNNING,
+                    node_name="LLMToolNode",
+                    tool_name=tool_name,
+                    tool_args=arguments,
+                    session_id=prep_res.get("session_id"),
+                    metadata={"tool_call_initiated": True}
+                ))
+
+            try:
+                # Resolve variables in arguments
+                if variable_manager:
+                    resolved_args = {}
+                    for key, value in arguments.items():
+                        if isinstance(value, str):
+                            resolved_args[key] = variable_manager.format_text(value)
+                        else:
+                            resolved_args[key] = value
+                else:
+                    resolved_args = arguments
+
+                # Execute via agent
+                result = await agent_instance.arun_function(tool_name, **resolved_args)
+                tool_duration = time.perf_counter() - tool_start
+                variable_manager.set(f"results.{tool_name}.data", result)
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.COMPLETED,
+                        tool_name=tool_name,
+                        tool_args=resolved_args,
+                        tool_result=result,
+                        tool_duration=tool_duration,
+                        tool_success=True,
+                        session_id=prep_res.get("session_id"),
+                        metadata={
+                            "result_type": type(result).__name__,
+                            "result_length": len(str(result))
+                        }
+                    ))
+                results.append({
+                    "tool_name": tool_name,
+                    "arguments": resolved_args,
+                    "success": True,
+                    "result": result
+                })
+
+            except Exception as e:
+                tool_duration = time.perf_counter() - tool_start
+
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.FAILED,
+                        tool_name=tool_name,
+                        tool_args=arguments,
+                        tool_duration=tool_duration,
+                        tool_success=False,
+                        tool_error=str(e),
+                        session_id=prep_res.get("session_id"),
+                        metadata={"error_type": type(e).__name__}
+                    ))
+                logger.error(f"Tool execution failed {tool_name}: {e}")
+                results.append({
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "success": False,
+                    "error": str(e)
+                })
+
+        return results
+
+    def _format_tool_results(self, results: List[Dict]) -> str:
+        """Format tool results for LLM"""
+        formatted = []
+
+        for result in results:
+            if result["success"]:
+                formatted.append(f"✓ {result['tool_name']}: {result['result']}")
+            else:
+                formatted.append(f"✗ {result['tool_name']}: ERROR - {result['error']}")
+
+        return "\n".join(formatted)
+
+    def _update_variables_with_results(self, results: List[Dict], variable_manager):
+        """Update variable manager with tool results"""
+        if not variable_manager:
+            return
+
+        for i, result in enumerate(results):
+            if result["success"]:
+                tool_name = result['tool_name']
+                result_data = result['result']
+
+                # FIXED: Store result in proper variable paths
+                variable_manager.set(f"results.{tool_name}.data", result_data)
+                variable_manager.set(f"tools.{tool_name}.result", result_data)
+
+                # Also store with index for multiple calls to same tool
+                var_key = f"tool_result_{tool_name}_{i}"
+                variable_manager.set(var_key, result_data)
+
+    def _build_context_aware_prompt(self, prep_res: Dict) -> str:
+        """Build context-aware prompt with variable resolution"""
+        variable_manager = prep_res.get("variable_manager")
+
+        prompt_parts = []
+
+        # Add context sections
+        recent_interaction = prep_res.get("recent_interaction", "")
+        session_summary = prep_res.get("session_summary", "")
+        task_context = prep_res.get("task_context", "")
+
+        if recent_interaction:
+            prompt_parts.append(recent_interaction)
+        if session_summary:
+            prompt_parts.append(session_summary)
+        if task_context:
+            prompt_parts.append(task_context)
+
+        # Add main task
+        task_description = prep_res.get("task_description", "")
+        if task_description:
+            prompt_parts.append(f"## Current Request\n{task_description}")
+
+        # Variable suggestions
+        if variable_manager and task_description:
+            suggestions = variable_manager.get_variable_suggestions(task_description)
+            if suggestions:
+                prompt_parts.append(f"## Available Variables\nYou can use: {', '.join(suggestions)}")
+
+        # Final variable resolution
+        final_prompt = "\n\n".join(prompt_parts)
+        if variable_manager:
+            final_prompt = variable_manager.format_text(final_prompt)
+
+        return final_prompt
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["current_response"] = exec_res.get("final_response", "Task completed.")
+        shared["tool_calls_made"] = exec_res.get("tool_calls_made", 0)
+        shared["llm_tool_conversation"] = exec_res.get("conversation_history", [])
+        shared["synthesized_response"] = {"synthesized_response":exec_res.get("final_response", "Task completed."),
+                                          "confidence": (0.7 if exec_res.get("model_used") == prep_res.get("complex_llm_model") else 0.6) if exec_res.get("success", False) else 0,
+                                          "metadata": exec_res.get("metadata", {"model_used": exec_res.get("model_used")}),
+                                          "synthesis_method": "llm_tool"}
+        return "llm_tool_complete"
+
+@with_progress_tracking
+class StateSyncNode(AsyncNode):
+    """Synchronize state between world model and shared store"""
+    async def prep_async(self, shared):
+        world_model = shared.get("world_model", {})
+        session_data = shared.get("session_data", {})
+        tasks = shared.get("tasks", {})
+        system_status = shared.get("system_status", "idle")
+
+        return {
+            "world_model": world_model,
+            "session_data": session_data,
+            "tasks": tasks,
+            "system_status": system_status,
+            "sync_timestamp": datetime.now().isoformat()
+        }
+
+    async def exec_async(self, prep_res):
+        # Perform intelligent state synchronization
+        sync_result = {
+            "world_model_updates": {},
+            "session_updates": {},
+            "task_updates": {},
+            "conflicts_resolved": [],
+            "sync_successful": True
+        }
+
+        # Update world model with new information
+        if "current_response" in prep_res:
+            # Extract learnable facts from responses
+            extracted_facts = self._extract_facts(prep_res.get("current_response", ""))
+            sync_result["world_model_updates"].update(extracted_facts)
+
+        # Sync task states
+        for task_id, task in prep_res["tasks"].items():
+            if task.status == "completed" and task.result:
+                # Store task results in world model
+                fact_key = f"task_{task_id}_result"
+                sync_result["world_model_updates"][fact_key] = task.result
+
+        return sync_result
+
+    def _extract_facts(self, text: str) -> Dict[str, Any]:
+        """Extract learnable facts from text"""
+        facts = {}
+        lines = text.split('\n')
+
+        for line in lines:
+            line = line.strip()
+            # Look for definitive statements
+            if ' is ' in line and not line.startswith('I ') and not '?' in line:
+                parts = line.split(' is ', 1)
+                if len(parts) == 2:
+                    subject = parts[0].strip().lower()
+                    predicate = parts[1].strip().rstrip('.')
+                    if len(subject.split()) <= 3:  # Keep subjects simple
+                        facts[subject] = predicate
+
+        return facts
+
+    async def post_async(self, shared, prep_res, exec_res):
+        # Apply the synchronization results
+        if exec_res["sync_successful"]:
+            shared["world_model"].update(exec_res["world_model_updates"])
+            shared["session_data"].update(exec_res["session_updates"])
+            shared["last_sync"] = datetime.now()
+            return "sync_complete"
+        else:
+            logger.warning("State synchronization failed")
+            return "sync_failed"
+
+
+@with_progress_tracking
+class CompletionCheckerNode(AsyncNode):
+    """Breaks infinite cycles by checking actual completion status"""
+
+    def __init__(self):
+        super().__init__()
+        self.execution_count = 0
+        self.max_cycles = 5  # Prevent infinite loops
+
+    async def prep_async(self, shared):
+        current_plan = shared.get("current_plan")
+        tasks = shared.get("tasks", {})
+
+        return {
+            "current_plan": current_plan,
+            "tasks": tasks,
+            "execution_count": self.execution_count
+        }
+
+    async def exec_async(self, prep_res):
+        self.execution_count += 1
+
+        # Safety check: prevent infinite loops
+        if self.execution_count > self.max_cycles:
+            logger.warning(f"Max execution cycles ({self.max_cycles}) reached, terminating")
+            return {
+                "action": "force_terminate",
+                "reason": "Max cycles reached"
+            }
+
+        current_plan = prep_res["current_plan"]
+        tasks = prep_res["tasks"]
+
+        if not current_plan:
+            return {"action": "truly_complete", "reason": "No active plan"}
+
+        # Check actual completion status
+        pending_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "pending"]
+        running_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "running"]
+        completed_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "completed"]
+        failed_tasks = [t for t in current_plan.tasks if tasks[t.id].status == "failed"]
+
+        total_tasks = len(current_plan.tasks)
+
+        # Truly complete: all tasks done
+        if len(completed_tasks) + len(failed_tasks) == total_tasks:
+            if len(failed_tasks) == 0 or len(completed_tasks) > len(failed_tasks):
+                return {"action": "truly_complete", "reason": "All tasks completed"}
+            else:
+                return {"action": "truly_complete", "reason": "Plan failed but cannot continue"}
+
+        # Has pending tasks that can run
+        if pending_tasks and not running_tasks:
+            return {"action": "continue_execution", "reason": f"{len(pending_tasks)} tasks ready"}
+
+        # Has running tasks, wait
+        if running_tasks:
+            return {"action": "continue_execution", "reason": f"{len(running_tasks)} tasks running"}
+
+        # Need reflection if tasks are stuck
+        if pending_tasks and not running_tasks:
+            return {"action": "needs_reflection", "reason": "Tasks may be blocked"}
+
+        # Default: we're done
+        return {"action": "truly_complete", "reason": "No actionable tasks"}
+
+    async def post_async(self, shared, prep_res, exec_res):
+        action = exec_res["action"]
+
+        # Reset counter on true completion
+        if action == "truly_complete":
+            self.execution_count = 0
+            shared["flow_completion_reason"] = exec_res["reason"]
+        elif action == "force_terminate":  # HINZUGEFÜGT
+            self.execution_count = 0
+            shared["flow_completion_reason"] = f"Force terminated: {exec_res['reason']}"
+            shared["force_terminated"] = True
+            logger.warning(f"Flow force terminated: {exec_res['reason']}")
+
+        return action
+
+# ===== ADVANCED BATCH NODE FOR PARALLEL EXECUTION =====
+
+@with_progress_tracking
+class ParallelTaskBatch(BatchNode):
+    """Batch node for parallel task execution"""
+    def prep(self, shared):
+        ready_tasks = []
+        for task_id, task in shared.get("tasks", {}).items():
+            if task.status == "pending":
+                ready_tasks.append(task)
+        return ready_tasks
+
+    def exec(self, task: Task):
+        # This runs in parallel for each task
+        try:
+            # Simulate task execution
+            time.sleep(0.1)
+            result = f"Batch result for task: {task.description}"
+            return {
+                "task_id": task.id,
+                "status": "completed",
+                "result": result
+            }
+        except Exception as e:
+            return {
+                "task_id": task.id,
+                "status": "failed",
+                "error": str(e)
+            }
+
+    def post(self, shared, prep_res, exec_res_list):
+        # Process all batch results
+        completed_count = 0
+        failed_count = 0
+
+        for result in exec_res_list:
+            task_id = result["task_id"]
+            if task_id in shared["tasks"]:
+                task = shared["tasks"][task_id]
+                task.status = result["status"]
+                if result["status"] == "completed":
+                    task.result = result["result"]
+                    completed_count += 1
+                else:
+                    task.error = result.get("error", "Unknown error")
+                    failed_count += 1
+
+        shared["batch_execution_stats"] = {
+            "completed": completed_count,
+            "failed": failed_count,
+            "total": len(exec_res_list)
+        }
+
+        return "batch_complete"
+
+# ===== FLOW COMPOSITIONS =====
+
+@with_progress_tracking
+class TaskManagementFlow(AsyncFlow):
+    """Fixed Task-Management-Flow with proper termination"""
+
+    def __init__(self, max_parallel_tasks: int = 3):
+        # Create all nodes
+        self.strategy_node = StrategyOrchestratorNode()
+        self.planner_node = TaskPlannerNode()
+        self.executor_node = TaskExecutorNode(max_parallel=max_parallel_tasks)
+        self.reflector_node = PlanReflectorNode()
+        self.sync_node = StateSyncNode()
+        self.llm_tool_node = LLMToolNode()
+
+        # Add a completion checker node to break cycles
+        self.completion_checker = CompletionCheckerNode()
+
+        # === MAIN FLOW (Linear with controlled cycles) ===
+
+        # Strategy -> Planning Phase
+        self.strategy_node - "fast_simple_planning" >> self.planner_node
+        self.strategy_node - "slow_complex_planning" >> self.planner_node
+        self.strategy_node - "research_and_analyze" >> self.planner_node
+        self.strategy_node - "creative_generation" >> self.planner_node
+        self.strategy_node - "problem_solving" >> self.planner_node
+
+        self.strategy_node - "direct_response" >> self.llm_tool_node
+        self.llm_tool_node - "llm_tool_complete" >> self.sync_node
+        self.strategy_node - "default" >> self.planner_node
+
+        # Planning -> Execution
+        self.planner_node - "planned" >> self.executor_node
+        self.planner_node - "planning_failed" >> self.sync_node
+        self.planner_node - "default" >> self.sync_node
+
+        # === EXECUTION CYCLE WITH TERMINATION CONTROL ===
+
+        # Executor -> Completion Checker (instead of direct to reflector)
+        self.executor_node - "plan_completed" >> self.completion_checker
+        self.executor_node - "continue_execution" >> self.completion_checker
+        self.executor_node - "execution_error" >> self.reflector_node
+        self.executor_node - "waiting" >> self.completion_checker
+        self.executor_node - "execution_complete" >> self.completion_checker  # HINZUGEFÜGT
+
+        # für dynamische Aktionen
+        self.executor_node - "needs_dynamic_replan" >> self.reflector_node
+        self.executor_node - "needs_plan_append" >> self.reflector_node
+
+
+        self.executor_node - "default" >> self.completion_checker  # GEÄNDERT von sync_node
+
+        # Completion Checker decides next action
+        self.completion_checker - "truly_complete" >> self.sync_node  # TERMINATE
+        self.completion_checker - "needs_reflection" >> self.reflector_node
+        self.completion_checker - "force_terminate" >> self.sync_node  # HINZUGEFÜGT
+        self.completion_checker - "continue_execution" >> self.executor_node
+        self.completion_checker - "default" >> self.sync_node
+
+        # Reflector actions (limited cycles)
+        self.reflector_node - "needs_replan" >> self.planner_node
+        self.reflector_node - "needs_plan_append" >> self.planner_node
+        self.reflector_node - "adapted" >> self.completion_checker
+        self.reflector_node - "continue" >> self.completion_checker
+        self.reflector_node - "plan_halted" >> self.sync_node
+        self.reflector_node - "default" >> self.sync_node
+
+        super().__init__(start=self.strategy_node)
+
+
+@with_progress_tracking
+class ResponseGenerationFlow(AsyncFlow):
+    """Intelligente Antwortgenerierung basierend auf Task-Ergebnissen"""
+
+    def __init__(self, tools=None):
+        # Nodes für Response-Pipeline
+        self.context_aggregator = ContextAggregatorNode()
+        self.result_synthesizer = ResultSynthesizerNode()
+        self.response_formatter = ResponseFormatterNode()
+        self.quality_checker = ResponseQualityNode()
+        self.final_processor = ResponseFinalProcessorNode()
+
+        # === RESPONSE GENERATION PIPELINE ===
+
+        # Context Aggregation -> Synthesis
+        self.context_aggregator - "context_ready" >> self.result_synthesizer
+        self.context_aggregator - "no_context" >> self.response_formatter  # Fallback
+
+        # Synthesis -> Formatting
+        self.result_synthesizer - "synthesized" >> self.response_formatter
+        self.result_synthesizer - "synthesis_failed" >> self.response_formatter
+
+        # Formatting -> Quality Check
+        self.response_formatter - "formatted" >> self.quality_checker
+        self.response_formatter - "format_failed" >> self.final_processor  # Skip quality check
+
+        # Quality Check -> Final Processing oder Retry
+        self.quality_checker - "quality_good" >> self.final_processor
+        self.quality_checker - "quality_poor" >> self.result_synthesizer  # Retry synthesis
+        self.quality_checker - "quality_acceptable" >> self.final_processor
+
+        super().__init__(start=self.context_aggregator)
+
+
+# Neue spezialisierte Nodes für Response-Generation
+
+@with_progress_tracking
+class ContextAggregatorNode(AsyncNode):
+    """Aggregiere alle relevanten Kontexte und Ergebnisse"""
+
+    async def prep_async(self, shared):
+        return {
+            "results_store": shared.get("results_store", {}),
+            "tasks": shared.get("tasks", {}),
+            "current_plan": shared.get("current_plan"),
+            "original_query": shared.get("current_query", ""),
+            "conversation_history": shared.get("conversation_history", []),
+            "world_model": shared.get("world_model", {}),
+            "plan_adaptations": shared.get("plan_adaptations", 0)
+        }
+
+    async def exec_async(self, prep_res):
+        """Aggregiere intelligente Kontextinformationen"""
+
+        aggregated_context = {
+            "original_query": prep_res["original_query"],
+            "successful_results": {},
+            "failed_attempts": {},
+            "key_discoveries": [],
+            "adaptation_summary": "",
+            "confidence_scores": {}
+        }
+
+        # Sammle erfolgreiche Task-Ergebnisse
+        for task_id, task in prep_res["tasks"].items():
+            if task.status == "completed" and task.result:
+                result_data = prep_res["results_store"].get(task_id, {})
+
+                aggregated_context["successful_results"][task_id] = {
+                    "task_description": task.description,
+                    "task_type": task.type,
+                    "result": task.result,
+                    "metadata": getattr(task, 'metadata', {}),
+                    "verification": result_data.get("verification", {})
+                }
+
+                # Extrahiere key discoveries
+                if isinstance(task, ToolTask) and task.hypothesis:
+                    verification = result_data.get("verification", {})
+                    if verification.get("hypothesis_score", 0) > 0.7:
+                        aggregated_context["key_discoveries"].append({
+                            "discovery": f"Tool {task.tool_name} confirmed: {task.hypothesis}",
+                            "confidence": verification.get("hypothesis_score", 0.0),
+                            "result": task.result
+                        })
+
+        # Sammle fehlgeschlagene Versuche
+        for task_id, task in prep_res["tasks"].items():
+            if task.status == "failed":
+                aggregated_context["failed_attempts"][task_id] = {
+                    "description": task.description,
+                    "error": task.error,
+                    "retry_count": task.retry_count
+                }
+
+        # Plan adaptations summary
+        if prep_res["plan_adaptations"] > 0:
+            aggregated_context[
+                "adaptation_summary"] = f"Plan was adapted {prep_res['plan_adaptations']} times to handle unexpected results."
+
+        return aggregated_context
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["aggregated_context"] = exec_res
+        if exec_res["successful_results"] or exec_res["key_discoveries"]:
+            return "context_ready"
+        else:
+            return "no_context"
+
+@with_progress_tracking
+class ResultSynthesizerNode(AsyncNode):
+    """Synthetisiere finale Antwort aus allen Ergebnissen"""
+
+    async def prep_async(self, shared):
+        return {
+            "aggregated_context": shared.get("aggregated_context", {}),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "agent_instance": shared.get("agent_instance")
+        }
+
+    async def exec_async(self, prep_res):
+        if not LITELLM_AVAILABLE:
+            return await self._fallback_synthesis(prep_res)
+
+        context = prep_res["aggregated_context"]
+        persona = (prep_res['agent_instance'].amd.persona.to_system_prompt_addition() if not prep_res['agent_instance'].amd.persona.should_post_process() else '') if prep_res['agent_instance'].amd.persona else None
+        prompt = f"""
+Du bist ein Experte für Informationssynthese. Erstelle eine umfassende, hilfreiche Antwort basierend auf den gesammelten Ergebnissen.
+
+## Ursprüngliche Anfrage
+{context.get('original_query', '')}
+
+## Erfolgreiche Ergebnisse
+{self._format_successful_results(context.get('successful_results', {}))}
+
+## Wichtige Entdeckungen
+{self._format_key_discoveries(context.get('key_discoveries', []))}
+
+## Plan-Adaptationen
+{context.get('adaptation_summary', 'No adaptations were needed.')}
+
+## Fehlgeschlagene Versuche
+{self._format_failed_attempts(context.get('failed_attempts', {}))}
+
+{persona}
+
+## Anweisungen
+1. Gib eine direkte, hilfreiche Antwort auf die ursprüngliche Anfrage
+2. Integriere alle relevanten gefundenen Informationen
+3. Erkläre kurz den Prozess, falls Adaptationen nötig waren
+4. Sei ehrlich über Limitationen oder fehlende Informationen
+5. Strukturiere die Antwort logisch und lesbar
+
+Erstelle eine finale Antwort:"""
+
+        try:
+            # Verwende complex model für finale Synthesis
+            model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+            agent_instance = prep_res["agent_instance"]
+            synthesized_response = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+                node_name="ResultSynthesizerNode", task_id="response_synthesis"
+            )
+
+            return {
+                "synthesized_response": synthesized_response,
+                "synthesis_method": "llm",
+                "model_used": model_to_use,
+                "confidence": self._estimate_synthesis_confidence(context)
+            }
+
+        except Exception as e:
+            logger.error(f"LLM synthesis failed: {e}")
+            return await self._fallback_synthesis(prep_res)
+
+    def _format_successful_results(self, results: Dict) -> str:
+        formatted = []
+        for task_id, result_info in results.items():
+            formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:200]}...")
+        return "\n".join(formatted) if formatted else "No successful results to report."
+
+    def _format_key_discoveries(self, discoveries: List) -> str:
+        formatted = []
+        for discovery in discoveries:
+            confidence = discovery.get('confidence', 0.0)
+            formatted.append(f"- {discovery['discovery']} (Confidence: {confidence:.2f})")
+        return "\n".join(formatted) if formatted else "No key discoveries."
+
+    def _format_failed_attempts(self, failed: Dict) -> str:
+        if not failed:
+            return "No significant failures."
+        formatted = [f"- {info['description']}: {info['error']}" for info in failed.values()]
+        return "\n".join(formatted)
+
+    async def _fallback_synthesis(self, prep_res) -> Dict:
+        """Fallback synthesis ohne LLM"""
+        context = prep_res["aggregated_context"]
+
+        # Einfache Template-basierte Synthese
+        response_parts = []
+
+        if context.get("key_discoveries"):
+            response_parts.append("Based on my analysis, I found:")
+            for discovery in context["key_discoveries"][:3]:  # Top 3
+                response_parts.append(f"- {discovery['discovery']}")
+
+        if context.get("successful_results"):
+            response_parts.append("\nDetailed results:")
+            for task_id, result in list(context["successful_results"].items())[:2]:  # Top 2
+                response_parts.append(f"- {result['task_description']}: {str(result['result'])[:150]}")
+
+        if context.get("adaptation_summary"):
+            response_parts.append(f"\n{context['adaptation_summary']}")
+
+        fallback_response = "\n".join(
+            response_parts) if response_parts else "I was unable to complete the requested task effectively."
+
+        return {
+            "synthesized_response": fallback_response,
+            "synthesis_method": "fallback",
+            "confidence": 0.3
+        }
+
+    def _estimate_synthesis_confidence(self, context: Dict) -> float:
+        """Schätze Confidence der Synthese"""
+        confidence = 0.5  # Base confidence
+
+        # Boost für erfolgreiche Ergebnisse
+        successful_count = len(context.get("successful_results", {}))
+        confidence += min(successful_count * 0.15, 0.3)
+
+        # Boost für key discoveries mit hoher confidence
+        for discovery in context.get("key_discoveries", []):
+            discovery_conf = discovery.get("confidence", 0.0)
+            confidence += discovery_conf * 0.1
+
+        # Penalty für viele fehlgeschlagene Versuche
+        failed_count = len(context.get("failed_attempts", {}))
+        confidence -= min(failed_count * 0.1, 0.2)
+
+        return max(0.1, min(1.0, confidence))
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["synthesized_response"] = exec_res
+        if exec_res.get("synthesized_response"):
+            return "synthesized"
+        else:
+            return "synthesis_failed"
+
+
+@with_progress_tracking
+class ResponseFormatterNode(AsyncNode):
+    """Formatiere finale Antwort für Benutzer"""
+
+    async def prep_async(self, shared):
+        return {
+            "synthesized_response": shared.get("synthesized_response", {}),
+            "original_query": shared.get("current_query", ""),
+            "user_preferences": shared.get("user_preferences", {})
+        }
+
+    async def exec_async(self, prep_res):
+        synthesis_data = prep_res["synthesized_response"]
+        raw_response = synthesis_data.get("synthesized_response", "")
+
+        if not raw_response:
+            return {
+                "formatted_response": "I apologize, but I was unable to generate a meaningful response to your query."}
+
+        # Basis-Formatierung
+        formatted_response = raw_response.strip()
+
+        # Füge Metadaten hinzu falls gewünscht (für debugging/transparency)
+        confidence = synthesis_data.get("confidence", 0.0)
+        if confidence < 0.4:
+            formatted_response += "\n\n*Note: This response has low confidence due to limited information.*"
+
+        adaptation_note = ""
+        synthesis_method = synthesis_data.get("synthesis_method", "unknown")
+        if synthesis_method == "fallback":
+            adaptation_note = "\n\n*Note: Response generated with limited processing capabilities.*"
+
+        return {
+            "formatted_response": formatted_response + adaptation_note,
+            "confidence": confidence,
+            "metadata": {
+                "synthesis_method": synthesis_method,
+                "response_length": len(formatted_response)
+            }
+        }
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["formatted_response"] = exec_res
+        return "formatted"
+
+
+@with_progress_tracking
+class ResponseQualityNode(AsyncNode):
+    """Prüfe Qualität der generierten Antwort"""
+
+    async def prep_async(self, shared):
+        return {
+            "formatted_response": shared.get("formatted_response", {}),
+            "original_query": shared.get("current_query", ""),
+            "format_config": self._get_format_config(shared),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "persona_config": shared.get("persona_config"),
+            "agent_instance": shared.get("agent_instance"),
+        }
+
+    def _get_format_config(self, shared) -> Optional[FormatConfig]:
+        """Extrahiere Format-Konfiguration"""
+        persona = shared.get("persona_config")
+        if persona and hasattr(persona, 'format_config'):
+            return persona.format_config
+        return None
+
+    async def exec_async(self, prep_res):
+        response_data = prep_res["formatted_response"]
+        response_text = response_data.get("formatted_response", "")
+        original_query = prep_res["original_query"]
+        format_config = prep_res["format_config"]
+
+        # Basis-Qualitätsprüfung
+        base_quality = self._heuristic_quality_check(response_text, original_query)
+
+        # Format-spezifische Bewertung
+        format_quality = await self._evaluate_format_adherence(response_text, format_config)
+
+        # Längen-spezifische Bewertung
+        length_quality = self._evaluate_length_adherence(response_text, format_config)
+
+        # LLM-basierte Gesamtbewertung
+        llm_quality = 0.5
+        if LITELLM_AVAILABLE and len(response_text) > 500:
+            llm_quality = await self._llm_format_quality_check(
+                response_text, original_query, format_config, prep_res
+            )
+
+        # Gewichtete Gesamtbewertung
+        total_quality = (
+            base_quality * 0.3 +
+            format_quality * 0.3 +
+            length_quality * 0.2 +
+            llm_quality * 0.2
+        )
+
+        quality_details = {
+            "total_score": total_quality,
+            "base_quality": base_quality,
+            "format_adherence": format_quality,
+            "length_adherence": length_quality,
+            "llm_assessment": llm_quality,
+            "format_config_used": format_config is not None
+        }
+
+        return {
+            "quality_score": total_quality,
+            "quality_assessment": self._score_to_assessment(total_quality),
+            "quality_details": quality_details,
+            "suggestions": self._generate_format_quality_suggestions(
+                total_quality, response_text, format_config, quality_details
+            )
+        }
+
+    async def _evaluate_format_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+        """Bewerte Format-Einhaltung"""
+        if not format_config:
+            return 0.8  # Neutral wenn kein Format vorgegeben
+
+        format_type = format_config.response_format
+        score = 0.5
+
+        # Format-spezifische Checks
+        if format_type == ResponseFormat.WITH_TABLES:
+            if '|' in response or 'Table:' in response or '| ' in response:
+                score += 0.4
+
+        elif format_type == ResponseFormat.WITH_BULLET_POINTS:
+            bullet_count = response.count('•') + response.count('-') + response.count('*')
+            if bullet_count >= 2:
+                score += 0.4
+            elif bullet_count >= 1:
+                score += 0.2
+
+        elif format_type == ResponseFormat.WITH_LISTS:
+            list_patterns = ['1.', '2.', '3.', 'a)', 'b)', 'c)']
+            list_score = sum(1 for pattern in list_patterns if pattern in response)
+            score += min(0.4, list_score * 0.1)
+
+        elif format_type == ResponseFormat.MD_TEXT:
+            md_elements = ['#', '**', '*', '`', '```', '[', ']', '(', ')']
+            md_score = sum(1 for element in md_elements if element in response)
+            score += min(0.4, md_score * 0.05)
+
+        elif format_type == ResponseFormat.YAML_TEXT:
+            if response.strip().startswith(('```yaml', '---')) or ': ' in response:
+                score += 0.4
+
+        elif format_type == ResponseFormat.JSON_TEXT:
+            if response.strip().startswith(('{', '[')):
+                try:
+                    json.loads(response)
+                    score += 0.4
+                except:
+                    score += 0.1  # Partial credit for JSON-like structure
+
+        elif format_type == ResponseFormat.TEXT_ONLY:
+            # Penalize if formatting elements are present
+            format_elements = ['#', '*', '|', '```', '1.', '•', '-']
+            format_count = sum(1 for element in format_elements if element in response)
+            score += max(0.1, 0.5 - format_count * 0.05)
+
+        elif format_type == ResponseFormat.PSEUDO_CODE:
+            code_indicators = ['if ', 'for ', 'while ', 'def ', 'return ', 'function', 'BEGIN', 'END']
+            code_score = sum(1 for indicator in code_indicators if indicator in response)
+            score += min(0.4, code_score * 0.1)
+
+        return max(0.0, min(1.0, score))
+
+    def _evaluate_length_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+        """Bewerte Längen-Einhaltung"""
+        if not format_config:
+            return 0.8
+
+        word_count = len(response.split())
+        min_words, max_words = format_config.get_expected_word_range()
+
+        if min_words <= word_count <= max_words:
+            return 1.0
+        elif word_count < min_words:
+            # Zu kurz - sanfte Bestrafung
+            ratio = word_count / min_words
+            return max(0.3, ratio * 0.8)
+        else:  # word_count > max_words
+            # Zu lang - weniger Bestrafung als zu kurz
+            excess_ratio = (word_count - max_words) / max_words
+            return max(0.4, 1.0 - excess_ratio * 0.3)
+
+    async def _llm_format_quality_check(
+        self,
+        response: str,
+        query: str,
+        format_config: Optional[FormatConfig],
+        prep_res: Dict
+    ) -> float:
+        """LLM-basierte Format- und Qualitätsbewertung"""
+        if not format_config:
+            return await self._standard_llm_quality_check(response, query, prep_res)
+
+        format_desc = format_config.get_format_instructions()
+        length_desc = format_config.get_length_instructions()
+
+        prompt = f"""
+Bewerte diese Antwort auf einer Skala von 0.0 bis 1.0 basierend auf Format-Einhaltung und Qualität:
+
+Benutzer-Anfrage: {query}
+
+Antwort: {response}
+
+Erwartetes Format: {format_desc}
+Erwartete Länge: {length_desc}
+
+Bewertungskriterien:
+1. Format-Einhaltung (40%): Entspricht die Antwort dem geforderten Format?
+2. Längen-Angemessenheit (25%): Ist die Länge angemessen?
+3. Inhaltliche Qualität (25%): Beantwortet die Anfrage vollständig?
+4. Lesbarkeit und Struktur (10%): Ist die Antwort gut strukturiert?
+
+Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
+
+        try:
+            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+            agent_instance = prep_res["agent_instance"]
+            score_text = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=10,
+                node_name="QualityAssessmentNode", task_id="format_quality_assessment"
+            ).strip()
+
+            return float(score_text)
+
+        except Exception as e:
+            logger.warning(f"LLM format quality check failed: {e}")
+            return 0.6  # Neutral fallback
+
+    def _generate_format_quality_suggestions(
+        self,
+        score: float,
+        response: str,
+        format_config: Optional[FormatConfig],
+        quality_details: Dict
+    ) -> List[str]:
+        """Generiere Format-spezifische Verbesserungsvorschläge"""
+        suggestions = []
+
+        if not format_config:
+            return ["Consider defining a specific response format for better consistency"]
+
+        # Format-spezifische Vorschläge
+        if quality_details["format_adherence"] < 0.6:
+            format_type = format_config.response_format
+
+            if format_type == ResponseFormat.WITH_TABLES:
+                suggestions.append("Add tables using markdown format (| Column | Column |)")
+            elif format_type == ResponseFormat.WITH_BULLET_POINTS:
+                suggestions.append("Use bullet points (•, -, *) to structure information")
+            elif format_type == ResponseFormat.MD_TEXT:
+                suggestions.append("Use markdown formatting (headers, bold, code blocks)")
+            elif format_type == ResponseFormat.YAML_TEXT:
+                suggestions.append("Format response as valid YAML structure")
+            elif format_type == ResponseFormat.JSON_TEXT:
+                suggestions.append("Format response as valid JSON")
+
+        # Längen-spezifische Vorschläge
+        if quality_details["length_adherence"] < 0.6:
+            word_count = len(response.split())
+            min_words, max_words = format_config.get_expected_word_range()
+
+            if word_count < min_words:
+                suggestions.append(f"Response too short ({word_count} words). Aim for {min_words}-{max_words} words")
+            else:
+                suggestions.append(f"Response too long ({word_count} words). Aim for {min_words}-{max_words} words")
+
+        # Qualitäts-spezifische Vorschläge
+        if score < 0.5:
+            suggestions.append("Overall quality needs improvement - consider regenerating")
+        elif score < 0.7:
+            suggestions.append("Good response but could be enhanced with better format adherence")
+
+        return suggestions
+
+    async def _standard_llm_quality_check(self, response: str, query: str, prep_res: Dict) -> float:
+        """Standard LLM-Qualitätsprüfung ohne Format-Fokus"""
+        # Bestehende Implementierung beibehalten
+        return await self._llm_quality_check(response, query, prep_res)
+
+    def _heuristic_quality_check(self, response: str, query: str) -> float:
+        """Heuristische Qualitätsprüfung"""
+        score = 0.5  # Base score
+
+        # Length check
+        if len(response) < 50:
+            score -= 0.3
+        elif len(response) > 100:
+            score += 0.2
+
+        # Query term coverage
+        query_terms = set(query.lower().split())
+        response_terms = set(response.lower().split())
+        coverage = len(query_terms.intersection(response_terms)) / max(len(query_terms), 1)
+        score += coverage * 0.3
+
+        # Structure indicators
+        if any(indicator in response for indicator in [":", "-", "1.", "•"]):
+            score += 0.1  # Structured response bonus
+
+        return max(0.0, min(1.0, score))
+
+    async def _llm_quality_check(self, response: str, query: str, prep_res: Dict) -> float:
+        """LLM-basierte Qualitätsprüfung"""
+        try:
+            prompt = f"""
+Rate the quality of this response to the user's query on a scale of 0.0 to 1.0.
+
+User Query: {query}
+
+Response: {response}
+
+Consider:
+- Relevance to the query
+- Completeness of information
+- Clarity and readability
+- Accuracy (if verifiable)
+
+Respond with just a number between 0.0 and 1.0:"""
+
+            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+            agent_instance = prep_res["agent_instance"]
+            score_text = await agent_instance.a_run_llm_completion(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=10,
+                node_name="QualityAssessmentNode", task_id="quality_assessment"
+            ).strip()
+
+            return float(score_text)
+
+        except:
+            return 0.5  # Fallback score
+
+    def _score_to_assessment(self, score: float) -> str:
+        if score >= 0.8:
+            return "quality_good"
+        elif score >= 0.5:
+            return "quality_acceptable"
+        else:
+            return "quality_poor"
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["quality_assessment"] = exec_res
+        return exec_res["quality_assessment"]
+
+
+@with_progress_tracking
+class ResponseFinalProcessorNode(AsyncNode):
+    """Finale Verarbeitung mit Persona-System"""
+
+    async def prep_async(self, shared):
+        return {
+            "formatted_response": shared.get("formatted_response", {}),
+            "quality_assessment": shared.get("quality_assessment", {}),
+            "conversation_history": shared.get("conversation_history", []),
+            "persona": shared.get("persona_config"),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "use_fast_response": shared.get("use_fast_response", True),
+            "agent_instance": shared.get("agent_instance"),
+        }
+
+    async def exec_async(self, prep_res):
+        response_data = prep_res["formatted_response"]
+        raw_response = response_data.get("formatted_response", "I apologize, but I couldn't generate a response.")
+
+        # Persona-basierte Anpassung
+        if prep_res.get("persona") and LITELLM_AVAILABLE:
+            final_response = await self._apply_persona_style(raw_response, prep_res)
+        else:
+            final_response = raw_response
+
+        # Finale Metadaten
+        processing_metadata = {
+            "response_confidence": response_data.get("confidence", 0.0),
+            "quality_score": prep_res.get("quality_assessment", {}).get("quality_score", 0.0),
+            "processing_timestamp": datetime.now().isoformat(),
+            "response_length": len(final_response),
+            "persona_applied": prep_res.get("persona") is not None
+        }
+
+        return {
+            "final_response": final_response,
+            "metadata": processing_metadata,
+            "status": "completed"
+        }
+
+    async def _apply_persona_style(self, response: str, prep_res: Dict) -> str:
+        """Optimized persona styling mit Konfiguration"""
+        persona = prep_res["persona"]
+
+        # Nur anwenden wenn post-processing konfiguriert
+        if not persona.should_post_process():
+            return response
+
+        # Je nach Integration Level unterschiedliche Prompts
+        if persona.integration_level == "light":
+            style_prompt = f"Make this {persona.tone} and {persona.style}: {response}"
+            max_tokens = 400
+        elif persona.integration_level == "medium":
+            style_prompt = f"""
+    Apply {persona.name} persona (style: {persona.style}, tone: {persona.tone}) to:
+    {response}
+
+    Keep the same information, adjust presentation:"""
+            max_tokens = 600
+        else:  # heavy
+            style_prompt = f"""
+    Completely transform as {persona.name}:
+    Style: {persona.style}, Tone: {persona.tone}
+    Traits: {', '.join(persona.personality_traits)}
+    Instructions: {persona.custom_instructions}
+
+    Original: {response}
+
+    As {persona.name}:"""
+            max_tokens = 1000
+
+        try:
+            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
+            agent_instance = prep_res["agent_instance"]
+            if prep_res.get("use_fast_response", True):
+                response = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=[{"role": "user", "content": style_prompt}],
+                    temperature=0.5,
+                    max_tokens=max_tokens, node_name="PersonaStylingNode", task_id="persona_styling_fast"
+                )
+            else:
+                response = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=[{"role": "user", "content": style_prompt}],
+                    temperature=0.6,
+                    max_tokens=max_tokens + 200, node_name="PersonaStylingNode", task_id="persona_styling_ritch"
+                )
+
+            return response.strip()
+
+        except Exception as e:
+            logger.warning(f"Persona styling failed: {e}")
+            return response
+
+    async def post_async(self, shared, prep_res, exec_res):
+        shared["current_response"] = exec_res["final_response"]
+        shared["response_metadata"] = exec_res["metadata"]
+        return "response_ready"
+
+# ===== Foramt Helper =====
+class VariableManager:
+    """Unified variable management system with advanced features"""
+
+    def __init__(self, world_model: Dict, shared_state: Dict = None):
+        self.world_model = world_model
+        self.shared_state = shared_state or {}
+        self.scopes = {
+            'world': world_model,
+            'shared': self.shared_state,
+            'results': {},
+            'tasks': {},
+            'user': {},
+            'system': {}
+        }
+        self._cache = {}
+
+    def register_scope(self, name: str, data: Dict):
+        """Register a new variable scope"""
+        self.scopes[name] = data
+        self._cache.clear()
+
+    def set_results_store(self, results_store: Dict):
+        """Set the results store for task result references"""
+        self.scopes['results'] = results_store
+        self._cache.clear()
+
+    def set_tasks_store(self, tasks_store: Dict):
+        """Set tasks store for task metadata access"""
+        self.scopes['tasks'] = tasks_store
+        self._cache.clear()
+
+    def get(self, path: str, default=None, use_cache: bool = True):
+        """Get variable with dot notation path support"""
+        if use_cache and path in self._cache:
+            return self._cache[path]
+
+        try:
+            value = self._resolve_path(path)
+            if use_cache:
+                self._cache[path] = value
+            return value if value is not None else default
+        except:
+            return default
+
+    def set(self, path: str, value, create_scope: bool = True):
+        """Set variable with dot notation path support"""
+        parts = path.split('.')
+
+        if len(parts) == 1:
+            # Simple key in world_model
+            self.world_model[path] = value
+        else:
+            scope_name = parts[0]
+
+            if scope_name not in self.scopes:
+                if create_scope:
+                    self.scopes[scope_name] = {}
+                else:
+                    raise KeyError(f"Scope '{scope_name}' not found")
+
+            # Navigate to nested location
+            current = self.scopes[scope_name]
+            for part in parts[1:-1]:
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            current[parts[-1]] = value
+
+        self._cache.clear()
+
+    def _resolve_path(self, path: str):
+        """Resolve dot notation path to actual value"""
+        parts = path.split('.')
+
+        if len(parts) == 1:
+            # Try world_model first, then other scopes
+            if path in self.world_model:
+                return self.world_model[path]
+
+            for scope in self.scopes.values():
+                if isinstance(scope, dict) and path in scope:
+                    return scope[path]
+            return None
+
+        # Multi-part path
+        scope_name = parts[0]
+        if scope_name not in self.scopes:
+            return None
+
+        current = self.scopes[scope_name]
+
+        for part in parts[1:]:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+
+        return current
+
+    def format_text(self, text: str, context: Dict = None) -> str:
+        """Enhanced text formatting with multiple syntaxes"""
+        if not text or not isinstance(text, str):
+            return str(text) if text is not None else ""
+
+        # Temporary context overlay
+        if context:
+            original_scopes = self.scopes.copy()
+            self.scopes['context'] = context
+
+        try:
+            # Handle {{ variable }} syntax
+            formatted = self._format_double_braces(text)
+
+            # Handle {variable} syntax
+            formatted = self._format_single_braces(formatted)
+
+            # Handle $variable syntax
+            formatted = self._format_dollar_syntax(formatted)
+
+            return formatted
 
         finally:
-            self.stream = original_stream_state # Restore stream setting
+            if context:
+                self.scopes = original_scopes
 
+    def _format_double_braces(self, text: str) -> str:
+        """Handle {{ variable.path }} syntax with improved debugging"""
+        import re
 
-    async def flow_world_model(self, text_input: str, session_id: str, adk_session_state: State | None):
-        """
-        Analyzes input, updates internal WorldModel, and syncs with ADK state if enabled.
-        Sync Priority: If ADK state exists, sync *from* it first. Then update based on text.
-                     The sync *to* ADK happens after the agent run completes.
-        """
-        logger.debug(f"Flowing world model based on text: {text_input[:100]}...")
+        def replace_var(match):
+            var_path = match.group(1).strip()
+            value = self.get(var_path)
 
-        # 1. Sync FROM ADK State (if enabled and state available)
-        if self.sync_adk_state and adk_session_state is not None:
-             logger.debug("Syncing World Model FROM ADK session state...")
-             self.world_model.sync_from_adk_state(adk_session_state)
+            if value is None:
+                # IMPROVED: Log missing variables for debugging
+                available_vars = list(self.get_available_variables().keys())
+                logger.warning(f"Variable '{var_path}' not found. Available: {available_vars[:10]}")
+                return match.group(0)  # Keep original if not found
 
-        # 2. Update World Model based on Text Input (using LLM)
-        # This adds/modifies based on the current turn's input
-        # Define Pydantic model for structured update extraction
-        current_keys = list(self.world_model.to_dict().keys())
-        class WorldModelAdaption(BaseModel):
-            action: Literal['add', 'update', 'remove', 'none'] = Field(..., description="Action on the world model.")
-            key: str | None = Field(None, description=f"Key to modify/add/remove (e.g., 'user_location', 'task_status'). Existing keys: {current_keys}")
-            value: Any | None = Field(None, description="New value (for 'add'/'update'). Should be JSON serializable.")
-            reasoning: str = Field(..., description="Why this change (or no change) is needed based on the input.")
+            return self._value_to_string(value)
 
-        prompt = (f"Analyze the following text and current world state to determine if the agent's world model needs changes.\n"
-                  f"Current World State Keys: {current_keys}\n"
-                  f"Text Input: ```\n{text_input}\n```\n"
-                  f"Decide action, key, value, and reasoning. Focus on factual updates derived *from the text*. Do not hallucinate.")
+        return re.sub(r'\{\{\s*([^}]+)\s*\}\}', replace_var, text)
 
-        try:
-            # Use a potentially faster/cheaper model for this classification task
-            # Could eventually use a separate AMD config for this call
-            adaption_dict = await self.a_format_class(WorldModelAdaption, prompt)
-            adaption = WorldModelAdaption(**adaption_dict)
+    def _format_single_braces(self, text: str) -> str:
+        """Handle {variable.path} syntax, including with spaces like { variable.path }."""
+        import re
 
-            logger.info(f"World Model Adaption proposed: {adaption.action} on key '{adaption.key}'. Reason: {adaption.reasoning}")
+        def replace_var(match):
+            # Extrahiert den Variablennamen und entfernt führende/nachfolgende Leerzeichen
+            var_path = match.group(1).strip()
 
-            if adaption.action == 'add' or adaption.action == 'update':
-                if adaption.key and adaption.value is not None:
-                    self.world_model.set(adaption.key, adaption.value)
-                else:
-                    logger.warning("World model 'add'/'update' ignored: missing key or value.")
-            elif adaption.action == 'remove':
-                if adaption.key:
-                    self.world_model.remove(adaption.key)
-                else:
-                    logger.warning("World model 'remove' ignored: missing key.")
-            # Else ('none'): do nothing
+            # Ruft den Wert über die get-Methode ab, die die Punktnotation bereits verarbeitet
+            value = self.get(var_path)
 
-        except (ValidationError, Exception) as e:
-            logger.warning(f"Failed to determine world model adaption via LLM: {e}. World model may be based only on ADK sync or previous state.")
+            # Gibt den konvertierten Wert oder das Original-Tag zurück, wenn der Wert nicht gefunden wurde
+            return self._value_to_string(value) if value is not None else match.group(0)
 
-        # NOTE: Sync TO ADK happens *after* the full agent run in a_run()
+        # Dieser Regex findet {beliebiger.inhalt} und erlaubt Leerzeichen um den Inhalt
+        # Er schließt verschachtelte oder leere Klammern wie {} oder { {var} } aus.
+        return re.sub(r'\{([^{}]+)\}', replace_var, text)
 
+    def _format_dollar_syntax(self, text: str) -> str:
+        """Handle $variable syntax"""
+        import re
 
-    # --- ADK Tool Implementations (Internal Wrappers) ---
-    def _ensure_internal_adk_tools(self):
-        """Adds essential internal ADK tools if not already present."""
-        if not ADK_AVAILABLE or not isinstance(self, LlmAgent):
-            return
-        if self.tools is None: self.tools = []
+        def replace_var(match):
+            var_name = match.group(1)
+            value = self.get(var_name)
+            return self._value_to_string(value) if value is not None else match.group(0)
 
-        existing_tool_names = {tool.name for tool in self.tools if isinstance(tool, BaseTool)}
+        return re.sub(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', replace_var, text)
 
-        internal_adk_tools = {
-            "get_world_model_key": self.adk_tool_world_model_get,
-            "show_world_model": self.adk_tool_world_model_show,
+    def _value_to_string(self, value) -> str:
+        """Convert value to string representation"""
+        if isinstance(value, str):
+            return value
+        elif isinstance(value, (dict, list)):
+            return json.dumps(value, default=str)
+        else:
+            return str(value)
+
+    def get_available_variables(self) -> Dict[str, Dict]:
+        """Get comprehensive variable documentation"""
+        variables = {}
+
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict):
+                variables[scope_name] = {}
+                for key, value in scope_data.items():
+                    if isinstance(value, str):
+                        preview = value[:50] + "..." if len(value) > 50 else value
+                    elif isinstance(value, dict):
+                        preview = f"Object with {len(value)} keys"
+                    elif isinstance(value, list):
+                        preview = f"Array with {len(value)} items"
+                    else:
+                        preview = str(type(value).__name__)
+
+                    variables[scope_name][key] = {
+                        'preview': preview,
+                        'type': type(value).__name__,
+                        'path': f"{scope_name}.{key}"
+                    }
+
+        return variables
+
+    def validate_references(self, text: str) -> Dict[str, bool]:
+        """Validate all variable references in text"""
+        import re
+
+        references = {}
+
+        # Find all {{ }} references
+        double_brace_refs = re.findall(r'\{\{\s*([^}]+)\s*\}\}', text)
+        for ref in double_brace_refs:
+            references["{{"+ref+"}}"] = self.get(ref.strip()) is not None
+
+        # Find all {} references
+        single_brace_refs = re.findall(r'\{([^{}\s]+)\}', text)
+        for ref in single_brace_refs:
+            if '.' not in ref:  # Only simple vars
+                references["{"+ref+"}"] = self.get(ref.strip()) is not None
+
+        # Find all $ references
+        dollar_refs = re.findall(r'\$([a-zA-Z_][a-zA-Z0-9_]*)', text)
+        for ref in dollar_refs:
+            references[f"${ref}"] = self.get(ref) is not None
+
+        return references
+
+    def get_scope_info(self) -> Dict[str, Any]:
+        """Get information about all available scopes"""
+        info = {}
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict):
+                info[scope_name] = {
+                    'type': 'dict',
+                    'keys': len(scope_data),
+                    'sample_keys': list(scope_data.keys())[:5]
+                }
+            else:
+                info[scope_name] = {
+                    'type': type(scope_data).__name__,
+                    'value': str(scope_data)[:100]
+                }
+        return info
+
+    def _validate_task_references(self, task: Task) -> Dict[str, Any]:
+        """Validate all variable references in a task"""
+        validation_results = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
         }
-        if A2A_AVAILABLE:
-            internal_adk_tools["a2a_send_and_wait"] = self.adk_tool_a2a_send_and_wait
-            # Add NEW tools
-            internal_adk_tools["a2a_send_no_wait"] = self.adk_tool_a2a_send_no_wait
-            internal_adk_tools["a2a_get_task_status"] = self.adk_tool_a2a_get_task_status
-            internal_adk_tools["a2a_cancel_task"] = self.adk_tool_a2a_cancel_task
 
-        for name, func in internal_adk_tools.items():
-            if name not in existing_tool_names:
-                try:
-                    tool_instance = FunctionTool(func=func) # ADK infers from func signature/docstring
-                    self.tools.append(tool_instance)
-                    logger.debug(f"Registered internal ADK tool: {name}")
-                except Exception as e:
-                    logger.warning(f"Failed to register internal ADK tool '{name}': {e}.")
+        # Check different task types
+        if isinstance(task, LLMTask):
+            if task.prompt_template:
+                refs = self.validate_references(task.prompt_template)
+                for ref, is_valid in refs.items():
+                    if not is_valid:
+                        validation_results['errors'].append(f"Invalid reference in prompt: {ref}")
+                        validation_results['valid'] = False
 
-    # --- Existing ADK Tools ---
-    async def adk_tool_world_model_get(self, tool_context: ToolContext | None, key: str) -> Any | None:
-        """ADK Tool: Retrieves a specific value from the agent's world model."""
-        # ... (implementation remains the same) ...
-        logger.info(f"[ADK Tool] get_world_model_key called for key: {key}")
-        return self.world_model.get(key)
+        elif isinstance(task, ToolTask):
+            for key, value in task.arguments.items():
+                if isinstance(value, str):
+                    refs = self.validate_references(value)
+                    for ref, is_valid in refs.items():
+                        if not is_valid:
+                            validation_results['warnings'].append(f"Invalid reference in {key}: {ref}")
 
-    async def adk_tool_world_model_show(self, tool_context: ToolContext | None) -> str:
-        """ADK Tool: Returns a string representation of the agent's entire world model."""
-        # ... (implementation remains the same) ...
-        logger.info("[ADK Tool] show_world_model called")
-        return self.world_model.show()
+        return validation_results
 
-    async def adk_tool_a2a_send_and_wait(self,
-                                         tool_context: ToolContext | None,
-                                         target_agent_url: str,
-                                         task_prompt: str,
-                                         session_id: Optional[str] = None
-                                         ) -> str:
-        """ADK Tool: Sends a task to another agent via A2A and waits for the final text result."""
-        # ... (implementation remains the same, calls _execute_a2a_call) ...
-        if not A2A_AVAILABLE: return "Error: python-a2a library not available."
-        logger.info(f"[ADK Tool] a2a_send_and_wait called for target: {target_agent_url}")
-        tool_session_id = session_id or f"adk_tool_a2a_{uuid.uuid4()}"
+    def get_llm_variable_context(self) -> str:
+        """Get variable context formatted for LLM consumption"""
+        context_parts = []
+        context_parts.append("## Variable System")
+        context_parts.append("You have access to a powerful variable system:")
+
+        # Show available scopes with examples
+        for scope_name, scope_data in self.scopes.items():
+            if isinstance(scope_data, dict) and scope_data:
+                sample_keys = list(scope_data.keys())[:3]
+                context_parts.append(f"- {scope_name}: {', '.join(sample_keys)}")
+
+        context_parts.append("\nSyntax: {{ variable.path }} or {variable} or $variable")
+        context_parts.append("Examples: {{ user.name }}, {{ results.search.data }}, {{ system_context.timestamp }}")
+
+        return "\n".join(context_parts)
+
+    def get_variable_suggestions(self, query: str) -> List[str]:
+        """Get variable suggestions based on query content"""
+
+        query_lower = query.lower()
+        suggestions = []
+
+        # Check all variables for relevance
+        for scope in self.scopes.values():
+            for name, var_def in scope.items():
+                # Name similarity
+                if any(word in name.lower() for word in query_lower.split()):
+                    suggestions.append(name)
+                    continue
+
+                # Description similarity
+                if var_def and any(word in str(var_def).lower() for word in query_lower.split()):
+                    suggestions.append(name)
+                    continue
+
+
+        return list(set(suggestions))[:10]
+
+# ===== MAIN AGENT CLASS =====
+class FlowAgent:
+    """Production-ready agent system built on PocketFlow"""
+    def __init__(
+        self,
+        amd: AgentModelData,
+        world_model: Dict[str, Any] = None,
+        verbose: bool = False,
+        enable_pause_resume: bool = True,
+        checkpoint_interval: int = 300,  # 5 minutes
+        max_parallel_tasks: int = 3,
+        progress_callback: Optional[callable] = None,
+        **kwargs
+    ):
+        self.amd = amd
+        self.world_model = world_model or {}
+        self.verbose = verbose
+        self.enable_pause_resume = enable_pause_resume
+        self.checkpoint_interval = checkpoint_interval
+        self.max_parallel_tasks = max_parallel_tasks
+        self.progress_tracker = ProgressTracker(progress_callback, agent_name=amd.name)
+
+        # Core state
+        self.shared = {
+            "world_model": self.world_model,
+            "tasks": {},
+            "task_plans": {},
+            "system_status": "idle",
+            "session_data": {},
+            "performance_metrics": {},
+            "conversation_history": [],
+            "available_tools": [],
+            "progress_tracker": self.progress_tracker
+        }
+        self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+        # Register default scopes
+        self._setup_variable_scopes()
+        # Flows
+        self.task_flow = TaskManagementFlow(max_parallel_tasks=self.max_parallel_tasks)
+        self.response_flow = ResponseGenerationFlow()
+
+        if hasattr(self.task_flow, 'executor_node'):
+            self.task_flow.executor_node.agent_instance = self
+
+        # Agent state
+        self.is_running = False
+        self.is_paused = False
+        self.last_checkpoint = None
+        self.checkpoint_data = {}
+
+        # Threading
+        self.executor = ThreadPoolExecutor(max_workers=max_parallel_tasks)
+        self._shutdown_event = threading.Event()
+
+        # Server components
+        self.a2a_server: Optional[A2AServer] = None
+        self.mcp_server: Optional[FastMCP] = None
+
+        # Enhanced tool registry
+        self._tool_registry = {}
+        self._tool_capabilities = {}
+        self._tool_analysis_cache = {}
+
+        # Tool analysis file path
+        self.tool_analysis_file = self._get_tool_analysis_path()
+
+        self._tool_capabilities.update(self._load_tool_analysis())
+        if self.amd.budget_manager:
+            self.amd.budget_manager.load_data()
+
+        logger.info(f"FlowAgent initialized: {amd.name}")
+
+    @property
+    def progress_callback(self):
+        return self.progress_tracker.progress_callback
+
+    @progress_callback.setter
+    def progress_callback(self, value):
+        self.progress_tracker.progress_callback = value
+
+
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", **kwargs) -> str:
+        if "model" not in kwargs:
+            kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
+
+        llm_start = time.perf_counter()
+
+        if self.progress_tracker:
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="llm_call",
+                timestamp=time.time(),
+                status=NodeStatus.RUNNING,
+                node_name=node_name,
+                task_id=task_id,
+                llm_model=kwargs["model"],
+                llm_temperature=kwargs.get("temperature", 0.7),
+                metadata={
+                    "task_type": "LLMCall",
+                    "model_preference": kwargs.get("model_preference", "fast"),
+                    "prompt_length": len(kwargs.get("messages", [{}])[-1].get("content", ""))
+                }
+            ))
+
         try:
-            return await self._execute_a2a_call(
-                 user_input=task_prompt,
-                 session_id=tool_session_id,
-                 target_a2a_agent_url=target_agent_url,
-                 a2a_task_prompt=task_prompt
+
+            response = await litellm.acompletion(**kwargs
             )
+
+            llm_duration = time.perf_counter() - llm_start
+            result = response.choices[0].message.content
+
+            # Extract token usage and cost
+            usage = response.usage
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else 0
+
+            call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
+                                                            output_tokens) if self.progress_tracker else 0.0
+
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    task_id=task_id,
+                    llm_model=kwargs["model"],
+                    llm_prompt_tokens=input_tokens,
+                    llm_completion_tokens=output_tokens,
+                    llm_total_tokens=total_tokens,
+                    llm_cost=call_cost,
+                    llm_duration=llm_duration,
+                    llm_temperature=kwargs.get("temperature", 0.7),
+                    metadata={
+                        "success": True,
+                        "result_length": len(result),
+                        "task_type": "LLMCall"
+                    }
+                ))
+
+            return result
         except Exception as e:
-             logger.error(f"[ADK Tool] a2a_send_and_wait failed: {e}", exc_info=True)
-             return f"Error executing A2A task via ADK tool: {e}"
+            llm_duration = time.perf_counter() - llm_start
 
-        # --- NEW ADK Tools for A2A ---
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    status=NodeStatus.FAILED,
+                    node_name=node_name,
+                    task_id=task_id,
+                    llm_model=kwargs["model"],
+                    llm_duration=llm_duration,
+                    metadata={
+                        "error": str(e),
+                        "task_type": "LLMCall",
+                        "error_type": type(e).__name__
+                    }
+                ))
 
-    async def adk_tool_a2a_send_no_wait(self,
-                                        tool_context: ToolContext | None,
-                                        target_agent_url: str,
-                                        task_prompt: str,
-                                        session_id: Optional[str] = None
-                                        ) -> str:
-        """ADK Tool: Sends a task to another agent via A2A and returns the task ID immediately.
+            raise
 
-        Args:
-            target_agent_url: The full URL of the target A2A agent.
-            task_prompt: The natural language prompt or task for the target agent.
-            session_id: Optional session ID to use for the A2A interaction.
+    async def a_run(
+        self,
+        query: str,
+        session_id: str = "default",
+        user_id: str = None,
+        stream_callback: Optional[Callable] = None,
+        **kwargs
+    ) -> str:
+        """Main entry point for agent execution"""
 
-        Returns:
-            The unique ID of the submitted A2A task, or an error message.
-        """
-        if not A2A_AVAILABLE: return "Error: python-a2a library not available."
-        logger.info(f"[ADK Tool] a2a_send_no_wait called for target: {target_agent_url}")
+        execution_start = self.progress_tracker.start_timer("total_execution")
+
+        await self.progress_tracker.emit_event(ProgressEvent(
+            event_type="execution_start",
+            timestamp=time.time(),
+            status=NodeStatus.RUNNING,
+            node_name="FlowAgent",
+            session_id=session_id,
+            metadata={"query": query, "user_id": user_id}
+        ))
 
         try:
-            client = await self.setup_a2a_client(target_agent_url)
-            if not client:
-                return f"Error: Could not connect to A2A agent at {target_agent_url}"
+            # Set user context variables
+            timestamp = datetime.now()
+            self.variable_manager.register_scope('user', {
+                'id': user_id,
+                'session': session_id,
+                'query': query,
+                'timestamp': timestamp.isoformat()
+            })
 
-            task_id = str(uuid.uuid4())
-            a2a_session_id = session_id or f"a2a_tool_nowait_{task_id[:8]}"
+            # Update system variables
+            self.variable_manager.set('system_context.timestamp', {'isoformat':timestamp.isoformat()})
+            self.variable_manager.set('system_context.timestamp.year', timestamp.year)
+            self.variable_manager.set('system_context.timestamp.month', timestamp.month)
+            self.variable_manager.set('system_context.timestamp.week', timestamp.strftime('%W'))
+            self.variable_manager.set('system_context.timestamp.day', timestamp.day)
+            self.variable_manager.set('system_context.timestamp.hour', timestamp.hour)
+            self.variable_manager.set('system_context.timestamp.minute', timestamp.minute)
+            self.variable_manager.set('system_context.timestamp.second', timestamp.second)
+            self.variable_manager.set('system_context.timestamp.date', timestamp.strftime('%Y-%m-%d'))
+            self.variable_manager.set('system_context.timestamp.weekday', timestamp.strftime('%A'))
+            self.variable_manager.set('system_context.timestamp.kalenderwoche', timestamp.strftime('%W'))
+            self.variable_manager.set('system_context.current_session', session_id)
+            self.variable_manager.set('system_context.current_user', user_id)
+            self.variable_manager.set('system_context.last_query', query)
 
-            message_payload = {"role": "user", "content": {"type": "text", "text": task_prompt}}
+            # Initialize with tool awareness
+            await self._initialize_context_awareness()
 
-            initial_task_info = None
-            if hasattr(client, 'send_task'):
-                initial_task_info = await client.send_task(message=message_payload, task_id=task_id,
-                                                           session_id=a2a_session_id)
-            elif hasattr(client, 'create_task'):
-                initial_task_info = await client.create_task(message=message_payload, task_id=task_id,
-                                                             session_id=a2a_session_id)
-            else:
-                return "Error: A2A client does not support send_task or create_task."
+            # Prepare execution context
+            self.shared.update({
+                "current_query": query,
+                "session_id": session_id,
+                "user_id": user_id,
+                "stream_callback": stream_callback
+            })
+            # Set LLM models in shared context
+            self.shared['fast_llm_model'] = self.amd.fast_llm_model
+            self.shared['complex_llm_model'] = self.amd.complex_llm_model
+            self.shared['persona_config'] = self.amd.persona
+            self.shared['use_fast_response'] = self.amd.use_fast_response
+            self.shared['variable_manager'] = self.variable_manager
+            # Add to conversation history
+            self.shared["conversation_history"].append({
+                "role": "user",
+                "content": query,
+                "timestamp": datetime.now().isoformat()
+            })
 
-            # Check for immediate errors from the submission call
-            # Structure depends on python-a2a's return value
-            error_info = None
-            if isinstance(initial_task_info, dict):
-                error_info = initial_task_info.get('error')
-            elif hasattr(initial_task_info, 'error'):
-                error_info = initial_task_info.error
+            # Set system status
+            self.shared["system_status"] = "running"
+            self.is_running = True
 
-            if error_info:
-                err_msg = error_info.get('message', str(error_info)) if isinstance(error_info, dict) else str(
-                    error_info)
-                logger.error(f"A2A send_task (no wait) failed immediately: {err_msg}")
-                return f"Error submitting A2A task: {err_msg}"
-            else:
-                logger.info(f"A2A task '{task_id}' submitted successfully (no wait) to {target_agent_url}.")
-                return task_id  # Return the ID for later polling/checking
+            # Execute main orchestration flow
+            result = await self._orchestrate_execution()
+            # Add response to history
+            self.shared["conversation_history"].append({
+                "role": "assistant",
+                "content": result,
+                "timestamp": datetime.now().isoformat()
+            })
 
-        except Exception as e:
-            logger.error(f"[ADK Tool] a2a_send_no_wait failed: {e}", exc_info=True)
-            return f"Error sending A2A task (no wait): {e}"
+            total_duration = self.progress_tracker.end_timer("total_execution")
 
-    async def adk_tool_a2a_get_task_status(self,
-                                           tool_context: ToolContext | None,
-                                           target_agent_url: str,
-                                           task_id: str
-                                           ) -> dict[str, Any]:
-        """ADK Tool: Gets the current status and details of an A2A task.
-
-        Args:
-            target_agent_url: The URL of the agent hosting the task.
-            task_id: The ID of the task to check.
-
-        Returns:
-            A dictionary containing task status details (state, message, artifacts) or an error.
-        """
-        if not A2A_AVAILABLE: return {"error": "python-a2a library not available."}
-        logger.info(f"[ADK Tool] a2a_get_task_status called for task {task_id} on {target_agent_url}")
-
-        try:
-            client = await self.setup_a2a_client(target_agent_url)
-            if not client:
-                return {"error": f"Could not connect to A2A agent at {target_agent_url}"}
-
-            if not hasattr(client, 'get_task'):
-                return {"error": f"A2A client for {target_agent_url} does not support 'get_task'."}
-
-            # Get task details from the client
-            task_details = await client.get_task(task_id=task_id, history_length=1)  # History=1 gets latest status
-
-            # Parse and return relevant info
-            if isinstance(task_details, dict):
-                # Basic parsing, adjust based on actual python-a2a structure
-                status_info = task_details.get('status', {})
-                artifacts = task_details.get('artifacts')
-                return {
-                    "task_id": task_id,
-                    "state": status_info.get('state', 'UNKNOWN'),
-                    "status_message": status_info.get('message'),  # Might be complex object
-                    "artifacts": artifacts,  # Might be complex list
-                    "raw_response": task_details  # Include raw for debugging
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="execution_complete",
+                timestamp=time.time(),
+                node_name="FlowAgent",
+                status=NodeStatus.COMPLETED,
+                node_duration=total_duration,
+                session_id=session_id,
+                metadata={
+                    "result_length": len(result),
+                    "summary": self.progress_tracker.get_summary()
                 }
-            elif hasattr(task_details, 'status'):  # Object-like response
-                status_obj = task_details.status
-                artifacts_obj = getattr(task_details, 'artifacts', None)
-                return {
-                    "task_id": task_id,
-                    "state": getattr(status_obj, 'state', TaskState.UNKNOWN).value,  # Get enum value
-                    "status_message": getattr(status_obj, 'message', None),
-                    "artifacts": artifacts_obj,
-                    "raw_response": vars(task_details)  # Example conversion
-                }
-            else:
-                return {"error": "Received unexpected response structure from get_task.", "raw_response": task_details}
+            ))
+            # Checkpoint if needed
+            if self.enable_pause_resume:
+                await self._maybe_checkpoint()
+
+            return result
 
         except Exception as e:
-            # Catch specific errors from python-a2a if they exist (e.g., TaskNotFoundError)
-            # if isinstance(e, TaskNotFoundError):
-            #    logger.warning(f"[ADK Tool] A2A Task {task_id} not found on {target_agent_url}.")
-            #    return {"error": f"Task {task_id} not found."}
-            logger.error(f"[ADK Tool] a2a_get_task_status failed: {e}", exc_info=True)
-            return {"error": f"Error getting A2A task status: {e}"}
+            logger.error(f"Agent execution failed: {e}", exc_info=True)
+            error_response = f"I encountered an error: {str(e)}"
+            import traceback
+            print(traceback.format_exc())
 
-    async def adk_tool_a2a_cancel_task(self,
-                                       tool_context: ToolContext | None,
-                                       target_agent_url: str,
-                                       task_id: str
-                                       ) -> dict[str, Any]:
-        """ADK Tool: Attempts to cancel an ongoing A2A task.
+            self.shared["conversation_history"].append({
+                "role": "assistant",
+                "content": error_response,
+                "timestamp": datetime.now().isoformat()
+            })
 
-        Args:
-            target_agent_url: The URL of the agent hosting the task.
-            task_id: The ID of the task to cancel.
+            total_duration = self.progress_tracker.end_timer("total_execution")
 
-        Returns:
-            A dictionary indicating success or failure, possibly with the task's state after cancellation attempt.
-        """
-        if not A2A_AVAILABLE: return {"error": "python-a2a library not available."}
-        logger.info(f"[ADK Tool] a2a_cancel_task called for task {task_id} on {target_agent_url}")
+            await self.progress_tracker.emit_event(ProgressEvent(
+                event_type="error",
+                timestamp=time.time(),
+                node_name="FlowAgent",
+                status=NodeStatus.FAILED,
+                node_duration=total_duration,
+                session_id=session_id,
+                metadata={"error": str(e), "error_type": type(e).__name__}
+            ))
+
+            return error_response
+
+        finally:
+            self.shared["system_status"] = "idle"
+            self.is_running = False
+
+    def set_response_format(
+        self,
+        response_format: str,
+        text_length: str,
+        custom_instructions: str = "",
+        quality_threshold: float = 0.7
+    ):
+        """Dynamische Format- und Längen-Konfiguration"""
+
+        # Validiere Eingaben
+        try:
+            ResponseFormat(response_format)
+            TextLength(text_length)
+        except ValueError:
+            available_formats = [f.value for f in ResponseFormat]
+            available_lengths = [l.value for l in TextLength]
+            raise ValueError(
+                f"Invalid format or length. "
+                f"Available formats: {available_formats}. "
+                f"Available lengths: {available_lengths}"
+            )
+
+        # Erstelle oder aktualisiere Persona
+        if not self.amd.persona:
+            self.amd.persona = PersonaConfig(name="Assistant")
+
+        # Erstelle Format-Konfiguration
+        format_config = FormatConfig(
+            response_format=ResponseFormat(response_format),
+            text_length=TextLength(text_length),
+            custom_instructions=custom_instructions,
+            quality_threshold=quality_threshold
+        )
+
+        self.amd.persona.format_config = format_config
+
+        # Aktualisiere Personality Traits mit Format-Hinweisen
+        self._update_persona_with_format(response_format, text_length)
+
+        # Update shared state
+        self.shared["persona_config"] = self.amd.persona
+        self.shared["format_config"] = format_config
+
+        logger.info(f"Response format set: {response_format}, length: {text_length}")
+
+    def _update_persona_with_format(self, response_format: str, text_length: str):
+        """Aktualisiere Persona-Traits basierend auf Format"""
+
+        # Format-spezifische Traits
+        format_traits = {
+            "with-tables": ["structured", "data-oriented", "analytical"],
+            "with-bullet-points": ["organized", "clear", "systematic"],
+            "with-lists": ["methodical", "sequential", "thorough"],
+            "md-text": ["technical", "formatted", "detailed"],
+            "yaml-text": ["structured", "machine-readable", "precise"],
+            "json-text": ["technical", "API-focused", "structured"],
+            "text-only": ["conversational", "natural", "flowing"],
+            "pseudo-code": ["logical", "algorithmic", "step-by-step"],
+            "code-structure": ["technical", "systematic", "hierarchical"]
+        }
+
+        # Längen-spezifische Traits
+        length_traits = {
+            "mini-chat": ["concise", "quick", "to-the-point"],
+            "chat-conversation": ["conversational", "friendly", "balanced"],
+            "table-conversation": ["structured", "comparative", "organized"],
+            "detailed-indepth": ["thorough", "comprehensive", "analytical"],
+            "phd-level": ["academic", "scholarly", "authoritative"]
+        }
+
+        # Kombiniere Traits
+        current_traits = set(self.amd.persona.personality_traits)
+
+        # Entferne alte Format-Traits
+        old_format_traits = set()
+        for traits in format_traits.values():
+            old_format_traits.update(traits)
+        for traits in length_traits.values():
+            old_format_traits.update(traits)
+
+        current_traits -= old_format_traits
+
+        # Füge neue Traits hinzu
+        new_traits = format_traits.get(response_format, [])
+        new_traits.extend(length_traits.get(text_length, []))
+
+        current_traits.update(new_traits)
+        self.amd.persona.personality_traits = list(current_traits)
+
+    def get_available_formats(self) -> Dict[str, List[str]]:
+        """Erhalte verfügbare Format- und Längen-Optionen"""
+        return {
+            "formats": [f.value for f in ResponseFormat],
+            "lengths": [l.value for l in TextLength],
+            "format_descriptions": {
+                f.value: FormatConfig(response_format=f).get_format_instructions()
+                for f in ResponseFormat
+            },
+            "length_descriptions": {
+                l.value: FormatConfig(text_length=l).get_length_instructions()
+                for l in TextLength
+            }
+        }
+
+    async def a_run_with_format(
+        self,
+        query: str,
+        response_format: str = "frei-text",
+        text_length: str = "chat-conversation",
+        custom_instructions: str = "",
+        **kwargs
+    ) -> str:
+        """Führe Agent mit spezifischem Format aus"""
+
+        # Temporäre Format-Einstellung
+        original_persona = self.amd.persona
 
         try:
-            client = await self.setup_a2a_client(target_agent_url)
-            if not client:
-                return {"error": f"Could not connect to A2A agent at {target_agent_url}"}
+            self.set_response_format(response_format, text_length, custom_instructions)
+            response = await self.a_run(query, **kwargs)
+            return response
+        finally:
+            # Restore original persona
+            self.amd.persona = original_persona
+            self.shared["persona_config"] = original_persona
 
-            if not hasattr(client, 'cancel_task'):
-                return {"error": f"A2A client for {target_agent_url} does not support 'cancel_task'."}
+    def get_format_quality_report(self) -> Dict[str, Any]:
+        """Erhalte detaillierten Format-Qualitätsbericht"""
+        quality_assessment = self.shared.get("quality_assessment", {})
 
-            # Call the client's cancel method
-            # The response structure depends heavily on the library implementation
-            cancel_response = await client.cancel_task(task_id=task_id)
+        if not quality_assessment:
+            return {"status": "no_assessment", "message": "No recent quality assessment available"}
 
-            # Parse response - could be simple success/fail, or updated task state
-            if isinstance(cancel_response, dict):
-                if 'error' in cancel_response:
-                    error_info = cancel_response['error']
-                    err_msg = error_info.get('message', str(error_info)) if isinstance(error_info, dict) else str(
-                        error_info)
-                    logger.warning(f"A2A cancel_task failed for {task_id}: {err_msg}")
-                    return {"success": False, "error": err_msg, "raw_response": cancel_response}
-                else:
-                    # Assume success, response might contain updated task state
-                    logger.info(f"A2A task {task_id} cancellation requested successfully.")
-                    # Try to extract state if returned
-                    state = cancel_response.get('result', {}).get('status', {}).get('state', 'UNKNOWN')
-                    return {"success": True, "state_after_request": state, "raw_response": cancel_response}
-            elif cancel_response is True:  # Simple boolean success
-                return {"success": True, "state_after_request": "UNKNOWN"}
-            else:  # Assume object-like or other structure
-                # Add parsing based on observed python-a2a behavior
-                logger.info(f"A2A task {task_id} cancellation request sent, parsing result.")
-                # Example: Check for specific attributes if object is returned
-                state = getattr(getattr(getattr(cancel_response, 'result', None), 'status', None), 'state',
-                                TaskState.UNKNOWN).value
-                return {"success": True, "state_after_request": state,
-                        "raw_response": vars(cancel_response) if hasattr(cancel_response, '__dict__') else str(
-                            cancel_response)}
+        quality_details = quality_assessment.get("quality_details", {})
 
+        return {
+            "overall_score": quality_details.get("total_score", 0.0),
+            "format_adherence": quality_details.get("format_adherence", 0.0),
+            "length_adherence": quality_details.get("length_adherence", 0.0),
+            "content_quality": quality_details.get("base_quality", 0.0),
+            "llm_assessment": quality_details.get("llm_assessment", 0.0),
+            "suggestions": quality_assessment.get("suggestions", []),
+            "assessment": quality_assessment.get("quality_assessment", "unknown"),
+            "format_config_active": quality_details.get("format_config_used", False)
+        }
 
-        except Exception as e:
-            # Catch specific errors like TaskNotFound, TaskNotCancelable if defined by python-a2a
-            # if isinstance(e, TaskNotFoundError):
-            #    return {"success": False, "error": f"Task {task_id} not found."}
-            # if isinstance(e, TaskNotCancelableError):
-            #    return {"success": False, "error": f"Task {task_id} is not in a cancelable state."}
-            logger.error(f"[ADK Tool] a2a_cancel_task failed: {e}", exc_info=True)
-            return {"success": False, "error": f"Error cancelling A2A task: {e}"}
+    def get_variable_documentation(self) -> str:
+        """Get comprehensive variable system documentation"""
+        docs = []
+        docs.append("# Variable System Documentation\n")
 
-    # async def adk_tool_a2a_get_task(self, tool_context: Optional[ToolContext], target_agent_url: str, task_id: str) -> Dict:
-    #     """ADK Tool: Gets the current status and details of an A2A task."""
-    #     # Implementation would be similar to _poll_a2a_task but return the status dict directly
-    #     pass
+        # Available scopes
+        docs.append("## Available Scopes:")
+        scope_info = self.variable_manager.get_scope_info()
+        for scope_name, info in scope_info.items():
+            docs.append(f"- `{scope_name}`: {info['type']} with {info.get('keys', 'N/A')} keys")
 
+        docs.append("\n## Syntax Options:")
+        docs.append("- `{{ variable.path }}` - Full path resolution")
+        docs.append("- `{variable}` - Simple variable (no dots)")
+        docs.append("- `$variable` - Shell-style variable")
 
-    # --- Cost Tracking ---
-    def _track_cost(self, response_obj: Any):
-        """Updates cost using LiteLLM."""
-        if not response_obj: return
+        docs.append("\n## Example Usage:")
+        docs.append("- `{{ results.task_1.data }}` - Get result from task_1")
+        docs.append("- `{{ user.name }}` - Get user name")
+        docs.append("- `{agent_name}` - Simple agent name")
+        docs.append("- `$timestamp` - System timestamp")
+
+        # Available variables
+        docs.append("\n## Available Variables:")
+        variables = self.variable_manager.get_available_variables()
+        for scope_name, scope_vars in variables.items():
+            docs.append(f"\n### {scope_name}:")
+            for var_name, var_info in scope_vars.items():
+                docs.append(f"- `{var_info['path']}`: {var_info['preview']} ({var_info['type']})")
+
+        return "\n".join(docs)
+
+    def _setup_variable_scopes(self):
+        """Setup default variable scopes with enhanced structure"""
+        self.variable_manager.register_scope('agent', {
+            'name': self.amd.name,
+            'model_fast': self.amd.fast_llm_model,
+            'model_complex': self.amd.complex_llm_model
+        })
+
+        timestamp = datetime.now()
+        self.variable_manager.register_scope('system', {
+            'timestamp': timestamp.isoformat(),
+            'version': '2.0',
+            'capabilities': []
+        })
+
+        # ADDED: Initialize empty results and tasks scopes
+        self.variable_manager.register_scope('results', {})
+        self.variable_manager.register_scope('tasks', {})
+
+        # Update shared state
+        self.shared["variable_manager"] = self.variable_manager
+
+    def set_variable(self, path: str, value: Any):
+        """Set variable using unified system"""
+        self.variable_manager.set(path, value)
+
+    def get_variable(self, path: str, default=None):
+        """Get variable using unified system"""
+        return self.variable_manager.get(path, default)
+
+    def format_text(self, text: str, **context) -> str:
+        """Format text with variables"""
+        return self.variable_manager.format_text(text, context)
+
+    async def initialize_session_context(self, session_id: str = "default", max_history: int = 200) -> bool:
+        """Initialize session-aware context management for infinite scaling"""
         try:
-            cost = completion_cost(completion_response=response_obj, model=self.amd.model)
-            if cost is not None:
-                self.total_cost += cost
-                logger.info(f"Turn Cost: ${cost:.6f}, Total Accumulated Cost: ${self.total_cost:.6f}")
-            else:
-                 logger.debug("Cost calculation returned None (possibly streaming or non-standard response).")
+            from toolboxv2 import get_app
+            from toolboxv2.mods.isaa.extras.session import ChatSession
+
+            # Initialize memory system
+            memory_instance = get_app().get_mod("isaa").get_memory()
+
+            # Create multiple session managers for different aspects
+            session_managers = {
+                "main_conversation": ChatSession(
+                    memory_instance,
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.conversation",
+                    max_length=max_history
+                ),
+                "task_history": ChatSession(
+                    memory_instance,
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.tasks",
+                    max_length=max_history // 2
+                ),
+                "insights": ChatSession(
+                    memory_instance,
+                    space_name=f"ChatSession/{self.amd.name}.{session_id}.insights",
+                    max_length=100
+                )
+            }
+
+            # Store in shared state
+            self.shared["session_managers"] = session_managers
+            self.shared["session_initialized"] = True
+
+            logger.info(f"Session context initialized for {session_id}")
+            return True
+
         except Exception as e:
-            logger.warning(f"Failed to calculate/track cost: {e}")
+            logger.error(f"Session context initialization failed: {e}")
+            return False
 
+    async def _initialize_context_awareness(self):
+        """Enhanced context awareness with session management"""
 
-    # --- Cleanup ---
-    async def close(self):
-        """Gracefully close connections and resources."""
-        logger.info(f"Closing resources for agent '{self.amd.name}'...")
-        # Close A2A resources
-        if self.a2a_server and hasattr(self.a2a_server, 'stop'): # Check if server has stop method
-             logger.info("Stopping A2A server...")
-             try:
-                 await self.a2a_server.stop() # Assuming stop is async
-             except Exception as e: logger.warning(f"Error stopping A2A server: {e}")
-        if hasattr(self, '_a2a_task_manager_instance') and hasattr(self._a2a_task_manager_instance, 'close'):
-             logger.info("Closing A2A task manager...")
-             await self._a2a_task_manager_instance.close()
-        await self.close_a2a_clients()
+        # Initialize session if not already done
+        session_id = self.shared.get("session_id", "default")
+        if not self.shared.get("session_initialized"):
+            await self.initialize_session_context(session_id)
 
-        # Close MCP server if running
-        if self.mcp_server and hasattr(self.mcp_server, 'stop'): # Check for stop method
-             logger.info("Stopping MCP server...")
-             try:
-                 # MCP server run is blocking, stop might need separate mechanism
-                 # or be handled by process termination. If stop method exists:
-                 # await self.mcp_server.stop() # Assuming async stop
-                 logger.warning("MCP server 'stop' might need manual implementation or process signal.")
-             except Exception as e: logger.warning(f"Error stopping MCP server: {e}")
+        # Replace context node in flows with advanced version
+        advanced_context_manager = ContextManagerNode(
+            max_tokens=self.amd.max_input_tokens,
+            compression_threshold=0.76
+        )
 
+        # Update task flow to use advanced context manager
+        if hasattr(self.task_flow, 'strategy_node'):
+            # Insert context manager before strategy
+            self.task_flow.context_manager = advanced_context_manager
+            advanced_context_manager >> self.task_flow.strategy_node
+            self.task_flow.start = advanced_context_manager
 
-        # Close ADK resources (MCPToolset connections managed by exit stack)
-        if self.adk_exit_stack:
-            logger.info("Closing ADK AsyncExitStack (manages MCPToolset connections)...")
+        # Ensure tool capabilities are loaded
+        # add tqdm prigress bar
+        from tqdm import tqdm
+
+        for tool_name in tqdm(self.shared["available_tools"], desc="Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
+            if tool_name not in self._tool_capabilities:
+                tool_info = self._tool_registry.get(tool_name, {})
+                description = tool_info.get("description", "No description")
+                await self._analyze_tool_capabilities(tool_name, description)
+
+            if tool_name in self._tool_capabilities and self._tool_capabilities[tool_name].get("args_schema") is None:
+                function = self._tool_registry[tool_name]["function"]
+                self._tool_capabilities[tool_name]["args_schema"] = get_args_schema(function)
+
+        # Set enhanced system context
+        self.shared["system_context"] = {
+            "capabilities_summary": self._build_capabilities_summary(),
+            "tool_count": len(self.shared["available_tools"]),
+            "analysis_loaded": len(self._tool_capabilities),
+            "intelligence_level": "high" if self._tool_capabilities else "basic",
+            "context_management": "advanced_session_aware",
+            "session_managers": len(self.shared.get("session_managers", {})),
+        }
+
+        logger.info(f"Advanced context awareness initialized with session management")
+
+    def get_context_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive context management statistics"""
+        stats = {
+            "context_system": "advanced_session_aware",
+            "compression_threshold": 0.76,
+            "max_tokens": getattr(self, 'max_input_tokens', 8000),
+            "session_managers": {},
+            "context_usage": {},
+            "compression_stats": {}
+        }
+
+        # Session manager statistics
+        session_managers = self.shared.get("session_managers", {})
+        for name, manager in session_managers.items():
+            stats["session_managers"][name] = {
+                "history_length": len(manager.history),
+                "max_length": manager.max_length,
+                "space_name": manager.space_name
+            }
+
+        # Context node statistics if available
+        if hasattr(self.task_flow, 'context_manager'):
+            context_manager = self.task_flow.context_manager
+            stats["compression_stats"] = {
+                "compression_threshold": context_manager.compression_threshold,
+                "max_tokens": context_manager.max_tokens,
+                "active_sessions": len(context_manager.session_managers)
+            }
+
+        # LLM call statistics from enhanced node
+        llm_stats = self.shared.get("llm_call_stats", {})
+        if llm_stats:
+            stats["context_usage"] = {
+                "total_llm_calls": llm_stats.get("total_calls", 0),
+                "context_compression_rate": llm_stats.get("context_compression_rate", 0.0),
+                "average_context_tokens": llm_stats.get("context_tokens_used", 0) / max(llm_stats.get("total_calls", 1),
+                                                                                        1)
+            }
+
+        return stats
+
+    def set_persona(self, name: str, style: str = "professional", tone: str = "friendly",
+                    personality_traits: List[str] = None, apply_method: str = "system_prompt",
+                    integration_level: str = "light", custom_instructions: str = ""):
+        """Set agent persona mit erweiterten Konfigurationsmöglichkeiten"""
+        if personality_traits is None:
+            personality_traits = ["helpful", "concise"]
+
+        self.amd.persona = PersonaConfig(
+            name=name,
+            style=style,
+            tone=tone,
+            personality_traits=personality_traits,
+            custom_instructions=custom_instructions,
+            apply_method=apply_method,
+            integration_level=integration_level
+        )
+
+        logger.info(f"Persona set: {name} ({style}, {tone}) - Method: {apply_method}, Level: {integration_level}")
+
+    def configure_persona_integration(self, apply_method: str = "system_prompt", integration_level: str = "light"):
+        """Configure how persona is applied"""
+        if self.amd.persona:
+            self.amd.persona.apply_method = apply_method
+            self.amd.persona.integration_level = integration_level
+            logger.info(f"Persona integration updated: {apply_method}, {integration_level}")
+        else:
+            logger.warning("No persona configured to update")
+
+    def get_available_variables(self) -> Dict[str, str]:
+        """Get available variables for dynamic formatting"""
+        return self.variable_manager.get_available_variables()
+
+    async def _orchestrate_execution(self) -> str:
+        """Vollständig adaptive Orchestrierung mit separaten Phasen"""
+
+        self.shared["agent_instance"] = self
+
+        # === PHASE 1: TASK MANAGEMENT CYCLE ===
+        logger.info("Starting adaptive task management cycle")
+
+        # Führe Task-Management-Flow aus (adaptiv mit Reflexion)
+        task_management_result = await self.task_flow.run_async(self.shared)
+
+        if self.shared.get("plan_halted"):
+            error_response = f"Task execution was halted: {self.shared.get('halt_reason', 'Unknown reason')}"
+            self.shared["current_response"] = error_response
+            return error_response
+
+        # === PHASE 2: RESPONSE GENERATION ===
+        logger.info("Starting response generation flow")
+
+        # Führe Response-Generation-Flow aus
+        response_result = await self.response_flow.run_async(self.shared)
+
+        # === PHASE 3: FINAL RESULT ===
+        final_response = self.shared.get("current_response", "Task completed successfully.")
+
+        # Logge Statistiken
+        self._log_execution_stats()
+
+        return final_response
+
+    def _log_execution_stats(self):
+        """Logge Ausführungsstatistiken"""
+        tasks = self.shared.get("tasks", {})
+        adaptations = self.shared.get("plan_adaptations", 0)
+
+        completed_tasks = sum(1 for t in tasks.values() if t.status == "completed")
+        failed_tasks = sum(1 for t in tasks.values() if t.status == "failed")
+
+        logger.info(
+            f"Execution complete - Tasks: {completed_tasks} completed, {failed_tasks} failed, {adaptations} adaptations")
+
+    def _build_capabilities_summary(self) -> str:
+        """Build summary of agent capabilities"""
+
+        if not self._tool_capabilities:
+            return "Basic LLM capabilities only"
+
+        summaries = []
+        for tool_name, cap in self._tool_capabilities.items():
+            primary = cap.get('primary_function', 'Unknown function')
+            summaries.append(f"{tool_name}{cap.get('args_schema', '()')}: {primary}")
+
+        return f"Enhanced capabilities: {'; '.join(summaries)}"
+
+    # Neue Hilfsmethoden für erweiterte Funktionalität
+
+    async def get_task_execution_summary(self) -> Dict[str, Any]:
+        """Erhalte detaillierte Zusammenfassung der Task-Ausführung"""
+        tasks = self.shared.get("tasks", {})
+        results_store = self.shared.get("results_store", {})
+
+        summary = {
+            "total_tasks": len(tasks),
+            "completed_tasks": [],
+            "failed_tasks": [],
+            "task_types_used": {},
+            "tools_used": [],
+            "adaptations": self.shared.get("plan_adaptations", 0),
+            "execution_timeline": []
+        }
+
+        for task_id, task in tasks.items():
+            task_info = {
+                "id": task_id,
+                "type": task.type,
+                "description": task.description,
+                "status": task.status,
+                "duration": None
+            }
+
+            if task.started_at and task.completed_at:
+                duration = (task.completed_at - task.started_at).total_seconds()
+                task_info["duration"] = duration
+
+            if task.status == "completed":
+                summary["completed_tasks"].append(task_info)
+                if isinstance(task, ToolTask):
+                    summary["tools_used"].append(task.tool_name)
+            elif task.status == "failed":
+                task_info["error"] = task.error
+                summary["failed_tasks"].append(task_info)
+
+            # Task types counting
+            task_type = task.type
+            summary["task_types_used"][task_type] = summary["task_types_used"].get(task_type, 0) + 1
+
+        return summary
+
+    async def explain_reasoning_process(self) -> str:
+        """Erkläre den Reasoning-Prozess des Agenten"""
+        if not LITELLM_AVAILABLE:
+            return "Reasoning explanation requires LLM capabilities."
+
+        summary = await self.get_task_execution_summary()
+
+        prompt = f"""
+Erkläre den Reasoning-Prozess dieses AI-Agenten in verständlicher Form:
+
+## Ausführungszusammenfassung
+- Total Tasks: {summary['total_tasks']}
+- Erfolgreich: {len(summary['completed_tasks'])}
+- Fehlgeschlagen: {len(summary['failed_tasks'])}
+- Plan-Adaptationen: {summary['adaptations']}
+- Verwendete Tools: {', '.join(set(summary['tools_used']))}
+- Task-Typen: {summary['task_types_used']}
+
+## Task-Details
+Erfolgreiche Tasks:
+{self._format_tasks_for_explanation(summary['completed_tasks'])}
+
+## Anweisungen
+Erkläre in 2-3 Absätzen:
+1. Welche Strategie der Agent gewählt hat
+2. Wie er die Aufgabe in Tasks unterteilt hat
+3. Wie er auf unerwartete Ergebnisse reagiert hat (falls Adaptationen)
+4. Was die wichtigsten Erkenntnisse waren
+
+Schreibe für einen technischen Nutzer, aber verständlich."""
+
+        try:
+            response = await self.a_run_llm_completion(
+                model=self.amd.complex_llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.5,
+                max_tokens=800,task_id="reasoning_explanation"
+            )
+
+            return response
+
+        except Exception as e:
+            return f"Could not generate reasoning explanation: {e}"
+
+    def _format_tasks_for_explanation(self, tasks: List[Dict]) -> str:
+        formatted = []
+        for task in tasks[:5]:  # Top 5 tasks
+            duration_info = f" ({task['duration']:.1f}s)" if task['duration'] else ""
+            formatted.append(f"- {task['type']}: {task['description']}{duration_info}")
+        return "\n".join(formatted)
+
+    # ===== PAUSE/RESUME FUNCTIONALITY =====
+
+    async def pause(self) -> bool:
+        """Pause agent execution"""
+        if not self.is_running:
+            return False
+
+        self.is_paused = True
+        self.shared["system_status"] = "paused"
+
+        # Create checkpoint
+        checkpoint = await self._create_checkpoint()
+        await self._save_checkpoint(checkpoint)
+
+        logger.info("Agent execution paused")
+        return True
+
+    async def resume(self) -> bool:
+        """Resume agent execution"""
+        if not self.is_paused:
+            return False
+
+        self.is_paused = False
+        self.shared["system_status"] = "running"
+
+        logger.info("Agent execution resumed")
+        return True
+
+    async def _create_checkpoint(self) -> AgentCheckpoint:
+        """Create a checkpoint of current state"""
+        self.amd.budget_manager.save_data()
+        amd = self.amd.model_dump()
+        amd['budget_manager'] = None  # Exclude budget manager from checkpoint
+        return AgentCheckpoint(
+            timestamp=datetime.now(),
+            agent_state={
+                "is_running": self.is_running,
+                "is_paused": self.is_paused,
+                "amd": json.dumps(amd, ensure_ascii=False, default=str, indent=2)
+            },
+            task_state={
+                task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
+            },
+            world_model=self.shared["world_model"].copy(),
+            active_flows=["task_flow", "response_flow"],  # Track active flows
+            metadata={
+                "session_id": self.shared.get("session_id", "default"),
+                "last_query": self.shared.get("current_query", "")
+            }
+        )
+
+    async def _save_checkpoint(self, checkpoint: AgentCheckpoint, filepath: str = None):
+        """Save checkpoint to file"""
+        from toolboxv2 import get_app
+        folder = str(get_app().data_dir) + '/Agents/checkpoint/' + self.amd.name
+        if not os.path.exists(folder):
+            os.makedirs(folder, exist_ok=True)
+        if not filepath:
+            timestamp = checkpoint.timestamp.strftime("%Y%m%d_%H%M%S")
+            filepath = f"agent_checkpoint_{timestamp}.pkl"
+        filepath = folder + '/' + filepath
+        try:
+            with open(filepath, 'wb') as f:
+                pickle.dump(checkpoint, f)
+
+            self.last_checkpoint = checkpoint.timestamp
+            logger.info(f"Checkpoint saved: {filepath}")
+
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+
+    async def load_checkpoint(self, filepath: str) -> bool:
+        """Load checkpoint from file"""
+        try:
+            with open(filepath, 'rb') as f:
+                checkpoint: AgentCheckpoint = pickle.load(f)
+
+            # Restore state
+            self.shared["world_model"] = checkpoint.world_model
+            self.shared["tasks"] = {
+                task_id: Task(**task_data)
+                for task_id, task_data in checkpoint.task_state.items()
+            }
+
+            # Restore agent state
+            agent_state = checkpoint.agent_state
+            self.is_running = agent_state.get("is_running", False)
+            self.is_paused = agent_state.get("is_paused", False)
+
+            self.last_checkpoint = checkpoint.timestamp
+            logger.info(f"Checkpoint loaded: {filepath}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint: {e}")
+            return False
+
+    async def _maybe_checkpoint(self):
+        """Create checkpoint if interval has passed"""
+        now = datetime.now()
+        if (not self.last_checkpoint or
+            (now - self.last_checkpoint).seconds >= self.checkpoint_interval):
+
+            checkpoint = await self._create_checkpoint()
+            await self._save_checkpoint(checkpoint)
+
+    # ===== TOOL AND NODE MANAGEMENT =====
+    def _get_tool_analysis_path(self) -> str:
+        """Get path for tool analysis cache"""
+        from toolboxv2 import get_app
+        folder = str(get_app().data_dir) + '/Agents/capabilities/' + self.amd.name
+        os.makedirs(folder, exist_ok=True)
+        return folder + '/tool_capabilities.json'
+
+    async def add_tool(self, tool_func: Callable, name: str = None, description: str = None, is_new=False):
+        """Enhanced tool addition with intelligent analysis"""
+        if not asyncio.iscoroutinefunction(tool_func):
+            @wraps(tool_func)
+            async def async_wrapper(*args, **kwargs):
+                return await asyncio.to_thread(tool_func, *args, **kwargs)
+
+            effective_func = async_wrapper
+        else:
+            effective_func = tool_func
+
+        tool_name = name or effective_func.__name__
+        tool_description = description or effective_func.__doc__ or "No description"
+
+        # Store in registry
+        self._tool_registry[tool_name] = {
+            "function": effective_func,
+            "description": tool_description
+        }
+
+        # Add to available tools list
+        if tool_name not in self.shared["available_tools"]:
+            self.shared["available_tools"].append(tool_name)
+
+        # Intelligent tool analysis
+        if is_new:
+            await self._analyze_tool_capabilities(tool_name, tool_description)
+
+        logger.info(f"Tool added with analysis: {tool_name}")
+
+    async def _analyze_tool_capabilities(self, tool_name: str, description: str):
+        """Analyze tool capabilities with LLM for smart usage"""
+
+        # Try to load existing analysis
+        existing_analysis = self._load_tool_analysis()
+
+        if tool_name in existing_analysis:
             try:
-                await self.adk_exit_stack.aclose()
+                # Validate cached data against the Pydantic model
+                ToolAnalysis.model_validate(existing_analysis[tool_name])
+                self._tool_capabilities[tool_name] = existing_analysis[tool_name]
+                logger.info(f"Loaded and validated cached analysis for {tool_name}")
+            except ValidationError as e:
+                logger.warning(f"Cached data for {tool_name} is invalid and will be regenerated: {e}")
+                del self._tool_capabilities[tool_name]
+
+        if not LITELLM_AVAILABLE:
+            # Fallback analysis
+            self._tool_capabilities[tool_name] = {
+                "use_cases": [description],
+                "triggers": [tool_name.lower().replace('_', ' ')],
+                "complexity": "unknown",
+                "confidence": 0.3
+            }
+            return
+
+        # LLM-based intelligent analysis
+        prompt = f"""
+Analyze this tool and identify ALL possible use cases, triggers, and connections:
+
+Tool Name: {tool_name}
+Description: {description}
+
+Provide a comprehensive analysis covering:
+
+1. OBVIOUS use cases (direct functionality)
+2. INDIRECT connections (when this tool might be relevant)
+3. TRIGGER PHRASES (what user queries would benefit from this tool)
+4. COMPLEX scenarios (non-obvious applications)
+5. CONTEXTUAL usage (when combined with other information)
+
+Example for a "get_user_name" tool:
+- Obvious: When user asks "what is my name"
+- Indirect: Personalization, greetings, user identification
+- Triggers: "my name", "who am I", "hello", "introduce yourself", "personalize"
+- Complex: User context in multi-step tasks, addressing user directly
+- Contextual: Any response that could be personalized
+
+Respond in YAML format:
+Example:
+```yaml
+primary_function: "Retrieves the current user's name."
+use_cases:
+  - "Responding to 'what is my name?'"
+  - "Personalizing greeting messages."
+trigger_phrases:
+  - "my name"
+  - "who am I"
+  - "introduce yourself"
+indirect_connections:
+  - "User identification in multi-factor authentication."
+  - "Tagging user-generated content."
+complexity_scenarios:
+  - "In a multi-step task, remembering the user's name to personalize the final output."
+user_intent_categories:
+  - "Personalization"
+  - "User Identification"
+confidence_triggers:
+  "my name": 0.95
+  "who am I": 0.9
+tool_complexity: low/medium/high
+```
+"""
+
+        for i in range(3):
+            try:
+                response = await self.a_run_llm_completion(
+                    model=self.amd.complex_llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=1000,
+                    task_id=f"tool_analysis_{tool_name}"
+                )
+
+                content = response.strip()
+
+                # Extract JSON
+                if "```yaml" in content:
+                    yaml_str = content.split("```yaml")[1].split("```")[0].strip()
+                else:
+                    yaml_str = content
+
+                analysis = yaml.safe_load(yaml_str)
+
+                # Store analysis
+                self._tool_capabilities[tool_name] = analysis
+
+                # Save to cache
+                await self._save_tool_analysis()
+
+                validated_analysis = ToolAnalysis.model_validate(analysis)
+                logger.info(f"Generated intelligent analysis for {tool_name}")
+                break
+
             except Exception as e:
-                logger.warning(f"Error closing ADK exit stack: {e}")
+                logger.error(f"Tool analysis failed for {tool_name}: {e}")
+                # Fallback
+                self._tool_capabilities[tool_name] = {
+                    "primary_function": description,
+                    "use_cases": [description],
+                    "trigger_phrases": [tool_name.lower().replace('_', ' ')],
+                    "tool_complexity": "medium"
+                }
 
-        # Close ADK runner if it has a close method
-        if self.adk_runner and hasattr(self.adk_runner, 'close'):
-             logger.info("Closing ADK runner...")
-             try:
-                  # Check if close is async
-                 if iscoroutinefunction(self.adk_runner.close):
-                     await self.adk_runner.close()
-                 else:
-                     self.adk_runner.close()
-             except Exception as e: logger.warning(f"Error closing ADK runner: {e}")
+    def _load_tool_analysis(self) -> Dict[str, Any]:
+        """Load tool analysis from cache"""
+        try:
+            if os.path.exists(self.tool_analysis_file):
+                with open(self.tool_analysis_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not load tool analysis: {e}")
+        return {}
+
+    async def _save_tool_analysis(self):
+        """Save tool analysis to cache"""
+        try:
+            with open(self.tool_analysis_file, 'w') as f:
+                json.dump(self._tool_capabilities, f, indent=2)
+        except Exception as e:
+            logger.error(f"Could not save tool analysis: {e}")
+
+    def add_custom_flow(self, flow: AsyncFlow, name: str):
+        """Add a custom flow for dynamic execution"""
+        self.add_tool(flow.run_async, name=name, description=f"Custom flow: {flow.__class__.__name__}")
+        logger.info(f"Custom node added: {name}")
+
+    def get_tool_by_name(self, tool_name: str) -> Callable | None:
+        """Get tool function by name"""
+        return self._tool_registry.get(tool_name, {}).get("function")
+
+    async def arun_function(self, function_name: str, *args, **kwargs) -> Any:
+        """
+        Asynchronously finds a function by its string name, executes it with
+        the given arguments, and returns the result.
+        """
+        logger.info(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
+        target_function = self.get_tool_by_name(function_name)
+
+        if not target_function:
+            raise ValueError(f"Function '{function_name}' not found in the agent's registered tools.")
+
+        try:
+            if asyncio.iscoroutinefunction(target_function):
+                result = await target_function(*args, **kwargs)
+            else:
+                # If the function is not async, run it in a thread pool
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
+
+            logger.info(f"Function {function_name} completed successfully with result: {result}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Function {function_name} execution failed: {e}")
+            raise
+    async def execute_custom_node(self, node_name: str, **kwargs) -> Any:
+        """Execute a custom node dynamically"""
+        if not hasattr(self, '_node_registry') or node_name not in self._node_registry:
+            raise ValueError(f"Node '{node_name}' not found")
+
+        node = self._node_registry[node_name]
+
+        # Create temporary shared state with kwargs
+        temp_shared = self.shared.copy()
+        temp_shared.update(kwargs)
+
+        # Execute the node
+        result = await node.run_async(temp_shared)
+
+        # Merge back any changes
+        self.shared.update(temp_shared)
+
+        return result
+
+    # ===== SERVER SETUP =====
+
+    def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000, **kwargs):
+        """Setup A2A server for bidirectional communication"""
+        if not A2A_AVAILABLE:
+            logger.warning("A2A not available, cannot setup server")
+            return
+
+        try:
+            self.a2a_server = A2AServer(
+                host=host,
+                port=port,
+                agent_card=AgentCard(
+                    name=self.amd.name,
+                    description="Production-ready PocketFlow agent",
+                    version="1.0.0"
+                ),
+                **kwargs
+            )
+
+            # Register agent methods
+            @self.a2a_server.route("/run")
+            async def handle_run(request_data):
+                query = request_data.get("query", "")
+                session_id = request_data.get("session_id", "a2a_session")
+
+                response = await self.a_run(query, session_id=session_id)
+                return {"response": response}
+
+            logger.info(f"A2A server setup on {host}:{port}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup A2A server: {e}")
+
+    def setup_mcp_server(self, host: str = "0.0.0.0", port: int = 8000, name: str = None, **kwargs):
+        """Setup MCP server"""
+        if not MCP_AVAILABLE:
+            logger.warning("MCP not available, cannot setup server")
+            return
+
+        try:
+            server_name = name or f"{self.amd.name}_MCP"
+            self.mcp_server = FastMCP(server_name)
+
+            # Register agent as MCP tool
+            @self.mcp_server.tool()
+            async def agent_run(query: str, session_id: str = "mcp_session") -> str:
+                """Execute agent with given query"""
+                return await self.a_run(query, session_id=session_id)
+
+            logger.info(f"MCP server setup: {server_name}")
+
+        except Exception as e:
+            logger.error(f"Failed to setup MCP server: {e}")
+
+    # ===== LIFECYCLE MANAGEMENT =====
+
+    async def start_servers(self):
+        """Start all configured servers"""
+        tasks = []
+
+        if self.a2a_server:
+            tasks.append(asyncio.create_task(self.a2a_server.start()))
+
+        if self.mcp_server:
+            tasks.append(asyncio.create_task(self.mcp_server.run()))
+
+        if tasks:
+            logger.info(f"Starting {len(tasks)} servers...")
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def close(self):
+        """Clean shutdown"""
+        self.is_running = False
+        self._shutdown_event.set()
+
+        # Create final checkpoint
+        if self.enable_pause_resume:
+            checkpoint = await self._create_checkpoint()
+            await self._save_checkpoint(checkpoint, "final_checkpoint.pkl")
+
+        # Shutdown executor
+        self.executor.shutdown(wait=True)
+
+        # Close servers
+        if self.a2a_server:
+            await self.a2a_server.close()
+
+        if self.mcp_server:
+            await self.mcp_server.close()
+
+        logger.info("Agent shutdown complete")
+
+    @property
+    def total_cost(self) -> float:
+        """Get total cost if budget manager available"""
+        if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
+            return getattr(self.amd.budget_manager, 'total_cost', 0.0)
+        return 0.0
+
+    def status(self, pretty_print: bool = False) -> Union[Dict[str, Any], str]:
+        """Get comprehensive agent status with optional pretty printing"""
+
+        # Core status information
+        base_status = {
+            "agent_info": {
+                "name": self.amd.name,
+                "version": "2.0",
+                "type": "FlowAgent"
+            },
+            "runtime_status": {
+                "status": self.shared.get("system_status", "idle"),
+                "is_running": self.is_running,
+                "is_paused": self.is_paused,
+                "uptime_seconds": (datetime.now() - getattr(self, '_start_time', datetime.now())).total_seconds()
+            },
+            "task_execution": {
+                "total_tasks": len(self.shared.get("tasks", {})),
+                "active_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "running"]),
+                "completed_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "completed"]),
+                "failed_tasks": len([t for t in self.shared.get("tasks", {}).values() if t.status == "failed"]),
+                "plan_adaptations": self.shared.get("plan_adaptations", 0)
+            },
+            "conversation": {
+                "turns": len(self.shared.get("conversation_history", [])),
+                "session_id": self.shared.get("session_id", "default"),
+                "current_user": self.shared.get("user_id"),
+                "last_query": self.shared.get("current_query", "")[:100] + "..." if len(
+                    self.shared.get("current_query", "")) > 100 else self.shared.get("current_query", "")
+            },
+            "capabilities": {
+                "available_tools": len(self.shared.get("available_tools", [])),
+                "tool_names": list(self.shared.get("available_tools", [])),
+                "analyzed_tools": len(self._tool_capabilities),
+                "world_model_size": len(self.shared.get("world_model", {})),
+                "intelligence_level": "high" if self._tool_capabilities else "basic"
+            },
+            "memory_context": {
+                "session_initialized": self.shared.get("session_initialized", False),
+                "session_managers": len(self.shared.get("session_managers", {})),
+                "context_system": "advanced_session_aware" if self.shared.get("session_initialized") else "basic",
+                "variable_scopes": len(self.variable_manager.get_scope_info()) if hasattr(self,
+                                                                                          'variable_manager') else 0
+            },
+            "performance": {
+                "total_cost": self.total_cost,
+                "checkpoint_enabled": self.enable_pause_resume,
+                "last_checkpoint": self.last_checkpoint.isoformat() if self.last_checkpoint else None,
+                "max_parallel_tasks": self.max_parallel_tasks
+            },
+            "servers": {
+                "a2a_server": self.a2a_server is not None,
+                "mcp_server": self.mcp_server is not None,
+                "server_count": sum([self.a2a_server is not None, self.mcp_server is not None])
+            },
+            "configuration": {
+                "fast_llm_model": self.amd.fast_llm_model,
+                "complex_llm_model": self.amd.complex_llm_model,
+                "use_fast_response": getattr(self.amd, 'use_fast_response', False),
+                "max_input_tokens": getattr(self.amd, 'max_input_tokens', 8000),
+                "persona_configured": self.amd.persona is not None,
+                "format_config": bool(getattr(self.amd.persona, 'format_config', None)) if self.amd.persona else False
+            }
+        }
+
+        # Add detailed execution summary if tasks exist
+        tasks = self.shared.get("tasks", {})
+        if tasks:
+            task_types_used = {}
+            tools_used = []
+            execution_timeline = []
+
+            for task_id, task in tasks.items():
+                # Count task types
+                task_type = getattr(task, 'type', 'unknown')
+                task_types_used[task_type] = task_types_used.get(task_type, 0) + 1
+
+                # Collect tools used
+                if hasattr(task, 'tool_name') and task.tool_name:
+                    tools_used.append(task.tool_name)
+
+                # Timeline info
+                if hasattr(task, 'started_at') and task.started_at:
+                    timeline_entry = {
+                        "task_id": task_id,
+                        "type": task_type,
+                        "started": task.started_at.isoformat(),
+                        "status": getattr(task, 'status', 'unknown')
+                    }
+                    if hasattr(task, 'completed_at') and task.completed_at:
+                        timeline_entry["completed"] = task.completed_at.isoformat()
+                        timeline_entry["duration"] = (task.completed_at - task.started_at).total_seconds()
+                    execution_timeline.append(timeline_entry)
+
+            base_status["task_execution"].update({
+                "task_types_used": task_types_used,
+                "tools_used": list(set(tools_used)),
+                "execution_timeline": execution_timeline[-5:]  # Last 5 tasks
+            })
+
+        # Add context statistics
+        if hasattr(self.task_flow, 'context_manager'):
+            context_manager = self.task_flow.context_manager
+            base_status["memory_context"].update({
+                "compression_threshold": context_manager.compression_threshold,
+                "max_tokens": context_manager.max_tokens,
+                "active_context_sessions": len(getattr(context_manager, 'session_managers', {}))
+            })
+
+        # Add variable system info
+        if hasattr(self, 'variable_manager'):
+            available_vars = self.variable_manager.get_available_variables()
+            scope_info = self.variable_manager.get_scope_info()
+
+            base_status["variable_system"] = {
+                "total_scopes": len(scope_info),
+                "scope_names": list(scope_info.keys()),
+                "total_variables": sum(len(vars) for vars in available_vars.values()),
+                "scope_details": {
+                    scope: {"type": info["type"], "variables": len(available_vars.get(scope, {}))}
+                    for scope, info in scope_info.items()
+                }
+            }
+
+        # Add format quality info if available
+        quality_assessment = self.shared.get("quality_assessment", {})
+        if quality_assessment:
+            quality_details = quality_assessment.get("quality_details", {})
+            base_status["format_quality"] = {
+                "overall_score": quality_details.get("total_score", 0.0),
+                "format_adherence": quality_details.get("format_adherence", 0.0),
+                "length_adherence": quality_details.get("length_adherence", 0.0),
+                "content_quality": quality_details.get("base_quality", 0.0),
+                "assessment": quality_assessment.get("quality_assessment", "unknown"),
+                "has_suggestions": bool(quality_assessment.get("suggestions", []))
+            }
+
+        # Add LLM usage statistics
+        llm_stats = self.shared.get("llm_call_stats", {})
+        if llm_stats:
+            base_status["llm_usage"] = {
+                "total_calls": llm_stats.get("total_calls", 0),
+                "context_compression_rate": llm_stats.get("context_compression_rate", 0.0),
+                "average_context_tokens": llm_stats.get("context_tokens_used", 0) / max(llm_stats.get("total_calls", 1),
+                                                                                        1),
+                "total_tokens_used": llm_stats.get("total_tokens_used", 0)
+            }
+
+        # Add timestamp
+        base_status["timestamp"] = datetime.now().isoformat()
+
+        if not pretty_print:
+            return base_status
+
+        # Pretty print using EnhancedVerboseOutput
+        try:
+            from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+            verbose_output = EnhancedVerboseOutput(verbose=True)
+
+            # Header
+            verbose_output.log_header(f"Agent Status: {base_status['agent_info']['name']}")
+
+            # Runtime Status
+            status_color = {
+                "running": "SUCCESS",
+                "paused": "WARNING",
+                "idle": "INFO",
+                "error": "ERROR"
+            }.get(base_status["runtime_status"]["status"], "INFO")
+
+            getattr(verbose_output, f"print_{status_color.lower()}")(
+                f"Status: {base_status['runtime_status']['status'].upper()}"
+            )
+
+            # Task Execution Summary
+            task_exec = base_status["task_execution"]
+            if task_exec["total_tasks"] > 0:
+                verbose_output.formatter.print_section(
+                    "Task Execution",
+                    f"Total: {task_exec['total_tasks']} | "
+                    f"Completed: {task_exec['completed_tasks']} | "
+                    f"Failed: {task_exec['failed_tasks']} | "
+                    f"Active: {task_exec['active_tasks']}\n"
+                    f"Adaptations: {task_exec['plan_adaptations']}"
+                )
+
+                if task_exec.get("tools_used"):
+                    verbose_output.formatter.print_section(
+                        "Tools Used",
+                        ", ".join(task_exec["tools_used"])
+                    )
+
+            # Capabilities
+            caps = base_status["capabilities"]
+            verbose_output.formatter.print_section(
+                "Capabilities",
+                f"Intelligence Level: {caps['intelligence_level']}\n"
+                f"Available Tools: {caps['available_tools']}\n"
+                f"Analyzed Tools: {caps['analyzed_tools']}\n"
+                f"World Model Size: {caps['world_model_size']}"
+            )
+
+            # Memory & Context
+            memory = base_status["memory_context"]
+            verbose_output.formatter.print_section(
+                "Memory & Context",
+                f"Context System: {memory['context_system']}\n"
+                f"Session Managers: {memory['session_managers']}\n"
+                f"Variable Scopes: {memory['variable_scopes']}\n"
+                f"Session Initialized: {memory['session_initialized']}"
+            )
+
+            # Configuration
+            config = base_status["configuration"]
+            verbose_output.formatter.print_section(
+                "Configuration",
+                f"Fast LLM: {config['fast_llm_model']}\n"
+                f"Complex LLM: {config['complex_llm_model']}\n"
+                f"Max Tokens: {config['max_input_tokens']}\n"
+                f"Persona: {'Configured' if config['persona_configured'] else 'Default'}\n"
+                f"Format Config: {'Active' if config['format_config'] else 'None'}"
+            )
+
+            # Performance
+            perf = base_status["performance"]
+            verbose_output.formatter.print_section(
+                "Performance",
+                f"Total Cost: ${perf['total_cost']:.4f}\n"
+                f"Checkpointing: {'Enabled' if perf['checkpoint_enabled'] else 'Disabled'}\n"
+                f"Max Parallel Tasks: {perf['max_parallel_tasks']}\n"
+                f"Last Checkpoint: {perf['last_checkpoint'] or 'None'}"
+            )
+
+            # Variable System Details
+            if "variable_system" in base_status:
+                var_sys = base_status["variable_system"]
+                scope_details = []
+                for scope, details in var_sys["scope_details"].items():
+                    scope_details.append(f"{scope}: {details['variables']} variables ({details['type']})")
+
+                verbose_output.formatter.print_section(
+                    "Variable System",
+                    f"Total Scopes: {var_sys['total_scopes']}\n"
+                    f"Total Variables: {var_sys['total_variables']}\n" +
+                    "\n".join(scope_details)
+                )
+
+            # Format Quality
+            if "format_quality" in base_status:
+                quality = base_status["format_quality"]
+                verbose_output.formatter.print_section(
+                    "Format Quality",
+                    f"Overall Score: {quality['overall_score']:.2f}\n"
+                    f"Format Adherence: {quality['format_adherence']:.2f}\n"
+                    f"Length Adherence: {quality['length_adherence']:.2f}\n"
+                    f"Content Quality: {quality['content_quality']:.2f}\n"
+                    f"Assessment: {quality['assessment']}"
+                )
+
+            # LLM Usage
+            if "llm_usage" in base_status:
+                llm = base_status["llm_usage"]
+                verbose_output.formatter.print_section(
+                    "LLM Usage Statistics",
+                    f"Total Calls: {llm['total_calls']}\n"
+                    f"Avg Context Tokens: {llm['average_context_tokens']:.1f}\n"
+                    f"Total Tokens: {llm['total_tokens_used']}\n"
+                    f"Compression Rate: {llm['context_compression_rate']:.2%}"
+                )
+
+            # Servers
+            servers = base_status["servers"]
+            if servers["server_count"] > 0:
+                server_status = []
+                if servers["a2a_server"]:
+                    server_status.append("A2A Server: Active")
+                if servers["mcp_server"]:
+                    server_status.append("MCP Server: Active")
+
+                verbose_output.formatter.print_section(
+                    "Servers",
+                    "\n".join(server_status)
+                )
+
+            verbose_output.print_separator()
+            verbose_output.print_info(f"Status generated at: {base_status['timestamp']}")
+
+            return "Status printed above"
+
+        except Exception as e:
+            # Fallback to JSON if pretty print fails
+            import json
+            return json.dumps(base_status, indent=2, default=str)
+
+    @property
+    def tool_registry(self):
+        return self._tool_registry
+
+def get_progress_summary(self) -> Dict[str, Any]:
+    """Get comprehensive progress summary from the agent"""
+    if hasattr(self, 'progress_tracker'):
+        return self.progress_tracker.get_summary()
+    return {"error": "No progress tracker available"}
+
+import inspect
+import typing
+from typing import Any, Callable
+
+def get_args_schema(func: Callable) -> str:
+    """
+    Generate a string representation of a function's arguments and annotations.
+    Keeps *args and **kwargs indicators and handles modern Python type hints.
+    """
+    sig = inspect.signature(func)
+    parts = []
+
+    for name, param in sig.parameters.items():
+        ann = ""
+        if param.annotation is not inspect._empty:
+            ann = f": {_annotation_to_str(param.annotation)}"
+
+        default = ""
+        if param.default is not inspect._empty:
+            default = f" = {repr(param.default)}"
+
+        prefix = ""
+        if param.kind == inspect.Parameter.VAR_POSITIONAL:
+            prefix = "*"
+        elif param.kind == inspect.Parameter.VAR_KEYWORD:
+            prefix = "**"
+
+        parts.append(f"{prefix}{name}{ann}{default}")
+
+    return f"({', '.join(parts)})"
+
+def _annotation_to_str(annotation: Any) -> str:
+    """
+    Convert any annotation to a nice string, including | union syntax (PEP 604),
+    Optional[T], generics, and forward references.
+    """
+    if isinstance(annotation, str):
+        return annotation  # Forward reference as-is
+
+    # Handle typing.Optional and typing.Union
+    if getattr(annotation, "__origin__", None) is typing.Union:
+        args = annotation.__args__
+        if len(args) == 2 and type(None) in args:
+            non_none = args[0] if args[1] is type(None) else args[1]
+            return f"Optional[{_annotation_to_str(non_none)}]"
+        return " | ".join(_annotation_to_str(a) for a in args)
+
+    # Handle built-in Union syntax (PEP 604)
+    if hasattr(annotation, "__args__") and getattr(annotation, "__origin__", None) is None and "|" in str(annotation):
+        return str(annotation)
+
+    # Handle generics like list[int], dict[str, Any]
+    if getattr(annotation, "__origin__", None):
+        origin = getattr(annotation.__origin__, "__name__", str(annotation.__origin__))
+        args = getattr(annotation, "__args__", None)
+        if args:
+            return f"{origin}[{', '.join(_annotation_to_str(a) for a in args)}]"
+        return origin
+
+    # Handle normal classes and built-ins
+    if hasattr(annotation, "__name__"):
+        return annotation.__name__
+
+    return repr(annotation)
+
+# Add this method to FlowAgent class
+FlowAgent.get_progress_summary = get_progress_summary
+
+if __name__ == "__main__2":
+    # Simple test
+    async def _agent():
+        amd = AgentModelData(
+        name="TestAgent",
+        fast_llm_model="groq/llama-3.3-70b-versatile",
+        complex_llm_model="openrouter/qwen/qwen3-coder",
+        persona=PersonaConfig(
+            name="Isaa",
+            style="light and perishes",
+            tone="modern friendly",
+            personality_traits=["intelligent", "autonomous", "duzen", "not formal"],
+            custom_instructions="dos not like to Talk in to long sanitize and texts."
+            )
+        )
+        agent = FlowAgent(amd, verbose=True)
+
+        def get_user_name():
+            return "Markin"
+
+        print(agent.get_available_variables())
+        await agent.add_tool(get_user_name, "get_user_name", "Get the user's name")
+        print("online")
+        import time
+        t = time.perf_counter()
+        response = await agent.a_run("is 1980 45 years ago?")
+        print(f"Time: {time.perf_counter() - t}")
+        print(f"Response: {response}")
+        agent.status(pretty_print=True)
+
+        while True:
+            query = input("Query: ")
+            if query == "r":
+                res = await agent.explain_reasoning_process()
+                print(res)
+                continue
+            if query == "exit":
+                break
+            response = await agent.a_run(query)
+            print(f"Response: {response}")
+
+        await agent.close()
+
+    asyncio.run(_agent())
 
 
-        logger.info(f"Agent '{self.amd.name}' resource cleanup finished.")
-
-    def print_verbose(self, *args):
-        """Conditional logging helper."""
-        if self.verbose:
-            logger.debug(' '.join(map(str, args)))
-
-# --- End of EnhancedAgent Class ---
-
-
-# --- Builder Class ---
-
-# **To make this code runnable and truly production-ready, you would still need to:**
-#
-# 1.  **Install Dependencies:** `pip install litellm google-cloud-aiplatform google-generativeai python-a2a mcp opentelemetry-sdk opentelemetry-api opentelemetry-exporter-otlp google-adk` (adjust based on specific ADK installation instructions and desired OTel exporters).
-# 2.  **Configure API Keys:** Set environment variables (e.g., `GOOGLE_API_KEY`, `OPENAI_API_KEY`) or use secure credential management.
-# 3.  **Implement Secure Code Execution:** Replace `SecureCodeExecutorPlaceholder` with a real sandboxed solution if code execution is needed and ADK's built-in isn't sufficient/available.
-# 4.  **Configure OpenTelemetry:** Set up the `TracerProvider` with appropriate exporters (OTLP, Jaeger, Prometheus, etc.) and resource attributes in your main application entry point.
-# 5.  **Persistent Storage:** If needed, replace `InMemoryRunner` with a persistent ADK runner (e.g., database-backed) and implement persistent storage for `message_history` and `WorldModel`.
-# 6.  **Configuration Management:** Load agent configurations from files (YAML, JSON) instead of hardcoding in the builder calls.
-# 7.  **Error Handling & Retries:** Enhance error handling for external calls (LLM, A2A, MCP) with more specific exceptions and robust retry logic (e.g., using libraries like `tenacity`).
-# 8.  **Server Deployment:** Run A2A/MCP servers in separate, managed processes or containers (e.g., using `uvicorn` for FastAPI-based servers like A2A/FastMCP, or appropriate process managers). The `run_a2a_server`/`run_mcp_server` methods are blocking.
-# 9.  **Testing:** Implement comprehensive unit, integration, and end-to-end tests.
-# 10. **Human-in-the-Loop:** Design and implement the actual HIL interaction points and UI/callback mechanisms.

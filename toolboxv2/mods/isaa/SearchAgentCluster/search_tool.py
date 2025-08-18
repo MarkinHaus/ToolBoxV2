@@ -43,48 +43,6 @@ class WebScraper:
     """
     A high-performance web scraper using BrowserAnt with multi-tab parallel processing.
     Handles both structured and unstructured data collection efficiently.
-import asyncio
-from pydantic import BaseModel, Field
-from typing import List, Optional
-
-# Define a structured data model
-class ProductInfo(BaseModel):
-    title: str
-    price: str
-    description: Optional[str] = None
-    rating: Optional[str] = None
-    availability: Optional[str] = None
-
-async def main():
-    # Initialize the scraper
-    scraper = WebScraper()
-
-    # Example 1: Simple scraping of a single URL
-    result = await scraper.scrape_url("https://example.com")
-    print(f"Title: {result['title']}")
-    print(f"Content: {result['markdown'][:200]}...")
-
-    # Example 2: Parallel scraping of multiple URLs
-    urls = [
-        "https://example.com/page1",
-        "https://example.com/page2",
-        "https://example.com/page3"
-    ]
-    results = await scraper.scrape_urls(urls)
-
-    # Example 3: Structured data extraction
-    products = await scraper.scrape_structured_data(
-        urls=["https://example.com/product1", "https://example.com/product2"],
-        model=ProductInfo,
-        extraction_task="Extract product information including title, price, and availability status"
-    )
-
-    for product in products:
-        if product:
-            print(f"Product: {product.title}, Price: {product.price}")
-
-    # Clean up
-    await scraper.close()
     """
 
     def __init__(
@@ -1023,7 +981,7 @@ async def web_search(query: str):
     try:
         # Simple search with content extraction
         results = await scraper.search_web(
-            query="climate change latest research",
+            query=query,
             max_results=3,
             include_content=True,
             extract_tables=True,
@@ -1069,7 +1027,7 @@ async def main2():
             if 'content' in result:
                 # Print a preview of the content
                 content = result['content']['markdown']
-                preview = content[:200] + "..." if len(content) > 200 else content
+                preview = content[:200] + f"... {len(content) - 200} characters more..." if len(content) > 200 else content
                 print(f"\nContent Preview: {preview}")
 
                 # Check for tables

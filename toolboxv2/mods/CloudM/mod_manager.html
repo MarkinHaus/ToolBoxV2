@@ -1,0 +1,48 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ToolBoxV2 - Mod Manager</title>
+    <script defer src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js"></script>
+    <!-- Assuming tbjs is loaded globally -->
+</head>
+<body>
+    <h1>Mod Manager</h1>
+
+    <div id="mod-manager-content">
+        <h2>Available Modules</h2>
+        <div id="module-list" hx-get="/api/CloudM/list_modules" hx-trigger="load, refreshList from:body" hx-swap="innerHTML">
+            <!-- Module list will be loaded here -->
+            <p>Loading modules...</p>
+        </div>
+
+        <hr>
+
+        <h2>Upload a New Mod</h2>
+        <form id="upload-form" hx-encoding='multipart/form-data' hx-post='/api/CloudM/upload_mod' hx-swap="innerHTML" hx-target="#upload-result">
+            <input type="file" name="file" id="mod-upload-input" required>
+            <button type="submit">Upload</button>
+        </form>
+        <div id="upload-result"></div>
+    </div>
+
+    <script>
+        document.addEventListener('htmx:beforeRequest', function(evt) {
+            if (evt.detail.requestConfig.verb === 'post') {
+                TB.ui.Loader.show('Uploading...');
+            }
+        });
+
+        document.addEventListener('htmx:afterRequest', function(evt) {
+            TB.ui.Loader.hide();
+            if (evt.detail.successful) {
+                TB.ui.Toast.showSuccess('Upload successful!');
+                htmx.trigger('#module-list', 'refreshList');
+            } else {
+                TB.ui.Toast.showError('Upload failed. Please check the console for details.');
+            }
+        });
+    </script>
+</body>
+</html>

@@ -170,12 +170,6 @@ class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing
 async def on_start(self):  # Renamed from on_start to avoid conflict if MainTool calls it `load`
     self.app.logger.info(
         f"Initializing {self.name} v{self.version}")
-    try:
-        self.db_mod = self.app.get_mod("DB")
-        if not self.db_mod:
-            self.app.logger.error(f"{self.name}: DB module not found. Session persistence will not work.")
-    except Exception as e:
-        self.app.logger.error(f"Error during {self.name} on_start (DB init): {e}", exc_info=True)
     # UI Registration
     try:
         self.app.run_any(
@@ -205,7 +199,9 @@ async def markdown_to_svg(self, request: RequestData, markdown_text: str = "", w
     The SVG is returned as a base64 encoded data URL.
     This version uses a viewBox for better scalability and multi-line handling.
     """
-    if not markdown_text:
+    if request is None:
+        return Result.default_user_error("Request data is missing.", 400)
+    if not markdown_text and request.data:
         markdown_text = request.data.get("markdown_text", "")
 
     if not markdown_text:
@@ -284,6 +280,10 @@ async def save_session(app: App, request: RequestData, data: Union[Dict[str, Any
     Saves the entire state of a canvas session to the database.
     This is typically triggered by a user's explicit "Save" action.
     """
+    if not data:
+        return Result.default_user_error("Request data is missing.", 400)
+    if request is None:
+        return Result.default_user_error("Request data is missing.", 400)
     canvas_tool = app.get_mod(MOD_NAME)
     if not canvas_tool or not canvas_tool.db_mod:
         app.logger.error("Save failed: Canvas module or DB not available.")
@@ -301,7 +301,8 @@ async def save_session(app: App, request: RequestData, data: Union[Dict[str, Any
         return Result.default_user_error(info=f"Invalid session data format: {e}", exec_code=400)
 
     # Update timestamp and construct the main session key
-    session_data_obj.last_modified = datetime.now(timezone.utc).timestamp()
+    if session_data_obj:
+        session_data_obj.last_modified = datetime.now(timezone.utc).timestamp()
     session_db_key = f"{user_db_key_base}_{session_data_obj.id}"
 
     # Save the full session object to the database
@@ -526,6 +527,9 @@ async def handle_send_canvas_action(app: App, request: RequestData, data: Dict[s
     canvas_tool = app.get_mod(MOD_NAME)
     if not canvas_tool or not canvas_tool.db_mod:
         return Result.default_internal_error("Canvas module or DB not loaded.")
+
+    if not data:
+        return Result.default_user_error("Request data is missing.", 400)
 
     canvas_id = data.get("canvas_id")
     action_type = data.get("action_type")

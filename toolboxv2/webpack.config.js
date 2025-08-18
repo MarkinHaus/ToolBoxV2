@@ -178,6 +178,12 @@ export default {
       filename: './web/dashboards/user_dashboard.html',
       chunks: ['main']
     }),
+    // For simplecore/index.html
+    new HtmlWebpackPlugin({
+      template: './web/pages/simplecore/index.html',
+      filename: './web/pages/simplecore/index.html',
+      chunks: ['main']
+    }),
     new MiniCssExtractPlugin({
       filename:  '[name].css',
     }),
@@ -189,6 +195,7 @@ export default {
           globOptions: {
             ignore: ['**/node_modules/**',
              '**/web/core0/index.html',
+             '**/web/pages/simplecore/index.html',
              '**/web/core0/Installer.html',
              '**/web/core0/MainIdea.html',
              '**/web/core0/roadmap.html',

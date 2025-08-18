@@ -7,8 +7,7 @@ name = "toolboxv2"
 version = "0.1.22"
 description = "Add your description here"
 readme = "README.md"
-# Aktiviert dynamisch das Einlesen von optional-dependencies
-dynamic = ["optional-dependencies"]
+
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11.13",
@@ -38,6 +37,7 @@ dependencies = [
     "icalendar>=6.3.1",
     "playwright>=1.51.0",
     "markdown2>=2.5.3",
+    "pocketflow>=0.0.3",
 ]
 
 [project.scripts]
@@ -72,9 +72,53 @@ dev-dependencies = [
 [tool.uv.workspace]
 members = ["toolboxv2/mods/isaa"]
 
-[tool.setuptools.dynamic]
+[project.optional-dependencies]
 # Definiert für die Extra-Gruppe "isaa" die Quelldatei
-optional-dependencies = { isaa = { file = ["toolboxv2/mods/isaa/requirements.txt"] } }
+isaa = [
+    "beautifulsoup4>=4.12.0",
+    "browser-use>=0.1.40",
+    "chromadb>=0.4.0",
+    "gtts>=2.3.0",
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.20",
+    "langchain-core>=0.1.20",
+    "litellm>=1.30.0",
+    "networkx>=3.1",
+    "numpy>=1.26.0",
+    "openai>=1.3.0",
+    "pebble>=5.0.0",
+    "pydantic>=2.5.0",
+    "pydub>=0.25.0",
+    "requests>=2.31.0",
+    "tiktoken>=0.5.0",
+    "torch>=2.1.0",
+    "tqdm>=4.66.0",
+    "transformers>=4.35.0",
+    "websockets>=12.0",
+    "scikit-learn>=1.3.0",
+    "sentence-transformers>=2.2.0",
+    "rapidfuzz>=3.0.0",
+    "astor>=0.8.0",
+    "nest-asyncio>=1.5.0",
+    "schedule>=1.2.0",
+    "python-levenshtein>=0.20.0",
+    "langchain-google-genai>=0.0.5",
+    "qdrant-client[fastembed]>=1.7.0",
+    "pyvis>=0.3.0",
+    "matplotlib>=3.8.0",
+    "redis>=5.0.0",
+    "seaborn>=0.13.0",
+    "google-adk[all]>=0.5.0",
+    "python-a2a[all]>=0.5.1",
+    "mcp>=1.6.0",
+    "google-cloud-aiplatform>=1.38.0",
+    "pyyaml>=6.0",
+    "restrictedpython>=7.0",
+    "docker>=7.0.0",
+    "uvicorn>=0.25.0",
+    "httpx>=0.25.0",
+    "fastapi>=0.108.0",
+]
 
 [tool.uv.sources]
 isaa = { workspace = true }

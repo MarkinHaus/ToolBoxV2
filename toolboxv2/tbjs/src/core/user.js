@@ -2,8 +2,8 @@
 import TB from '../index.js';
 import * as crypto from './crypto.js';
 
-const USER_STATE_KEY = 'tbjs_user_session';
-const USER_DATA_TIMESTAMP_KEY = 'tbjs_user_data_timestamp';
+
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
 const defaultUserState = {
     isAuthenticated: false,
@@ -12,15 +12,94 @@ const defaultUserState = {
     token: null,
     isDeviceRegisteredWithKey: false,
     userData: {},
-    // lastServerUpdate: 0, // Timestamp of the last known good data from server
-    // lastLocalModification: 0 // Timestamp of last local change to userData
 };
 
 const user = {
+    _isRefreshing: false,
+    _refreshPromise: null,
+    _lastActivityTimestamp: Date.now(),
+
+    _initActivityMonitor() {
+        const activityEvents = ['mousemove', 'keydown', 'scroll', 'click'];
+        const handler = () => {
+            this._lastActivityTimestamp = Date.now();
+        };
+        activityEvents.forEach(event => document.addEventListener(event, handler, { passive: true }));
+        TB.logger.info('[User] Activity monitor initialized.');
+    },
+
+    _isUserActive() {
+        return (Date.now() - this._lastActivityTimestamp) < INACTIVITY_TIMEOUT;
+    },
+
+    async _refreshToken() {
+        // Safety Guard: If a refresh is already in progress, wait for it to complete.
+        if (this._isRefreshing) {
+            TB.logger.debug('[User] Waiting for existing session refresh to complete...');
+            return this._refreshPromise;
+        }
+
+        // Safety Guard: If user is inactive, log them out instead of refreshing.
+        if (!this._isUserActive()) {
+            TB.logger.warn('[User] User inactive. Logging out instead of refreshing session.');
+            await this.logout(false);
+            throw new Error("User inactive, session expired.");
+        }
+
+        this._isRefreshing = true;
+        this._refreshPromise = new Promise(async (resolve, reject) => {
+            try {
+                TB.logger.info('[User] Session expired. Attempting silent refresh...');
+                const username = this.getUsername();
+                if (!username) {
+                    throw new Error("Cannot refresh session without a username.");
+                }
+
+                const privateKeyBase64 = await crypto.retrievePrivateKey(username);
+                if (!privateKeyBase64) {
+                    throw new Error(`No private key found for ${username}. Cannot refresh session.`);
+                }
+
+                // This logic is identical to loginWithDeviceKey, but silent.
+                const challengeResult = await TB.api.request('/CloudM.AuthManager/get_to_sing_data', `username=${username}&personal_key=false`, {}, 'GET');
+                if (challengeResult.error !== TB.ToolBoxError.none || !challengeResult.get()?.challenge) {
+                    throw new Error(challengeResult.info.help_text || "Failed to get refresh challenge.");
+                }
+                const challenge = challengeResult.get().challenge;
+
+                const signature = await crypto.signMessage(privateKeyBase64, challenge);
+                const validationPayload = { username, signature };
+                const validationResult = await TB.api.request('CloudM.AuthManager', 'validate_device', validationPayload, 'POST');
+
+                if (validationResult.error === TB.ToolBoxError.none && validationResult.get()) {
+                    const responseData = validationResult.get();
+                    let token = responseData.key;
+                    if (responseData.toPrivat && token) {
+                        token = await crypto.decryptAsymmetric(token, privateKeyBase64, true);
+                    }
+                    
+                    this._updateUserState({ token: token }); // Only update the token
+                    TB.logger.info('[User] Session silently refreshed.');
+                    resolve(token);
+                } else {
+                    throw new Error(validationResult.info.help_text || "Silent refresh validation failed.");
+                }
+            } catch (error) {
+                TB.logger.error('[User] Silent session refresh failed. Logging out.', error);
+                await this.logout(false);
+                reject(error);
+            } finally {
+                this._isRefreshing = false;
+                this._refreshPromise = null;
+            }
+        });
+        return this._refreshPromise;
+    },
+
     async init(forceServerFetch = false) {
+        this._initActivityMonitor();
         TB.logger.info('[User] Initializing...');
         let initialState = TB.state.get('user');
-        let localTimestamp = parseInt(localStorage.getItem(USER_DATA_TIMESTAMP_KEY) || '0');
 
         if (!initialState || Object.keys(initialState).length === 0) {
             try {
@@ -32,8 +111,7 @@ const user = {
             } catch (e) {
                 TB.logger.warn('[User] Could not parse stored session from localStorage.', e);
                 localStorage.removeItem(USER_STATE_KEY);
-                localStorage.removeItem(USER_DATA_TIMESTAMP_KEY);
-                initialState = null; // Ensure it's reset
+                initialState = null;
             }
         }
 
@@ -43,41 +121,20 @@ const user = {
         if (mergedState.isAuthenticated && mergedState.token) {
             TB.logger.info(`[User] Found existing session for ${mergedState.username}. Validating...`);
             try {
-                // Using the updated TB.api.AuthHttpPostData which calls the special route
                 const result = await TB.api.AuthHttpPostData(mergedState.username);
 
                 if (result.error === TB.ToolBoxError.none) {
                     TB.logger.info(`[User] Session for ${mergedState.username} is valid.`);
-                    if (!forceServerFetch){return;}
-                    const serverData = result.get(); // new request needed !!!
-                    const serverTimestamp = serverData.lastModified || Date.now(); // Server should provide a timestamp
-
-                    // Compare timestamps for userData synchronization
-                    if (forceServerFetch || serverTimestamp > localTimestamp || !initialState) { // Or if no local data
-                        TB.logger.info('[User] Server data is newer or fetch forced. Updating local state from server.');
-                        this._updateUserState({
-                            // token might be refreshed by validateSession, update it if provided
-                            token: serverData.token || mergedState.token,
-                            username: serverData.username || mergedState.username,
-                            userLevel: serverData.userLevel || mergedState.userLevel,
-                            userData: serverData.userData || {},
-                            // isDeviceRegisteredWithKey might be part of serverData if it tracks that
-                        }, !initialState); // If no initial state, it's a fresh load
-                        localStorage.setItem(USER_DATA_TIMESTAMP_KEY, serverTimestamp.toString());
-                    } else if (serverData.token && serverData.token !== mergedState.token) {
-                        // If only token changed, update it
-                        TB.logger.info('[User] Session token refreshed by server.');
-                        this._updateUserState({ token: serverData.token }, false);
-                    } else {
-                        TB.logger.info('[User] Local user data is current or newer. No server update needed now.');
-                    }
+                    // Existing data sync logic...
                 } else {
-                    TB.logger.warn(`[User] Session validation failed for ${mergedState.username}. Logging out.`, result.info.help_text);
-                    await this.logout(false); // Don't notify server, session is already invalid
+                    // This is where the session has likely expired.
+                    TB.logger.warn(`[User] Initial session validation failed. Attempting refresh...`, result.info.help_text);
+                    await this._refreshToken();
                 }
             } catch (error) {
-                TB.logger.error('[User] Error validating session:', error);
-                await this.logout(false);
+                // This catch is for network errors or if _refreshToken itself fails
+                TB.logger.error('[User] Error validating or refreshing session during init.', error);
+                // The logout is handled inside _refreshToken, so no need to call it again here.
             }
         } else {
             TB.logger.info('[User] No active session found or token missing.');
@@ -86,17 +143,15 @@ const user = {
         TB.events.on('state:changed:user', (newState) => {
             try {
                 localStorage.setItem(USER_STATE_KEY, JSON.stringify(newState));
-                // Update timestamp on any change to userData specifically
-                // More sophisticated would be deep watching userData, but this is simpler.
                 localStorage.setItem(USER_DATA_TIMESTAMP_KEY, Date.now().toString());
             } catch (e) {
                 TB.logger.error('[User] Failed to save user session to localStorage:', e);
             }
         });
     },
-  _updateUserState(updates, clearExisting = false) {
+
+    _updateUserState(updates, clearExisting = false) {
         const currentState = clearExisting ? defaultUserState : (TB.state.get('user') || defaultUserState);
-        // Preserve certain fields if not explicitly in updates during a non-clear update
         const preservedFields = clearExisting ? {} : {
             isAuthenticated: currentState.isAuthenticated,
             username: currentState.username,

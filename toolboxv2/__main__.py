@@ -390,6 +390,14 @@ def parse_args():
           $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
           $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
 
+        Account Management:
+          $ tb -c helper init_system
+          $ tb -c helper create-user <username> <email>
+          $ tb -c helper delete-user <username>
+          $ tb -c helper list-users
+          $ tb -c helper create-invitation <username>
+          $ tb -c helper send-magic-link <username>
+
         +----------------------------------------------------------------------------+
         """),
         formatter_class=ASCIIHelpFormatter
@@ -619,12 +627,25 @@ def run_tests(test_path):
     try:
         result = subprocess.run(command, check=True, encoding='cp850')
         # Überprüfe den Rückgabewert des Prozesses und gib entsprechend True oder False zurück
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
     except subprocess.CalledProcessError as e:
         print(f"Fehler beim Ausführen der Unittests: {e}")
         return False
     except Exception as e:
         print(f"Fehler beim Ausführen der Unittests:{e}")
+        return False
+
+    # Führe npm test aus
+    print("Running npm tests...")
+    try:
+        result = subprocess.run(["npm", "test"], check=True, encoding='cp850', cwd=tb_root_dir)
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        print(f"Fehler beim Ausführen der npm-Tests: {e}")
+        return False
+    except Exception as e:
+        print(f"Fehler beim Ausführen der npm-Tests:{e}")
         return False
 
 
@@ -678,7 +699,7 @@ async def setup_app(ov_name=None):
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=App)
 
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
-        tb_app.sprint = lambda text, *_args, **kwargs: [time.sleep(0.1), False][-1]
+        tb_app.sprint = lambda text, *_args, **kwargs: False
 
     tb_app.loop = asyncio.get_running_loop()
 
@@ -864,8 +885,8 @@ async def main():
             flows_dict = {**flows_dict, **flows_dict_func(s=args.modi, remote=True)}
         tb_app.set_flows(flows_dict)
         if args.modi not in flows_dict:
-            raise ValueError(
-                f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
+            print(f"Modi : [{args.modi}] not found on device installed modi : {list(flows_dict.keys())}")
+            exit(1)
         # open(f"./config/{args.modi}.pid", "w").write(app_pid)
         await tb_app.run_flows(args.modi, **args.kwargs[0])
 

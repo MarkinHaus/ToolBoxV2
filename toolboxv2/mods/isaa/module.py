@@ -42,21 +42,21 @@ import json
 import locale
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
-from typing import Any, Optional
+from typing import Any, Optional, Awaitable
 
-from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger
+from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles
 
-# Updated imports for EnhancedAgent
+# Updated imports for FlowAgent
 from .base.Agent.agent import (
-    EnhancedAgent,
+    FlowAgent,
     AgentModelData,  # For type hinting if needed
-    WorldModel,  # For type hinting if needed
 )
 from .base.Agent.builder import (
-    EnhancedAgentBuilder,
-    BuilderConfig,
+    FlowAgentBuilder,
+    AgentConfig,
 )
 # AgentVirtualEnv and LLMFunction might be deprecated or need adaptation
 # For now, keeping them if they are used by other parts not being refactored.
@@ -93,6 +93,7 @@ pipeline_arr = [  # This seems to be for HuggingFace pipeline, keep as is for no
     'text-to-speech',
 ]
 
+row_agent_builder_sto = {}
 
 def get_ip():
     response = requests.get('https://api64.ipify.org?format=json').json()
@@ -132,7 +133,7 @@ class Tools(MainTool, FileHandler):
                        "DEFAULTMODEL_LF_TOOLS": os.getenv("DEFAULTMODEL_LF_TOOLS", "ollama/llama3.1"),
                        }
         self.per_data = {}
-        self.agent_data: dict[str, dict] = {}  # Will store BuilderConfig dicts
+        self.agent_data: dict[str, dict] = {}  # Will store AgentConfig dicts
         self.keys = {
             "KEY": "key~~~~~~~",
             "Config": "config~~~~"
@@ -158,7 +159,7 @@ class Tools(MainTool, FileHandler):
             "save_to_mem": self.save_to_mem_sync,
             "get_agent": self.get_agent,  # Now async
             "run_task": self.run_task,  # Now async
-            "crate_task_chain": self.crate_task_chain,  # Now async
+            "create_task_chain": self.create_task_chain,  # Now async
             "format_class": self.format_class,  # Now async
             "get_memory": self.get_memory,
             "get_pipe": self.get_pipe,  # Now async
@@ -168,8 +169,8 @@ class Tools(MainTool, FileHandler):
         }
         self.working_directory = os.getenv('ISAA_WORKING_PATH', os.getcwd())
         self.print_stream = stram_print
-        self.agent_collective_senses = False  # This might be obsolete with EnhancedAgent's design
-        self.global_stream_override = False  # Handled by EnhancedAgentBuilder
+        self.agent_collective_senses = False  # This might be obsolete with FlowAgent's design
+        self.global_stream_override = False  # Handled by FlowAgentBuilder
         self.pipes_device = 1  # For HuggingFace pipelines
         self.lang_chain_tools_dict: dict[str, Any] = {}  # Store actual tool objects for wrapping
         self.agent_chain = AgentChain(directory=f"{app.data_dir}{extra_path}/chains")
@@ -200,6 +201,7 @@ class Tools(MainTool, FileHandler):
         MainTool.toolID = ""  # Static attribute?
         self.web_search = web_search
         self.shell_tool_function = shell_tool_function
+        self.tools["shell"] = shell_tool_function
 
         self.print(f"Start {self.spec}.isaa")
         with Spinner(message="Starting module", symbols='c'):
@@ -232,12 +234,11 @@ class Tools(MainTool, FileHandler):
         #initialize_isaa_webui_module(self.app, self)
         #self.print("ISAA module started. fallback")
 
-
     async def _async_function_runner(self, name, **kwargs):
         agent = await self.get_agent("self")  # Get self agent for its tools
-        # EnhancedAgent doesn't have function_invoke. Need to find tool and run.
+        # FlowAgent doesn't have function_invoke. Need to find tool and run.
         # This is a simplified version. Real ADK tool execution is more complex.
-        for tool in agent.tools:  # Assuming agent.tools is populated for EnhancedAgent
+        for tool in agent.tools:  # Assuming agent.tools is populated for FlowAgent
             if tool.name == name:
                 # This is a placeholder. ADK tools expect ToolContext.
                 # For simple FunctionTool, calling tool.func might work.
@@ -262,32 +263,40 @@ class Tools(MainTool, FileHandler):
         return await self.run_agent(name, task, **kwargs)
 
     def add_task(self, name, task):
-        self.agent_chain.add_task(name, task)
+        return self.agent_chain.add_task(name, task)
 
     def list_task(self):
         return str(self.agent_chain)
 
-    def remove_task(self, name):
+    def remove_task(self, name:str):
         return self.agent_chain.remove(name)
 
-    def save_task(self, name=None):
+    def save_task(self, name:Optional[str]=None):
         self.agent_chain.save_to_file(name)
 
-    def load_task(self, name=None):
+    def load_task(self, name:Optional[str]=None):
         self.agent_chain.load_from_file(name)
 
-    def get_task(self, name=None):
+    def get_task(self, name:Optional[str]=None):
         return self.agent_chain.get(name)
 
-    async def run_task(self, task_input: str, chain_name: str, sum_up=True):
+    async def run_task(self, task_input: str, chain_name: str, sum_up:bool=True, agent_name:Optional[str]=None):
         self.agent_chain_executor.reset()
+        if agent_name is None:
+            agent_name = "self"
 
-        return self.agent_chain_executor.execute(task_input,
+        agent_instance = await self.get_agent(agent_name)
+        self.agent_chain_executor.set_runner( agent_instance.arun_function, agent_instance.a_run)
+
+        return await self.agent_chain_executor.a_execute(task_input,
                                           self.agent_chain.get(chain_name), sum_up)
 
-    async def crate_task_chain(self, prompt):
+    async def create_task_chain(self, prompt: str, agent_name:Optional[str]=None):
+        if prompt is None:
+            return None
+        if prompt == "": return None
         agents_list = self.config.get('agents-name-list', ['self', 'isaa'])
-        # Tools list needs to be adapted for EnhancedAgent/ADK
+        # Tools list needs to be adapted for FlowAgent/ADK
         self_agent = await self.get_agent("self")
         tools_list_str = ", ".join(
             [tool.name for tool in self_agent.tools]) if self_agent.tools else "No tools available"
@@ -295,10 +304,10 @@ class Tools(MainTool, FileHandler):
         prompt += f"\n\nAvailable Agents: {agents_list}"
         prompt += f"\n\nAvailable Tools on 'self' agent: {tools_list_str}"
         prompt += f"\n\nAvailable Chains: {self.list_task()}"
-
-        if 'TaskChainAgent' not in self.config['agents-name-list']:
+        agent_name = agent_name or "TaskChainAgent"
+        if agent_name not in self.config['agents-name-list']:
             task_chain_builder = self.get_agent_builder("code")
-            task_chain_builder.with_agent_name("TaskChainAgent")
+            task_chain_builder.with_agent_name(agent_name)
             tcm = self.controller.rget(TaskChainMode)
             task_chain_builder.with_system_message(tcm.system_msg)  # Use system_msg from LLMMode
             await self.register_agent(task_chain_builder)  # await here
@@ -315,54 +324,56 @@ class Tools(MainTool, FileHandler):
         return task_chain.name
 
     def get_augment(self, task_name=None, exclude=None):
-        # This needs to be adapted. Serialization of EnhancedAgent is through BuilderConfig.
+        # This needs to be adapted. Serialization of FlowAgent is through AgentConfig.
         return {
-            "tools": {},  # Tool configurations might be part of BuilderConfig now
-            "Agents": self.serialize_all(exclude=exclude),  # Returns dict of BuilderConfig dicts
+            "tools": {},  # Tool configurations might be part of AgentConfig now
+            "Agents": self.serialize_all(exclude=exclude),  # Returns dict of AgentConfig dicts
             "customFunctions": json.dumps(self.scripts.scripts),  # Remains same
             "tasks": self.agent_chain.save_to_dict(task_name)  # Remains same
         }
 
-    async def init_from_augment(self, augment, agent_name: str or EnhancedAgentBuilder = 'self', exclude=None):
-        builder_instance = None
+    async def init_from_augment(self, augment, agent_name: str = 'self', exclude=None):
+        """Initialize from augmented data using new builder system"""
+
+        # Handle agent_name parameter
         if isinstance(agent_name, str):
-            builder_instance = self.get_agent_builder(agent_name)  # Gets a builder
-        elif isinstance(agent_name, EnhancedAgentBuilder):
-            builder_instance = agent_name
+            pass  # Use string name
+        elif hasattr(agent_name, 'config'):  # FlowAgentBuilder
+            agent_name = agent_name.config.name
         else:
-            raise ValueError(f"Invalid Type {type(agent_name)} accept ar: str and EnhancedAgentBuilder")
+            raise ValueError(f"Invalid agent_name type: {type(agent_name)}")
 
         a_keys = augment.keys()
 
-        if "tools" in a_keys:
-            tools_config = augment['tools']  # This config needs to define how tools are added to builder
-            # model_for_tools = tools_config.get("tools.model", self.config['DEFAULTMODEL_LF_TOOLS']) # model is per agent
-            # Await self.init_tools(tools_config, builder_instance) # init_tools needs to work with builder
-            pass  # Tool init needs redesign for builder
-
+        # Load agent configurations
         if "Agents" in a_keys:
-            agents_configs_dict = augment['Agents']  # This is dict of BuilderConfig dicts
-            self.deserialize_all(agents_configs_dict)  # Populates self.agent_data
+            agents_configs_dict = augment['Agents']
+            self.deserialize_all(agents_configs_dict)
             self.print("Agent configurations loaded.")
 
+        # Load custom functions (scripts)
         if "customFunctions" in a_keys:
             custom_functions = augment['customFunctions']
             if isinstance(custom_functions, str):
                 custom_functions = json.loads(custom_functions)
             if custom_functions:
                 self.scripts.scripts = custom_functions
-                self.print("customFunctions saved")
+                self.print("Custom functions loaded")
 
+        # Load task chains
         if "tasks" in a_keys:
-            tasks = augment['tasks']  # This is AgentChain data
+            tasks = augment['tasks']
             if isinstance(tasks, str):
                 tasks = json.loads(tasks)
             if tasks:
-                self.agent_chain.load_from_dict(tasks)  # AgentChain handles its own format
-                self.print("tasks chains restored")
+                self.agent_chain.load_from_dict(tasks)
+                self.print("Task chains restored")
 
-    async def init_tools(self, tools_config: dict, agent_builder: EnhancedAgentBuilder):
-        # This function needs to be adapted to add tools to the EnhancedAgentBuilder
+        # Tools are now handled by the builder system during agent creation
+        if "tools" in a_keys:
+            self.print("Tool configurations noted - will be applied during agent building")
+    async def init_tools(self, tools_config: dict, agent_builder: FlowAgentBuilder):
+        # This function needs to be adapted to add tools to the FlowAgentBuilder
         # For LangChain tools, they need to be wrapped as callables or ADK BaseTool instances.
         lc_tools_names = tools_config.get('lagChinTools', [])
         # hf_tools_names = tools_config.get('huggingTools', []) # HuggingFace tools are also LangChain tools
@@ -399,9 +410,9 @@ class Tools(MainTool, FileHandler):
         #         self.print(f"Failed to load AIPlugin from {url}: {e}")
 
     def serialize_all(self, exclude=None):
-        # Returns a copy of agent_data, which contains BuilderConfig dicts
+        # Returns a copy of agent_data, which contains AgentConfig dicts
         # The exclude logic might be different if it was excluding fields from old AgentBuilder
-        # For BuilderConfig, exclusion happens during model_dump if needed.
+        # For AgentConfig, exclusion happens during model_dump if needed.
         return copy.deepcopy(self.agent_data)
 
     def deserialize_all(self, data: dict[str, dict]):
@@ -430,6 +441,7 @@ class Tools(MainTool, FileHandler):
             self.controller.init(self.config['controller_file'])
         self.config["controller-init"] = True
 
+
         return self.get_agent_builder(name) if build else await self.get_agent(name)
 
     def show_version(self):
@@ -440,6 +452,8 @@ class Tools(MainTool, FileHandler):
 
         initialize_isaa_chains(self.app)
         initialize_isaa_webui_module(self.app, self)
+
+        threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
         self.print("ISAA module started.")
 
     def load_secrit_keys_from_env(self):
@@ -456,10 +470,11 @@ class Tools(MainTool, FileHandler):
     def on_exit(self):
         # Save agent configurations
         for agent_name, agent_instance in self.config.items():
-            if agent_name.startswith('agent-instance-') and isinstance(agent_instance, EnhancedAgent):
+            if agent_name.startswith('agent-instance-') and agent_instance and isinstance(agent_instance, list) and isinstance(agent_instance[0], FlowAgent):
+                self.app.run_bg_task_advanced(asyncio.gather(*[agent_instance.close() for agent_instance in agent_instance]))
                 # If agent instance has its own save logic (e.g. cost tracker)
                 # asyncio.run(agent_instance.close()) # This might block, consider task group
-                # The BuilderConfig is already in self.agent_data, which should be saved.
+                # The AgentConfig is already in self.agent_data, which should be saved.
                 pass  # Agent instances are not directly saved, their configs are.
 
         threading.Thread(target=self.save_to_mem_sync, daemon=True).start()  # Sync wrapper for save_to_mem
@@ -482,164 +497,244 @@ class Tools(MainTool, FileHandler):
         self.scripts.save_scripts()
 
     def save_to_mem_sync(self):
-        # This used to call agent.save_memory(). EnhancedAgent does not have this.
+        # This used to call agent.save_memory(). FlowAgent does not have this.
         # If AISemanticMemory needs global saving, it should be handled by AISemanticMemory itself.
         # For now, this can be a no-op or save AISemanticMemory instances if managed by Tools.
         memory_instance = self.get_memory()  # Assuming this returns AISemanticMemory
         if hasattr(memory_instance, 'save_all_memories'):  # Hypothetical method
             memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory saving process initiated")
+    def load_to_mem_sync(self):
+        # This used to call agent.save_memory(). FlowAgent does not have this.
+        # If AISemanticMemory needs global saving, it should be handled by AISemanticMemory itself.
+        # For now, this can be a no-op or save AISemanticMemory instances if managed by Tools.
+        memory_instance = self.get_memory()  # Assuming this returns AISemanticMemory
+        if hasattr(memory_instance, 'load_all_memories'):  # Hypothetical method
+            memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
+        self.print("Memory loading process initiated")
 
-    def get_agent_builder(self, name="self") -> EnhancedAgentBuilder:
-        if name == 'None': name = "self"  # Default name
-        self.print(f"Default EnhancedAgentBuilder::{name}")
+    def get_agent_builder(self, name="self") -> FlowAgentBuilder:
+        if name == 'None':
+            name = "self"
 
-        agent_builder = EnhancedAgentBuilder(agent_name=name)
-        agent_builder._isaa_ref = self  # Store ISAA reference if needed by builder logic or tools
+        self.print(f"Creating FlowAgentBuilder: {name}")
 
-        # Load from file if exists
-        agent_config_path = Path(f"{get_app().data_dir}/Agents/{name}.agent.json")  # Builder saves as .json
+        # Create builder with agent-specific configuration
+        config = AgentConfig(
+            name=name,
+            fast_llm_model=self.config.get(f'DEFAULTMODEL{name.upper()}', self.config['DEFAULTMODEL0']),
+            complex_llm_model=self.config.get(f'DEFAULTMODEL{name.upper()}', self.config['DEFAULTMODEL1']),
+            system_message="You are a production-ready autonomous agent.",
+            temperature=0.7,
+            max_tokens_output=2048,
+            max_tokens_input=32768,
+            use_fast_response=True,
+            max_parallel_tasks=3,
+            verbose_logging=False
+        )
+
+        builder = FlowAgentBuilder(config=config)
+        builder._isaa_ref = self  # Store ISAA reference
+
+        # Load existing configuration if available
+        agent_config_path = Path(f"{get_app().data_dir}/Agents/{name}.agent.json")
         if agent_config_path.exists():
             try:
-                agent_builder.load_config(agent_config_path)
-                self.print(f"Loaded existing configuration for builder {name} from {agent_config_path}")
+                builder = FlowAgentBuilder.from_config_file(str(agent_config_path))
+                builder._isaa_ref = self
+                self.print(f"Loaded existing configuration for builder {name}")
             except Exception as e:
                 self.print(f"Failed to load config for {name}: {e}. Using defaults.")
-                # Fallback to default settings if load fails
-                agent_builder = EnhancedAgentBuilder(agent_name=name)
-                agent_builder._isaa_ref = self
+                # Keep the default builder
 
-        if self.global_stream_override:  # This is a global flag for ISAA
-            agent_builder.enable_streaming(True)
+        # Apply global settings
+        if self.global_stream_override:
+            builder.verbose(True)
 
-        # Set default model (can be overridden by loaded config)
-        if not agent_builder._config.model_identifier:
-            agent_builder.with_model(self.config.get(f'DEFAULTMODEL{name.upper()}', self.config['DEFAULTMODEL0']))
-
-        # Apply ISAA specific setter if available
+        # Apply custom setter if available
         if self.default_setter:
-            agent_builder = self.default_setter(agent_builder, name)  # Pass name for context
+            builder = self.default_setter(builder, name)
 
         # Add common ISAA tools
         async def run_isaa_agent_tool(target_agent_name: str, instructions: str, **kwargs_):
-            # Ensure this function is awaitable as ADK tools might be async
             return await self.run_agent(target_agent_name, instructions, **kwargs_)
 
-        async def memory_search_tool(query: str):
-            # This needs to use the agent's *own* memory or a shared ISAA memory
-            # For now, assuming a global ISAA memory
+        async def memory_search_tool(
+            query: str,
+            search_mode: Optional[str] = "balanced",
+            context_name: Optional[str] = None
+        ) -> str:
+            """Memory search with configurable precision"""
             mem_instance = self.get_memory()
-            # AISemanticMemory.query is async
-            return await mem_instance.query(query, to_str=True)
+            memory_names_list = [name.strip() for name in context_name.split(',')] if context_name else None
+
+            search_params = {
+                "wide": {"k": 7, "min_similarity": 0.1, "cross_ref_depth": 3, "max_cross_refs": 4, "max_sentences": 8},
+                "narrow": {"k": 2, "min_similarity": 0.75, "cross_ref_depth": 1, "max_cross_refs": 1,
+                           "max_sentences": 3},
+                "balanced": {"k": 3, "min_similarity": 0.2, "cross_ref_depth": 2, "max_cross_refs": 2,
+                             "max_sentences": 5}
+            }.get(search_mode,
+                  {"k": 3, "min_similarity": 0.2, "cross_ref_depth": 2, "max_cross_refs": 2, "max_sentences": 5})
+
+            return await mem_instance.query(
+                query=query, memory_names=memory_names_list,
+                query_params=search_params, to_str=True
+            )
 
         async def save_to_memory_tool(data_to_save: str, context_name: str = name):
             mem_instance = self.get_memory()
-            await mem_instance.add_data(context_name, str(data_to_save))
-            return 'Data added to memory.'
+            result = await mem_instance.add_data(context_name, str(data_to_save), direct=True)
+            return 'Data added to memory.' if result else 'Error adding data to memory.'
 
-        agent_builder.with_adk_tool_function(run_isaa_agent_tool, name="runAgent",
-                                             description=f"Run another ISAA agent. Available: {self.config.get('agents-name-list', [])}")
-        agent_builder.with_adk_tool_function(memory_search_tool, name="memorySearch",
-                                             description="Search ISAA's semantic memory.")
-        agent_builder.with_adk_tool_function(save_to_memory_tool, name="saveDataToMemory",
-                                             description="Save data to ISAA's semantic memory for the current agent's context.")
-        agent_builder.with_adk_tool_function(self.web_search, name="searchWeb",
-                                             description="Search the web for information.")
-        agent_builder.with_adk_tool_function(self.shell_tool_function, name="shell", description="Run a shell command.")
+        # Add tools to builder
+        builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
+        builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
+        builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
+        builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
-        # Add more tools based on agent 'name' or type
-        if name == "self" or "code" in name.lower() or "pipe" in name.lower():  # Example condition
+        # Add specialized tools based on agent type
+        if name == "self" or "code" in name.lower() or "pipe" in name.lower():
             async def code_pipeline_tool(task: str, do_continue: bool = False):
-                pipe_agent_name = name  # Use current agent's context for the pipe
-                return await self.run_pipe(pipe_agent_name, task, do_continue=do_continue)
+                return await self.run_pipe(name, task, do_continue=do_continue)
 
-            agent_builder.with_adk_tool_function(code_pipeline_tool, name="runCodePipeline",
-                                                 description="Run a multi-step code generation/execution task.")
+            builder.add_tool(code_pipeline_tool, "runCodePipeline",
+                             "Run multi-step code generation/execution in isolated Python environment")
 
-        # Configure cost tracking persistency if not already set by loaded config
-        if agent_builder._config.cost_tracker_config is None or agent_builder._config.cost_tracker_config.get(
-            'type') != 'json':
-            cost_file = Path(f"{get_app().data_dir}/Agents/{name}.costs.json")
-            agent_builder.with_json_cost_tracker(cost_file)
+        if name == "self" or any(keyword in name.lower() for keyword in ["task", "chain", "supervisor"]):
+            # Add task management tools
+            task_tools = [
+                (self.create_task_chain, "createTaskChain", "Create a task chain from sequence of steps"),
+                (self.run_task, "runTaskChain", "Run a specific task chain"),
+                (self.get_task, "getTaskChain", "Get information about a task chain"),
+                (self.load_task, "loadTaskChain", "Load a task chain from storage"),
+                (self.save_task, "saveTaskChain", "Save a task chain to persistent storage"),
+                (self.remove_task, "removeTaskChain", "Remove a task chain from system"),
+                (self.list_task, "listTasksChains", "List all available task chains"),
+            ]
 
-        return agent_builder
+            builder.add_tool(run_isaa_agent_tool, "askAgent",
+                             f"Ask any agent: {self.config.get('agents-name-list', [])} for results/status")
 
-    async def register_agent(self, agent_builder: EnhancedAgentBuilder):
-        agent_name = agent_builder._config.agent_name
+            for func, tool_name, desc in task_tools:
+                builder.add_tool(func, tool_name, desc)
+
+        # Configure cost tracking
+        cost_file = Path(f"{get_app().data_dir}/Agents/{name}.costs.json")
+        builder.with_budget_manager(max_cost=100.0)  # Set reasonable default
+
+        return builder
+
+    async def register_agent(self, agent_builder: FlowAgentBuilder):
+        agent_name = agent_builder.config.name
+
         if f'agent-instance-{agent_name}' in self.config:
             self.print(f"Agent '{agent_name}' instance already exists. Overwriting config and rebuilding on next get.")
-            self.config.pop(f'agent-instance-{agent_name}', None)  # Remove old instance
+            self.config.pop(f'agent-instance-{agent_name}', None)
 
         # Save the builder's configuration
         config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}.agent.json")
-        agent_builder.save_config(config_path)
-        self.print(f"Saved EnhancedAgentBuilder config for '{agent_name}' to {config_path}")
+        agent_builder.save_config(str(config_path), format='json')
+        self.print(f"Saved FlowAgentBuilder config for '{agent_name}' to {config_path}")
 
-        # Store the serializable config dict in self.agent_data
-        self.agent_data[agent_name] = agent_builder._config.model_dump()
+        # Store serializable config in agent_data
+        self.agent_data[agent_name] = agent_builder.config.model_dump()
 
         if agent_name not in self.config.get("agents-name-list", []):
-            if "agents-name-list" not in self.config: self.config["agents-name-list"] = []
+            if "agents-name-list" not in self.config:
+                self.config["agents-name-list"] = []
             self.config["agents-name-list"].append(agent_name)
 
-        self.print(f"EnhancedAgent '{agent_name}' configuration registered. Will be built on first use.")
-        # Agent is built on demand by get_agent to handle async build
+        self.print(f"FlowAgent '{agent_name}' configuration registered. Will be built on first use.")
+        row_agent_builder_sto[agent_name] = agent_builder  # Cache builder
 
-    async def get_agent(self, agent_name="Normal", model_override: str | None = None) -> EnhancedAgent:
-        if "agents-name-list" not in self.config: self.config["agents-name-list"] = []
+    async def get_agent(self, agent_name="Normal", model_override: str | None = None) -> FlowAgent:
+        if "agents-name-list" not in self.config:
+            self.config["agents-name-list"] = []
 
         instance_key = f'agent-instance-{agent_name}'
         if instance_key in self.config:
             agent_instance = self.config[instance_key]
-            if model_override and agent_instance.amd.model != model_override:
+            if model_override and agent_instance.amd.fast_llm_model != model_override:
                 self.print(f"Model override for {agent_name}: {model_override}. Rebuilding.")
-                self.config.pop(instance_key, None)  # Remove old instance
-                # Fall through to build with new model
+                self.config.pop(instance_key, None)
             else:
-                self.print(f"Returning existing EnhancedAgent instance: {agent_name}")
+                self.print(f"Returning existing FlowAgent instance: {agent_name}")
                 return agent_instance
 
         builder_to_use = None
-        if agent_name in self.agent_data:
-            self.print(f"Loading configuration for EnhancedAgent: {agent_name}")
-            builder_config_dict = self.agent_data[agent_name]
+
+        # Try to get cached builder first
+        if agent_name in row_agent_builder_sto:
+            builder_to_use = row_agent_builder_sto[agent_name]
+            self.print(f"Using cached builder for {agent_name}")
+
+        # Try to load from stored config
+        elif agent_name in self.agent_data:
+            self.print(f"Loading configuration for FlowAgent: {agent_name}")
             try:
-                builder_config = BuilderConfig(**builder_config_dict)
-                builder_to_use = EnhancedAgentBuilder(config=builder_config)
+                config = AgentConfig(**self.agent_data[agent_name])
+                builder_to_use = FlowAgentBuilder(config=config)
             except Exception as e:
-                self.print(f"Error loading BuilderConfig for {agent_name}: {e}. Falling back to default.")
+                self.print(f"Error loading config for {agent_name}: {e}. Falling back to default.")
 
+        # Create default builder if none found
         if builder_to_use is None:
-            self.print(f"No existing config for {agent_name} or load failed. Creating default builder.")
-            builder_to_use = self.get_agent_builder(agent_name)  # This returns a configured builder
+            self.print(f"No existing config for {agent_name}. Creating default builder.")
+            builder_to_use = self.get_agent_builder(agent_name)
 
-        # Apply ISAARef and model override if any
+        # Apply overrides and ensure correct name
         builder_to_use._isaa_ref = self
         if model_override:
-            builder_to_use.with_model(model_override)
+            builder_to_use.with_models(model_override, model_override)
 
-        # Ensure agent name in builder config matches requested name, important if default builder was fetched
-        if builder_to_use._config.agent_name != agent_name:
-            builder_to_use.with_agent_name(agent_name)
+        if builder_to_use.config.name != agent_name:
+            builder_to_use.with_name(agent_name)
 
-        self.print(f"Building EnhancedAgent: {agent_name} with model {builder_to_use._config.model_identifier}")
-        agent_instance = await builder_to_use.build()
+        self.print(
+            f"Building FlowAgent: {agent_name} with models {builder_to_use.config.fast_llm_model}/{builder_to_use.config.complex_llm_model}")
 
+        # Build the agent
+        agent_instance: FlowAgent = await builder_to_use.build()
+
+        # colletive cabability cahring for reduched reduanda analysis _tool_capabilities
+        agent_tool_nams = set(agent_instance.tool_registry.keys())
+
+        tools_data = {}
+        for _agent_name in self.config["agents-name-list"]:
+            _instance_key = f'agent-instance-{_agent_name}'
+            if _instance_key not in self.config:
+                if agent_name != "self" and _agent_name == "self":
+                    await self.get_agent("self")
+
+            if _instance_key not in self.config:
+                continue
+            _agent_instance = self.config[_instance_key]
+            _agent_tool_nams = set(_agent_instance._tool_capabilities.keys())
+            # extract the tool names that are in both agents_registry
+            overlap_tool_nams = agent_tool_nams.intersection(_agent_tool_nams)
+            _tc = _agent_instance._tool_capabilities
+            for tool_name in overlap_tool_nams:
+                if tool_name not in _tc:
+                    continue
+                tools_data[tool_name] = _tc[tool_name]
+
+        agent_instance._tool_capabilities.update(tools_data)
+        # Cache the instance and update tracking
         self.config[instance_key] = agent_instance
-        # Ensure its config is in agent_data (if built from default)
         if agent_name not in self.agent_data:
-            self.agent_data[agent_name] = builder_to_use._config.model_dump()
-
+            self.agent_data[agent_name] = builder_to_use.config.model_dump()
         if agent_name not in self.config["agents-name-list"]:
             self.config["agents-name-list"].append(agent_name)
 
-        self.print(f"Built and cached EnhancedAgent instance: {agent_name}")
+        self.print(f"Built and cached FlowAgent instance: {agent_name}")
         return agent_instance
 
     async def mini_task_completion(self, mini_task: str, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
                                    stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion"):
         if mini_task is None: return None
+        if agent_name is None: return None
         if mini_task == "test": return "test"
         self.print(f"Running mini task, volume {len(mini_task)}")
 
@@ -663,7 +758,7 @@ class Tools(MainTool, FileHandler):
         messages.append({"role": "user", "content": current_prompt})
 
         # Prepare params for a_run_llm_completion
-        llm_params = {"model": agent.amd.model, "llm_messages": messages}
+        llm_params = {"model": agent.amd.fast_llm_model if agent.amd.use_fast_response else agent.amd.complex_llm_model, "messages": messages}
         if max_tokens_override:
             llm_params['max_tokens'] = max_tokens_override
         else:
@@ -671,7 +766,7 @@ class Tools(MainTool, FileHandler):
 
         if stream_function:
             llm_params['stream'] = True
-            # EnhancedAgent a_run_llm_completion handles stream_callback via agent.stream_callback
+            # FlowAgent a_run_llm_completion handles stream_callback via agent.stream_callback
             # For a one-off, we might need a temporary override or pass it if supported.
             # For now, assume stream_callback is set on agent instance if needed globally.
             # If stream_function is for this call only, agent.a_run_llm_completion needs modification
@@ -736,25 +831,25 @@ class Tools(MainTool, FileHandler):
         agent = None
         if isinstance(agent_name, str):
             agent = await self.get_agent(agent_name)
-        elif isinstance(agent_name, EnhancedAgent):
+        elif isinstance(agent_name, FlowAgent):
             agent = agent_name
         else:
-            raise TypeError("agent_name must be str or EnhancedAgent instance")
+            raise TypeError("agent_name must be str or FlowAgent instance")
 
         return await agent.a_format_class(format_schema, task)
 
-    async def get_pipe(self, agent_name_or_instance: str | EnhancedAgent, *args, **kwargs) -> Pipeline:
+    async def get_pipe(self, agent_name_or_instance: str | FlowAgent, *args, **kwargs) -> Pipeline:
         agent_instance = None
         agent_name_str = ""
 
         if isinstance(agent_name_or_instance, str):
             agent_name_str = agent_name_or_instance
             agent_instance = await self.get_agent(agent_name_str)
-        elif isinstance(agent_name_or_instance, EnhancedAgent):
+        elif isinstance(agent_name_or_instance, FlowAgent):
             agent_instance = agent_name_or_instance
             agent_name_str = agent_instance.amd.name  # amd is AgentModelData
         else:
-            return self.return_result().default_internal_error(f"agent_name_or_instance must be str or EnhancedAgent is {type(agent_name_or_instance)}")
+            return self.return_result().default_internal_error(f"agent_name_or_instance must be str or FlowAgent is {type(agent_name_or_instance)}")
 
         if agent_name_str in self.pipes:
             # Optionally reconfigure if args/kwargs are different
@@ -762,47 +857,66 @@ class Tools(MainTool, FileHandler):
             return self.pipes[agent_name_str]
         else:
             # Pass the already fetched/validated agent_instance to Pipeline
-            self.pipes[agent_name_str] = Pipeline(agent_instance, *args, **kwargs)
+            variables = []
+            if 'variables' in kwargs:
+                variables = kwargs.pop('variables')
+            if isinstance(variables, list):
+                variables += [self.app, agent_instance]
+            if isinstance(variables, dict):
+                variables.update({'app': self.app, 'agent': agent_instance})
+
+            self.pipes[agent_name_str] = Pipeline(agent_instance, *args, **kwargs, variables=variables)
             return self.pipes[agent_name_str]
 
-    async def run_pipe(self, agent_name_or_instance: str | EnhancedAgent, task: str, do_continue=False):
+    async def run_pipe(self, agent_name_or_instance: str | FlowAgent, task: str, do_continue=False):
+        if task is None: return ""
+        if task == "test": return "test"
+        if agent_name_or_instance is None: return ""
+
         pipe = await self.get_pipe(agent_name_or_instance)
+        if not hasattr(pipe, 'run'):
+            return pipe
         return await pipe.run(task, do_continue=do_continue)  # pipeline.run is async
 
-    async def run_agent(self, name: str | EnhancedAgent,
+    async def run_agent(self, name: str | FlowAgent,
                         text: str,
                         verbose: bool = False,  # Handled by agent's own config mostly
                         session_id: Optional[str] = None,
-                        persist_history: bool = True,
-                        strategy_override: str | None = None,  # Maps to ProcessingStrategy enum
+                        progress_callback: Callable[[Any], None | Awaitable[None]] | None = None,
                         **kwargs):  # Other kwargs for a_run
         if text is None: return ""
+        if name is None: return ""
         if text == "test": return ""
 
         agent_instance = None
         if isinstance(name, str):
             agent_instance = await self.get_agent(name)
-        elif isinstance(name, EnhancedAgent):
+        elif isinstance(name, FlowAgent):
             agent_instance = name
         else:
             return self.return_result().default_internal_error(
                 f"Invalid agent identifier type: {type(name)}")
 
         self.print(f"Running agent {agent_instance.amd.name} for task: {text[:100]}...")
+        save_p = None
+        if progress_callback:
+            save_p = agent_instance.progress_callback
+            agent_instance.progress_callback = progress_callback
 
-        # Map strategy_override string to Enum if needed
-        # from toolboxv2.mods.isaa.base.Agent.agent import ProcessingStrategy (example)
-        # strategy_enum = ProcessingStrategy[strategy_override.upper()] if strategy_override else None
-        strategy_enum = None  # Placeholder, actual enum needed if used
+        if verbose:
+            agent_instance.verbose = True
 
-        # Call EnhancedAgent's a_run method
+        # Call FlowAgent's a_run method
         response = await agent_instance.a_run(
-            user_input=text,
+            query=text,
             session_id=session_id,
-            persist_history=persist_history,
-            strategy_override=strategy_enum,
-            kwargs_override=kwargs  # Pass other kwargs if a_run supports them
+            user_id=None,
+            stream_callback=None
+
         )
+        if save_p:
+            agent_instance.progress_callback = save_p
+
         return response
 
     # mass_text_summaries and related methods remain complex and depend on AISemanticMemory
@@ -853,9 +967,29 @@ class Tools(MainTool, FileHandler):
         return f"Local file tools (old system) set to: {self.local_files_tools}"
 
 
-def detect_shell() -> str:
-    if platform.system() == "Windows": return "cmd.exe"
-    return os.environ.get("SHELL", "/bin/sh")
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
+
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
+
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
+
+    return "/bin/sh", "-c"
 
 
 def safe_decode(data: bytes) -> str:
@@ -870,28 +1004,35 @@ def safe_decode(data: bytes) -> str:
 
 def shell_tool_function(command: str) -> str:
     result: dict[str, Any] = {"success": False, "output": "", "error": ""}
-    shell_cmd = detect_shell()
     try:
-        if platform.system() == "Windows":
-            full_cmd = f'{shell_cmd} /c "{command}"' if "powershell" not in shell_cmd.lower() else f"{shell_cmd} -Command {shlex.quote(command)}"
-        else:
-            full_cmd = f"{shell_cmd} -c {shlex.quote(command)}"
+        shell_exe, cmd_flag = detect_shell()
 
-        process = subprocess.run(full_cmd, shell=True, check=False, capture_output=True, timeout=120, text=False)
+        process = subprocess.run(
+            [shell_exe, cmd_flag, command],
+            capture_output=True,
+            text=False,
+            timeout=120,
+            check=False
+        )
 
-        stdout = safe_decode(process.stdout)
-        stderr = safe_decode(process.stderr)
+        stdout = remove_styles(safe_decode(process.stdout))
+        stderr = remove_styles(safe_decode(process.stderr))
 
         if process.returncode == 0:
             result.update({"success": True, "output": stdout, "error": stderr if stderr else ""})
         else:
-            result.update({"success": False, "output": stdout if stdout else "",
-                           "error": stderr if stderr else f"Command failed with exit code {process.returncode}"})
+            error_output = (f"Stdout:\n{stdout}\nStderr:\n{stderr}" if stdout else stderr).strip()
+            result.update({
+                "success": False,
+                "output": stdout,
+                "error": error_output if error_output else f"Command failed with exit code {process.returncode}"
+            })
 
     except subprocess.TimeoutExpired:
-        result.update({"error": "Timeout", "output": f"Command timed out: {command}"})
+        result.update({"error": "Timeout", "output": f"Command '{command}' timed out after 120 seconds."})
     except Exception as e:
         result.update({"error": f"Unexpected error: {type(e).__name__}", "output": str(e)})
+
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -904,7 +1045,7 @@ if __name__ == "__main__":
 
         # Test get_agent
         self_agent = await isaa_tool_instance.get_agent("self")
-        print(f"Got agent: {self_agent.amd.name} with model {self_agent.amd.model}")
+        print(f"Got agent: {self_agent.amd.name} with model {self_agent.amd.fast_llm_model} and {self_agent.amd.complex_llm_model}")
 
         # Test run_agent
         # response = await isaa_tool_instance.run_agent("self", "Hello, world!")

@@ -422,8 +422,9 @@ class AgentChain:
         name = self.format_name(name)
         if name in self.chains:
             self.chains[name].append(task)
+            return f"Task added to chain '{name}'."
         else:
-            print(f"Chain '{name}' not found.")
+            return f"Chain '{name}' not found."
 
     def remove_task(self, name, task_index):
         name = self.format_name(name)
@@ -522,16 +523,6 @@ class AgentChain:
                     "running_mode": "lineIs"
                 }
             ])
-        if "liveRunner" not in self.chains:
-            print("loading default chain liveRunner")
-            self.add("liveRunner", [
-                {
-                    "use": "agent",
-                    "name": "liveInterpretation",
-                    "args": "$user-input",
-                    "return": "$return"
-                }
-            ])
         if "SelfRunner" not in self.chains:
             print("loading default chain SelfRunner")
             self.add("SelfRunner", [
@@ -540,20 +531,6 @@ class AgentChain:
                     "name": "self",
                     "mode": "conversation",
                     "args": "$user-input",
-                    "return": "$return"
-                }
-            ])
-        if "liveRunnerMission" not in self.chains:
-            print("loading default chain liveRunnerMission")
-            self.add("liveRunnerMission", [
-                {
-                    "use": "agent",
-                    "name": "liveInterpretation",
-                    "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
-                            "However, you will not directly execute the tasks yourself. Your role is to act as a "
-                            "supervisor and create chains of agents to successfully accomplish the mission. Your "
-                            "main responsibility is to ensure that the mission's objectives are achieved. your "
-                            "mission : $user-input",
                     "return": "$return"
                 }
             ])
@@ -736,7 +713,7 @@ class AISemanticMemory(metaclass=Singleton):
     async def add_data(self,
                        memory_name: str,
                        data: str | list[str] | bytes | dict,
-                       metadata: dict | None = None) -> bool:
+                       metadata: dict | None = None, direct=False) -> bool:
         """
         Add data to memory store
 
@@ -771,7 +748,7 @@ class AISemanticMemory(metaclass=Singleton):
 
         # Add data to KnowledgeBase
         try:
-            added, duplicates = await kb.add_data(texts, metadata)
+            added, duplicates = await kb.add_data(texts, metadata, direct=direct)
             return added > 0
         except Exception as e:
             import traceback

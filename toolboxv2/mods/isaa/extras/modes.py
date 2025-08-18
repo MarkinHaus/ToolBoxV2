@@ -1,3 +1,4 @@
+import asyncio
 import os
 from dataclasses import dataclass
 from platform import system
@@ -691,6 +692,12 @@ class ChainTreeExecutor:
         self.variable_system = VariableSyntaxSystem()
         self.task_results = {}
 
+    def set_runner(self, function_runner=None, agent_runner=None):
+        if function_runner:
+            self.function_runner = function_runner
+        if agent_runner:
+            self.agent_runner = agent_runner
+
     def execute(self, user_input: str, tasks, sum_up=False):
         self.variable_system.user_input = user_input
         for task in tasks:
@@ -719,6 +726,31 @@ class ChainTreeExecutor:
                                       max_iterations=len(self.task_results) // 2)
         return self.task_results
 
+    async def a_execute(self, user_input: str, tasks, sum_up=False):
+        self.variable_system.user_input = user_input
+        for task in tasks:
+            task = Task(**task)
+            injected_args = self.variable_system.inject_variables(task.args)
+            injected_args = self._inject_task_results(injected_args)
+
+            undefined_vars = self.variable_system.detect_undefined_variables(injected_args)
+            if undefined_vars:
+                raise ValueError(f"Undefined variables detected: {', '.join(undefined_vars)}")
+
+            result = await self._a_execute_task(task.use, task.name, injected_args, **task.kwargs)
+            self.variable_system.parse_declarations(result)
+            self.task_results[task.return_key.replace('$', '')] = result
+            self.variable_system.declare_variable(task.return_key.replace('$', ''), result)
+
+        if sum_up and len(self.task_results) > 3:
+            return await self._a_execute_task(
+                TaskType.AGENT,
+                name="isaa",
+                args="Generate a User Report On " + '\n\n'.join(self.task_results.values()),
+                max_iterations=len(self.task_results) // 2
+            )
+        return self.task_results
+
     def _inject_task_results(self, text: str) -> str:
         def replace_task_result(match):
             key = match.group(1)
@@ -728,6 +760,22 @@ class ChainTreeExecutor:
                 return f"[UNDEFINED_TASK_RESULT:{key}]"
 
         return re.sub(r'\$(\w+)', replace_task_result, text)
+
+    async def _a_execute_task(self, task_type: TaskType, name: str, args: str, **t_task) -> Any:
+        try:
+            if task_type == TaskType.TOOL:
+                result =  self.function_runner(name, **t_task)
+            elif task_type == TaskType.AGENT:
+                result =  self.agent_runner(name, args, **t_task)
+            elif task_type == TaskType.CHAIN:
+                result =  self.execute(args, **t_task)
+            else:
+                raise ValueError(f"Error in chain Unknown task type: Result of {task_type.value} task '{name}' with args: {args}")
+        except Exception as e:
+            result =  e
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
 
     def _execute_task(self, task_type: TaskType, name: str, args: str, **t_task) -> Any:
         try:

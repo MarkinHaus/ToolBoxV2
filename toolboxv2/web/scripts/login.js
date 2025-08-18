@@ -232,5 +232,5 @@ async function setupLogin_() {
         }
     }
 }
-TB.once(setupLogin);
+window.TB.once(setupLogin);
 

@@ -17,7 +17,7 @@ import {NavMenu} from "tbjs/src/ui/index.js"; // Stellt sicher, dass das CSS von
 // Die 'defer'-Attribute sorgen für die richtige Ausführungsreihenfolge.
 
 // Definiere eine Funktion für die Initialisierung, um den globalen Scope sauber zu halten
-function initializeApp() {
+async function initializeApp() {
     const isProduction = false;
     console.log('isProduction: ', isProduction);
     const tbjsConfig = {
@@ -91,7 +91,7 @@ function initializeApp() {
         loadPlatformSpecificFeatures(initializedTB);
     });
 
-    window.TB = TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
+    window.TB = await TB.init(tbjsConfig); // window.AppTB ist optional, TB selbst ist ja schon importiert
     if (!isProduction) {
         TB.logger.log('TB.js wurde in der Hauptanwendung initialisiert (Development Mode).');
     }
@@ -161,5 +161,5 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeApp);
 } else {
     // DOMContentLoaded wurde bereits ausgelöst
-    initializeApp();
+    setTimeout(async () => { await initializeApp();}, 1)
 }

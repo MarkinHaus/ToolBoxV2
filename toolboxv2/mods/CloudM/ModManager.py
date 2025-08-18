@@ -19,7 +19,7 @@ from toolboxv2 import App, Spinner, __version__, get_app
 from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.api import find_highest_zip_version
 from toolboxv2.utils.system.state_system import get_state_from_app
-from toolboxv2.utils.system.types import Result, ToolBoxInterfaces
+from toolboxv2.utils.system.types import Result, ToolBoxInterfaces, RequestData
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
@@ -340,17 +340,54 @@ def uninstaller(app: App | None, module_name: str):
     return don
 
 
+@export(mod_name=Name, name="upload_mod", api=True, api_methods=['POST'])
+async def upload_mod(app: App, request: RequestData):
+    if not request or not request.files:
+        return Result.default_user_error("No file provided.")
+
+    uploaded_file = request.files[0]  # Assuming single file upload
+    file_name = uploaded_file.filename
+    file_bytes = uploaded_file.file.read()
+
+    # Security: Add validation for filename and content type here
+
+    save_path = Path(app.start_dir) / "mods_sto" / file_name
+    save_path.write_bytes(file_bytes)
+
+    return Result.ok(f"File '{file_name}' uploaded successfully.")
+
+
+@export(mod_name=Name, name="download_mod", api=True, api_methods=['GET'])
+async def download_mod(app: App, module_name: str):
+    zip_path_str = find_highest_zip_version(module_name)
+    if not zip_path_str:
+        return Result.default_user_error(f"Module '{module_name}' not found.", exec_code=404)
+
+    zip_path = Path(zip_path_str)
+    return Result.binary(
+        data=zip_path.read_bytes(),
+        content_type="application/zip",
+        download_name=zip_path.name
+    )
+
+
 @export(mod_name=Name, name="upload", test=False)
 async def upload(app: App | None, module_name: str):
     if app is None:
         app = get_app(f"{Name}.installer")
 
     zip_path = find_highest_zip_version(module_name)
-       # find_highest_zip_version_entry(module_name, filepath=f'{app.start_dir}/tbState.yaml').get('url', '').split(
-        #    'mods_sto')[-1]
 
-    if upload or 'y' in input(f"uploade zip file {zip_path} ?"):
-        await app.session.upload_file(zip_path, '/installer/upload-file/')
+    if 'y' in input(f"uploade zip file {zip_path} ?"):
+        await app.session.upload_file(zip_path, f'/api/{Name}/upload_mod')
+
+
+@export(mod_name=Name, name="getModVersion", api=True, api_methods=['GET'])
+async def get_mod_version(app: App, module_name: str):
+    version = find_highest_zip_version(module_name, version_only=True)
+    if version:
+        return Result.text(version)
+    return Result.default_user_error(f"No build found for module '{module_name}'", exec_code=404)
 
 
 @export(mod_name=Name, name="install", test=False)
@@ -365,9 +402,8 @@ async def installer(app: App | None, module_name: str, build_state=True):
         return Result.default_user_error("Please login with CloudM login")
 
     # Hole nur die höchste verfügbare Version vom Server
-    response = await app.session.fetch(f"/installer/version?name={module_name}", method="GET")
-    remote_version : str = await response.text()
-    remote_version = remote_version.split('"')[1]
+    response = await app.session.fetch(f"/api/{Name}/getModVersion?module_name={module_name}", method="GET")
+    remote_version: str = await response.text()
     if remote_version == "None":
         remote_version = None
     # Finde lokale Version
@@ -386,23 +422,16 @@ async def installer(app: App | None, module_name: str, build_state=True):
 
     if remote_ver > local_ver:
         # Konstruiere die URL direkt aus Modulname und Version
-        mod_url = f"/installer/mods_sto/RST${module_name}&{app.version}§{remote_version}.zip"
         download_path = Path(app.start_dir) / 'mods_sto'
 
-        app.print(f"Fetching Mod from {app.session.base+mod_url}")
-        if not await app.session.download_file(mod_url, str(download_path)):
+        app.print(f"Fetching Mod from {app.session.base}/api/{Name}/download_mod?module_name={module_name}")
+        if not await app.session.download_file(f"/api/{Name}/download_mod?module_name={module_name}", str(download_path)):
             app.print("Failed to download mod")
             if 'y' not in input("Download manually and place in mods_sto folder. Done? (y/n) ").lower():
                 return Result.default_user_error("Installation cancelled")
 
         # Korrigiere Dateinamen
-        zip_name = mod_url.split('/')[-1]
-        clean_name = zip_name.replace("$", '').replace("&", '').replace("§", '')
-        with contextlib.suppress(FileExistsError):
-            os.rename(
-                str(download_path / clean_name),
-                str(download_path / zip_name)
-            )
+        zip_name = f"RST${module_name}&{app.version}§{remote_version}.zip"
 
         with Spinner("Installing from zip"):
             report = install_from_zip(app, zip_name)
@@ -524,4 +553,9 @@ if __name__ == "__main__":
     # zip_path = create_and_pack_module("./mods/audio", "audio", "0.0.5")
     # print(zip_path)
     # unpack_and_move_module("./mods_sto/RST$audio&0.1.9§0.0.5.zip")
+
+@export(mod_name=Name, name="ui", api=True, api_methods=['GET'])
+def mod_manager_ui(app: App):
+    ui_path = Path(__file__).parent / "mod_manager.html"
+    return Result.html(ui_path.read_text())
 

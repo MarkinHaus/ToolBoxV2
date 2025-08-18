@@ -201,19 +201,25 @@ class ClusterManager:
         if not self.config_path.is_absolute():
             self.config_path = tb_root_dir / self.config_path
 
+        default_config_dir = (tb_root_dir / ".data/db_data/").resolve()
+        default_config = {
+            "instance-01": {"port": 3001, "data_dir": str(default_config_dir / "01")},
+            "instance-02": {"port": 3002, "data_dir": str(default_config_dir / "02")},
+        }
+
         if not self.config_path.exists():
             print(Style.YELLOW(f"Warning: Cluster config '{self.config_path}' not found. Creating a default example."))
-            default_config_dir = (tb_root_dir / ".data/db_data/").resolve()
-            default_config = {
-                "instance-01": {"port": 3001, "data_dir": str(default_config_dir / "01")},
-                "instance-02": {"port": 3002, "data_dir": str(default_config_dir / "02")},
-            }
+
             with open(self.config_path, 'w') as f:
                 json.dump(default_config, f, indent=4)
             config_data = default_config
         else:
-            with open(self.config_path, 'r') as f:
-                config_data = json.load(f)
+            try:
+                with open(self.config_path, 'r') as f:
+                    config_data = json.load(f)
+            except json.JSONDecodeError:
+                print(Style.RED(f"Error: Cluster config '{self.config_path}' is not valid JSON. using default config."))
+                config_data = default_config
 
         return {id: DBInstanceManager(id, cfg) for id, cfg in config_data.items()}
 

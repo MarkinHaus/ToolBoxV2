@@ -50,9 +50,10 @@ class RunAgentStreamParams(BaseModel):  # For GET query parameters
 # For this example, we assume Pydantic model binding from query params works.
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['GET'])
 async def run_agent_stream(app: App, session_id, agent_name, prompt, request: RequestData=None,  **kwargs):
+
     isaa = get_isaa_instance(app)
     # Params are already parsed into the 'params' Pydantic model by the framework (assumed)
-    session_id_val = session_id or f"webui-session-{request.session_id[:8] if request.session_id else uuid.uuid4().hex[:8]}"
+    session_id_val = session_id or f"webui-session-{request.session.SiID[:8] if request.session_id else uuid.uuid4().hex[:8]}"
 
     try:
         agent = await isaa.get_agent(agent_name)  # isaa.get_agent is async
@@ -136,12 +137,12 @@ async def run_agent_once(app: App, request: RequestData, data: RunAgentRequest):
     # if hasattr(isaa, 'initialized') and not isaa.initialized:
     #     if hasattr(isaa, 'init_isaa'):
     #         await isaa.init_isaa(build=True) # Or however ISAA is initialized
-    if request is None:
+    if request is None or data is None:
         return Result.default_user_error(info=f"Failed to run agent: No request provided.")
     if isinstance(data, dict):  # Should be automatically handled by Pydantic if type hint is RunAgentRequest
         data = RunAgentRequest(**data)
 
-    session_id_val = data.session_id or f"webui-session-{request.session_id[:8] if request.session_id else uuid.uuid4().hex[:8]}"
+    session_id_val = data.session_id or f"webui-session-{request.session.SiID[:8] if request.session_id else uuid.uuid4().hex[:8]}"
 
     try:
         # Ensure agent.stream is False for a single response
@@ -523,7 +524,6 @@ async def get_isaa_webui_page(app: App, request: Optional[RequestData] = None):
 # Initialisierungsfunktion für das Modul (optional)
 @export(mod_name=MOD_NAME, version=VERSION)
 def initialize_isaa_webui_module(app: App, isaa_instance=None):  # isaa_instance might be passed if main app manages it
-    print(f"ISAA WebUI Modul ({MOD_NAME} v{VERSION}) initialisiert.")
     if app is None:
         app = get_app()
 

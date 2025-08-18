@@ -11,6 +11,7 @@ GUI_COMMAND="wt new-tab powershell -NoExit -Command"
 
 ICON_FILE="./favicon.ico"
 
+SHELL=
 PYO3_PYTHON=
 UV_BASE_ENV=
 
