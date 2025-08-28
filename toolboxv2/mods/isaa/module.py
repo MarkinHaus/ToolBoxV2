@@ -3,31 +3,19 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import field
-from enum import Enum
-from inspect import signature
-import asyncio  # Added for async operations
+import asyncio
 from pathlib import Path
 
 import requests
-import torch
 from langchain_community.agent_toolkits.load_tools import (
-    load_huggingface_tool,
     load_tools,
 )
-from langchain_community.chat_models import ChatOpenAI
-from langchain_community.llms import HuggingFaceHub, OpenAI
-from langchain_community.tools import AIPluginTool
 from pebble import concurrent
 from pydantic import BaseModel
 
-from .base.KnowledgeBase import TextSplitter
-from .extras.filter import filter_relevant_texts
-from .types import TaskChain
-
+from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
 from toolboxv2.utils.system import FileCache
-
-from ...utils.toolbox import stram_print
+from toolboxv2.utils.toolbox import stram_print
 
 try:
     import gpt4all
@@ -41,11 +29,11 @@ except Exception:
 import json
 import locale
 import platform
-import shlex
+
 import shutil
 import subprocess
 import sys
-from typing import Any, Optional, Awaitable
+from typing import Any, Optional, Awaitable, Dict
 
 from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles
 
@@ -58,29 +46,21 @@ from .base.Agent.builder import (
     FlowAgentBuilder,
     AgentConfig,
 )
-# AgentVirtualEnv and LLMFunction might be deprecated or need adaptation
-# For now, keeping them if they are used by other parts not being refactored.
-# from t.base.Agents import AgentVirtualEnv, LLMFunction
 
 
 from .base.AgentUtils import (
-    AgentChain,
     AISemanticMemory,
     Scripts,
-    dilate_string, ControllerManager
+    ControllerManager
 )
-from .CodingAgent.live import Pipeline
 from .extras.modes import (
     ISAA0CODE,  # Assuming this is a constant string
-    ChainTreeExecutor,
     StrictFormatResponder,
     SummarizationMode,
-    TaskChainMode,
-    # crate_llm_function_from_langchain_tools, # This will need to adapt to ADK tools
+    # crate_llm_function_from_langchain_tools,
 )
 
-from .SearchAgentCluster.search_tool import web_search
-from .chainUi import initialize_module as initialize_isaa_chains
+from .extras.web_search import web_search
 from .ui import initialize_isaa_webui_module
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
@@ -114,7 +94,6 @@ class Tools(MainTool, FileHandler):
 
         self.run_callback = None
         # self.coding_projects: dict[str, ProjectManager] = {} # Assuming ProjectManager is defined elsewhere or removed
-        self.pipes: dict[str, Pipeline] = {}
         if app is None:
             app = get_app("isaa-mod")
         self.version = version
@@ -149,35 +128,19 @@ class Tools(MainTool, FileHandler):
         self.tools = {
             "name": "isaa",
             "Version": self.show_version,
-            "add_task": self.add_task,
-            "save_task": self.save_task,
-            "load_task": self.load_task,
-            "get_task": self.get_task,
-            "list_task": self.list_task,
             "mini_task_completion": self.mini_task_completion,
             "run_agent": self.run_agent,
             "save_to_mem": self.save_to_mem_sync,
-            "get_agent": self.get_agent,  # Now async
-            "run_task": self.run_task,  # Now async
-            "create_task_chain": self.create_task_chain,  # Now async
+            "get_agent": self.get_agent,
             "format_class": self.format_class,  # Now async
             "get_memory": self.get_memory,
-            "get_pipe": self.get_pipe,  # Now async
-            "run_pipe": self.run_pipe,  # Now async
             "rget_mode": lambda mode: self.controller.rget(mode),
-            "set_local_files_tools": self.set_local_files_tools,
         }
+        self.tools_interfaces: Dict[str, ToolsInterface] = {}
         self.working_directory = os.getenv('ISAA_WORKING_PATH', os.getcwd())
         self.print_stream = stram_print
-        self.agent_collective_senses = False  # This might be obsolete with FlowAgent's design
         self.global_stream_override = False  # Handled by FlowAgentBuilder
-        self.pipes_device = 1  # For HuggingFace pipelines
         self.lang_chain_tools_dict: dict[str, Any] = {}  # Store actual tool objects for wrapping
-        self.agent_chain = AgentChain(directory=f"{app.data_dir}{extra_path}/chains")
-        self.agent_chain_executor = ChainTreeExecutor()
-        # These runners will become async due to get_agent being async
-        self.agent_chain_executor.function_runner = self._async_function_runner
-        self.agent_chain_executor.agent_runner = self._async_agent_runner
 
         self.agent_memory: AISemanticMemory = f"{app.id}{extra_path}/Memory"  # Path for AISemanticMemory
         self.controller = ControllerManager({})
@@ -185,20 +148,13 @@ class Tools(MainTool, FileHandler):
         self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x  # Placeholder
         self.scripts = Scripts(f"{app.data_dir}{extra_path}/ScriptFile")
-        self.ac_task = None  # Unused?
-        self.default_setter = None  # For agent builder customization
-        self.local_files_tools = True  # Related to old FileManagementToolkit
-        self.initialized = False
 
-        self.personality_code = ISAA0CODE  # Constant string
+        self.default_setter = None  # For agent builder customization
+        self.initialized = False
 
         FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
-
-        self.fc_generators = {}  # Unused?
-        self.toolID = ""  # MainTool attribute
-        MainTool.toolID = ""  # Static attribute?
         self.web_search = web_search
         self.shell_tool_function = shell_tool_function
         self.tools["shell"] = shell_tool_function
@@ -230,109 +186,17 @@ class Tools(MainTool, FileHandler):
             Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(parents=True, exist_ok=True)
             Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(parents=True, exist_ok=True)
 
-        #initialize_isaa_chains(self.app)
         #initialize_isaa_webui_module(self.app, self)
         #self.print("ISAA module started. fallback")
 
-    async def _async_function_runner(self, name, **kwargs):
-        agent = await self.get_agent("self")  # Get self agent for its tools
-        # FlowAgent doesn't have function_invoke. Need to find tool and run.
-        # This is a simplified version. Real ADK tool execution is more complex.
-        for tool in agent.tools:  # Assuming agent.tools is populated for FlowAgent
-            if tool.name == name:
-                # This is a placeholder. ADK tools expect ToolContext.
-                # For simple FunctionTool, calling tool.func might work.
-                if hasattr(tool, 'func') and callable(tool.func):
-                    if asyncio.iscoroutinefunction(tool.func):
-                        return await tool.func(**kwargs)
-                    else:
-                        return tool.func(**kwargs)
-                else:  # Fallback to trying to run the tool directly if it's a BaseTool instance
-                    # This is highly dependent on the tool's implementation
-                    try:
-                        if hasattr(tool, 'run_async'):
-                            return await tool.run_async(args=kwargs, tool_context=None)
-                        elif hasattr(tool, 'run'):
-                            return tool.run(args=kwargs, tool_context=None)
-                    except Exception as e:
-                        self.print(f"Error running tool {name} via fallback: {e}")
-                        return f"Error running tool {name}"
-        return f"Tool {name} not found on self agent."
-
-    async def _async_agent_runner(self, name, task, **kwargs):
-        return await self.run_agent(name, task, **kwargs)
-
-    def add_task(self, name, task):
-        return self.agent_chain.add_task(name, task)
-
-    def list_task(self):
-        return str(self.agent_chain)
-
-    def remove_task(self, name:str):
-        return self.agent_chain.remove(name)
-
-    def save_task(self, name:Optional[str]=None):
-        self.agent_chain.save_to_file(name)
-
-    def load_task(self, name:Optional[str]=None):
-        self.agent_chain.load_from_file(name)
-
-    def get_task(self, name:Optional[str]=None):
-        return self.agent_chain.get(name)
-
-    async def run_task(self, task_input: str, chain_name: str, sum_up:bool=True, agent_name:Optional[str]=None):
-        self.agent_chain_executor.reset()
-        if agent_name is None:
-            agent_name = "self"
-
-        agent_instance = await self.get_agent(agent_name)
-        self.agent_chain_executor.set_runner( agent_instance.arun_function, agent_instance.a_run)
-
-        return await self.agent_chain_executor.a_execute(task_input,
-                                          self.agent_chain.get(chain_name), sum_up)
-
-    async def create_task_chain(self, prompt: str, agent_name:Optional[str]=None):
-        if prompt is None:
-            return None
-        if prompt == "": return None
-        agents_list = self.config.get('agents-name-list', ['self', 'isaa'])
-        # Tools list needs to be adapted for FlowAgent/ADK
-        self_agent = await self.get_agent("self")
-        tools_list_str = ", ".join(
-            [tool.name for tool in self_agent.tools]) if self_agent.tools else "No tools available"
-
-        prompt += f"\n\nAvailable Agents: {agents_list}"
-        prompt += f"\n\nAvailable Tools on 'self' agent: {tools_list_str}"
-        prompt += f"\n\nAvailable Chains: {self.list_task()}"
-        agent_name = agent_name or "TaskChainAgent"
-        if agent_name not in self.config['agents-name-list']:
-            task_chain_builder = self.get_agent_builder("code")
-            task_chain_builder.with_agent_name(agent_name)
-            tcm = self.controller.rget(TaskChainMode)
-            task_chain_builder.with_system_message(tcm.system_msg)  # Use system_msg from LLMMode
-            await self.register_agent(task_chain_builder)  # await here
-
-        task_chain_dict = await self.format_class(TaskChain, prompt, agent_name="TaskChainAgent")
-        task_chain = TaskChain(**task_chain_dict)
-
-        self.print(f"New TaskChain {task_chain.name} len:{len(task_chain.tasks)}")
-
-        if task_chain and len(task_chain.tasks):
-            self.print(f"adding : {task_chain.name}")
-            self.agent_chain.add(task_chain.name, task_chain.model_dump().get("tasks"))
-            self.agent_chain.add_discr(task_chain.name, task_chain.description)
-        return task_chain.name
-
-    def get_augment(self, task_name=None, exclude=None):
+    def get_augment(self):
         # This needs to be adapted. Serialization of FlowAgent is through AgentConfig.
         return {
-            "tools": {},  # Tool configurations might be part of AgentConfig now
-            "Agents": self.serialize_all(exclude=exclude),  # Returns dict of AgentConfig dicts
+            "Agents": self.serialize_all(),  # Returns dict of AgentConfig dicts
             "customFunctions": json.dumps(self.scripts.scripts),  # Remains same
-            "tasks": self.agent_chain.save_to_dict(task_name)  # Remains same
         }
 
-    async def init_from_augment(self, augment, agent_name: str = 'self', exclude=None):
+    async def init_from_augment(self, augment, agent_name: str = 'self'):
         """Initialize from augmented data using new builder system"""
 
         # Handle agent_name parameter
@@ -360,18 +224,10 @@ class Tools(MainTool, FileHandler):
                 self.scripts.scripts = custom_functions
                 self.print("Custom functions loaded")
 
-        # Load task chains
-        if "tasks" in a_keys:
-            tasks = augment['tasks']
-            if isinstance(tasks, str):
-                tasks = json.loads(tasks)
-            if tasks:
-                self.agent_chain.load_from_dict(tasks)
-                self.print("Task chains restored")
-
         # Tools are now handled by the builder system during agent creation
         if "tools" in a_keys:
             self.print("Tool configurations noted - will be applied during agent building")
+
     async def init_tools(self, tools_config: dict, agent_builder: FlowAgentBuilder):
         # This function needs to be adapted to add tools to the FlowAgentBuilder
         # For LangChain tools, they need to be wrapped as callables or ADK BaseTool instances.
@@ -392,7 +248,7 @@ class Tools(MainTool, FileHandler):
                         # ADK FunctionTool needs a schema, or infers it.
                         # We might need to manually create Pydantic models for args.
                         # For simplicity, assume ADK can infer or the tool takes simple args.
-                        agent_builder.with_adk_tool_function(lc_tool_instance.run, name=lc_tool_instance.name,
+                        agent_builder.add_tool(lc_tool_instance.run, name=lc_tool_instance.name,
                                                              description=lc_tool_instance.description)
                         self.print(f"Added LangChain tool '{lc_tool_instance.name}' to builder.")
                         self.lang_chain_tools_dict[lc_tool_instance.name] = lc_tool_instance  # Store for reference
@@ -409,7 +265,7 @@ class Tools(MainTool, FileHandler):
         #     except Exception as e:
         #         self.print(f"Failed to load AIPlugin from {url}: {e}")
 
-    def serialize_all(self, exclude=None):
+    def serialize_all(self):
         # Returns a copy of agent_data, which contains AgentConfig dicts
         # The exclude logic might be different if it was excluding fields from old AgentBuilder
         # For AgentConfig, exclusion happens during model_dump if needed.
@@ -422,7 +278,7 @@ class Tools(MainTool, FileHandler):
         for agent_name in data.keys():
             self.config.pop(f'agent-instance-{agent_name}', None)
 
-    async def init_isaa(self, name='self', build=False, only_v=False, **kwargs):  # build/only_v seem unused
+    async def init_isaa(self, name='self', build=False, **kwargs):
         if self.initialized:
             self.print(f"Already initialized. Getting agent/builder: {name}")
             # build=True implies getting the builder, build=False (default) implies getting agent instance
@@ -434,7 +290,6 @@ class Tools(MainTool, FileHandler):
 
         # Background loading
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, self.agent_chain.load_from_file)
         loop.run_in_executor(None, self.scripts.load_scripts)
 
         with Spinner(message="Building Controller", symbols='c'):
@@ -450,15 +305,10 @@ class Tools(MainTool, FileHandler):
 
     def on_start(self):
 
-        initialize_isaa_chains(self.app)
         initialize_isaa_webui_module(self.app, self)
 
         threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
         self.print("ISAA module started.")
-
-    def load_secrit_keys_from_env(self):
-        # These are often used by LiteLLM if not passed directly or set as env vars for LiteLLM
-        pass  # Keeping this empty as API keys are better handled by direct env vars or builder config
 
     def load_keys_from_env(self):
         # Update default model names from environment variables
@@ -468,6 +318,7 @@ class Tools(MainTool, FileHandler):
         self.config['VAULTS'] = os.getenv("VAULTS")
 
     def on_exit(self):
+        self.app.run_bg_task_advanced(self.cleanup_tools_interfaces)
         # Save agent configurations
         for agent_name, agent_instance in self.config.items():
             if agent_name.startswith('agent-instance-') and agent_instance and isinstance(agent_instance, list) and isinstance(agent_instance[0], FlowAgent):
@@ -493,7 +344,6 @@ class Tools(MainTool, FileHandler):
 
         # Save other persistent data
         self.save_file_handler()
-        self.agent_chain.save_to_file()
         self.scripts.save_scripts()
 
     def save_to_mem_sync(self):
@@ -504,6 +354,7 @@ class Tools(MainTool, FileHandler):
         if hasattr(memory_instance, 'save_all_memories'):  # Hypothetical method
             memory_instance.save_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory saving process initiated")
+
     def load_to_mem_sync(self):
         # This used to call agent.save_memory(). FlowAgent does not have this.
         # If AISemanticMemory needs global saving, it should be handled by AISemanticMemory itself.
@@ -513,9 +364,12 @@ class Tools(MainTool, FileHandler):
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory loading process initiated")
 
-    def get_agent_builder(self, name="self") -> FlowAgentBuilder:
+    def get_agent_builder(self, name="self", extra_tools=None) -> FlowAgentBuilder:
         if name == 'None':
             name = "self"
+
+        if extra_tools is None:
+            extra_tools = []
 
         self.print(f"Creating FlowAgentBuilder: {name}")
 
@@ -537,7 +391,7 @@ class Tools(MainTool, FileHandler):
         builder._isaa_ref = self  # Store ISAA reference
 
         # Load existing configuration if available
-        agent_config_path = Path(f"{get_app().data_dir}/Agents/{name}.agent.json")
+        agent_config_path = Path(f"{get_app().data_dir}/Agents/{name}/agent.json")
         if agent_config_path.exists():
             try:
                 builder = FlowAgentBuilder.from_config_file(str(agent_config_path))
@@ -545,7 +399,6 @@ class Tools(MainTool, FileHandler):
                 self.print(f"Loaded existing configuration for builder {name}")
             except Exception as e:
                 self.print(f"Failed to load config for {name}: {e}. Using defaults.")
-                # Keep the default builder
 
         # Apply global settings
         if self.global_stream_override:
@@ -555,9 +408,47 @@ class Tools(MainTool, FileHandler):
         if self.default_setter:
             builder = self.default_setter(builder, name)
 
-        # Add common ISAA tools
+        # Initialize ToolsInterface for this agent
+        if not hasattr(self, 'tools_interfaces'):
+            self.tools_interfaces = {}
+
+        # Create or get existing ToolsInterface for this agent
+        if name not in self.tools_interfaces:
+            try:
+                # Determine if web capabilities are needed
+                web_llm = None
+                if any(keyword in name.lower() for keyword in ["web", "browser", "scrape", "search"]):
+                    web_llm = config.fast_llm_model
+
+                # Initialize ToolsInterface
+                tools_interface = ToolsInterface(
+                    session_dir=str(Path(get_app().data_dir) / "Agents" / name / "tools_session"),
+                    auto_remove=False,  # Keep session data for agents
+                    variables={
+                        'agent_name': name,
+                        'isaa_instance': self
+                    },
+                    variable_manager=getattr(self, 'variable_manager', None),
+                    web_llm=web_llm
+                )
+
+                self.tools_interfaces[name] = tools_interface
+                self.print(f"Created ToolsInterface for agent: {name}")
+
+            except Exception as e:
+                self.print(f"Failed to create ToolsInterface for {name}: {e}")
+                self.tools_interfaces[name] = None
+
+        tools_interface = self.tools_interfaces[name]
+
+        # Add ISAA core tools
         async def run_isaa_agent_tool(target_agent_name: str, instructions: str, **kwargs_):
-            return await self.run_agent(target_agent_name, instructions, **kwargs_)
+            if not instructions:
+                return "No instructions provided."
+            if target_agent_name.startswith('"') and target_agent_name.endswith('"') or target_agent_name.startswith(
+                "'") and target_agent_name.endswith("'"):
+                target_agent_name = target_agent_name[1:-1]
+            return await self.run_agent(target_agent_name, text=instructions, **kwargs_)
 
         async def memory_search_tool(
             query: str,
@@ -587,43 +478,187 @@ class Tools(MainTool, FileHandler):
             result = await mem_instance.add_data(context_name, str(data_to_save), direct=True)
             return 'Data added to memory.' if result else 'Error adding data to memory.'
 
-        # Add tools to builder
+        # Add ISAA core tools
         builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
         builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
         builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
         builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
-        # Add specialized tools based on agent type
-        if name == "self" or "code" in name.lower() or "pipe" in name.lower():
-            async def code_pipeline_tool(task: str, do_continue: bool = False):
-                return await self.run_pipe(name, task, do_continue=do_continue)
+        # Scripting tools
+        builder.add_tool(self.scripts.run_script, "runScript", "Run a saved script")
+        builder.add_tool(self.scripts.get_scripts_list, "listScripts", "List all available scripts")
+        builder.add_tool(self.scripts.create_script, "createScript", "Create a new script args name, description, content, type py or sh")
+        builder.add_tool(self.scripts.remove_script, "deleteScript", "Delete a script")
 
-            builder.add_tool(code_pipeline_tool, "runCodePipeline",
-                             "Run multi-step code generation/execution in isolated Python environment")
-
+        # Add agent orchestration tool for specific agent types
         if name == "self" or any(keyword in name.lower() for keyword in ["task", "chain", "supervisor"]):
-            # Add task management tools
-            task_tools = [
-                (self.create_task_chain, "createTaskChain", "Create a task chain from sequence of steps"),
-                (self.run_task, "runTaskChain", "Run a specific task chain"),
-                (self.get_task, "getTaskChain", "Get information about a task chain"),
-                (self.load_task, "loadTaskChain", "Load a task chain from storage"),
-                (self.save_task, "saveTaskChain", "Save a task chain to persistent storage"),
-                (self.remove_task, "removeTaskChain", "Remove a task chain from system"),
-                (self.list_task, "listTasksChains", "List all available task chains"),
-            ]
-
             builder.add_tool(run_isaa_agent_tool, "askAgent",
                              f"Ask any agent: {self.config.get('agents-name-list', [])} for results/status")
 
-            for func, tool_name, desc in task_tools:
-                builder.add_tool(func, tool_name, desc)
+        # Add ToolsInterface tools dynamically
+        if tools_interface:
+            try:
+                # Get all tools from ToolsInterface
+                interface_tools = tools_interface.get_tools()
+
+                # Determine which tools to add based on agent name/type
+                tool_categories = {
+                    'code': ['execute_python', 'execute_rust', 'install_package'],
+                    'web': ['execute_javascript', 'navigate_web', 'extract_web_data'],
+                    'file': ['write_file', 'replace_in_file', 'read_file', 'list_directory', 'create_directory'],
+                    'session': ['get_execution_history', 'clear_session', 'get_variables'],
+                    'config': ['set_base_directory', 'set_current_file']
+                }
+
+                # Determine which categories to include
+                include_categories = set()
+                name_lower = name.lower()
+
+                # Code execution for development/coding agents
+                if any(keyword in name_lower for keyword in ["dev", "code", "program", "script", "python", "rust", "worker"]):
+                    include_categories.update(['code', 'file', 'session', 'config'])
+
+                # Web tools for web-focused agents
+                if any(keyword in name_lower for keyword in ["web", "browser", "scrape", "crawl", "extract"]):
+                    include_categories.update(['web', 'file', 'session'])
+
+                # File tools for file management agents
+                if any(keyword in name_lower for keyword in ["file", "fs", "document", "write", "read"]):
+                    include_categories.update(['file', 'session', 'config'])
+
+                # Default: add core tools for general agents
+                if not include_categories or name == "self":
+                    include_categories.update(['code', 'file', 'session', 'config'])
+                    # Add web tools if web_llm is available
+                    if tools_interface.browser:
+                        include_categories.add('web')
+
+                # Add selected tools
+                tools_added = 0
+                for tool_func, tool_name, tool_description in interface_tools:
+                    # Check if this tool should be included
+                    should_include = tool_name in extra_tools
+
+                    if not should_include:
+                        for category, tool_names in tool_categories.items():
+                            if category in include_categories and tool_name in tool_names:
+                                should_include = True
+                                break
+
+                    # Always include session management tools
+                    if tool_name in ['get_execution_history', 'get_variables']:
+                        should_include = True
+
+                    if should_include:
+                        try:
+                            builder.add_tool(tool_func, tool_name, tool_description)
+                            tools_added += 1
+                        except Exception as e:
+                            self.print(f"Failed to add tool {tool_name}: {e}")
+
+                self.print(f"Added {tools_added} ToolsInterface tools to agent {name}")
+
+            except Exception as e:
+                self.print(f"Error adding ToolsInterface tools to {name}: {e}")
 
         # Configure cost tracking
-        cost_file = Path(f"{get_app().data_dir}/Agents/{name}.costs.json")
-        builder.with_budget_manager(max_cost=100.0)  # Set reasonable default
+        builder.with_budget_manager(max_cost=100.0)
+
+        # Store agent configuration
+        try:
+            agent_dir = Path(f"{get_app().data_dir}/Agents/{name}")
+            agent_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save agent metadata
+            metadata = {
+                'name': name,
+                'created_at': time.time(),
+                'tools_interface_available': tools_interface is not None,
+                'web_enabled': tools_interface.browser is not None if tools_interface else False,
+                'session_dir': str(agent_dir / "tools_session")
+            }
+
+            metadata_file = agent_dir / f"metadata.json"
+            with open(metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+        except Exception as e:
+            self.print(f"Failed to save agent metadata for {name}: {e}")
 
         return builder
+
+
+    def get_tools_interface(self, agent_name: str = "self") -> Optional[ToolsInterface]:
+        """
+        Get the ToolsInterface instance for a specific agent.
+
+        Args:
+            agent_name: Name of the agent
+
+        Returns:
+            ToolsInterface instance or None if not found
+        """
+        if not hasattr(self, 'tools_interfaces'):
+            return None
+
+        return self.tools_interfaces.get(agent_name)
+
+    async def configure_tools_interface(self, agent_name: str, **kwargs) -> bool:
+        """
+        Configure the ToolsInterface for a specific agent.
+
+        Args:
+            agent_name: Name of the agent
+            **kwargs: Configuration parameters
+
+        Returns:
+            True if successful, False otherwise
+        """
+        tools_interface = self.get_tools_interface(agent_name)
+        if not tools_interface:
+            self.print(f"No ToolsInterface found for agent {agent_name}")
+            return False
+
+        try:
+            # Configure based on provided parameters
+            if 'base_directory' in kwargs:
+                await tools_interface.set_base_directory(kwargs['base_directory'])
+
+            if 'current_file' in kwargs:
+                await tools_interface.set_current_file(kwargs['current_file'])
+
+            if 'variables' in kwargs:
+                tools_interface.ipython.user_ns.update(kwargs['variables'])
+
+            self.print(f"Configured ToolsInterface for agent {agent_name}")
+            return True
+
+        except Exception as e:
+            self.print(f"Failed to configure ToolsInterface for {agent_name}: {e}")
+            return False
+
+    async def cleanup_tools_interfaces(self):
+        """
+        Cleanup all ToolsInterface instances.
+        """
+        if not hasattr(self, 'tools_interfaces'):
+            return
+
+        async def cleanup_async():
+            for name, tools_interface in self.tools_interfaces.items():
+                if tools_interface:
+                    try:
+                        await tools_interface.__aexit__(None, None, None)
+                    except Exception as e:
+                        self.print(f"Error cleaning up ToolsInterface for {name}: {e}")
+
+        # Run cleanup
+        try:
+            await cleanup_async()
+            self.tools_interfaces.clear()
+            self.print("Cleaned up all ToolsInterface instances")
+        except Exception as e:
+            self.print(f"Error during ToolsInterface cleanup: {e}")
 
     async def register_agent(self, agent_builder: FlowAgentBuilder):
         agent_name = agent_builder.config.name
@@ -633,7 +668,7 @@ class Tools(MainTool, FileHandler):
             self.config.pop(f'agent-instance-{agent_name}', None)
 
         # Save the builder's configuration
-        config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}.agent.json")
+        config_path = Path(f"{get_app().data_dir}/Agents/{agent_name}/agent.json")
         agent_builder.save_config(str(config_path), format='json')
         self.print(f"Saved FlowAgentBuilder config for '{agent_name}' to {config_path}")
 
@@ -696,6 +731,12 @@ class Tools(MainTool, FileHandler):
 
         # Build the agent
         agent_instance: FlowAgent = await builder_to_use.build()
+
+        if agent_instance.amd.name == "self":
+            self.app.run_bg_task(agent_instance.initialize_context_awareness)
+
+        if interface := self.get_tools_interface(agent_name):
+            interface.variable_manager = agent_instance.variable_manager
 
         # colletive cabability cahring for reduched reduanda analysis _tool_capabilities
         agent_tool_nams = set(agent_instance.tool_registry.keys())
@@ -838,46 +879,6 @@ class Tools(MainTool, FileHandler):
 
         return await agent.a_format_class(format_schema, task)
 
-    async def get_pipe(self, agent_name_or_instance: str | FlowAgent, *args, **kwargs) -> Pipeline:
-        agent_instance = None
-        agent_name_str = ""
-
-        if isinstance(agent_name_or_instance, str):
-            agent_name_str = agent_name_or_instance
-            agent_instance = await self.get_agent(agent_name_str)
-        elif isinstance(agent_name_or_instance, FlowAgent):
-            agent_instance = agent_name_or_instance
-            agent_name_str = agent_instance.amd.name  # amd is AgentModelData
-        else:
-            return self.return_result().default_internal_error(f"agent_name_or_instance must be str or FlowAgent is {type(agent_name_or_instance)}")
-
-        if agent_name_str in self.pipes:
-            # Optionally reconfigure if args/kwargs are different
-            # For simplicity, returning existing pipe.
-            return self.pipes[agent_name_str]
-        else:
-            # Pass the already fetched/validated agent_instance to Pipeline
-            variables = []
-            if 'variables' in kwargs:
-                variables = kwargs.pop('variables')
-            if isinstance(variables, list):
-                variables += [self.app, agent_instance]
-            if isinstance(variables, dict):
-                variables.update({'app': self.app, 'agent': agent_instance})
-
-            self.pipes[agent_name_str] = Pipeline(agent_instance, *args, **kwargs, variables=variables)
-            return self.pipes[agent_name_str]
-
-    async def run_pipe(self, agent_name_or_instance: str | FlowAgent, task: str, do_continue=False):
-        if task is None: return ""
-        if task == "test": return "test"
-        if agent_name_or_instance is None: return ""
-
-        pipe = await self.get_pipe(agent_name_or_instance)
-        if not hasattr(pipe, 'run'):
-            return pipe
-        return await pipe.run(task, do_continue=do_continue)  # pipeline.run is async
-
     async def run_agent(self, name: str | FlowAgent,
                         text: str,
                         verbose: bool = False,  # Handled by agent's own config mostly
@@ -957,14 +958,6 @@ class Tools(MainTool, FileHandler):
             mem_kb = cm.get(name)  # This might return a list of KnowledgeBase or single one
             return mem_kb
         return cm
-
-    # set_local_files_tools seems related to old FileManagementToolkit, may need removal or ADK equivalent
-    def set_local_files_tools(self, local_files_tools_enabled: bool):
-        self.local_files_tools = local_files_tools_enabled
-        self.print(f"Local file tools (old system) set to: {self.local_files_tools}")
-        # If using ADK, file tools would be added to agents via builder.
-        # This flag might control whether default builders get default file tools.
-        return f"Local file tools (old system) set to: {self.local_files_tools}"
 
 
 def detect_shell() -> tuple[str, str]:

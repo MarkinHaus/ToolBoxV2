@@ -663,7 +663,7 @@ class FastVectorStore(AbstractVectorStore):
         self._build_index_if_needed()
 
 class FastVectorStoreO(AbstractVectorStore):
-    def __init__(self, embedding_size=768, initial_buffer_size=1000000):
+    def __init__(self, embedding_size=768, initial_buffer_size=1000):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedding_size = embedding_size
         self.initial_buffer_size = initial_buffer_size

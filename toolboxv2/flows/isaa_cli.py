@@ -28,7 +28,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
-from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+from toolboxv2.mods.isaa.extras.verbose_output import EnhancedVerboseOutput
 from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent, TaskPlan
 from toolboxv2.mods.isaa.base.Agent.builder import AgentConfig, logger
 from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode, NodeStatus
@@ -82,7 +82,7 @@ class WorkspaceIsaasCli:
 
 
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=print)
-        self.active_agent_name = "workspace_supervisor"
+        self.active_agent_name = "workspace_supervisor_fs"
         self.session_id = "workspace_session"
         self.history = FileHistory(Path(self.app.data_dir) / "isaa_cli_history.txt")
 
@@ -294,7 +294,7 @@ class WorkspaceIsaasCli:
             },
             "/monitor": None,
             "/system": {"branch": WordCompleter([]), "config": None, "backup": None, "restore": None, "performance": None, "backup-infos": None,
-                        'verbosity': {"MINIMAL":None,"STANDARD":None,"DEBUG":None,"REALTIME":None}},
+                        'verbosity': {"MINIMAL":None,"STANDARD":None,"DEBUG":None,"REALTIME":None, "VERBOSE":None}},
             "/help": None, "/quit": None, "/clear": None}
         return commands_dict
 
@@ -586,6 +586,7 @@ class WorkspaceIsaasCli:
                               backup: bool = False):
         """Write content to file with optional backup"""
         try:
+            file_path = file_path.replace("'", '').replace('"', '')
             path = Path(self.workspace_path / file_path)
             if backup and path.exists():
                 backup_path = path.with_suffix(path.suffix + '.backup')
@@ -1176,7 +1177,7 @@ class WorkspaceIsaasCli:
 
                 # Tools
                 if hasattr(agent, '_tool_registry') and agent.tool_registry:
-                    tool_names = [tool.name if hasattr(tool, 'name') else tool.__name__ for tool in agent.tool_registry]
+                    tool_names = [tool.name if hasattr(tool, 'name') else tool for tool in agent.tool_registry.keys()]
                     output_lines.append(f"\n   {Style.Underlined('Tools')}:")
                     if tool_names:
                         tools_str = ", ".join(tool_names)
@@ -1345,15 +1346,18 @@ If this is an internal task that doesn't require user notification, acknowledge 
             else:
                 # Just log for supervisor's awareness
                 supervisor_agent = await self.isaa_tools.get_agent(self.active_agent_name)
+                t = {}
                 if supervisor_agent and hasattr(supervisor_agent, 'world_model'):
-                    supervisor_agent.world_model.set(f"completed_task_{task_id}", {
+                    supervisor_agent.world_model[f"completed_task_{task_id}"] = {
                         'result': result,
                         'timestamp': asyncio.get_event_loop().time(),
                         'needs_user_attention': False  # Supervisor can modify this
-                    })
+                    }
 
         except Exception as e:
             self.formatter.print_error(f"Error notifying supervisor: {e}")
+            import traceback
+            print(traceback.format_exc())
 
     async def _notify_supervisor_of_failure(self, task_id: str, error: str):
         """Notify supervisor when a sub-agent task fails"""
@@ -1377,11 +1381,11 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
             # Always notify supervisor of failures for potential intervention
             supervisor_agent = await self.isaa_tools.get_agent(self.active_agent_name)
             if supervisor_agent and hasattr(supervisor_agent, 'world_model'):
-                supervisor_agent.world_model.set(f"failed_task_{task_id}", {
+                supervisor_agent.world_model[f"failed_task_{task_id}"] = {
                     'error': error,
                     'timestamp': asyncio.get_event_loop().time(),
                     'needs_intervention': True
-                })
+                }
 
         except Exception as e:
             self.formatter.print_error(f"Error notifying supervisor of failure: {e}")
@@ -1435,6 +1439,9 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
             if not new_path.is_dir(): return f"❌ {directory} is not a directory"
             old_path, self.workspace_path = self.workspace_path, new_path
             os.chdir(new_path)
+            res = self.isaa_tools.get_tools_interface(self.active_agent_name)
+            if res:
+                await res.set_base_directory(str(new_path))
             return f"✅ Workspace changed from {old_path} to {new_path}"
         except Exception as e:
             return f"❌ Error changing workspace: {str(e)}"
@@ -1659,16 +1666,7 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
         """Initialize the FlowAgent builder system"""
         try:
             # Create base agent configuration
-            base_config = AgentConfig(
-                name="workspace_system",
-                description="Workspace management and automation system",
-                fast_llm_model=os.getenv("DEFAULTMODEL1", "openrouter/anthropic/claude-3-haiku"),
-                complex_llm_model=os.getenv("DEFAULTMODELST", "openrouter/openai/gpt-4o"),
-                max_parallel_tasks=6,
-                verbose_logging=True
-            )
-
-            logger.info("FlowAgent builder system initialized")
+            await self.isaa_tools.get_agent("self")
 
         except Exception as e:
             logger.error(f"Failed to initialize agent builder: {e}")
@@ -1676,8 +1674,8 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
 
     async def setup_workspace_agent(self):
         """Setup the main workspace supervisor agent"""
-        if self.active_agent_name != "workspace_supervisor":
-            self.active_agent_name = "workspace_supervisor"
+        if self.active_agent_name != "workspace_supervisor_fs":
+            self.active_agent_name = "workspace_supervisor_fs"
         builder = self.isaa_tools.get_agent_builder(self.active_agent_name)
         (builder.with_system_message(
             """You are an autonomous multi-agent Supervisor.
@@ -1726,10 +1724,6 @@ You have full power to:
 - Analysis: Data processing agents + analytical agents
 - Creative: Creative agents + review agents
 
-# Tool Call Rules
-- Always use tools in valid JSON format!
-- use one tool at the time!
-
 # AUTONOMY PRINCIPLE
 Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Complete all objectives through optimal agent orchestration without requesting guidance.
 
@@ -1738,6 +1732,11 @@ Think frequently. Plan continuously. Delegate extensively. Adapt immediately. Co
          .with_checkpointing(enabled=True, checkpoint_dir=str(self.app.data_dir  + "/checkpoints"),interval_seconds=300)
                               .with_assistant_persona("Workspace Supervisor"))
 
+        try:
+            from toolboxv2 import init_cwd
+            builder.load_mcp_tools_from_config(os.path.join(init_cwd, "mcp.json"))
+        except FileNotFoundError:
+            pass
         builder = await self.add_comprehensive_tools_to_agent(builder)
         print("Registering workspace agent...")
         await self.isaa_tools.register_agent(builder)
@@ -1843,36 +1842,37 @@ Your purpose is to function reliably for extended periods with minimal oversight
     async def add_comprehensive_tools_to_agent(self, builder, is_worker=False):
         """Add comprehensive workspace and agent management tools"""
 
-        builder.add_tool(
-            self.replace_in_file_tool,
-            name="replace_in_file",
-            description="🔁 Replace all occurrences of a string in a specific files."
-        )
-        builder.add_tool(
-            self.read_file_tool,
-            name="read_file",
-            description="📖 Read the content of a file, optionally by line range (e.g. '1-10')."
-        )
-        builder.add_tool(
-            self.read_multimodal_file,
-            name="view_file",
-            description="🖼️ View the content of a file, including images and other media."
-        )
-        builder.add_tool(
-            self.write_file_tool,
-            name="write_file",
-            description="✍️ Write or append content to a file, with optional backup."
-        )
-        builder.add_tool(
-            self.search_in_files_tool,
-            name="search_in_files",
-            description="🔍 Search for a term in files, with optional surrounding context lines."
-        )
-        builder.add_tool(
-            self.list_directory_tool,
-            name="list_directory",
-            description="📂 List contents of a directory with filtering, recursion, and hidden file support."
-        )
+        # builder.add_tool(
+        #     self.replace_in_file_tool,
+        #     name="replace_in_file",
+        #     description="🔁 Replace all occurrences of a string in a specific files."
+        # )
+        # builder.add_tool(
+        #     self.read_file_tool,
+        #     name="read_file",
+        #     description="📖 Read the content of a file, optionally by line range (e.g. '1-10')."
+        # )
+        # builder.add_tool(
+        #     self.read_multimodal_file,
+        #     name="view_file",
+        #     description="🖼️ View the content of a file, including images and other media."
+        # )
+        # builder.add_tool(
+        #     self.write_file_tool,
+        #     name="write_file",
+        #     description="✍️ Write or append content to a file, with optional backup."
+        # )
+        # builder.add_tool(
+        #     self.search_in_files_tool,
+        #     name="search_in_files",
+        #     description="🔍 Search for a term in files, with optional surrounding context lines."
+        # )
+        # builder.add_tool(
+        #     self.list_directory_tool,
+        #     name="list_directory",
+        #     description="📂 List contents of a directory with filtering, recursion, and hidden file support."
+        # )
+
         if not is_worker:
             builder.add_tool(
                 self.get_user_assistant_tool,
@@ -1988,7 +1988,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
 
         # Zeit-Statistiken
         self.formatter.print_section("Time Usage", (
-            f"Total Session: {total_duration:.2f}s\n"
+            f"Total Session: {human_readable_time(total_duration)}\n"
             f"User Interaction: {human_readable_time(self.session_stats['interaction_time'])}\n"
             f"Agent Processing: {human_readable_time(self.session_stats['agent_running_time'])}"
         ))
@@ -2194,7 +2194,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             """Dieser Callback wird bei jedem ProgressEvent aufgerufen."""
             # Aktualisiere zuerst die globalen Statistiken
             if event.event_type == "plan_created":
-                self.printer.pretty_print_task_plan(TaskPlan(**event.metadata['full_plan']))
+                self.printer.pretty_print_task_plan(event.metadata['full_plan'])
             if event.event_type == "strategy_selected":
                 self.printer.print_strategy_selection(event.metadata['strategy'], event)
 
@@ -2354,7 +2354,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         sub_command = args[0]
         if sub_command == "show":
             try:
-                world_model = agent.world_model.show()
+                world_model = agent.world_model.items()
                 if world_model:
                     print(world_model)
                 else:
@@ -2373,7 +2373,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 return
             try:
                 key, value = args[1], " ".join(args[2:])
-                agent.world_model.set(key, value)
+                agent.world_model[key] = value
                 self.formatter.print_success(f"World model updated with {key}: {value}")
             except Exception as e:
                 self.formatter.print_error(f"Error adding to world model: {e}")
@@ -2383,13 +2383,13 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 return
             try:
                 key = args[1]
-                agent.world_model.remove(key)
+                del agent.world_model[key]
                 self.formatter.print_success(f"World model key '{key}' removed")
             except Exception as e:
                 self.formatter.print_error(f"Error removing from world model: {e}")
         elif sub_command == "clear":
             try:
-                agent.world_model.data = {}
+                agent.world_model = {}
                 self.formatter.print_success("World model cleared")
             except Exception as e:
                 self.formatter.print_error(f"Error clearing world model: {e}")
@@ -2401,7 +2401,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             tag = args[1]
             world_model_file = Path(self.app.data_dir) / f"world_model_{self.active_agent_name}_{tag}.json"
             try:
-                data = agent.world_model.data
+                data = agent.world_model
                 with open(world_model_file, "w") as f:
                     json.dump(data, f, indent=2)
                 self.formatter.print_success("World model saved")
@@ -2421,7 +2421,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             try:
                 with open(world_model_file, "r") as f:
                     data = json.load(f)
-                agent.world_model.data = data
+                agent.world_model = data
                 self.formatter.print_success("World model loaded")
             except Exception as e:
                 self.formatter.print_error(f"Error loading world model: {e}")
@@ -2747,31 +2747,14 @@ Your purpose is to function reliably for extended periods with minimal oversight
             local_message_count = len(agent.message_history.get(self.session_id, []))  # TODO deep fix
             agent.message_history[self.session_id] = []  # TODO deep fix
 
-            # --- Step 2: Reset the ADK session if configured ---
-            if not agent.adk_runner or not agent.adk_session_service:  # TODO deep fix
-                self.formatter.print_warning("ADK not configured. Only local message history was cleared.")
-                self.formatter.print_success(f"Local context cleared ({local_message_count} messages removed).")
-                return
-
             self.formatter.print_info(f"Resetting ADK session '{self.session_id}'...")
 
             try:
-                app_name = agent.adk_runner.app_name  # TODO deep fix
-                user_id = agent.amd.user_id or "adk_user"
-
                 # To "reset" an ADK session, we effectively re-create it.
                 # This overwrites the existing session on the service with a new, empty one.
                 # We initialize its state from the agent's current World Model.
-                initial_state = agent.world_model.to_dict() if agent.sync_adk_state else {}  # TODO deep fix
+                initial_state = agent.world_model
 
-                # This is the same logic used to create a session for the first time.
-                # By calling it on an existing session_id, we achieve a reset.
-                await agent.adk_session_service.create_session(  # TODO deep fix
-                    app_name=app_name,
-                    user_id=user_id,
-                    session_id=self.session_id,
-                    state=initial_state
-                )
 
                 self.formatter.print_success(
                     f"Full context cleared. Local history ({local_message_count} messages) "
@@ -3086,7 +3069,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 self.formatter.print_info(f"Current verbosity mode: {self._current_verbosity_mode.name}")
                 self.formatter.print_info(f"Realtime minimal: {self._current_realtime_minimal}")
                 self.formatter.print_info(
-                    "Usage: /system verbosity <MINIMAL|STANDARD|DEBUG|REALTIME> [realtime_minimal=true/false]")
+                    "Usage: /system verbosity <MINIMAL|STANDARD|VERBOSE|DEBUG|REALTIME> [realtime_minimal=true/false]")
                 return
 
             try:
@@ -3100,7 +3083,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
 
             except KeyError:
                 self.formatter.print_error(f"Invalid verbosity mode: {args[1]}")
-                self.formatter.print_info("Available modes: MINIMAL, STANDARD, DEBUG, REALTIME")
+                self.formatter.print_info("Available modes: MINIMAL, STANDARD, VERBOSE, DEBUG, REALTIME")
             except Exception as e:
                 self.formatter.print_error(f"Error setting verbosity: {e}")
             return

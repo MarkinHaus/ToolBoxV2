@@ -232,8 +232,6 @@ class ExecutionNode:
 
         # Error-based completion detection
         if event.event_type == "error" or event.success is False:
-            print(event.metadata, event.event_type, event.event_id)
-            print("=" * 200)
             self.update_status(NodeStatus.FAILED, "Error detected", {
                 "error": event.metadata.get("error", (
                     event.tool_error if hasattr(event, 'tool_error') else "Unknown error") or "Unknown error"),
@@ -424,16 +422,45 @@ class ExecutionTreeBuilder:
                 })
 
             # Track errors
-            if event.event_type == "error" or event.success is False:
-                error_entry = {
+            error_message = None
+            error_source = None
+
+            # Check multiple places for error information
+            if event.event_type == "error":
+                # Direct error event
+                error_message = event.metadata.get("error") or event.metadata.get("error_message")
+                error_source = event.metadata.get("source", "unknown")
+            elif event.event_type == "task_error":
+                # Task-specific error
+                error_message = event.metadata.get("error") or event.metadata.get("error_message")
+                error_source = "task_execution"
+            elif event.success is False:
+                # Failed operation
+                error_message = (event.metadata.get("error") or
+                                 event.metadata.get("error_message") or
+                                 getattr(event, 'tool_error', None) or
+                                 "Operation failed")
+                error_source = event.event_type
+            elif event.metadata and (event.metadata.get("error") or event.metadata.get("error_message")):
+                # Error in metadata
+                error_message = event.metadata.get("error") or event.metadata.get("error_message")
+                error_source = "metadata"
+
+            # Add to error log if we found an error
+            if error_message and error_message != "Unknown error":
+                self.error_log.append({
                     "timestamp": event.timestamp,
-                    "node": node_name,
-                    "event_type": event.event_type,
-                    "error": event.metadata.get("error", "Unknown error"),
-                    "error_type": event.metadata.get("error_type", "UnknownError"),
-                    "retry_count": node.retry_count
-                }
-                self.error_log.append(error_entry)
+                    "node": event.node_name or "Unknown",
+                    "error": error_message,
+                    "error_type": event.metadata.get("error_type", "Unknown") if event.metadata else "Unknown",
+                    "source": error_source or "unknown",
+                    "task_id": getattr(event, 'task_id', None),
+                    "tool_name": getattr(event, 'tool_name', None)
+                })
+
+                # Limit error log size
+                if len(self.error_log) > 150:
+                    self.error_log = self.error_log[-100:]
 
             # Update global stats
             if event.llm_cost:
@@ -561,7 +588,7 @@ class ProgressiveTreePrinter:
         self.print_history: List[Dict[str, Any]] = []
 
         # Optimized realtime option
-        self.realtime_minimal = realtime_minimal if realtime_minimal is not None else (mode == VerbosityMode.REALTIME)
+        self.realtime_minimal = realtime_minimal if realtime_minimal is not None else False
         self._last_summary = ""
         self._needs_full_tree = False
         self._spinner_chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -673,7 +700,7 @@ class ProgressiveTreePrinter:
                     "\n".join(strategy_content),
                     title="🎯 Strategy Selection Details",
                     style="cyan bold",
-                    box=box.DOUBLE
+                    box=box.ROUNDED
                 )
                 self.console.print()
                 self.console.print(strategy_panel)
@@ -994,7 +1021,7 @@ class ProgressiveTreePrinter:
         """Get appropriate color styling for task status"""
         status_colors = {
             "pending": "yellow",
-            "running": "blue bold",
+            "running": "white bold dim",
             "completed": "green bold",
             "failed": "red bold",
             "paused": "orange3"
@@ -1004,7 +1031,7 @@ class ProgressiveTreePrinter:
     def _add_task_details(self, parent_branch: Tree, task: Any):
         """Add detailed task information based on task type"""
         # Description
-        parent_branch.add(f"📄 {task.description}", style="blue dim")
+        parent_branch.add(f"📄 {task.description}", style="white dim")
 
         # Dependencies
         if task.dependencies:
@@ -1685,7 +1712,7 @@ class ProgressiveTreePrinter:
             self._add_execution_flow_branch(tree, summary)
 
             # Error log (if any errors)
-            if self.tree_builder.error_log and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+            if self.tree_builder.error_log and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG, VerbosityMode.STANDARD]:
                 self._add_error_log_branch(tree)
 
             # Performance metrics
@@ -1694,7 +1721,7 @@ class ProgressiveTreePrinter:
 
             # Routing history
             if (self.tree_builder.routing_history and
-                self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]):
+                self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG, VerbosityMode.STANDARD]):
                 self._add_routing_branch(tree)
 
             return tree
@@ -1830,20 +1857,45 @@ class ProgressiveTreePrinter:
             parent_branch.add(perf_text, style="yellow dim")
 
     def _add_error_log_branch(self, tree: Tree):
-        """Add error log branch"""
+        """Add enhanced error log branch with detailed error information"""
         if not self.tree_builder.error_log:
             return
 
         error_branch = tree.add(f"❌ Error Log ({len(self.tree_builder.error_log)})", style="red bold")
 
-        # Show recent errors
+        # Show recent errors with enhanced details
         recent_errors = self.tree_builder.error_log[-5:]  # Last 5 errors
         for error in recent_errors:
             timestamp = datetime.fromtimestamp(error["timestamp"]).strftime("%H:%M:%S")
-            error_text = f"[{timestamp}] {error['node']}: {error['error']}"
-            if error.get('retry_count', 0) > 0:
+            node_name = error.get("node", "Unknown")
+            error_message = error.get("error", "Unknown error")
+            error_type = error.get("error_type", "Unknown")
+
+            # FIXED: Use actual error message instead of "Unknown error"
+            if error_message and error_message != "Unknown error":
+                error_text = f"[{timestamp}] {node_name}: {error_message}"
+            else:
+                error_text = f"[{timestamp}] {node_name}: {error_type} error"
+
+            # Add additional context if available
+            if error.get("task_id"):
+                error_text += f" (Task: {error['task_id']})"
+            elif error.get("tool_name"):
+                error_text += f" (Tool: {error['tool_name']})"
+
+            # Add retry info if available
+            if error.get("retry_count", 0) > 0:
                 error_text += f" (Retry #{error['retry_count']})"
-            error_branch.add(error_text, style="red dim")
+
+            # Use different colors based on error severity
+            if "critical" in error_message.lower() or "fatal" in error_message.lower():
+                style = "red bold"
+            elif error.get("source") == "task_execution":
+                style = "red"
+            else:
+                style = "red dim"
+
+            error_branch.add(error_text, style=style)
 
     def _add_performance_branch(self, tree: Tree, summary: Dict[str, Any]):
         """Add performance metrics branch"""
@@ -1993,7 +2045,7 @@ class ProgressiveTreePrinter:
         if timing["estimated_completion"]:
             eta = timing["estimated_completion"] - time.time()
             if eta > 0:
-                timing_text += f" | ETA: {eta:.0f}s"
+                timing_text += f" | ETA: {human_readable_time(eta)}"
 
         # Performance info
         perf_metrics = summary["performance_metrics"]
@@ -2090,7 +2142,8 @@ class ProgressiveTreePrinter:
                 print(f"Print error: {e}")
 
     async def progress_callback(self, event: ProgressEvent):
-        """Main progress callback with minimal realtime support"""
+        """Enhanced progress callback with automatic task detection"""
+        is_task_update = False
         try:
             # Add event to tree builder
             self.tree_builder.add_event(event)
@@ -2107,21 +2160,27 @@ class ProgressiveTreePrinter:
             if len(self.print_history) > self.max_history:
                 self.print_history = self.print_history[-self.max_history:]
 
+            # Automatic task detection and printing
+            if event.event_type.startswith('task_'):
+                self.print_task_update_from_event(event)
+                is_task_update = True
+
+            if event.node_name == "LLMReasonerNode":
+                self.print_reasoner_update_from_event(event)
+
             # Check if we need to show full tree (errors or completion)
             if self.realtime_minimal:
-                # Check for errors
                 if (event.event_type == "error" or
                     event.success is False or
                     (event.metadata and event.metadata.get("error"))):
                     self._needs_full_tree = True
 
-                # Check for completion
                 if (event.event_type in ["execution_complete", "task_complete", "node_exit"] or
                     (event.node_name in self.tree_builder.nodes and
                      self.tree_builder.nodes[event.node_name].is_completed())):
-                    # Check if this is final completion
                     summary = self.tree_builder.get_execution_summary()
-                    if (summary["session_info"]["completed_nodes"] + summary["session_info"]["failed_nodes"] ==
+                    if (summary["session_info"]["completed_nodes"] + summary["session_info"][
+                        "failed_nodes"] ==
                         summary["session_info"]["total_nodes"]):
                         self._needs_full_tree = True
 
@@ -2129,22 +2188,1583 @@ class ProgressiveTreePrinter:
             if self.mode == VerbosityMode.DEBUG:
                 self._print_debug_event(event)
 
-            # Decide whether to print update
-            if event.node_name == "FlowAgent" or self._should_print_update():
+            # Agent name extraction
+            self.agent_name = event.agent_name if event.agent_name else event.metadata.get("agent_name",
+                                                                                          self.agent_name)
+            # Print strategy and plan updates
+            if (not is_task_update and
+                event.node_name != "LLMReasonerNode" and  # Don't double-print reasoner events
+                (event.node_name == "FlowAgent" or self._should_print_update())):
                 self.print_strategy_from_event(event)
                 self.print_plan_from_event(event)
-                self.agent_name = event.agent_name if event.agent_name else event.metadata.get("agent_name", self.agent_name)
                 self._print_tree_update()
 
         except Exception as e:
             # Emergency error handling
             self._consecutive_errors += 1
-            print(f"⚠️  Progress callback error #{self._consecutive_errors}: {e}")
+            print(f"⚠️ Progress callback error #{self._consecutive_errors}: {e}")
 
             if self._consecutive_errors > self._error_threshold:
                 print("🚨 Progress printing disabled due to excessive errors")
-                # Disable further callbacks
                 self.progress_callback = self._noop_callback
+
+    def print_reasoner_update_from_event(self, event: ProgressEvent):
+        """Print reasoner updates and meta-tool usage based on events for all verbosity modes"""
+        try:
+            # Handle reasoner-related events in all modes (not just verbose)
+            if (event.node_name != "LLMReasonerNode" or
+                not event.metadata or
+                event.event_type not in ["reasoning_loop", "meta_tool_call", "meta_tool_batch_complete",
+                                         "meta_tool_analysis"]):
+                return
+
+            if event.event_type == "reasoning_loop":
+                self._print_reasoning_loop_update(event)
+            elif event.event_type == "meta_tool_call":
+                self._print_meta_tool_update(event)
+            elif event.event_type == "meta_tool_batch_complete":
+                self._print_meta_tool_batch_summary(event)
+            elif event.event_type == "meta_tool_analysis":
+                self._print_meta_tool_analysis_update(event)
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Error printing reasoner update: {e}")
+
+    def _print_meta_tool_batch_summary(self, event: ProgressEvent):
+        """Print summary when multiple meta-tools complete"""
+        try:
+            metadata = event.metadata
+            total_meta_tools = metadata.get("total_meta_tools_processed", 0)
+            reasoning_loop = metadata.get("reasoning_loop", "?")
+            final_context_size = metadata.get("final_context_size", 0)
+            final_task_stack_size = metadata.get("final_task_stack_size", 0)
+            meta_tools_executed = metadata.get("meta_tools_executed", [])
+            batch_performance = metadata.get("batch_performance", {})
+
+            if self._fallback_mode or not self.use_rich:
+                if self.mode != VerbosityMode.MINIMAL:  # Skip in minimal mode
+                    print(f"🔧 Batch Complete: {total_meta_tools} meta-tools in loop {reasoning_loop}")
+                return
+
+            # Only show batch summaries in detailed modes
+            if self.mode == VerbosityMode.MINIMAL:
+                return  # Skip batch summaries in minimal mode
+
+            elif self.mode == VerbosityMode.STANDARD:
+                # Simple batch summary
+                if total_meta_tools > 2:  # Only show for larger batches
+                    summary_text = f"🔧 Completed {total_meta_tools} operations in loop {reasoning_loop}"
+                    self.console.print(summary_text, style="purple dim")
+
+            elif self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                # Detailed batch summary
+                summary_text = f"🔧 Meta-Tool Batch Complete"
+                details = []
+                details.append(f"🎯 Tools executed: {', '.join(meta_tools_executed)}")
+                details.append(f"🔄 Loop: {reasoning_loop}")
+                details.append(f"📚 Final context size: {final_context_size}")
+                details.append(f"📋 Final task stack: {final_task_stack_size}")
+
+                if self.mode == VerbosityMode.DEBUG and batch_performance:
+                    details.append(f"📊 Tool diversity: {batch_performance.get('tool_diversity', 0)}")
+                    most_used = batch_performance.get('most_used_tool', 'none')
+                    if most_used != 'none':
+                        details.append(f"🏆 Most used: {most_used}")
+
+                batch_panel = Panel(
+                    "\n".join(details),
+                    title=summary_text,
+                    style="purple",
+                    box=box.ROUNDED
+                )
+                self.console.print(batch_panel)
+
+            elif self.mode == VerbosityMode.REALTIME:
+                if not self.realtime_minimal and total_meta_tools > 1:
+                    self.console.print(f"🔧 {total_meta_tools} tools completed", style="purple dim")
+
+        except Exception as e:
+            print(f"⚠️ Error printing batch summary: {e}")
+
+    def _print_meta_tool_analysis_update(self, event: ProgressEvent):
+        """Print meta-tool analysis updates (when no tools found)"""
+        metadata = event.metadata
+        analysis_result = metadata.get("analysis_result", "")
+        llm_response_length = metadata.get("llm_response_length", 0)
+        reasoning_loop = metadata.get("reasoning_loop", "?")
+
+        # Only show analysis in verbose/debug modes
+        if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+            if analysis_result == "no_meta_tools_detected":
+                analysis_text = f"🔍 Loop {reasoning_loop}: No meta-tools in LLM response ({llm_response_length} chars)"
+
+                if self.mode == VerbosityMode.DEBUG:
+                    preview = metadata.get("llm_response_preview", "")
+                    if preview:
+                        analysis_panel = Panel(
+                            f"{analysis_text}\n\n📄 Response preview:\n{preview}",
+                            title="🔍 Meta-Tool Analysis",
+                            style="orange3",
+                            box=box.ROUNDED
+                        )
+                        self.console.print(analysis_panel)
+                    else:
+                        self.console.print(analysis_text, style="orange3 dim")
+                else:
+                    self.console.print(analysis_text, style="orange3 dim")
+
+    def _print_reasoning_loop_update(self, event: ProgressEvent):
+        """Print reasoning loop progress update for all modes with enhanced timestamps"""
+        try:
+            metadata = event.metadata
+            loop_number = metadata.get("loop_number", "?")
+            context_size = metadata.get("context_size", 0)
+            task_stack_size = metadata.get("task_stack_size", 0)
+            outline_step = metadata.get("outline_step", 0)
+            auto_recovery_attempts = metadata.get("auto_recovery_attempts", 0)
+            performance_metrics = metadata.get("performance_metrics", {})
+
+            # Enhanced timestamp formatting
+            timestamp = datetime.fromtimestamp(event.timestamp)
+
+            if self._fallback_mode or not self.use_rich:
+                # Fallback for all modes with enhanced info
+                if self.mode == VerbosityMode.MINIMAL:
+                    if loop_number == 1:  # Only show first loop in minimal
+                        time_str = timestamp.strftime("%H:%M:%S")
+                        print(f"🧠 [{time_str}] Starting reasoning...")
+                elif self.mode == VerbosityMode.REALTIME:
+                    if self.realtime_minimal:
+                        time_str = timestamp.strftime("%H:%M:%S")
+                        print(f"\r🧠 [{time_str}] Thinking... (step {loop_number})", end="", flush=True)
+                    else:
+                        time_str = timestamp.strftime("%H:%M:%S")
+                        outline_info = f" | Step: {outline_step}" if outline_step > 0 else ""
+                        recovery_info = f" | Recovery: {auto_recovery_attempts}" if auto_recovery_attempts > 0 else ""
+                        print(
+                            f"🧠 [{time_str}] Loop {loop_number}{outline_info} | Context: {context_size} | Tasks: {task_stack_size}{recovery_info}")
+                else:
+                    time_str = timestamp.strftime("%H:%M:%S")
+                    outline_info = f" | Outline Step: {outline_step}" if outline_step > 0 else ""
+                    print(
+                        f"🧠 [{time_str}] Reasoning Loop #{loop_number}{outline_info} | Context: {context_size} | Tasks: {task_stack_size}")
+                return
+
+            # Rich formatted output for all modes with enhanced timestamps
+            if self.mode == VerbosityMode.MINIMAL:
+                if loop_number == 1:
+                    time_str = timestamp.strftime("%H:%M:%S")
+                    self.console.print(f"🧠 [{time_str}] Starting reasoning process...", style="cyan")
+                elif loop_number % 5 == 0:  # Every 5th loop
+                    time_str = timestamp.strftime("%H:%M:%S")
+                    self.console.print(f"🧠 [{time_str}] Reasoning progress: Step #{loop_number}", style="cyan dim")
+
+            elif self.mode == VerbosityMode.STANDARD:
+                time_str = timestamp.strftime("%H:%M:%S")
+                if loop_number == 1 or context_size > 5 or task_stack_size > 0 or auto_recovery_attempts > 0:
+
+                    content_lines = [f"📚 Context: {context_size} entries", f"📋 Tasks: {task_stack_size} items"]
+                    if outline_step > 0:
+                        content_lines.append(f"📍 Outline Step: {outline_step}")
+                    if auto_recovery_attempts > 0:
+                        content_lines.append(f"🔄 Recovery Attempts: {auto_recovery_attempts}")
+                    if performance_metrics.get("action_efficiency"):
+                        efficiency = performance_metrics["action_efficiency"]
+                        content_lines.append(f"📊 Efficiency: {efficiency:.1%}")
+
+                    loop_panel = Panel(
+                        "\n".join(content_lines),
+                        title=f"🧠 [{time_str}] Reasoning Step #{loop_number}",
+                        style="cyan",
+                        box=box.ROUNDED
+                    )
+                    self.console.print(loop_panel)
+                else:
+                    self.console.print(f"🧠 [{time_str}] Step #{loop_number}", style="cyan dim")
+
+            elif self.mode == VerbosityMode.VERBOSE:
+                time_str = timestamp.strftime("%H:%M:%S")
+                loop_content = [
+                    f"📚 Context: {context_size} entries",
+                    f"📋 Task Stack: {task_stack_size} items",
+                    f"⏱️ Time: {time_str}"
+                ]
+
+                if outline_step > 0:
+                    loop_content.append(f"📍 Outline Step: {outline_step}")
+                if auto_recovery_attempts > 0:
+                    loop_content.append(f"🔄 Recovery Attempts: {auto_recovery_attempts}")
+                if performance_metrics:
+                    if performance_metrics.get("action_efficiency"):
+                        loop_content.append(f"📊 Action Efficiency: {performance_metrics['action_efficiency']:.1%}")
+                    if performance_metrics.get("avg_loop_time"):
+                        loop_content.append(f"⚡ Avg Loop Time: {performance_metrics['avg_loop_time']:.2f}s")
+
+                loop_panel = Panel(
+                    "\n".join(loop_content),
+                    title=f"🧠 Reasoning Loop #{loop_number}",
+                    style="cyan",
+                    box=box.ROUNDED
+                )
+                self.console.print(loop_panel)
+
+            elif self.mode == VerbosityMode.DEBUG:
+                timestamp_detailed = timestamp.strftime("%H:%M:%S.%f")[:-3]
+                debug_info = [
+                    f"📚 Context Size: {context_size} entries",
+                    f"📋 Task Stack: {task_stack_size} items",
+                    f"⏱️ Timestamp: {timestamp_detailed}",
+                    f"📊 Event ID: {event.event_id}",
+                    f"🔄 Status: {event.status.value if event.status else 'unknown'}"
+                ]
+
+                if outline_step > 0:
+                    debug_info.append(f"📍 Outline Step: {outline_step}")
+                if auto_recovery_attempts > 0:
+                    debug_info.append(f"🔄 Recovery Attempts: {auto_recovery_attempts}")
+
+                if performance_metrics:
+                    debug_info.append("📈 Performance Metrics:")
+                    for key, value in performance_metrics.items():
+                        if isinstance(value, float):
+                            debug_info.append(f"  • {key}: {value:.3f}")
+                        else:
+                            debug_info.append(f"  • {key}: {value}")
+
+                debug_panel = Panel(
+                    "\n".join(debug_info),
+                    title=f"🧠 Debug: Reasoning Loop #{loop_number}",
+                    style="cyan bold",
+                    box=box.HEAVY
+                )
+                self.console.print(debug_panel)
+
+            elif self.mode == VerbosityMode.REALTIME:
+                time_str = timestamp.strftime("%H:%M:%S")
+                if self.realtime_minimal:
+                    progress_indicators = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                    spinner = progress_indicators[(loop_number - 1) % len(progress_indicators)]
+                    outline_info = f" step:{outline_step}" if outline_step > 0 else ""
+                    print(f"\r{spinner} [{time_str}] Loop {loop_number}{outline_info} (ctx:{context_size})", end="",
+                          flush=True)
+                else:
+                    outline_info = f" | Step: {outline_step}" if outline_step > 0 else ""
+                    recovery_info = f" | Rec: {auto_recovery_attempts}" if auto_recovery_attempts > 0 else ""
+                    self.console.print(
+                        f"🧠 [{time_str}] Loop #{loop_number}{outline_info} | Context: {context_size} | Tasks: {task_stack_size}{recovery_info}",
+                        style="cyan dim")
+
+        except Exception as e:
+            print(f"⚠️ Error printing reasoning loop: {e}")
+
+    def _print_meta_tool_update(self, event: ProgressEvent):
+        """Print meta-tool execution updates for all verbosity modes with enhanced timestamps"""
+        try:
+            metadata = event.metadata
+            meta_tool_name = metadata.get("meta_tool_name", "unknown")
+            execution_phase = metadata.get("execution_phase", "unknown")
+            tool_category = metadata.get("tool_category", "unknown")
+
+            # Enhanced timestamp
+            timestamp = datetime.fromtimestamp(event.timestamp)
+
+            # Handle different phases based on verbosity mode
+            if execution_phase == "meta_tool_start" and self.mode == VerbosityMode.MINIMAL:
+                return  # Skip start phase in minimal mode
+
+            if self._fallback_mode or not self.use_rich:
+                self._print_meta_tool_fallback(event, metadata, timestamp)
+                return
+
+            # Route to specific tool handlers based on verbosity mode
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                # Detailed mode - use specific handlers
+                if meta_tool_name == "internal_reasoning":
+                    self._print_internal_reasoning_update(event, metadata, timestamp)
+                elif meta_tool_name == "manage_internal_task_stack":
+                    self._print_task_stack_update(event, metadata, timestamp)
+                elif meta_tool_name == "delegate_to_llm_tool_node":
+                    self._print_delegation_update(event, metadata, timestamp)
+                elif meta_tool_name == "create_and_execute_plan":
+                    self._print_plan_execution_update(event, metadata, timestamp)
+                elif meta_tool_name == "direct_response":
+                    self._print_direct_response_update(event, metadata, timestamp)
+                elif meta_tool_name in ["advance_outline_step", "write_to_variables", "read_from_variables"]:
+                    self._print_enhanced_meta_tool_update(event, metadata, timestamp)
+                else:
+                    self._print_generic_meta_tool_update(event, metadata, timestamp)
+            else:
+                # Simpler modes - use unified handler
+                self._print_unified_meta_tool_update(event, metadata, timestamp)
+
+        except Exception as e:
+            print(f"⚠️ Error printing meta-tool update: {e}")
+
+    def _print_internal_reasoning_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print internal reasoning specific updates with insights and enhanced timestamp support"""
+        if not event.success:
+            return
+
+        thought_number = metadata.get("thought_number", "?")
+        total_thoughts = metadata.get("total_thoughts", "?")
+        current_focus = metadata.get("current_focus", "")
+        confidence_level = metadata.get("confidence_level", 0.0)
+        key_insights = metadata.get("key_insights", [])
+        key_insights_count = len(key_insights)
+        potential_issues = metadata.get("potential_issues", [])
+        next_thought_needed = metadata.get("next_thought_needed", False)
+        outline_step = metadata.get("outline_step", 0)
+        outline_step_progress = metadata.get("outline_step_progress", "")
+        reasoning_depth = metadata.get("reasoning_depth", 0)
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        # Create reasoning update with timestamp
+        reasoning_text = f"💭 [{time_str}] Thought {thought_number}/{total_thoughts}"
+
+        # Add outline step info if available
+        if outline_step > 0:
+            reasoning_text += f" (Step {outline_step})"
+
+        if current_focus:
+            focus_preview = current_focus[:60] + "..." if len(current_focus) > 60 else current_focus
+            reasoning_text += f"\n🎯 Focus: {focus_preview}"
+
+        details = []
+        if key_insights_count > 0:
+            details.append(f"💡 {key_insights_count} insights")
+        if confidence_level > 0:
+            details.append(f"📊 {confidence_level:.1%} confidence")
+        if next_thought_needed:
+            details.append("➡️ More thinking needed")
+        if outline_step_progress:
+            details.append(f"📍 Progress: {outline_step_progress[:40]}...")
+
+        # Add performance info in debug mode
+        if self.mode == VerbosityMode.DEBUG:
+            duration = metadata.get("execution_duration", 0)
+            if duration > 0:
+                details.append(f"⏱️ {duration:.2f}s")
+            if reasoning_depth > 0:
+                details.append(f"🔄 Depth: {reasoning_depth}")
+
+        if self.mode == VerbosityMode.DEBUG:
+            # Show detailed insights in debug mode
+            debug_content = [reasoning_text]
+
+            if details:
+                debug_content.append("\n📊 Metrics:")
+                debug_content.extend(f"• {detail}" for detail in details)
+
+            # Show actual insights
+            if key_insights:
+                debug_content.append("\n💡 Key Insights:")
+                for i, insight in enumerate(key_insights[:3], 1):  # Show up to 3 insights
+                    insight_preview = insight[:80] + "..." if len(insight) > 80 else insight
+                    debug_content.append(f"  {i}. {insight_preview}")
+
+                if len(key_insights) > 3:
+                    debug_content.append(f"  ... +{len(key_insights) - 3} more insights")
+
+            # Show potential issues
+            if potential_issues:
+                debug_content.append("\n⚠️ Potential Issues:")
+                for i, issue in enumerate(potential_issues[:2], 1):  # Show up to 2 issues
+                    issue_preview = issue[:80] + "..." if len(issue) > 80 else issue
+                    debug_content.append(f"  {i}. {issue_preview}")
+
+                if len(potential_issues) > 2:
+                    debug_content.append(f"  ... +{len(potential_issues) - 2} more issues")
+
+            # Show outline step progress if available
+            if outline_step_progress and len(outline_step_progress) > 40:
+                debug_content.append(f"\n📍 Outline Progress:")
+                debug_content.append(f"  {outline_step_progress}")
+
+            reasoning_panel = Panel(
+                "\n".join(debug_content),
+                title="🧠 Internal Reasoning Analysis",
+                style="white",
+                box=box.ROUNDED
+            )
+            self.console.print(reasoning_panel)
+        else:
+            # Verbose mode - simpler display with enhanced info
+            if details:
+                reasoning_text += f"\n{', '.join(details)}"
+            self.console.print(reasoning_text, style="white")
+
+    def _print_task_stack_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print task stack management updates with enhanced timestamp and outline step tracking"""
+        if not event.success:
+            return
+
+        stack_action = metadata.get("stack_action", "unknown")
+        task_description = metadata.get("task_description", "")
+        outline_step_ref = metadata.get("outline_step_ref", "")
+        stack_size_before = metadata.get("stack_size_before", 0)
+        stack_size_after = metadata.get("stack_size_after", 0)
+        stack_change = metadata.get("stack_change", 0)
+        outline_step = metadata.get("outline_step", 0)
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        # Action icons
+        action_icons = {
+            "add": "➕",
+            "remove": "➖",
+            "complete": "✅",
+            "get_current": "📋"
+        }
+
+        action_icon = action_icons.get(stack_action, "🔄")
+        stack_text = f"{action_icon} [{time_str}] Stack {stack_action.title()}"
+
+        # Add outline step context
+        if outline_step > 0:
+            stack_text += f" (Step {outline_step})"
+
+        if stack_action in ["add", "remove", "complete"] and task_description:
+            preview = task_description[:60] + "..." if len(task_description) > 60 else task_description
+            stack_text += f": {preview}"
+
+        # Show size change with enhanced info
+        if stack_change != 0:
+            change_text = f" ({stack_change:+d})" if stack_change != 0 else ""
+            stack_text += f"\n📊 Size: {stack_size_before} → {stack_size_after}{change_text}"
+        elif stack_action == "get_current":
+            stack_text += f"\n📊 Current size: {stack_size_after} items"
+
+        # Add outline step reference if available
+        if outline_step_ref and outline_step_ref != f"step_{outline_step}":
+            stack_text += f"\n📍 Linked to: {outline_step_ref}"
+
+        # Add performance info in debug mode
+        if self.mode == VerbosityMode.DEBUG:
+            duration = metadata.get("execution_duration", 0)
+            if duration > 0:
+                stack_text += f"\n⏱️ Duration: {duration:.3f}s"
+
+            # Show additional debug info
+            debug_details = []
+            if metadata.get("reasoning_loop"):
+                debug_details.append(f"Loop: {metadata['reasoning_loop']}")
+            if metadata.get("context_before_size") and metadata.get("context_after_size"):
+                ctx_before = metadata["context_before_size"]
+                ctx_after = metadata.get("context_after_size", ctx_before)
+                if ctx_after != ctx_before:
+                    debug_details.append(f"Context: {ctx_before}→{ctx_after}")
+
+            if debug_details:
+                stack_text += f"\n🔧 Debug: {', '.join(debug_details)}"
+
+        self.console.print(stack_text, style="yellow")
+
+    def _print_delegation_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print delegation to LLMToolNode updates with enhanced timestamp and variable system integration"""
+        delegated_task = metadata.get("delegated_task_description", "")
+        tools_list = metadata.get("tools_list", [])
+        tools_count = metadata.get("tools_count", 0)
+        execution_phase = metadata.get("execution_phase", "")
+        delegation_complexity = metadata.get("delegation_complexity", "unknown")
+        outline_step = metadata.get("outline_step", 0)
+        outline_step_completion = metadata.get("outline_step_completion", False)
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        if execution_phase == "meta_tool_start":
+            # Starting delegation - show task description in all modes
+            if self.mode == VerbosityMode.VERBOSE or self.mode == VerbosityMode.DEBUG:
+                # Detailed view for verbose/debug
+                task_preview = delegated_task[:80] + "..." if len(delegated_task) > 80 else delegated_task
+                delegation_text = f"🎯 [{time_str}] Delegating: {task_preview}"
+
+                # Add outline step context
+                if outline_step > 0:
+                    delegation_text += f" (Step {outline_step})"
+                if outline_step_completion:
+                    delegation_text += " [Step Completion Expected]"
+
+                if tools_count > 0:
+                    tools_preview = ", ".join(tools_list[:3])
+                    if len(tools_list) > 3:
+                        tools_preview += f" +{len(tools_list) - 3} more"
+                    delegation_text += f"\n🔧 Tools: [{tools_preview}]"
+
+                if self.mode == VerbosityMode.DEBUG:
+                    delegation_text += f"\n📊 Complexity: {delegation_complexity}"
+
+                    # Add variable system context if available
+                    if metadata.get("variable_system_context"):
+                        delegation_text += f"\n💾 Variables available: {metadata['variable_system_context']}"
+
+                self.console.print(delegation_text, style="green")
+
+            elif self.mode == VerbosityMode.STANDARD:
+                # Standard mode - show task description in panel
+                task_preview = delegated_task[:100] + "..." if len(delegated_task) > 100 else delegated_task
+
+                panel_content = f"📄 Task: {task_preview}"
+
+                # Add outline context
+                if outline_step > 0:
+                    panel_content += f"\n📍 Outline Step: {outline_step}"
+                    if outline_step_completion:
+                        panel_content += " (Completion Expected)"
+
+                if tools_count > 0:
+                    tools_preview = ", ".join(tools_list[:4])
+                    if len(tools_list) > 4:
+                        tools_preview += f" +{len(tools_list) - 4} more"
+                    panel_content += f"\n🔧 Available Tools: {tools_preview}"
+
+                delegation_panel = Panel(
+                    panel_content,
+                    title=f"🎯 [{time_str}] Delegating Task to LLM Tool Node",
+                    style="green",
+                    box=box.ROUNDED
+                )
+                self.console.print(delegation_panel)
+
+        elif event.success and execution_phase != "meta_tool_start":
+            # Delegation completed with enhanced info
+            duration = metadata.get("execution_duration", 0)
+            duration_str = f" ({duration:.1f}s)" if duration > 0.1 else ""
+
+            if self.mode == VerbosityMode.STANDARD:
+                # Show completion with brief task reference in standard mode
+                task_brief = delegated_task[:50] + "..." if len(delegated_task) > 50 else delegated_task
+                completion_text = f"✅ [{time_str}] Task completed: {task_brief}"
+
+                # Add outline step completion info
+                if outline_step_completion:
+                    completion_text += " ✓ Step Complete"
+                elif outline_step > 0:
+                    completion_text += f" (Step {outline_step})"
+
+                completion_text += duration_str
+
+                if tools_count > 0:
+                    completion_text += f" | Used {tools_count} tools"
+
+                # Show any variable system results
+                if metadata.get("variable_results_stored"):
+                    completion_text += f" | Results stored in variables"
+
+            else:
+                # Simpler completion for verbose/debug
+                completion_text = f"✅ [{time_str}] Delegation completed"
+
+                if outline_step > 0:
+                    completion_text += f" (Step {outline_step})"
+                if outline_step_completion:
+                    completion_text += " ✓ Step Complete"
+
+                completion_text += duration_str
+
+                if tools_count > 0:
+                    completion_text += f" | Used {tools_count} tools"
+
+                # Debug mode: show additional delegation details
+                if self.mode == VerbosityMode.DEBUG:
+                    debug_details = []
+                    if delegation_complexity != "unknown":
+                        debug_details.append(f"Complexity: {delegation_complexity}")
+                    if metadata.get("sub_system_execution"):
+                        debug_details.append("Sub-system executed")
+                    if metadata.get("variable_integration"):
+                        debug_details.append("Variable system integrated")
+
+                    if debug_details:
+                        completion_text += f"\n🔧 Debug: {', '.join(debug_details)}"
+
+            self.console.print(completion_text, style="green")
+
+    def _print_plan_execution_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print plan creation and execution updates with enhanced timeline and variable integration"""
+        goals_list = metadata.get("goals_list", [])
+        goals_count = metadata.get("goals_count", 0)
+        execution_phase = metadata.get("execution_phase", "")
+        estimated_complexity = metadata.get("estimated_complexity", "unknown")
+        outline_step = metadata.get("outline_step", 0)
+        outline_step_completion = metadata.get("outline_step_completion", False)
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        if execution_phase == "meta_tool_start":
+            # Starting plan execution
+            plan_text = f"📋 [{time_str}] Creating Plan: {goals_count} goals"
+
+            # Add outline context
+            if outline_step > 0:
+                plan_text += f" (Step {outline_step})"
+            if outline_step_completion:
+                plan_text += " [Step Completion Expected]"
+
+            if self.mode == VerbosityMode.DEBUG and goals_list:
+                goals_preview = []
+                for i, goal in enumerate(goals_list[:4], 1):
+                    goal_short = goal[:50] + "..." if len(goal) > 50 else goal
+                    goals_preview.append(f"{i}. {goal_short}")
+
+                if len(goals_list) > 4:
+                    goals_preview.append(f"... +{len(goals_list) - 4} more goals")
+
+                debug_content = []
+                debug_content.append(f"📊 Complexity: {estimated_complexity}")
+                if outline_step > 0:
+                    debug_content.append(f"📍 Outline Step: {outline_step}")
+                if outline_step_completion:
+                    debug_content.append("✓ Will complete outline step")
+
+                # Add variable system integration info
+                if metadata.get("variable_system_integration"):
+                    debug_content.append("💾 Variable system integration enabled")
+
+                debug_content.append("")
+                debug_content.extend(goals_preview)
+
+                plan_panel = Panel(
+                    "\n".join(debug_content),
+                    title=f"📋 [{time_str}] Plan Creation",
+                    style="magenta",
+                    box=box.ROUNDED
+                )
+                self.console.print(plan_panel)
+            else:
+                if estimated_complexity != "unknown":
+                    plan_text += f" (complexity: {estimated_complexity})"
+                self.console.print(plan_text, style="magenta")
+
+        elif event.success and execution_phase != "meta_tool_start":
+            # Plan execution completed with enhanced results
+            duration = metadata.get("execution_duration", 0)
+            duration_str = f" ({duration:.1f}s)" if duration > 0.5 else ""
+
+            completion_text = f"✅ [{time_str}] Plan execution completed"
+
+            # Add outline context
+            if outline_step_completion:
+                completion_text += " ✓ Step Complete"
+            elif outline_step > 0:
+                completion_text += f" (Step {outline_step})"
+
+            completion_text += duration_str
+
+            if goals_count > 0:
+                completion_text += f" | {goals_count} goals processed"
+
+            # Show additional execution details in verbose/debug modes
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                additional_details = []
+
+                if estimated_complexity != "unknown":
+                    additional_details.append(f"Complexity: {estimated_complexity}")
+
+                # Show task execution results if available
+                if metadata.get("tasks_completed"):
+                    additional_details.append(f"Tasks completed: {metadata['tasks_completed']}")
+                if metadata.get("tasks_failed"):
+                    additional_details.append(f"Tasks failed: {metadata['tasks_failed']}")
+
+                # Show variable system integration results
+                if metadata.get("results_stored_in_variables"):
+                    additional_details.append("Results stored in variables")
+                if metadata.get("variable_references_resolved"):
+                    additional_details.append(f"Variable refs: {metadata['variable_references_resolved']}")
+
+                if additional_details and self.mode == VerbosityMode.DEBUG:
+                    completion_text += f"\n🔧 Details: {', '.join(additional_details)}"
+                elif additional_details and self.mode == VerbosityMode.VERBOSE:
+                    completion_text += f" | {additional_details[0]}"
+
+            self.console.print(completion_text, style="magenta")
+
+    def _print_direct_response_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print direct response (flow termination) updates with enhanced session completion info"""
+        final_answer_length = metadata.get("final_answer_length", 0)
+        reasoning_complete = metadata.get("reasoning_complete", False)
+        total_reasoning_steps = metadata.get("total_reasoning_steps", 0)
+        outline_completion = metadata.get("outline_completion", False)
+        steps_completed = metadata.get("steps_completed", [])
+        session_completion = metadata.get("session_completion", False)
+        reasoning_summary = metadata.get("reasoning_summary", "")
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        if reasoning_complete and session_completion:
+            if self.mode == VerbosityMode.MINIMAL:
+                self.console.print(f"✅ [{time_str}] Response ready", style="green bold")
+
+            elif self.mode == VerbosityMode.STANDARD:
+                response_text = f"✨ [{time_str}] Final response generated ({final_answer_length} characters)"
+
+                # Add outline completion status
+                if outline_completion and len(steps_completed) > 0:
+                    response_text += f" | {len(steps_completed)} steps completed"
+
+                self.console.print(response_text, style="green bold")
+
+            else:  # VERBOSE/DEBUG
+                response_text = f"✨ [{time_str}] Final Response Generated"
+                details = [
+                    f"📝 Length: {final_answer_length} characters",
+                    f"🧠 Reasoning steps: {total_reasoning_steps}"
+                ]
+
+                # Add outline completion details
+                if outline_completion:
+                    details.append(f"📋 Outline completed: {len(steps_completed)} steps")
+
+                # Add session completion info
+                if session_completion:
+                    details.append("🎯 Session successfully completed")
+
+                if self.mode == VerbosityMode.DEBUG:
+                    duration = metadata.get("execution_duration", 0)
+                    if duration > 0:
+                        details.append(f"⏱️ Generation time: {duration:.3f}s")
+
+                    if reasoning_summary:
+                        details.append(f"📊 {reasoning_summary}")
+
+                    # Add variable system completion info
+                    if metadata.get("results_stored_in_variables"):
+                        details.append("💾 Results stored in variable system")
+                    if metadata.get("session_data_archived"):
+                        details.append("📚 Session data archived")
+
+                    # Show completed steps in debug mode
+                    if steps_completed and len(steps_completed) <= 5:
+                        details.append("✅ Completed steps:")
+                        for i, step in enumerate(steps_completed[:3], 1):
+                            step_preview = step[:50] + "..." if len(step) > 50 else step
+                            details.append(f"  {i}. {step_preview}")
+                        if len(steps_completed) > 3:
+                            details.append(f"  ... +{len(steps_completed) - 3} more")
+
+                response_panel = Panel(
+                    "\n".join(details),
+                    title=response_text,
+                    style="green bold",
+                    box=box.ROUNDED
+                )
+                self.console.print(response_panel)
+
+    def _print_generic_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print generic meta-tool updates for unknown tools with enhanced variable system support"""
+        meta_tool_name = metadata.get("meta_tool_name", "unknown")
+        execution_phase = metadata.get("execution_phase", "")
+        outline_step = metadata.get("outline_step", 0)
+
+        # Enhanced timestamp formatting
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        if execution_phase == "meta_tool_start":
+            if self.mode in [VerbosityMode.STANDARD, VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                start_text = f"🔧 [{time_str}] {meta_tool_name.replace('_', ' ').title()} starting..."
+
+                # Add outline context
+                if outline_step > 0:
+                    start_text += f" (Step {outline_step})"
+
+                # Add any additional context in debug mode
+                if self.mode == VerbosityMode.DEBUG:
+                    debug_details = []
+                    if metadata.get("tool_category"):
+                        debug_details.append(f"Category: {metadata['tool_category']}")
+                    if metadata.get("variable_system_operation"):
+                        debug_details.append(f"Variable op: {metadata['variable_system_operation']}")
+                    if metadata.get("reasoning_loop"):
+                        debug_details.append(f"Loop: {metadata['reasoning_loop']}")
+
+                    if debug_details:
+                        start_text += f"\n🔧 {', '.join(debug_details)}"
+
+                self.console.print(start_text, style="white dim")
+
+        elif event.success:
+            duration = metadata.get("execution_duration", 0)
+            duration_str = f" ({duration:.1f}s)" if duration > 0.1 else ""
+
+            completion_text = f"✅ [{time_str}] {meta_tool_name.replace('_', ' ').title()} completed"
+
+            # Add outline context
+            if outline_step > 0:
+                completion_text += f" (Step {outline_step})"
+
+            completion_text += duration_str
+
+            # Add specific results based on metadata
+            result_details = []
+
+            # Variable system operations
+            if metadata.get("variable_system_operation") == "write":
+                var_scope = metadata.get("variable_scope", "")
+                var_key = metadata.get("variable_key", "")
+                if var_scope and var_key:
+                    result_details.append(f"Stored: {var_scope}.{var_key}")
+            elif metadata.get("variable_system_operation") == "read":
+                var_scope = metadata.get("variable_scope", "")
+                var_key = metadata.get("variable_key", "")
+                if var_scope and var_key:
+                    result_details.append(f"Retrieved: {var_scope}.{var_key}")
+
+            # Performance scores
+            if metadata.get("performance_score") and self.mode == VerbosityMode.DEBUG:
+                score = metadata["performance_score"]
+                result_details.append(f"Performance: {score:.1%}")
+
+            # Context changes
+            if (metadata.get("context_before_size") and metadata.get("context_after_size") and
+                metadata["context_before_size"] != metadata["context_after_size"]):
+                ctx_before = metadata["context_before_size"]
+                ctx_after = metadata["context_after_size"]
+                result_details.append(f"Context: {ctx_before}→{ctx_after}")
+
+            # Add result details to completion text
+            if result_details:
+                if self.mode == VerbosityMode.DEBUG:
+                    completion_text += f"\n🔧 Details: {', '.join(result_details)}"
+                else:
+                    completion_text += f" | {result_details[0]}"
+
+            self.console.print(completion_text, style="white")
+
+        else:
+            error_message = metadata.get("error_message", "Unknown error")
+            error_text = f"❌ [{time_str}] {meta_tool_name} failed"
+
+            # Add outline context
+            if outline_step > 0:
+                error_text += f" (Step {outline_step})"
+
+            error_text += f": {error_message}"
+
+            # Add recovery info in debug mode
+            if self.mode == VerbosityMode.DEBUG and metadata.get("recovery_recommended"):
+                error_text += "\n🔄 Auto-recovery recommended"
+
+            self.console.print(error_text, style="red")
+
+    def _print_unified_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Unified meta-tool update with enhanced timestamp display"""
+        meta_tool_name = metadata.get("meta_tool_name", "unknown")
+        execution_phase = metadata.get("execution_phase", "unknown")
+        tool_category = metadata.get("tool_category", "unknown")
+        args_string = metadata.get("raw_args_string", "unknown")
+        outline_step = metadata.get("outline_step", 0)
+
+        if "purpose" in args_string:
+            args_string = args_string.split("purpose")[1].split("}")[0]
+        elif "description" in args_string:
+            args_string = args_string.split("description")[1].split(',')[0]
+        elif "thought" in args_string:
+            args_string = args_string.split("thought")[1].split(',')[0]
+        else:
+            args_string = "..."
+
+        # Tool icons and colors
+        tool_icons = {
+            "internal_reasoning": "💭",
+            "manage_internal_task_stack": "📋",
+            "delegate_to_llm_tool_node": "🎯",
+            "create_and_execute_plan": "📋",
+            "advance_outline_step": "➡️",
+            "write_to_variables": "💾",
+            "read_from_variables": "📖",
+            "direct_response": "✨"
+        }
+
+        tool_colors = {
+            "thinking": "white",
+            "planning": "yellow",
+            "delegation": "green",
+            "orchestration": "magenta",
+            "completion": "green bold"
+        }
+
+        icon = tool_icons.get(meta_tool_name, "🔧")
+        color = tool_colors.get(tool_category, "white")
+        time_str = timestamp.strftime("%H:%M:%S")
+
+        if execution_phase == "meta_tool_start":
+            if self.mode == VerbosityMode.MINIMAL:
+                # Show more tools in minimal mode for better visibility
+                if meta_tool_name in ["create_and_execute_plan", "direct_response", "delegate_to_llm_tool_node",
+                                      "advance_outline_step"]:
+                    tool_name_display = meta_tool_name.replace('_', ' ').title()
+                    outline_info = f" (step {outline_step})" if outline_step > 0 else ""
+                    self.console.print(f"{icon} [{time_str}] {tool_name_display}{outline_info}...", style=color)
+
+            elif self.mode == VerbosityMode.STANDARD:
+                # Show all tools with brief description
+                tool_descriptions = {
+                    "internal_reasoning": "Analyzing and thinking",
+                    "manage_internal_task_stack": "Managing task queue",
+                    "delegate_to_llm_tool_node": "Delegating to tool system",
+                    "create_and_execute_plan": "Creating execution plan",
+                    "advance_outline_step": "Advancing outline step",
+                    "write_to_variables": "Storing data",
+                    "read_from_variables": "Retrieving data",
+                    "direct_response": "Generating final response"
+                }
+
+                description = tool_descriptions.get(meta_tool_name, meta_tool_name.replace('_', ' ').title())
+                outline_info = f" {args_string} (step {outline_step})" if outline_step > 0 else ""
+                self.console.print(f"{icon} [{time_str}] {description}{outline_info}...", style=color)
+
+            elif self.mode == VerbosityMode.REALTIME:
+                if self.realtime_minimal:
+                    if meta_tool_name in ["delegate_to_llm_tool_node", "create_and_execute_plan", "direct_response",
+                                          "advance_outline_step"]:
+                        tool_brief = {
+                            "delegate_to_llm_tool_node": "Delegating",
+                            "create_and_execute_plan": "Planning",
+                            "advance_outline_step": "Advancing",
+                            "direct_response": "Responding"
+                        }
+                        brief_name = tool_brief.get(meta_tool_name, meta_tool_name.replace('_', ' '))
+                        outline_info = f":s{outline_step}" if outline_step > 0 else ""
+                        print(f"\r{icon} [{time_str}] {brief_name}{outline_info}...", end="", flush=True)
+                else:
+                    tool_display = meta_tool_name.replace('_', ' ').title()
+                    outline_info = f" {args_string}  (step {outline_step})" if outline_step > 0 else ""
+                    self.console.print(f"{icon} [{time_str}] {tool_display}{outline_info} starting...",
+                                       style=f"{color} dim")
+
+        elif event.success and execution_phase != "meta_tool_start":
+            # Enhanced completion messages with timestamps
+            duration = metadata.get("execution_duration", 0)
+            duration_str = f" ({duration:.1f}s)" if duration > 0.1 else ""
+
+            if self.mode == VerbosityMode.MINIMAL:
+                # Show completion for important tools
+                if meta_tool_name == "direct_response":
+                    answer_length = metadata.get("final_answer_length", 0)
+                    self.console.print(f"✅ [{time_str}] Response ready ({answer_length} chars){duration_str}",
+                                       style="green bold")
+                elif meta_tool_name == "create_and_execute_plan":
+                    goals_count = metadata.get("goals_count", 0)
+                    self.console.print(f"✅ [{time_str}] Plan completed ({goals_count} goals){duration_str}",
+                                       style="green")
+                elif meta_tool_name == "delegate_to_llm_tool_node":
+                    self.console.print(f"✅ [{time_str}] Task delegated successfully{duration_str}", style="green")
+                elif meta_tool_name == "advance_outline_step":
+                    step_completed = metadata.get("step_completed", False)
+                    if step_completed:
+                        self.console.print(f"✅ [{time_str}] Outline step advanced{duration_str}", style="green")
+
+            elif self.mode == VerbosityMode.STANDARD:
+                # Show all completions with enhanced results
+                if meta_tool_name == "internal_reasoning":
+                    thought_num = metadata.get("thought_number", "?")
+                    focus = metadata.get("current_focus", "")[:40] + "..." if len(
+                        metadata.get("current_focus", "")) > 40 else metadata.get("current_focus", "")
+                    confidence = metadata.get("confidence_level", 0)
+                    confidence_str = f" ({confidence:.1%})" if confidence > 0 else ""
+                    if focus:
+                        self.console.print(
+                            f"💭 [{time_str}] Thought {thought_num}: {focus}{confidence_str}{duration_str}",
+                            style="white")
+
+                elif meta_tool_name == "manage_internal_task_stack":
+                    action = metadata.get("stack_action", "")
+                    stack_size = metadata.get("stack_size_after", 0)
+                    outline_ref = metadata.get("outline_step_ref", "")
+                    ref_info = f" ({outline_ref})" if outline_ref else ""
+                    self.console.print(
+                        f"📋 [{time_str}] Task stack {action}: {stack_size} items{ref_info}{duration_str}",
+                        style="yellow")
+
+                elif meta_tool_name == "delegate_to_llm_tool_node":
+                    task_desc = metadata.get("delegated_task_description", "")
+                    outline_completion = metadata.get("outline_step_completion", False)
+                    completion_info = " ✓ Step Complete" if outline_completion else ""
+                    if task_desc:
+                        task_brief = task_desc[:60] + "..." if len(task_desc) > 60 else task_desc
+                        self.console.print(f"🎯 [{time_str}] Completed: {task_brief}{completion_info}{duration_str}",
+                                           style="green")
+
+                elif meta_tool_name == "advance_outline_step":
+                    step_completed = metadata.get("step_completed", False)
+                    completion_evidence = metadata.get("completion_evidence", "")[:50] + "..." if len(
+                        metadata.get("completion_evidence", "")) > 50 else metadata.get("completion_evidence", "")
+                    if step_completed:
+                        self.console.print(f"➡️ [{time_str}] Step advanced: {completion_evidence}{duration_str}",
+                                           style="green")
+
+                elif meta_tool_name == "write_to_variables":
+                    var_scope = metadata.get("variable_scope", "")
+                    var_key = metadata.get("variable_key", "")
+                    self.console.print(f"💾 [{time_str}] Stored: {var_scope}.{var_key}{duration_str}", style="blue")
+
+                elif meta_tool_name == "read_from_variables":
+                    var_scope = metadata.get("variable_scope", "")
+                    var_key = metadata.get("variable_key", "")
+                    self.console.print(f"📖 [{time_str}] Retrieved: {var_scope}.{var_key}{duration_str}", style="blue")
+
+                elif meta_tool_name == "create_and_execute_plan":
+                    goals_count = metadata.get("goals_count", 0)
+                    complexity = metadata.get("estimated_complexity", "")
+                    complexity_str = f" ({complexity})" if complexity and complexity != "unknown" else ""
+                    outline_completion = metadata.get("outline_step_completion", False)
+                    completion_info = " ✓ Step Complete" if outline_completion else ""
+                    self.console.print(
+                        f"📋 [{time_str}] Plan executed: {goals_count} goals{complexity_str}{completion_info}{duration_str}",
+                        style="magenta")
+
+                elif meta_tool_name == "direct_response":
+                    answer_length = metadata.get("final_answer_length", 0)
+                    total_steps = metadata.get("total_reasoning_steps", 0)
+                    self.console.print(
+                        f"✨ [{time_str}] Response generated ({answer_length} chars, {total_steps} reasoning steps){duration_str}",
+                        style="green bold")
+
+            elif self.mode == VerbosityMode.REALTIME:
+                if self.realtime_minimal:
+                    # Clear the line and show completion with time
+                    if meta_tool_name == "direct_response":
+                        print(f"\r✅ [{time_str}] Response ready                    ")
+                    elif meta_tool_name == "create_and_execute_plan":
+                        goals_count = metadata.get("goals_count", 0)
+                        print(f"\r✅ [{time_str}] Plan done ({goals_count})           ")
+                    elif meta_tool_name == "delegate_to_llm_tool_node":
+                        print(f"\r✅ [{time_str}] Task completed                    ")
+                    elif meta_tool_name == "advance_outline_step":
+                        if metadata.get("step_completed", False):
+                            print(f"\r➡️ [{time_str}] Step advanced                    ")
+                else:
+                    # Full realtime updates with timestamp and duration
+                    tool_display = meta_tool_name.replace('_', ' ').title()
+                    outline_info = f" (step {outline_step})" if outline_step > 0 else ""
+
+                    if meta_tool_name == "direct_response":
+                        answer_length = metadata.get("final_answer_length", 0)
+                        self.console.print(
+                            f"✅ [{time_str}] {tool_display} complete: {answer_length} chars{outline_info}{duration_str}",
+                            style="green bold")
+                    elif meta_tool_name == "create_and_execute_plan":
+                        goals_count = metadata.get("goals_count", 0)
+                        outline_completion = metadata.get("outline_step_completion", False)
+                        completion_info = " ✓" if outline_completion else ""
+                        self.console.print(
+                            f"✅ [{time_str}] {tool_display} complete: {goals_count} goals{completion_info}{outline_info}{duration_str}",
+                            style="magenta")
+                    elif meta_tool_name == "delegate_to_llm_tool_node":
+                        tools_count = metadata.get("tools_count", 0)
+                        outline_completion = metadata.get("outline_step_completion", False)
+                        completion_info = " ✓" if outline_completion else ""
+                        self.console.print(
+                            f"✅ [{time_str}] {tool_display} complete: {tools_count} tools{completion_info}{outline_info}{duration_str}",
+                            style="green")
+                    else:
+                        self.console.print(f"✅ [{time_str}] {tool_display} completed{outline_info}{duration_str}",
+                                           style=f"{color} dim")
+
+        elif not event.success:
+            # Error messages with timestamps - show in all modes except minimal realtime
+            if not (self.mode == VerbosityMode.REALTIME and self.realtime_minimal):
+                error_message = metadata.get("error_message", "Unknown error")
+                outline_info = f" (step {outline_step})" if outline_step > 0 else ""
+                if self.mode == VerbosityMode.REALTIME and self.realtime_minimal:
+                    print(f"\r❌ [{time_str}] {meta_tool_name.replace('_', ' ').title()} failed      ")
+                else:
+                    self.console.print(
+                        f"❌ [{time_str}] {meta_tool_name.replace('_', ' ').title()} failed{outline_info}: {error_message}",
+                        style="red")
+
+    def _print_enhanced_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Print updates for enhanced meta-tools (advance_outline_step, write_to_variables, read_from_variables)"""
+        if not event.success:
+            return
+
+        meta_tool_name = metadata.get("meta_tool_name", "unknown")
+        time_str = timestamp.strftime("%H:%M:%S")
+        duration = metadata.get("execution_duration", 0)
+        duration_str = f" ({duration:.2f}s)" if duration > 0.01 else ""
+
+        if meta_tool_name == "advance_outline_step":
+            step_completed = metadata.get("step_completed", False)
+            completion_evidence = metadata.get("completion_evidence", "")
+            next_step_focus = metadata.get("next_step_focus", "")
+            step_progression = metadata.get("step_progression", "")
+
+            if step_completed:
+                advancement_text = f"➡️ [{time_str}] Outline Step Advanced"
+                if step_progression:
+                    advancement_text += f" ({step_progression})"
+
+                details = []
+                if completion_evidence:
+                    evidence_preview = completion_evidence[:80] + "..." if len(
+                        completion_evidence) > 80 else completion_evidence
+                    details.append(f"✓ Evidence: {evidence_preview}")
+                if next_step_focus:
+                    focus_preview = next_step_focus[:60] + "..." if len(next_step_focus) > 60 else next_step_focus
+                    details.append(f"🎯 Next Focus: {focus_preview}")
+
+                if self.mode == VerbosityMode.DEBUG and details:
+                    advancement_panel = Panel(
+                        "\n".join(details),
+                        title=advancement_text + duration_str,
+                        style="green",
+                        box=box.ROUNDED
+                    )
+                    self.console.print(advancement_panel)
+                else:
+                    if details and self.mode == VerbosityMode.VERBOSE:
+                        self.console.print(f"{advancement_text}{duration_str}\n{details[0]}", style="green")
+                    else:
+                        self.console.print(f"{advancement_text}{duration_str}", style="green")
+
+        elif meta_tool_name == "write_to_variables":
+            var_scope = metadata.get("variable_scope", "")
+            var_key = metadata.get("variable_key", "")
+            var_description = metadata.get("variable_description", "")
+
+            var_text = f"💾 [{time_str}] Stored Variable: {var_scope}.{var_key}{duration_str}"
+
+            if var_description and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                desc_preview = var_description[:60] + "..." if len(var_description) > 60 else var_description
+                self.console.print(f"{var_text}\n📄 {desc_preview}", style="blue")
+            else:
+                self.console.print(var_text, style="blue")
+
+        elif meta_tool_name == "read_from_variables":
+            var_scope = metadata.get("variable_scope", "")
+            var_key = metadata.get("variable_key", "")
+            read_purpose = metadata.get("read_purpose", "")
+
+            var_text = f"📖 [{time_str}] Retrieved Variable: {var_scope}.{var_key}{duration_str}"
+
+            if read_purpose and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                purpose_preview = read_purpose[:60] + "..." if len(read_purpose) > 60 else read_purpose
+                self.console.print(f"{var_text}\n🎯 Purpose: {purpose_preview}", style="blue")
+            else:
+                self.console.print(var_text, style="blue")
+
+    def _print_meta_tool_fallback(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+        """Fallback meta-tool printing without Rich for all modes with timestamps"""
+        try:
+            meta_tool_name = metadata.get("meta_tool_name", "unknown")
+            execution_phase = metadata.get("execution_phase", "")
+            reasoning_loop = metadata.get("reasoning_loop", "?")
+            outline_step = metadata.get("outline_step", 0)
+            time_str = timestamp.strftime("%H:%M:%S")
+
+            if execution_phase == "meta_tool_start":
+                if self.mode == VerbosityMode.MINIMAL:
+                    # Only show important tools
+                    if meta_tool_name in ["create_and_execute_plan", "direct_response", "advance_outline_step"]:
+                        outline_info = f" (step {outline_step})" if outline_step > 0 else ""
+                        print(f"🔧 [{time_str}] {meta_tool_name.replace('_', ' ').title()}{outline_info}")
+                else:
+                    outline_info = f" step:{outline_step}" if outline_step > 0 else ""
+                    print(f"🔧 [{time_str}] Loop {reasoning_loop}{outline_info}: {meta_tool_name} starting...")
+
+            elif event.success:
+                duration = metadata.get("execution_duration", 0)
+                duration_str = f" ({duration:.1f}s)" if duration > 0 else ""
+                outline_info = f" step:{outline_step}" if outline_step > 0 else ""
+
+                if self.mode == VerbosityMode.MINIMAL:
+                    # Only show completion for important tools
+                    if meta_tool_name == "direct_response":
+                        print(f"✅ [{time_str}] Response generated{duration_str}")
+                    elif meta_tool_name == "create_and_execute_plan":
+                        goals_count = metadata.get("goals_count", 0)
+                        print(f"✅ [{time_str}] Plan executed ({goals_count} goals){duration_str}")
+                    elif meta_tool_name == "advance_outline_step":
+                        if metadata.get("step_completed", False):
+                            print(f"➡️ [{time_str}] Step advanced{duration_str}")
+                else:
+                    print(
+                        f"✅ [{time_str}] Loop {reasoning_loop}{outline_info}: {meta_tool_name} completed{duration_str}")
+
+                    # Show specific results based on tool type with enhanced info
+                    if meta_tool_name == "manage_internal_task_stack":
+                        action = metadata.get("stack_action", "")
+                        stack_size = metadata.get("stack_size_after", 0)
+                        outline_ref = metadata.get("outline_step_ref", "")
+                        ref_info = f" ({outline_ref})" if outline_ref else ""
+                        print(f"   Stack {action}: {stack_size} items{ref_info}")
+
+                    elif meta_tool_name == "internal_reasoning":
+                        thought_num = metadata.get("thought_number", "?")
+                        total_thoughts = metadata.get("total_thoughts", "?")
+                        focus = metadata.get("current_focus", "")[:50] + "..." if len(
+                            metadata.get("current_focus", "")) > 50 else metadata.get("current_focus", "")
+                        confidence = metadata.get("confidence_level", 0)
+                        confidence_str = f" ({confidence:.1%})" if confidence > 0 else ""
+                        print(f"   Thought {thought_num}/{total_thoughts}: {focus}{confidence_str}")
+
+                    elif meta_tool_name == "create_and_execute_plan":
+                        goals_count = metadata.get("goals_count", 0)
+                        complexity = metadata.get("estimated_complexity", "")
+                        complexity_str = f" ({complexity})" if complexity and complexity != "unknown" else ""
+                        print(f"   Plan executed: {goals_count} goals{complexity_str}")
+
+                    elif meta_tool_name == "delegate_to_llm_tool_node":
+                        tools_count = metadata.get("tools_count", 0)
+                        task_desc = metadata.get("delegated_task_description", "")
+                        if task_desc:
+                            task_brief = task_desc[:50] + "..." if len(task_desc) > 50 else task_desc
+                            print(f"   Task: {task_brief} | {tools_count} tools used")
+                        else:
+                            print(f"   Delegation: {tools_count} tools used")
+
+                    elif meta_tool_name == "advance_outline_step":
+                        if metadata.get("step_completed", False):
+                            evidence = metadata.get("completion_evidence", "")[:50] + "..." if len(
+                                metadata.get("completion_evidence", "")) > 50 else metadata.get("completion_evidence",
+                                                                                                "")
+                            print(f"   Step completed: {evidence}")
+
+                    elif meta_tool_name == "write_to_variables":
+                        var_scope = metadata.get("variable_scope", "")
+                        var_key = metadata.get("variable_key", "")
+                        print(f"   Stored: {var_scope}.{var_key}")
+
+                    elif meta_tool_name == "read_from_variables":
+                        var_scope = metadata.get("variable_scope", "")
+                        var_key = metadata.get("variable_key", "")
+                        print(f"   Retrieved: {var_scope}.{var_key}")
+            else:
+                error = metadata.get("error_message", "Unknown error")
+                if self.mode != VerbosityMode.MINIMAL:
+                    outline_info = f" step:{outline_step}" if outline_step > 0 else ""
+                    print(f"❌ [{time_str}] Loop {reasoning_loop}{outline_info}: {meta_tool_name} failed - {error}")
+
+        except Exception as e:
+            print(f"⚠️ Fallback meta-tool print error: {e}")
+
+    def print_task_update_from_event(self, event: ProgressEvent):
+        """Print task updates from events with automatic task detection"""
+        try:
+            # Check if this is a task-related event
+            if not event.event_type.startswith('task_'):
+                return
+
+            # Extract task object from metadata
+            if not event.metadata or 'task' not in event.metadata:
+                return
+
+            task_dict = event.metadata['task']
+
+            self._print_task_update(event, task_dict)
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Error printing task update from event: {e}")
+            import traceback
+            print(traceback.format_exc())
+
+    def _print_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any]):
+        """Print task update based on verbosity mode"""
+        try:
+            if self._fallback_mode or not self.use_rich:
+                self._print_task_update_fallback(event, task_dict)
+                return
+
+            # Get task info
+            task_id = task_dict.get('id', 'unknown')
+            task_type = task_dict.get('type', 'Task')
+            task_status = task_dict.get('status', 'unknown')
+            task_description = task_dict.get('description', 'No description')
+
+            # Status icon and color
+            status_icon = self._get_task_status_icon_from_dict(task_dict)
+            status_color = self._get_task_status_color_from_dict(task_dict)
+
+            # Format based on verbosity mode and event type
+            if self.mode == VerbosityMode.MINIMAL:
+                self._print_minimal_task_update(event, task_dict, status_icon)
+
+            elif self.mode == VerbosityMode.STANDARD:
+                self._print_standard_task_update(event, task_dict, status_icon, status_color)
+
+            elif self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                self._print_detailed_task_update(event, task_dict, status_icon, status_color)
+
+            elif self.mode == VerbosityMode.REALTIME:
+                if not self.realtime_minimal:
+                    self._print_realtime_task_update(event, task_dict, status_icon)
+
+        except Exception as e:
+            self._consecutive_errors += 1
+            if self._consecutive_errors <= self._error_threshold:
+                print(f"⚠️ Task update print error: {e}")
+            self._print_task_update_fallback(event, task_dict)
+
+    def _print_minimal_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str):
+        """Minimal task update - only status changes"""
+        if event.event_type in ['task_start', 'task_complete', 'task_error']:
+            task_id = task_dict.get('id', 'unknown')
+            task_text = f"{status_icon} {task_id}"
+
+            if event.event_type == 'task_error' and task_dict.get('error'):
+                task_text += f" - {task_dict['error']}"
+
+            self.console.print(task_text, style=self._get_task_status_color_from_dict(task_dict))
+
+    def _print_standard_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str,
+                                    status_color: str):
+        """Standard task update with panels"""
+        task_id = task_dict.get('id', 'unknown')
+        task_description = task_dict.get('description', 'No description')
+
+        # Create update message based on event type
+        if event.event_type == 'task_start':
+            title = f"🚀 Task Starting: {task_id}"
+            content = f"{status_icon} {task_description}"
+
+        elif event.event_type == 'task_complete':
+            title = f"✅ Task Completed: {task_id}"
+            content = f"{status_icon} {task_description}"
+
+            # Add timing if available
+            if task_dict.get('started_at') and task_dict.get('completed_at'):
+                try:
+                    start = datetime.fromisoformat(task_dict['started_at']) if isinstance(task_dict['started_at'],
+                                                                                          str) else task_dict[
+                        'started_at']
+                    end = datetime.fromisoformat(task_dict['completed_at']) if isinstance(task_dict['completed_at'],
+                                                                                          str) else task_dict[
+                        'completed_at']
+                    duration = (end - start).total_seconds()
+                    content += f"\n⏱️ Duration: {duration:.1f}s"
+                except:
+                    pass
+
+        elif event.event_type == 'task_error':
+            title = f"❌ Task Failed: {task_id}"
+            content = f"{status_icon} {task_description}"
+
+            if task_dict.get('error'):
+                content += f"\n🚨 Error: {task_dict['error']}"
+
+            retry_count = task_dict.get('retry_count', 0)
+            max_retries = task_dict.get('max_retries', 0)
+            if retry_count > 0:
+                content += f"\n🔄 Retries: {retry_count}/{max_retries}"
+
+        elif event.event_type == 'task_updating':
+            old_status = event.metadata.get('old_status', 'unknown')
+            new_status = event.metadata.get('new_status', 'unknown')
+            title = f"🔄 Task Update: {task_id}"
+            content = f"{status_icon} {old_status} → {new_status}"
+        else:
+            return  # Don't print other task events in standard mode
+
+        # Create and print panel
+        panel = Panel(
+            content,
+            title=title,
+            style=status_color,
+            box=box.ROUNDED
+        )
+        self.console.print(panel)
+
+    def _print_detailed_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str,
+                                    status_color: str):
+        """Detailed task update with full information"""
+        task_id = task_dict.get('id', 'unknown')
+        task_type = task_dict.get('type', 'Task')
+
+        # Build comprehensive task info
+        content_lines = []
+        content_lines.append(f"{status_icon} Type: {task_type}")
+        content_lines.append(f"📄 {task_dict.get('description', 'No description')}")
+
+        # Dependencies
+        if task_dict.get('dependencies'):
+            content_lines.append(f"🔗 Dependencies: {', '.join(task_dict['dependencies'])}")
+
+        # Priority
+        if task_dict.get('priority', 1) != 1:
+            content_lines.append(f"⭐ Priority: {task_dict['priority']}")
+
+        # Task-specific details
+        if task_type == 'ToolTask':
+            if task_dict.get('tool_name'):
+                content_lines.append(f"🔧 Tool: {task_dict['tool_name']}")
+            if task_dict.get('arguments') and self.mode == VerbosityMode.DEBUG:
+                args_str = str(task_dict['arguments'])[:80] + "..." if len(str(task_dict['arguments'])) > 80 else str(
+                    task_dict['arguments'])
+                content_lines.append(f"⚙️ Args: {args_str}")
+            if task_dict.get('hypothesis'):
+                content_lines.append(f"🔬 Hypothesis: {task_dict['hypothesis']}")
+
+        elif task_type == 'LLMTask':
+            if task_dict.get('llm_config'):
+                model = task_dict['llm_config'].get('model_preference', 'default')
+                temp = task_dict['llm_config'].get('temperature', 0.7)
+                content_lines.append(f"🧠 Model: {model} (temp: {temp})")
+            if task_dict.get('context_keys'):
+                content_lines.append(f"🔑 Context: {', '.join(task_dict['context_keys'])}")
+
+        elif task_type == 'DecisionTask':
+            if task_dict.get('routing_map') and self.mode == VerbosityMode.DEBUG:
+                routes = list(task_dict['routing_map'].keys())
+                content_lines.append(f"🗺️ Routes: {routes}")
+
+        # Timing information
+        timing_info = []
+        if task_dict.get('created_at'):
+            timing_info.append(f"Created: {self._format_timestamp(task_dict['created_at'])}")
+        if task_dict.get('started_at'):
+            timing_info.append(f"Started: {self._format_timestamp(task_dict['started_at'])}")
+        if task_dict.get('completed_at'):
+            timing_info.append(f"Completed: {self._format_timestamp(task_dict['completed_at'])}")
+
+        if timing_info:
+            content_lines.append(f"📅 {' | '.join(timing_info)}")
+
+        # Error information
+        if task_dict.get('error'):
+            content_lines.append(f"❌ Error: {task_dict['error']}")
+            retry_count = task_dict.get('retry_count', 0)
+            max_retries = task_dict.get('max_retries', 0)
+            if retry_count > 0:
+                content_lines.append(f"🔄 Retries: {retry_count}/{max_retries}")
+
+        # Result preview (in debug mode)
+        if self.mode == VerbosityMode.DEBUG and task_dict.get('result'):
+            result_preview = str(task_dict['result'])[:100] + "..." if len(str(task_dict['result'])) > 100 else str(
+                task_dict['result'])
+            content_lines.append(f"📊 Result: {result_preview}")
+
+        # Critical flag
+        if task_dict.get('critical'):
+            content_lines.append("🚨 CRITICAL TASK")
+
+        # Create title based on event type
+        event_titles = {
+            'task_start': f"🔄 Running Task: {task_id}",
+            'task_complete': f"✅ Completed Task: {task_id}",
+            'task_error': f"❌ Failed Task: {task_id}",
+            'task_updating': f"🔄 Updating Task: {task_id}"
+        }
+        title = event_titles.get(event.event_type, f"📋 Task Update: {task_id}")
+
+        # Create and print panel
+        panel = Panel(
+            "\n".join(content_lines),
+            title=title,
+            style=status_color,
+            box=box.ROUNDED
+        )
+        self.console.print(panel)
+
+    def _print_realtime_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str):
+        """Realtime task update - brief but informative"""
+        if event.event_type in ['task_start', 'task_complete', 'task_error']:
+            task_id = task_dict.get('id', 'unknown')
+            task_desc = task_dict.get('description', '')[:50] + "..." if len(
+                task_dict.get('description', '')) > 50 else task_dict.get('description', '')
+
+            update_text = f"{status_icon} {task_id}: {task_desc}"
+
+            if event.event_type == 'task_error' and task_dict.get('error'):
+                update_text += f" ({task_dict['error']})"
+
+            self.console.print(update_text, style=self._get_task_status_color_from_dict(task_dict))
+
+    def _print_task_update_fallback(self, event: ProgressEvent, task_dict: Dict[str, Any]):
+        """Fallback task update printing without Rich"""
+        try:
+            task_id = task_dict.get('id', 'unknown')
+            task_type = task_dict.get('type', 'Task')
+            task_status = task_dict.get('status', 'unknown')
+            task_description = task_dict.get('description', 'No description')
+
+            status_icon = self._get_task_status_icon_from_dict(task_dict)
+
+            if event.event_type == 'task_start':
+                print(f"\n🚀 TASK STARTING: {task_id}")
+                print(f"{status_icon} {task_description}")
+
+            elif event.event_type == 'task_complete':
+                print(f"\n✅ TASK COMPLETED: {task_id}")
+                print(f"{status_icon} {task_description}")
+
+                if task_dict.get('started_at') and task_dict.get('completed_at'):
+                    try:
+                        start = datetime.fromisoformat(task_dict['started_at']) if isinstance(task_dict['started_at'],
+                                                                                              str) else task_dict[
+                            'started_at']
+                        end = datetime.fromisoformat(task_dict['completed_at']) if isinstance(task_dict['completed_at'],
+                                                                                              str) else task_dict[
+                            'completed_at']
+                        duration = (end - start).total_seconds()
+                        print(f"⏱️ Duration: {duration:.1f}s")
+                    except:
+                        pass
+
+            elif event.event_type == 'task_error':
+                print(f"\n❌ TASK FAILED: {task_id}")
+                print(f"{status_icon} {task_description}")
+                if task_dict.get('error'):
+                    print(f"🚨 Error: {task_dict['error']}")
+
+            elif event.event_type == 'task_updating':
+                old_status = event.metadata.get('old_status', 'unknown')
+                new_status = event.metadata.get('new_status', 'unknown')
+                print(f"\n🔄 TASK UPDATE: {task_id}")
+                print(f"{status_icon} {old_status} → {new_status}")
+
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                print(f"Type: {task_type} | Priority: {task_dict.get('priority', 1)}")
+                if task_dict.get('dependencies'):
+                    print(f"Dependencies: {', '.join(task_dict['dependencies'])}")
+
+            print("-" * 50)
+
+        except Exception as e:
+            print(f"⚠️ Error in fallback task print: {e}")
+
+    def _get_task_status_icon_from_dict(self, task_dict: Dict[str, Any]) -> str:
+        """Get status icon from task dict"""
+        status = task_dict.get('status', 'unknown')
+        status_icons = {
+            "pending": "⏳",
+            "running": "🔄",
+            "completed": "✅",
+            "failed": "❌",
+            "paused": "⏸️"
+        }
+        return status_icons.get(status, "❓")
+
+    def _get_task_status_color_from_dict(self, task_dict: Dict[str, Any]) -> str:
+        """Get status color from task dict"""
+        status = task_dict.get('status', 'unknown')
+        status_colors = {
+            "pending": "yellow",
+            "running": "white bold",
+            "completed": "green bold",
+            "failed": "red bold",
+            "paused": "orange3"
+        }
+        return status_colors.get(status, "white")
+
+    def _format_timestamp(self, timestamp) -> str:
+        """Format timestamp for display"""
+        try:
+            if isinstance(timestamp, str):
+                dt = datetime.fromisoformat(timestamp)
+            else:
+                dt = timestamp
+            return dt.strftime('%H:%M:%S')
+        except:
+            return str(timestamp)
+
 
     def _print_debug_event(self, event: ProgressEvent):
         """Print individual event details in debug mode"""
@@ -2156,7 +3776,7 @@ class ProgressiveTreePrinter:
                 debug_text += f" {success_icon}"
             self.console.print(debug_text, style="dim")
         else:
-            print(f"[{timestamp}] {event.event_type.upper()} - {event.node_name}")
+            print(f"[{timestamp}] {event.event_type.upper()} - {event.node_name} ({json.dumps({k: v for k, v in asdict(event).items() if v is not None}, default=str, ensure_ascii=False)})")
 
     async def _noop_callback(self, event: ProgressEvent):
         """No-op callback when printing is disabled"""

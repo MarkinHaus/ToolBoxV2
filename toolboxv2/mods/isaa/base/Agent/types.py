@@ -9,7 +9,7 @@ import time
 
 
 class ResponseFormat(Enum):
-    FREI_TEXT = "frei-text"
+    FREE_TEXT = "free-text"
     WITH_TABLES = "with-tables"
     WITH_BULLET_POINTS = "with-bullet-points"
     WITH_LISTS = "with-lists"
@@ -173,7 +173,7 @@ class ProgressTracker:
 @dataclass
 class FormatConfig:
     """Konfiguration für Response-Format und -Länge"""
-    response_format: ResponseFormat = ResponseFormat.FREI_TEXT
+    response_format: ResponseFormat = ResponseFormat.FREE_TEXT
     text_length: TextLength = TextLength.CHAT_CONVERSATION
     custom_instructions: str = ""
     strict_format_adherence: bool = True
@@ -182,27 +182,27 @@ class FormatConfig:
     def get_format_instructions(self) -> str:
         """Generiere Format-spezifische Anweisungen"""
         format_instructions = {
-            ResponseFormat.FREI_TEXT: "Verwende natürlichen Fließtext ohne spezielle Formatierung.",
-            ResponseFormat.WITH_TABLES: "Integriere Tabellen zur strukturierten Darstellung von Daten. Verwende Markdown-Tabellen.",
-            ResponseFormat.WITH_BULLET_POINTS: "Strukturiere Informationen mit Bullet Points (•, -, *) für bessere Lesbarkeit.",
-            ResponseFormat.WITH_LISTS: "Verwende nummerierte und unnummerierte Listen zur Organisation von Inhalten.",
-            ResponseFormat.TEXT_ONLY: "Nur reiner Text ohne Formatierung, Symbole oder Strukturelemente.",
-            ResponseFormat.MD_TEXT: "Vollständige Markdown-Formatierung mit Headings, Code-Blocks, Links etc.",
-            ResponseFormat.YAML_TEXT: "Strukturiere Antworten als YAML-Format für maschinenlesbare Ausgabe.",
-            ResponseFormat.JSON_TEXT: "Formatiere Antworten als JSON-Struktur für API-Integration.",
-            ResponseFormat.PSEUDO_CODE: "Verwende Pseudocode-Struktur für algorithmische oder logische Erklärungen.",
-            ResponseFormat.CODE_STRUCTURE: "Strukturiere wie Code mit Einrückungen, Kommentaren und logischen Blöcken."
+            ResponseFormat.FREE_TEXT: "Use natural continuous text without special formatting.",
+            ResponseFormat.WITH_TABLES: "Integrate tables for structured data representation. Use Markdown tables.",
+            ResponseFormat.WITH_BULLET_POINTS: "Structure information with bullet points (•, -, *) for better readability.",
+            ResponseFormat.WITH_LISTS: "Use numbered and unnumbered lists to organize content.",
+            ResponseFormat.TEXT_ONLY: "Plain text only without formatting, symbols, or structural elements.",
+            ResponseFormat.MD_TEXT: "Full Markdown formatting with headings, code blocks, links, etc.",
+            ResponseFormat.YAML_TEXT: "Structure responses in YAML format for machine-readable output.",
+            ResponseFormat.JSON_TEXT: "Format responses as a JSON structure for API integration.",
+            ResponseFormat.PSEUDO_CODE: "Use pseudocode structure for algorithmic or logical explanations.",
+            ResponseFormat.CODE_STRUCTURE: "Structure like code with indentation, comments, and logical blocks."
         }
         return format_instructions.get(self.response_format, "Standard-Formatierung.")
 
     def get_length_instructions(self) -> str:
         """Generiere Längen-spezifische Anweisungen"""
         length_instructions = {
-            TextLength.MINI_CHAT: "Sehr kurze, prägnante Antworten (1-2 Sätze, max 50 Wörter). Chat-Style.",
-            TextLength.CHAT_CONVERSATION: "Moderate Gesprächslänge (2-4 Sätze, 50-150 Wörter). Natürlicher Unterhaltungsstil.",
-            TextLength.TABLE_CONVERSATION: "Strukturierte, tabellarische Darstellung mit kompakten Erklärungen (100-250 Wörter).",
-            TextLength.DETAILED_INDEPTH: "Ausführliche, detaillierte Erklärungen (300-800 Wörter) mit Tiefe und Kontext.",
-            TextLength.PHD_LEVEL: "Akademische Tiefe mit umfassenden Erklärungen (800+ Wörter), Quellenangaben und Fachterminologie."
+            TextLength.MINI_CHAT: "Very short, concise answers (1–2 sentences, max 50 words). Chat style.",
+            TextLength.CHAT_CONVERSATION: "Moderate conversation length (2–4 sentences, 50–150 words). Natural conversational style.",
+            TextLength.TABLE_CONVERSATION: "Structured, tabular presentation with compact explanations (100–250 words).",
+            TextLength.DETAILED_INDEPTH: "Comprehensive, detailed explanations (300–800 words) with depth and context.",
+            TextLength.PHD_LEVEL: "Academic depth with extensive explanations (800+ words), references, and technical terminology."
         }
         return length_instructions.get(self.text_length, "Standard-Länge.")
 
@@ -219,7 +219,7 @@ class FormatConfig:
             instructions.append(self.custom_instructions)
 
         if self.strict_format_adherence:
-            instructions.append("\n## WICHTIG: Halte dich strikt an diese Format- und Längen-Vorgaben!")
+            instructions.append("\n## ATTENTION: STRICT FORMAT ADHERENCE REQUIRED!")
 
         return "\n".join(instructions)
 
@@ -358,8 +358,10 @@ def create_task(task_type: str, **kwargs) -> Task:
 
     return task
 
+
 @dataclass
 class AgentCheckpoint:
+    """Enhanced AgentCheckpoint with UnifiedContextManager and ChatSession integration"""
     timestamp: datetime
     agent_state: Dict[str, Any]
     task_state: Dict[str, Any]
@@ -367,6 +369,153 @@ class AgentCheckpoint:
     active_flows: List[str]
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # NEUE: Enhanced checkpoint data for UnifiedContextManager integration
+    session_data: Dict[str, Any] = field(default_factory=dict)
+    context_manager_state: Dict[str, Any] = field(default_factory=dict)
+    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
+    variable_system_state: Dict[str, Any] = field(default_factory=dict)
+    results_store: Dict[str, Any] = field(default_factory=dict)
+    tool_capabilities: Dict[str, Any] = field(default_factory=dict)
+    variable_scopes: Dict[str, Any] = field(default_factory=dict)
+
+    # Optional: Additional system state
+    performance_metrics: Dict[str, Any] = field(default_factory=dict)
+    execution_history: List[Dict[str, Any]] = field(default_factory=list)
+
+    def get_checkpoint_summary(self) -> str:
+        """Get human-readable checkpoint summary"""
+        try:
+            summary_parts = []
+
+            # Basic info
+            if self.session_data:
+                session_count = len([s for s in self.session_data.values() if s.get("status") != "failed"])
+                summary_parts.append(f"{session_count} sessions")
+
+            # Task info
+            if self.task_state:
+                completed_tasks = len([t for t in self.task_state.values() if t.get("status") == "completed"])
+                total_tasks = len(self.task_state)
+                summary_parts.append(f"{completed_tasks}/{total_tasks} tasks")
+
+            # Conversation info
+            if self.conversation_history:
+                summary_parts.append(f"{len(self.conversation_history)} messages")
+
+            # Context info
+            if self.context_manager_state:
+                cache_count = self.context_manager_state.get("cache_entries", 0)
+                if cache_count > 0:
+                    summary_parts.append(f"{cache_count} cached contexts")
+
+            # Variable system info
+            if self.variable_system_state:
+                scopes = len(self.variable_system_state.get("scopes", {}))
+                summary_parts.append(f"{scopes} variable scopes")
+
+            # Tool capabilities
+            if self.tool_capabilities:
+                summary_parts.append(f"{len(self.tool_capabilities)} analyzed tools")
+
+            return "; ".join(summary_parts) if summary_parts else "Basic checkpoint"
+
+        except Exception as e:
+            return f"Summary generation failed: {str(e)}"
+
+    def get_storage_size_estimate(self) -> Dict[str, int]:
+        """Estimate storage size of different checkpoint components"""
+        try:
+            sizes = {}
+
+            # Calculate sizes in bytes (approximate)
+            sizes["agent_state"] = len(str(self.agent_state))
+            sizes["task_state"] = len(str(self.task_state))
+            sizes["world_model"] = len(str(self.world_model))
+            sizes["conversation_history"] = len(str(self.conversation_history))
+            sizes["session_data"] = len(str(self.session_data))
+            sizes["context_manager_state"] = len(str(self.context_manager_state))
+            sizes["variable_system_state"] = len(str(self.variable_system_state))
+            sizes["results_store"] = len(str(self.results_store))
+            sizes["tool_capabilities"] = len(str(self.tool_capabilities))
+
+            sizes["total_bytes"] = sum(sizes.values())
+            sizes["total_kb"] = sizes["total_bytes"] / 1024
+            sizes["total_mb"] = sizes["total_kb"] / 1024
+
+            return sizes
+
+        except Exception as e:
+            return {"error": str(e)}
+
+    def validate_checkpoint_integrity(self) -> Dict[str, Any]:
+        """Validate checkpoint integrity and completeness"""
+        validation = {
+            "is_valid": True,
+            "errors": [],
+            "warnings": [],
+            "completeness_score": 0.0,
+            "components_present": []
+        }
+
+        try:
+            # Check required components
+            required_components = ["timestamp", "agent_state", "task_state", "world_model", "active_flows"]
+            for component in required_components:
+                if hasattr(self, component) and getattr(self, component) is not None:
+                    validation["components_present"].append(component)
+                else:
+                    validation["errors"].append(f"Missing required component: {component}")
+                    validation["is_valid"] = False
+
+            # Check optional enhanced components
+            enhanced_components = ["session_data", "context_manager_state", "conversation_history",
+                                   "variable_system_state", "results_store", "tool_capabilities"]
+
+            for component in enhanced_components:
+                if hasattr(self, component) and getattr(self, component):
+                    validation["components_present"].append(component)
+
+            # Calculate completeness score
+            total_possible = len(required_components) + len(enhanced_components)
+            validation["completeness_score"] = len(validation["components_present"]) / total_possible
+
+            # Check timestamp validity
+            if isinstance(self.timestamp, datetime):
+                age_hours = (datetime.now() - self.timestamp).total_seconds() / 3600
+                if age_hours > 24:
+                    validation["warnings"].append(f"Checkpoint is {age_hours:.1f} hours old")
+            else:
+                validation["errors"].append("Invalid timestamp format")
+                validation["is_valid"] = False
+
+            # Check session data consistency
+            if self.session_data and self.conversation_history:
+                session_ids_in_data = set(self.session_data.keys())
+                session_ids_in_conversation = set(
+                    msg.get("session_id") for msg in self.conversation_history
+                    if msg.get("session_id")
+                )
+
+                if session_ids_in_data != session_ids_in_conversation:
+                    validation["warnings"].append("Session data and conversation history session IDs don't match")
+
+            return validation
+
+        except Exception as e:
+            validation["errors"].append(f"Validation error: {str(e)}")
+            validation["is_valid"] = False
+            return validation
+
+    def get_version_info(self) -> Dict[str, str]:
+        """Get checkpoint version information"""
+        return {
+            "checkpoint_version": self.metadata.get("checkpoint_version", "1.0"),
+            "data_format": "enhanced" if self.session_data or self.context_manager_state else "basic",
+            "context_system": "unified" if self.context_manager_state else "legacy",
+            "variable_system": "integrated" if self.variable_system_state else "basic",
+            "session_management": "chatsession" if self.session_data else "memory_only",
+            "created_with": f"FlowAgent v2.0 Enhanced Context System"
+        }
 
 @dataclass
 class PersonaConfig:
@@ -448,7 +597,7 @@ class AgentModelData(BaseModel):
         if self.persona and self.persona.apply_method in ["system_prompt", "both"]:
             persona_addition = self.persona.to_system_prompt_addition()
             if persona_addition:
-                base_message += f"\n\n## Persona Instructions\n{persona_addition}"
+                base_message += f"\n## Persona Instructions\n{persona_addition}"
 
         return base_message
 

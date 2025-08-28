@@ -1,3 +1,4 @@
+import copy
 import os
 import re
 from enum import Enum
@@ -9,7 +10,7 @@ import pickle
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable, Union, Type
+from typing import Dict, List, Any, Optional, Callable, Union, Type, Tuple
 from dataclasses import dataclass, asdict, field
 from pydantic import BaseModel, Field, create_model, ValidationError
 from concurrent.futures import ThreadPoolExecutor
@@ -22,7 +23,7 @@ from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
 
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-
+from toolboxv2.utils.extras.Style import print_prompt
 
 # Framework imports with graceful degradation
 try:
@@ -70,6 +71,19 @@ git_logger = logging.getLogger("git")
 git_logger.setLevel(logging.CRITICAL) #(get_logger().level)
 mcp_logger = logging.getLogger("mcp")
 mcp_logger.setLevel(logging.CRITICAL)
+urllib3_logger = logging.getLogger("urllib3")
+urllib3_logger.setLevel(logging.CRITICAL)
+chardet_logger = logging.getLogger("chardet")
+chardet_logger.setLevel(logging.CRITICAL)
+numba_logger = logging.getLogger("numba")
+numba_logger.setLevel(logging.CRITICAL)
+asyncio_logger = logging.getLogger("asyncio")
+asyncio_logger.setLevel(logging.CRITICAL)
+
+AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
+rprint = print if AGENT_VERBOSE else lambda *a, **k: None
+wprint = print if AGENT_VERBOSE else lambda *a, **k: None
+eprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
 TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
@@ -336,716 +350,51 @@ def with_progress_tracking(cls):
     return cls
 
 # ===== CORE NODE IMPLEMENTATIONS =====
-@with_progress_tracking
-class ContextManagerNode(AsyncNode):
-    """Advanced context management with intelligent splitting"""
-
-    def __init__(self, max_tokens: int = 8000, compression_threshold: float = 0.76, **kwargs):
-        super().__init__(**kwargs)
-        self.max_tokens = max_tokens
-        self.compression_threshold = compression_threshold
-        self.session_managers = {}  # Chat session instances
-
-    async def prep_async(self, shared):
-        agent_instance = shared.get("agent_instance")
-        session_id = shared.get("session_id", "default")
-        current_query = shared.get("current_query", "")
-
-        # Initialize or get chat session
-        session_manager = await self._get_session_manager(agent_instance, session_id)
-
-        return {
-            "session_manager": session_manager,
-            "current_query": current_query,
-            "agent_instance": agent_instance,
-            "tasks": shared.get("tasks", {}),
-            "world_model": shared.get("world_model", {}),
-            "results_store": shared.get("results_store", {}),
-            "conversation_history": shared.get("conversation_history", []),
-            "max_tokens": self.max_tokens,
-            "compression_threshold": self.compression_threshold
-        }
-
-    async def _get_session_manager(self, agent_instance, session_id: str):
-        """Get or create ChatSession for this session"""
-        if session_id not in self.session_managers:
-            from toolboxv2 import get_app
-            from toolboxv2.mods.isaa.extras.session import ChatSession
-
-            memory_instance = get_app().get_mod("isaa").get_memory()
-            space_name = f"ChatSession/ContextManager/{agent_instance.amd.name}/{session_id}"
-
-            self.session_managers[session_id] = ChatSession(
-                memory_instance,
-                space_name=space_name,
-                max_length=200  # Keep more history for context
-            )
-
-        return self.session_managers[session_id]
-
-    async def exec_async(self, prep_res):
-        session_manager = prep_res["session_manager"]
-        current_query = prep_res["current_query"]
-
-        # Build comprehensive context parts
-        context_parts = await self._build_three_part_context(prep_res)
-
-        # Calculate token usage
-        total_tokens = self._estimate_total_tokens(context_parts)
-        usage_ratio = total_tokens / prep_res["max_tokens"]
-
-        # Automatic compression if needed
-        if usage_ratio >= prep_res["compression_threshold"]:
-            context_parts = await self._compress_context_intelligently(context_parts, prep_res)
-            total_tokens = self._estimate_total_tokens(context_parts)
-            usage_ratio = total_tokens / prep_res["max_tokens"]
-
-        # Store current interaction for future reference
-        await session_manager.add_message({
-            'role': 'user',
-            'content': current_query
-        })
-
-        return {
-            "recent_interaction": context_parts["recent_interaction"],
-            "session_summary": context_parts["session_summary"],
-            "task_context": context_parts["task_context"],
-            "total_tokens": total_tokens,
-            "usage_ratio": usage_ratio,
-            "compression_applied": usage_ratio >= prep_res["compression_threshold"],
-            "session_manager": session_manager
-        }
-
-    async def _build_three_part_context(self, prep_res) -> Dict[str, str]:
-        """Build the 3-part context system"""
-        session_manager = prep_res["session_manager"]
-        current_query = prep_res["current_query"]
-
-        # Part 1: Recent Interaction (latest exchanges)
-        recent_interaction = await self._build_recent_interaction(session_manager, current_query)
-
-        # Part 2: Session Summary (compressed history + logger insights)
-        session_summary = await self._build_session_summary(session_manager, prep_res)
-
-        # Part 3: Task Context (current agent state and tasks)
-        task_context = await self._build_task_context(prep_res)
-
-        return {
-            "recent_interaction": recent_interaction,
-            "session_summary": session_summary,
-            "task_context": task_context
-        }
-
-    async def _build_recent_interaction(self, session_manager, current_query: str) -> str:
-        """Latest conversation context"""
-        # Get last few exchanges from session
-        recent_history = session_manager.get_past_x(6)  # Last 3 exchanges
-
-        formatted_recent = []
-        for entry in recent_history:
-            role = entry.get('role', 'unknown')
-            content = entry.get('content', '')
-            formatted_recent.append(f"{role}: {content}")
-
-        recent_context = "## Recent Interaction\n"
-        if formatted_recent:
-            recent_context += "\n".join(formatted_recent)
-
-        recent_context += f"\nCurrent: user: {current_query}"
-
-        return recent_context
-
-    async def _build_session_summary(self, session_manager, prep_res) -> str:
-        """Compressed session history with insights"""
-        # Get relevant historical context using memory search
-        context_query = prep_res["current_query"]
-        relevant_refs = await session_manager.get_reference(context_query, top_k=5, to_str=True)
-
-        summary = "## Session Summary\n"
-
-        if relevant_refs:
-            summary += f"Relevant previous interactions:\n{relevant_refs}\n"
-
-        # Add world model insights
-        world_model = prep_res.get("world_model", {})
-        if world_model:
-            key_facts = []
-            for key, value in list(world_model.items())[:10]:  # Top 10 facts
-                if self._is_context_relevant(key, context_query):
-                    key_facts.append(f"- {key}: {value}")
-
-            if key_facts:
-                summary += f"\nKnown context:\n" + "\n".join(key_facts)
-
-        return summary
-
-    async def _build_task_context(self, prep_res) -> str:
-        """Current agent task state and capabilities"""
-        tasks = prep_res.get("tasks", {})
-        results_store = prep_res.get("results_store", {})
-        agent_instance = prep_res.get("agent_instance")
-
-        context = "## Current Task Context\n"
-
-        # Active/recent tasks
-        active_tasks = [t for t in tasks.values() if t.status in ["running", "completed"]]
-        if active_tasks:
-            context += "Recent task activity:\n"
-            for task in active_tasks[-5:]:  # Last 5 tasks
-                status_emoji = "✓" if task.status == "completed" else "⚙️"
-                context += f"{status_emoji} {task.description} ({task.status})\n"
-
-        # Key results
-        if results_store:
-            context += "\nKey findings:\n"
-            for task_id, result in list(results_store.items())[-3:]:  # Last 3 results
-                if result.get("metadata", {}).get("success", False):
-                    data_preview = str(result.get("data", ""))[:100] + "..."
-                    context += f"- {task_id}: {data_preview}\n"
-
-        # Agent capabilities
-        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
-            available_tools = list(agent_instance._tool_capabilities.keys())[:5]
-            context += f"\nAvailable tools: {', '.join(available_tools)}"
-
-        return context
-
-    async def _compress_context_intelligently(self, context_parts: Dict[str, str], prep_res) -> Dict[str, str]:
-        """Intelligent context compression using LLM"""
-        if not LITELLM_AVAILABLE:
-            return self._fallback_compression(context_parts)
-
-        # Compress session summary (most compressible)
-        session_summary = context_parts["session_summary"]
-        if len(session_summary) > 1000:  # Only compress if substantial
-            compressed_summary = await self._llm_compress_text(
-                session_summary,
-                "session context",
-                prep_res.get("agent_instance")
-            )
-            context_parts["session_summary"] = compressed_summary
-
-        # Compress task context if still too large
-        total_tokens = self._estimate_total_tokens(context_parts)
-        if total_tokens > prep_res["max_tokens"] * 0.9:
-            task_context = context_parts["task_context"]
-            compressed_task = await self._llm_compress_text(
-                task_context,
-                "task context",
-                prep_res.get("agent_instance")
-            )
-            context_parts["task_context"] = compressed_task
-
-        return context_parts
-
-    async def _llm_compress_text(self, text: str, context_type: str, agent_instance) -> str:
-        """Compress text using LLM while preserving key information"""
-        if len(text) < 200:  # Don't compress short texts
-            return text
-
-        prompt = f"""
-    Compress this {context_type} while preserving ALL key information and relationships.
-    Focus on removing redundancy and verbose explanations, keep facts and data intact.
-
-    Original text:
-    {text}
-
-    Compressed version (aim for 60% reduction):"""
-
-        try:
-            model_to_use = agent_instance.amd.fast_llm_model if agent_instance else "openrouter/anthropic/claude-3-haiku"
-
-            response = await agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,  # Low temperature for consistent compression
-                max_tokens=int(len(text) * 0.4),  # Target 60% reduction
-                node_name="Context Compression",
-                task_id="compression"
-            )
-
-            compressed = response.strip()
-            return compressed if compressed else text
-
-        except Exception as e:
-            logger.warning(f"LLM compression failed: {e}")
-            return self._simple_text_compression(text)
-
-    def _fallback_compression(self, context_parts: Dict[str, str]) -> Dict[str, str]:
-        """Simple fallback compression without LLM"""
-        # Compress by truncating less important parts
-        if len(context_parts["session_summary"]) > 800:
-            lines = context_parts["session_summary"].split('\n')
-            context_parts["session_summary"] = '\n'.join(lines[:15]) + "\n[...compressed...]"
-
-        if len(context_parts["task_context"]) > 600:
-            lines = context_parts["task_context"].split('\n')
-            context_parts["task_context"] = '\n'.join(lines[:12]) + "\n[...compressed...]"
-
-        return context_parts
-
-    def _simple_text_compression(self, text: str) -> str:
-        """Simple text compression by removing redundancy"""
-        lines = text.split('\n')
-
-        # Remove empty lines and duplicates
-        compressed_lines = []
-        seen_lines = set()
-
-        for line in lines:
-            line = line.strip()
-            if line and line not in seen_lines:
-                compressed_lines.append(line)
-                seen_lines.add(line)
-
-        # Keep first 75% of unique lines
-        keep_count = int(len(compressed_lines) * 0.75)
-        return '\n'.join(compressed_lines[:keep_count])
-
-    def _is_context_relevant(self, key: str, query: str) -> bool:
-        """Check if world model key is relevant to current query"""
-        query_words = set(query.lower().split())
-        key_words = set(key.lower().split())
-
-        # Simple relevance scoring
-        intersection = query_words.intersection(key_words)
-        relevance_score = len(intersection) / max(len(query_words), 1)
-
-        return relevance_score > 0.1
-
-    def _estimate_total_tokens(self, context_parts: Dict[str, str]) -> int:
-        """Estimate total token count for all context parts"""
-        total_chars = sum(len(part) for part in context_parts.values())
-        return total_chars // 4  # Rough token estimation
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["formatted_context"] = exec_res
-        shared["context_tokens"] = exec_res["total_tokens"]
-        shared["context_usage_ratio"] = exec_res["usage_ratio"]
-        shared["context_compression_applied"] = exec_res["compression_applied"]
-
-        # Store session manager for other nodes
-        shared["session_manager"] = exec_res["session_manager"]
-
-        return "context_ready"
-
-@with_progress_tracking
-class YAMLFormatterNode(AsyncNode):
-    """Enhanced YAML formatter with schema-based generation"""
-
-    def __init__(self, schema_class: Optional[Type[BaseModel]] = None, **kwargs):
-        super().__init__(**kwargs)
-        self.schema_class = schema_class
-
-    async def prep_async(self, shared):
-        task_description = shared.get("current_task_description", "")
-        schema_mode = shared.get("yaml_format_mode", "general")
-        custom_schema = shared.get("custom_schema", {})
-        raw_input = shared.get("raw_llm_output", "")
-
-        return {
-            "task_description": task_description,
-            "schema_mode": schema_mode,
-            "custom_schema": custom_schema,
-            "raw_input": raw_input,
-            "context": shared.get("formatted_context", {}),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "agent_instance": shared.get("agent_instance")
-        }
-
-    async def exec_async(self, prep_res):
-        if prep_res["raw_input"]:
-            # Parse existing LLM output into YAML
-            return await self._parse_to_yaml(prep_res)
-        else:
-            # Generate new YAML based on schema
-            return await self._generate_yaml_from_schema(prep_res)
-
-    async def _parse_to_yaml(self, prep_res):
-        raw_input = prep_res["raw_input"]
-
-        try:
-            # Try to extract YAML from markdown code blocks
-            if "```yaml" in raw_input:
-                yaml_content = raw_input.split("```yaml")[1].split("```")[0].strip()
-            elif "```" in raw_input:
-                yaml_content = raw_input.split("```")[1].split("```")[0].strip()
-            else:
-                yaml_content = raw_input
-
-            parsed = yaml.safe_load(yaml_content)
-            return {
-                "success": True,
-                "data": parsed,
-                "raw_yaml": yaml_content
-            }
-        except Exception as e:
-            logger.error(f"Failed to parse YAML: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "fallback": {"raw_content": raw_input}
-            }
-
-    async def _generate_yaml_from_schema(self, prep_res):
-        schema_mode = prep_res["schema_mode"]
-
-        if self.schema_class:
-            schema = self.schema_class.model_json_schema()
-        else:
-            schema = self._get_default_schema(schema_mode)
-
-        # Generate LLM prompt to create YAML based on schema
-        prompt = self._build_schema_prompt(schema, prep_res)
-
-        if LITELLM_AVAILABLE:
-            try:
-                # Use fast model from shared context
-                model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-                logger.info(f"Using model {model_to_use} for YAML generation")
-                agent_instance = prep_res["agent_instance"]
-                yaml_content = await agent_instance.a_run_llm_completion(
-                    model=model_to_use,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.1, node_name="YAMLFormatterNode", task_id="yaml_format"
-                )
-
-                # Extract and validate YAML
-                if "```yaml" in yaml_content:
-                    yaml_str = yaml_content.split("```yaml")[1].split("```")[0].strip()
-                else:
-                    yaml_str = yaml_content.strip()
-
-                parsed = yaml.safe_load(yaml_str)
-                return {
-                    "success": True,
-                    "data": parsed,
-                    "raw_yaml": yaml_str
-                }
-            except Exception as e:
-                logger.error(f"LLM YAML generation failed: {e}")
-                return self._generate_fallback_yaml(prep_res)
-        else:
-            return self._generate_fallback_yaml(prep_res)
-
-    def _get_default_schema(self, mode: str) -> Dict:
-        schemas = {
-            "task_plan": {
-                "type": "object",
-                "properties": {
-                    "plan_name": {"type": "string"},
-                    "description": {"type": "string"},
-                    "tasks": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "description": {"type": "string"},
-                                "priority": {"type": "integer"},
-                                "dependencies": {"type": "array", "items": {"type": "string"}}
-                            }
-                        }
-                    }
-                }
-            },
-            "action": {
-                "type": "object",
-                "properties": {
-                    "action_type": {"type": "string"},
-                    "parameters": {"type": "object"},
-                    "reasoning": {"type": "string"}
-                }
-            },
-            "analysis": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string"},
-                    "key_points": {"type": "array", "items": {"type": "string"}},
-                    "recommendations": {"type": "array", "items": {"type": "string"}}
-                }
-            }
-        }
-        return schemas.get(mode, schemas["analysis"])
-
-    def _build_schema_prompt(self, schema: Dict, prep_res: Dict) -> str:
-        return f"""
-Generate a YAML structure based on the following schema and context:
-
-## Task Description
-{prep_res['task_description']}
-
-## Required Schema
-```yaml
-{yaml.safe_dump(schema, indent=2)}
-```
-Context
-{prep_res.get('context', {})}
-Generate valid YAML that conforms to this schema.
-Wrap your response in one
-```yaml
-```
-code block!.
-"""
-    def _generate_fallback_yaml(self, prep_res):
-        fallback = {
-            "task_description": prep_res["task_description"],
-            "schema_mode": prep_res["schema_mode"],
-            "timestamp": datetime.now().isoformat()
-        }
-        return {
-            "success": True,
-            "data": fallback,
-            "raw_yaml": yaml.dump(fallback)
-        }
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["formatted_yaml"] = exec_res
-        if exec_res["success"]:
-            shared["structured_data"] = exec_res["data"]
-        return "formatted" if exec_res["success"] else "format_failed"
-
-@with_progress_tracking
-class StrategyOrchestratorNode(AsyncNode):
-    """Strategic orchestration with meta-reasoning"""
-    def __init__(self, strategies: Dict[str, Dict] = None, **kwargs):
-        super().__init__(**kwargs)
-        self.strategies = strategies or self._get_default_strategies()
-
-    async def prep_async(self, shared):
-        current_query = shared.get("current_query", "")
-        task_stack = shared.get("tasks", {})
-        world_model = shared.get("world_model", {})
-        system_status = shared.get("system_status", "idle")
-        recent_performance = shared.get("performance_metrics", {})
-
-        agent_instance = shared.get("agent_instance")
-        tool_capabilities = {}
-        if agent_instance and hasattr(agent_instance, '_tool_capabilities'):
-            tool_capabilities = agent_instance._tool_capabilities
-
-        return {
-            "query": current_query,
-            "tasks": task_stack,
-            "world_model": world_model,
-            "system_status": system_status,
-            "performance": recent_performance,
-            "available_strategies": list(self.strategies.keys()),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "tool_capabilities": tool_capabilities,
-            "agent_instance": agent_instance,
-            "available_tools_names": shared.get("available_tools", []),
-            "variable_manager": shared.get("variable_manager")
-        }
-
-    async def exec_async(self, prep_res):
-        # LLM-basierte Strategieauswahl
-        strategy = await self._determine_strategy_llm(prep_res)
-
-        # Generate execution plan
-        execution_plan = await self._create_execution_plan(strategy, prep_res)
-
-        return {
-            "selected_strategy": strategy,
-            "execution_plan": execution_plan,
-            "reasoning": self._get_strategy_reasoning(strategy, prep_res),
-            "estimated_complexity": self._estimate_complexity(prep_res)
-        }
-
-    async def _determine_strategy_llm(self, prep_res) -> str:
-        """Enhanced strategy determination with variable awareness"""
-        if not LITELLM_AVAILABLE:
-            return "direct_response"
-
-        variable_manager = prep_res.get("variable_manager")
-        tool_context = self._build_tool_awareness_context(prep_res)
-
-        # Variable-aware context
-        var_context = ""
-        if variable_manager:
-            var_context = variable_manager.get_llm_variable_context()
-
-        prompt = f"""
-You are a strategic AI agent with advanced variable system and tool capabilities.
-
-## User Query
-{prep_res['query']}
-
-## Your Capabilities & Context
-{tool_context}
-
-{var_context}
-
-## System Variables Available
-- User context: {{ user.name }}, {{ user.session }}, {{ user.id }}
-- System state: {{ system.timestamp }}, {{ agent.name }}
-- Previous results: {{ results.* }} (if any exist)
-- World knowledge: {{ world.* }} (learned facts)
-
-## Available Strategies:
-## Available Strategies:
-- direct_response: Simple LLM flow with optional tool calls
-- fast_simple_planning: Simple multi-step plan with tool orchestration
-- slow_complex_planning: Complex task breakdown with tool orchestration, use for tasks with mor then 2 'and' words.
-- research_and_analyze: Information gathering with variable integration
-- creative_generation: Content creation with personalization
-- problem_solving: Analysis with tool validation
-
-## Decision Criteria:
-1. Check if tools can directly answer the query
-2. Consider variable/personalization opportunities
-3. Evaluate complexity and multi-step needs
-4. Look for context dependencies
-
-Respond ONLY with strategy name for the current task:"""
-
-        try:
-            agent_instance = prep_res["agent_instance"]
-            response = await agent_instance.a_run_llm_completion(
-                model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=50, node_name="StrategyOrchestratorNode", task_id="strategy_determination",
-            )
-            strategy = response.strip().lower()
-            return strategy if strategy in self.strategies else "fast_simple_planning"
-
-        except Exception as e:
-            logger.error(f"Strategy determination failed: {e}")
-            import traceback
-            print(traceback.format_exc())
-            return "fast_simple_planning"
-
-    def _build_tool_awareness_context(self, prep_res: Dict) -> str:
-        """Build comprehensive tool context for strategy decisions"""
-
-        tool_capabilities = prep_res.get("tool_capabilities", {})
-        available_tools = prep_res.get("available_tools_names", [])
-
-        if not available_tools:
-            return "No tools available."
-
-        context_parts = []
-        context_parts.append("### Available Tools:")
-
-        for tool_name in available_tools:
-            if tool_name in tool_capabilities:
-                cap = tool_capabilities[tool_name]
-                context_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
-                context_parts.append(f"- Primary function: {cap.get('primary_function', 'Unknown')}")
-                context_parts.append(f"- Use cases: {', '.join(cap.get('use_cases', [])[:3])}")
-                context_parts.append(f"- Triggers: {', '.join(cap.get('trigger_phrases', [])[:5])}")
-
-                # Add indirect connections
-                indirect = cap.get('indirect_connections', [])
-                if indirect:
-                    context_parts.append(f"- Indirect uses: {', '.join([str(i) for i in indirect[:3]])}")
-            else:
-                # Fallback for tools without analysis
-                context_parts.append(f"\n**{tool_name}:** Available but not analyzed")
-
-        return "\n".join(context_parts)
-
-    async def _create_execution_plan(self, strategy: str, prep_res: Dict) -> Dict:
-        strategy_config = self.strategies[strategy]
-
-        plan = {
-            "strategy": strategy,
-            "phases": strategy_config["phases"],
-            "parallel_capable": strategy_config.get("parallel_capable", False),
-            "estimated_steps": len(strategy_config["phases"]),
-            "resource_requirements": strategy_config.get("resources", {}),
-            "success_criteria": strategy_config.get("success_criteria", [])
-        }
-
-        return plan
-
-    def _get_default_strategies(self) -> Dict[str, Dict]:
-        return {
-            "direct_response": {
-                "phases": ["context_prep", "llm_call", "response_format"],
-                "parallel_capable": False,
-                "resources": {"llm_calls": 1, "complexity": "low"}
-            },
-            "fast_simple_planning": {
-                "phases": ["context_prep", "tool_llm_call", "result_synthesis"],
-                "parallel_capable": True,
-                "resources": {"llm_calls": "multiple", "complexity": "low"}
-            },
-            "slow_complex_planning": {
-                "phases": ["task_decomposition", "dependency_analysis", "parallel_execution", "result_synthesis"],
-                "parallel_capable": True,
-                "resources": {"llm_calls": "multiple", "complexity": "high"}
-            },
-            "research_and_analyze": {
-                "phases": ["query_expansion", "information_gathering", "analysis", "synthesis"],
-                "parallel_capable": True,
-                "resources": {"llm_calls": "multiple", "tools": ["search", "analysis"]}
-            },
-            "creative_generation": {
-                "phases": ["ideation", "structure_planning", "content_generation", "refinement"],
-                "parallel_capable": False,
-                "resources": {"llm_calls": "multiple", "complexity": "medium"}
-            },
-            "problem_solving": {
-                "phases": ["problem_analysis", "solution_exploration", "implementation_planning", "validation"],
-                "parallel_capable": True,
-                "resources": {"llm_calls": "multiple", "tools": ["code_execution", "testing"]}
-            }
-        }
-
-    def _get_strategy_reasoning(self, strategy: str, prep_res: Dict) -> str:
-        return f"Selected '{strategy}' based on query analysis and current system state"
-
-    def _estimate_complexity(self, prep_res: Dict) -> str:
-        task_count = len(prep_res["tasks"])
-        query_length = len(prep_res["query"].split())
-
-        if task_count > 5 or query_length > 100:
-            return "high"
-        elif task_count > 2 or query_length > 20:
-            return "medium"
-        else:
-            return "low"
-
-    async def post_async(self, shared, prep_res, exec_res):
-        shared["selected_strategy"] = exec_res["selected_strategy"]
-        shared["execution_plan"] = exec_res["execution_plan"]
-        shared["strategy_reasoning"] = exec_res["reasoning"]
-        progress_tracker = shared.get("progress_tracker")
-        if progress_tracker:
-            await progress_tracker.emit_event(ProgressEvent(
-                event_type="strategy_selected",
-                timestamp=time.time(),
-                node_name="StrategyOrchestratorNode",
-                status=NodeStatus.COMPLETED,
-                session_id=shared.get("session_id"),
-                metadata={"strategy": exec_res["selected_strategy"],
-                          "reasoning": exec_res["reasoning"],
-                          "estimated_complexity": exec_res["estimated_complexity"],
-                          "execution_plan": exec_res["execution_plan"]}
-            ))
-        return exec_res["selected_strategy"]
 
 @with_progress_tracking
 class TaskPlannerNode(AsyncNode):
     """Erweiterte Aufgabenplanung mit dynamischen Referenzen und Tool-Integration"""
 
     async def prep_async(self, shared):
-        return {
-            "query": shared.get("current_query", ""),
-            "tasks": shared.get("tasks", {}),
-            "system_status": shared.get("system_status", "idle"),
-            "tool_capabilities": shared.get("tool_capabilities", {}),
-            "available_tools_names": shared.get("available_tools", []),
-            "strategy": shared.get("selected_strategy", "direct_response"),
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "agent_instance": shared.get("agent_instance"),
-            "variable_manager": shared.get("variable_manager"),
-        }
+        """Enhanced preparation with goals-based planning support"""
+
+        # Check if this is a goals-based call from LLMReasonerNode
+        replan_context = shared.get("replan_context", {})
+        goals_list = replan_context.get("goals", [])
+
+        if goals_list:
+            # Goals-based planning (called by LLMReasonerNode)
+            return {
+                "goals": goals_list,
+                "planning_mode": "goals_based",
+                "query": shared.get("current_query", ""),
+                "reasoning_context": replan_context.get("reasoning_context", ""),
+                "triggered_by": replan_context.get("triggered_by", "unknown"),
+                "tasks": shared.get("tasks", {}),
+                "system_status": shared.get("system_status", "idle"),
+                "tool_capabilities": shared.get("tool_capabilities", {}),
+                "available_tools_names": shared.get("available_tools", []),
+                "strategy": "goals_decomposition",  # New strategy type
+                "fast_llm_model": shared.get("fast_llm_model"),
+                "complex_llm_model": shared.get("complex_llm_model"),
+                "agent_instance": shared.get("agent_instance"),
+                "variable_manager": shared.get("variable_manager"),
+            }
+        else:
+            # Legacy planning (original query-based approach)
+            return {
+                "query": shared.get("current_query", ""),
+                "tasks": shared.get("tasks", {}),
+                "system_status": shared.get("system_status", "idle"),
+                "tool_capabilities": shared.get("tool_capabilities", {}),
+                "available_tools_names": shared.get("available_tools", []),
+                "strategy": shared.get("selected_strategy", "direct_response"),
+                "fast_llm_model": shared.get("fast_llm_model"),
+                "complex_llm_model": shared.get("complex_llm_model"),
+                "agent_instance": shared.get("agent_instance"),
+                "variable_manager": shared.get("variable_manager"),
+                "planning_mode": "legacy"
+            }
 
     async def exec_async(self, prep_res):
         if prep_res["strategy"] == "fast_simple_planning":
@@ -1089,20 +438,20 @@ class TaskPlannerNode(AsyncNode):
             shared["plan_strategy"] = exec_res.execution_strategy
             shared["total_tasks_planned"] = len(exec_res.tasks)
 
-            logger.info(f"Plan created successfully: {exec_res.name} with {len(exec_res.tasks)} tasks")
+            rprint(f"Plan created successfully: {exec_res.name} with {len(exec_res.tasks)} tasks")
             return "planned"
 
         else:
             # Plan creation failed
             shared["planning_error"] = "Invalid plan format returned"
             shared["current_plan"] = None
-            logger.error("Plan creation failed - invalid format")
+            eprint("Plan creation failed - invalid format")
             return "planning_failed"
 
     async def _create_simple_plan(self, prep_res) -> TaskPlan:
         """Fast lightweight planning for direct or simple multi-step queries."""
-        taw = self._build_tool_intelligence(prep_res) # TODO contet and var injection
-        logger.info("You are a FAST "+ taw)
+        taw = self._build_tool_intelligence(prep_res)
+        rprint("You are a FAST "+ taw)
         prompt = f"""
 You are a FAST abstract pattern recognizer and task planner.
 Identify if the query needs a **single-step LLM answer** or a **simple 2–3 task plan** using available tools.
@@ -1131,47 +480,48 @@ tasks:
     dependencies: [list]
 Example 1 — Direct LLM
 ```yaml
-plan_name: "Direct Response"
-description: "Quick answer from LLM"
-execution_strategy: "sequential"
+plan_name: Direct Response
+description: Quick answer from LLM
+execution_strategy: sequential
 tasks:
-  - id: "answer"
-    type: "LLMTask"
-    description: "Respond to query"
+  - id: answer
+    type: LLMTask
+    description: Respond to query
     priority: 1
     dependencies: []
-    prompt_template: "Respond concisely to: {prep_res['query']}"
+    prompt_template: Respond concisely to: {prep_res['query']}
     llm_config:
-      model_preference: "fast"
+      model_preference: fast
       temperature: 0.3
 ```
 Example 2 — Tool + LLM
 ```yaml
-plan_name: "Fetch and Answer"
-description: "Get info from tool and summarize"
-execution_strategy: "sequential"
+plan_name: Fetch and Answer
+description: Get info from tool and summarize
+execution_strategy: sequential
 tasks:
-  - id: "fetch_info"
-    type: "ToolTask"
-    description: "Get required data"
+  - id: fetch_info
+    type: ToolTask
+    description: Get required data
     priority: 1
     dependencies: []
-    tool_name: "info_api"
+    tool_name: info_api
     arguments:
-      query: "{{ prep_res['query'] }}"
-  - id: "summarize"
-    type: "LLMTask"
-    description: "Summarize fetched data"
+      query: "{prep_res['query']}"
+  - id: summarize
+    type: LLMTask
+    description: Summarize fetched data
     priority: 2
     dependencies: ["fetch_info"]
-    prompt_template: "Summarize: {{ results.fetch_info.data }}"
+    prompt_template: Summarize: {{ results.fetch_info.data }}
     llm_config:
-      model_preference: "fast"
+      model_preference: fast
       temperature: 0.3
 ```
 Output Requirements
 Use ONLY YAML for the final output
 Pick minimal plan type for fastest completion!
+focus on correct quotation and correct yaml format!
     """
 
         try:
@@ -1199,7 +549,7 @@ Pick minimal plan type for fastest completion!
             )
 
         except Exception as e:
-            logger.error(f"Simple plan creation failed: {e}")
+            eprint(f"Simple plan creation failed: {e}")
             import traceback
             print(traceback.format_exc())
             return TaskPlan(
@@ -1220,60 +570,40 @@ Pick minimal plan type for fastest completion!
             )
 
     async def _advanced_llm_decomposition(self, prep_res) -> TaskPlan:
-        """Erweiterte LLM-basierte Dekomposition mit dynamischer Plan-Anpassung"""
+        """Enhanced LLM-based decomposition with goals-based planning support"""
+
+        planning_mode = prep_res.get("planning_mode", "legacy")
         variable_manager = prep_res.get("variable_manager")
         tool_intelligence = self._build_tool_intelligence(prep_res)
 
-        # Check for replan context from failed DecisionTask
-        replan_context = prep_res.get("replan_context", {})
-        is_replanning = bool(replan_context)
+        if planning_mode == "goals_based":
+            # Goals-based planning from LLMReasonerNode
+            goals_list = prep_res.get("goals", [])
+            reasoning_context = prep_res.get("reasoning_context", "")
 
-        # Get variable context for planning
-        var_suggestions = ""
-        if variable_manager:
-            suggestions = variable_manager.get_variable_suggestions(prep_res['query'])
-            if suggestions:
-                var_suggestions = f"\n## Suggested Variables\n{', '.join(suggestions)}"
+            prompt = f"""
+You are an expert task planner specialized in creating execution plans from strategic goals.
+Create a comprehensive plan that addresses all goals with proper dependencies and parallelization.
 
-        # Build context-aware prompt
-        base_query = prep_res['query']
-        if is_replanning:
-            context_info = f"""
-    ## REPLANNING CONTEXT
-    Original Query: {base_query}
-    Previous Failure: {replan_context.get('failure_reason', 'Unknown')}
-    New Goal: {replan_context.get('new_goal', 'Continue with refined approach')}
-    Failed Approach: {replan_context.get('avoid_approaches', [])}
+## Strategic Goals from Reasoner
+{chr(10).join([f"{i + 1}. {goal}" for i, goal in enumerate(goals_list)])}
 
-    Focus on the NEW GOAL and avoid the failed approaches."""
-            effective_query = replan_context.get('new_goal', base_query)
-        else:
-            context_info = ""
-            effective_query = base_query
-
-        prompt = f"""
-You are an expert **task planner** with **dynamic adaptation capabilities**.
-Create intelligent, adaptive execution plans that can modify themselves during execution.
-
-## User Query
-{effective_query}
-
-{context_info}
+## Reasoning Context
+{reasoning_context}
 
 ## Your Available Tools & Intelligence
 {tool_intelligence}
 
 {variable_manager.get_llm_variable_context() if variable_manager else ""}
-{var_suggestions}
 
+## Goals-Based Planning Instructions
+1. Analyze each goal for dependencies on other goals
+2. Identify goals that can be executed in parallel
+3. Create tasks that address each goal effectively
+4. Use variable references {{ results.task_id.data }} for dependencies
+5. Ensure proper sequencing and coordination
 
-## TASK TYPES (Dataclass-Aligned)
-- **LLMTask**: Step that uses a language model.
-- **ToolTask**: Step that calls an available tool.
-- **DecisionTask**: Step that decides routing between tasks. or triggers plan modifications.
-- **CompoundTask**: Step grouping sub-tasks.
-
-## YAML SCHEMA
+## YAML Schema
 ```yaml
 plan_name: string
 description: string
@@ -1284,251 +614,97 @@ tasks:
     description: string
     priority: int
     dependencies: [list of task ids]
-    # Additional fields depending on type:
-    # LLMTask: prompt_template, llm_config, context_keys
-    # ToolTask: tool_name, arguments, hypothesis, validation_criteria, expectation
-    # DecisionTask: decision_prompt, routing_map, decision_model
-    # CompoundTask: sub_task_ids, execution_strategy, success_criteria
-```
+    # Type-specific fields as needed
+Goals Decomposition Strategy
 
-DecisionTasks can now trigger **plan modifications** during execution:
+Independent Goals: Create parallel tasks
+Sequential Goals: Use dependencies array
+Complex Goals: Break into sub-tasks with DecisionTask routing
+Data Dependencies: Use variable references between tasks
 
-### Routing Map Options:
-```yaml
-routing_map:
-  # Classical routing to existing task
-  "success":
-    action: "route_to_task"
-    task_id: "next_task_id"
-
-  # Complete replan from this point
-  "failure":
-    action: "replan_from_here"
-    new_goal: "Specific new objective based on failure"
-    context: "What went wrong and why"
-
-  # Append new tasks to existing plan
-  "partial_success":
-    action: "append_plan"
-    new_goal: "Extended objective requiring additional steps"
-```
-PLANNING STRATEGY
-
-For uncertain outcomes (web searches, API calls, data analysis):
-Use DecisionTask with "replan_from_here" for failure cases
-Include specific new_goal based on potential failure modes
-
-For multi-stage workflows:
-Use "append_plan" when intermediate results may require different next steps
-
-For critical path dependencies:
-Plan alternative routes using DecisionTask routing
-
-ENHANCED EXAMPLES
-Adaptive Web Research Pattern:
-<reasoning>
-The logic ensures that subsequent steps are chosen depending on the sufficiency of the retrieved information.
-It’s a decision-making scaffold for research workflows.
-</reasoning>
-```yaml
+Example for Multi-Goal Plan
+yamlCopyplan_name: "Multi-Goal Strategic Plan"
+description: "Execute multiple strategic objectives with proper coordination"
+execution_strategy: "mixed"
 tasks:
-  - id: "web_search"
+  - id: "goal_1_research"
     type: "ToolTask"
-    tool_name: "search_web"
-    description: "Get required data"
-    priority: 1
-    dependencies: []
-    arguments:
-      query: "{{ user.query }}"
-
-  - id: "evaluate_results"
-    type: "DecisionTask"
-    priority: 2
-    dependencies: ["web_search"]
-    description: "Evaluate search results and decide on next steps"
-    decision_prompt: "Are the search results sufficient?\nQuery: {{ user.query }}\nResults:\n{{ results.web_search.data }}\nEnd of Results\n Answer 'good', 'poor', or 'empty'"
-    routing_map:
-      "good":
-        action: "route_to_task"
-        task_id: "analyze_findings"
-      "poor":
-        action: "replan_from_here"
-        new_goal: "Search results were poor quality. Analyze the query '{{ user.query }}' and create a refined, more specific search strategy."
-      "empty":
-        action: "replan_from_here"
-        new_goal: "No search results found for '{{ user.query }}'. Try alternative search terms or different information sources."
-```
-Dynamic Tool Selection Pattern:
-<reasoning>
-By offering multiple branching paths
-(direct search, analysis-first, or multi-source), it maximizes adaptability for
-diverse data retrieval contexts. The routing logic ensures that each branch aligns
-with the complexity and reliability requirements of the query.
-</reasoning>
-```yaml
-tasks:
-...
-  - id: "choose_approach"
-    type: "DecisionTask"
-    priority: 2
-    dependencies: ["xyz"]
-    description: "Evaluate results and decide on next steps"
-    decision_prompt: "For query '{{ results.xyz.data }}', should we use 'direct_search', 'analysis_first', or 'multi_source'?"
-    routing_map:
-      "direct_search":
-        action: "append_plan"
-        new_goal: "Execute direct search approach for: {{ results.xyz.data }}"
-      "analysis_first":
-        action: "append_plan"
-        new_goal: "First analyze the query structure, then plan appropriate search strategy"
-      "multi_source":
-        action: "append_plan"
-        new_goal: "Use multiple information sources and cross-reference results"
-```
-Example 2 — Tool + LLM
-<reasoning>
-The separation of concerns—data acquisition
-first, followed by language model summarization—ensures.
-This is effective for scenarios where raw data must be condensed.
-</reasoning>
-```yaml
-plan_name: "Fetch and Answer"
-description: "Get info from tool and summarize"
-execution_strategy: "sequential"
-tasks:
-  - id: "fetch_info"
-    type: "ToolTask"
-    description: "Get required data"
-    priority: 1
-    dependencies: []
-    tool_name: "info_api"
-    arguments:
-      query: "{{ user.query }}"
-  - id: "summarize"
-    type: "LLMTask"
-    description: "Summarize fetched data"
-    priority: 2
-    dependencies: ["fetch_info"]
-    prompt_template: "Summarize: {{ results.fetch_info.data }}"
-    llm_config:
-      model_preference: "fast"
-      temperature: 0.3
-```
-Example: Complex Research with CompoundTask
-<reasoning>
-CompoundTask groups related sub-tasks that should be executed together as a logical unit.
-In this research case, we need to gather information from multiple sources simultaneously,
-then analyze all results together.
-The CompoundTask ensures that all data collection tasks are completed before moving to analysis,
-while allowing parallel execution within the compound task.
-</reasoning>
-```yaml
-plan_name: "Multi-Source Research Analysis"
-description: "Research topic from multiple sources and provide comprehensive analysis"
-execution_strategy: "sequential"
-tasks:
-  - id: "research_compound"
-    type: "CompoundTask"
-    description: "Gather information from multiple sources"
-    priority: 1
-    dependencies: []
-    sub_task_ids: ["web_search", "academic_search", "news_search"]
-    execution_strategy: "parallel"
-    success_criteria: "At least 2 out of 3 searches return useful data"
-
-  - id: "web_search"
-    type: "ToolTask"
-    description: "Search web for general information"
+    description: "Research data for Goal 1"
     priority: 1
     dependencies: []
     tool_name: "search_web"
     arguments:
-      query: "{{ user.query }}"
-      max_results: 5
-    hypothesis: "Web search will provide current general information"
-    validation_criteria: "Results should contain relevant recent information"
+      query: "research topic for goal 1"
 
-  - id: "academic_search"
+  - id: "goal_2_research"
     type: "ToolTask"
-    description: "Search academic sources"
+    description: "Research data for Goal 2"
     priority: 1
     dependencies: []
-    tool_name: "search_academic"
+    tool_name: "search_web"
     arguments:
-      query: "{{ user.query }}"
-      max_results: 3
-    hypothesis: "Academic search will provide authoritative sources"
-    validation_criteria: "Results should contain peer-reviewed content"
+      query: "research topic for goal 2"
 
-  - id: "news_search"
-    type: "ToolTask"
-    description: "Search recent news"
-    priority: 1
-    dependencies: []
-    tool_name: "search_news"
-    arguments:
-      query: "{{ user.query }}"
-      timeframe: "last_month"
-    hypothesis: "News search will provide latest developments"
-    validation_criteria: "Results should contain recent updates"
-
-  - id: "analyze_all_sources"
+  - id: "analyze_combined"
     type: "LLMTask"
-    description: "Analyze and synthesize information from all sources"
+    description: "Analyze combined research results"
     priority: 2
-    dependencies: ["research_compound"]
+    dependencies: ["goal_1_research", "goal_2_research"]
     prompt_template: |
-      Analyze and synthesize the following research results for: {{ user.query }}
+      Analyze these research results:
+      Goal 1 Data: {{ results.goal_1_research.data }}
+      Goal 2 Data: {{ results.goal_2_research.data }}
 
-      Web Results: {{ results.web_search.data }}
-      Academic Results: {{ results.academic_search.data }}
-      News Results: {{ results.news_search.data }}
-
-      Provide a comprehensive analysis covering:
-      1. Key findings from each source type
-      2. Consensus and contradictions
-      3. Most reliable information
-      4. Recent developments
+      Provide comprehensive analysis addressing both goals.
     llm_config:
       model_preference: "complex"
       temperature: 0.3
+Generate the execution plan for the strategic goals:
+    """
 
-  - id: "final_report"
-    type: "LLMTask"
-    description: "Create final user-friendly report"
-    priority: 3
-    dependencies: ["analyze_all_sources"]
-    prompt_template: |
-      Create a user-friendly report based on this analysis: {{ results.analyze_all_sources.data }}
+        else:
+            # Legacy single-query planning
+            base_query = prep_res['query']
+            prompt = f"""
+You are an expert task planner with dynamic adaptation capabilities.
+Create intelligent, adaptive execution plans for the user query.
+User Query
+{base_query}
+Your Available Tools & Intelligence
+{tool_intelligence}
+{variable_manager.get_llm_variable_context() if variable_manager else ""}
+TASK TYPES (Dataclass-Aligned)
 
-      Structure the response with:
-      - Executive summary
-      - Key findings
-      - Sources used
-      - Confidence levels
-    llm_config:
-      model_preference: "fast"
-      temperature: 0.4
-```
-OUTPUT REQUIREMENTS
+LLMTask: Step that uses a language model
+ToolTask: Step that calls an available tool
+DecisionTask: Step that decides routing between tasks
+CompoundTask: Step grouping sub-tasks
 
-For complex/uncertain queries: Include at least one DecisionTask with replan_from_here
-Use specific, actionable new_goal descriptions
-Include failure context in routing decisions
-Maintain logical task dependencies
-Output ONLY YAML and wrap it in ```yaml``` tags.
-Provide high-level reasoning before in <reasoning> tags, independent from the YAML code.
-
+YAML SCHEMA
+yamlCopyplan_name: string
+description: string
+execution_strategy: "sequential" | "parallel" | "mixed"
+tasks:
+  - id: string
+    type: "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
+    description: string
+    priority: int
+    dependencies: [list of task ids]
+    # Additional fields depending on type
 Generate the adaptive execution plan:
-"""
+            """
+
         try:
             model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
             agent_instance = prep_res["agent_instance"]
+
             content = await agent_instance.a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=2048, node_name="TaskExecutorNode", task_id="adaptive_planning"
+                max_tokens=2048,
+                node_name="TaskPlannerNode",
+                task_id="goals_based_planning" if planning_mode == "goals_based" else "adaptive_planning"
             )
 
             if "```yaml" in content:
@@ -1537,46 +713,34 @@ Generate the adaptive execution plan:
                 yaml_content = content
 
             plan_data = yaml.safe_load(yaml_content)
-            # print("Advanced", json.dumps(plan_data, indent=2))
 
-            # Create specialized tasks with enhanced DecisionTask support
+            # Create specialized tasks
             tasks = []
             for task_data in plan_data.get("tasks", []):
                 task_type = task_data.pop("type", "generic")
-
-                if task_type == "DecisionTask" or task_type == "decision":
-                    # Enhanced DecisionTask with dynamic capabilities
-                    task = DecisionTask(
-                        id=task_data.get("id", str(uuid.uuid4())),
-                        type="decision",
-                        description=task_data.get("description", ""),
-                        priority=task_data.get("priority", 1),
-                        dependencies=task_data.get("dependencies", []),
-                        decision_prompt=task_data.get("decision_prompt", ""),
-                        routing_map=task_data.get("routing_map", {}),
-                        decision_model=task_data.get("decision_model", "fast"),
-                        critical=True
-                    )
-                else:
-                    task = create_task(task_type, **task_data)
-
+                task = create_task(task_type, **task_data)
                 tasks.append(task)
 
             plan = TaskPlan(
                 id=str(uuid.uuid4()),
-                name=plan_data.get("plan_name", "Adaptive Plan"),
-                description=plan_data.get("description", f"Adaptive plan for: {effective_query}"),
+                name=plan_data.get("plan_name", "Generated Plan"),
+                description=plan_data.get("description",
+                                          f"Plan for goals-based execution" if planning_mode == "goals_based" else f"Plan for: {base_query}"),
                 tasks=tasks,
                 execution_strategy=plan_data.get("execution_strategy", "sequential"),
-                metadata={"is_replan": is_replanning, "replan_context": replan_context}
+                metadata={
+                    "planning_mode": planning_mode,
+                    "goals_count": len(prep_res.get("goals", [])) if planning_mode == "goals_based" else 1
+                }
             )
 
-            logger.info(f"Created adaptive plan with {len(tasks)} tasks (replanning: {is_replanning})")
+            rprint(f"Created {planning_mode} plan with {len(tasks)} tasks")
             return plan
 
         except Exception as e:
-            logger.error(f"Advanced adaptive planning failed: {e}")
+            eprint(f"Advanced planning failed: {e}")
             import traceback
+
             print(traceback.format_exc())
             return await self._create_simple_plan(prep_res)
 
@@ -1704,7 +868,7 @@ class TaskExecutorNode(AsyncNode):
             "complex_llm_model": self.complex_llm_model,
             "available_tools": shared.get("available_tools", []),
             "world_model": shared.get("world_model", {}),
-            "results_store": self.results_store,
+            "results": self.results_store,
             "variable_manager": self.variable_manager,
             "progress_tracker": self.progress_tracker ,
         }
@@ -1734,7 +898,7 @@ class TaskExecutorNode(AsyncNode):
                     return False
             else:
                 # Dependency existiert nicht - könnte Problem sein
-                logger.warning(f"Task {task.id} has missing dependency: {dep_id}")
+                wprint(f"Task {task.id} has missing dependency: {dep_id}")
                 return False
         return True
 
@@ -1884,12 +1048,12 @@ confidence: 0.85
             # Validiere und erweitere den Plan
             validated_plan = self._validate_execution_plan(execution_plan, ready_tasks)
 
-            logger.info(
+            rprint(
                 f"LLM execution plan created: {validated_plan.get('strategy')} with {len(validated_plan.get('execution_groups', []))} groups")
             return validated_plan
 
         except Exception as e:
-            logger.error(f"LLM execution planning failed: {e}")
+            eprint(f"LLM execution planning failed: {e}")
             return self._create_simple_execution_plan(ready_tasks, plan)
 
     def _analyze_tasks_for_llm(self, ready_tasks: List[Task], blocked_tasks: List[Task]) -> Dict[str, str]:
@@ -2046,7 +1210,7 @@ confidence: 0.85
             }
 
         except Exception as e:
-            logger.error(f"Execution plan failed: {e}")
+            eprint(f"Execution plan failed: {e}")
             return {
                 "status": "execution_failed",
                 "error": str(e),
@@ -2076,7 +1240,7 @@ confidence: 0.85
             ]
 
             if critical_failures:
-                logger.error(f"Critical task failures in group {group['group_id']}, stopping execution")
+                eprint(f"Critical task failures in group {group['group_id']}, stopping execution")
                 break
 
         return all_results
@@ -2132,7 +1296,7 @@ confidence: 0.85
             # Flache Liste der Ergebnisse
             for result_group in batch_results:
                 if isinstance(result_group, Exception):
-                    logger.error(f"Group execution failed: {result_group}")
+                    eprint(f"Group execution failed: {result_group}")
                     continue
                 all_results.extend(result_group)
 
@@ -2170,7 +1334,7 @@ confidence: 0.85
             processed_results = []
             for i, result in enumerate(batch_results):
                 if isinstance(result, Exception):
-                    logger.error(f"Task {batch[i].id} failed with exception: {result}")
+                    eprint(f"Task {batch[i].id} failed with exception: {result}")
                     processed_results.append({
                         "task_id": batch[i].id,
                         "status": "failed",
@@ -2194,11 +1358,11 @@ confidence: 0.85
 
                 # Stoppe bei kritischen Fehlern in sequenzieller Ausführung
                 if result.get("status") == "failed" and getattr(task, 'critical', False):
-                    logger.error(f"Critical task {task.id} failed, stopping sequential execution")
+                    eprint(f"Critical task {task.id} failed, stopping sequential execution")
                     break
 
             except Exception as e:
-                logger.error(f"Sequential task {task.id} failed: {e}")
+                eprint(f"Sequential task {task.id} failed: {e}")
                 results.append({
                     "task_id": task.id,
                     "status": "failed",
@@ -2223,7 +1387,8 @@ confidence: 0.85
                     "task_type": task.type,
                     "task_description": task.description,
                     "priority": task.priority,
-                    "dependencies": task.dependencies
+                    "dependencies": task.dependencies,
+                    "task": asdict(task),
                 }
             ))
 
@@ -2271,7 +1436,8 @@ confidence: 0.85
                     metadata={
                         "success": True,
                         "result_type": type(result).__name__,
-                        "task_type": task.type
+                        "task_type": task.type,
+                        "task": asdict(task),
                     }
                 ))
 
@@ -2292,6 +1458,24 @@ confidence: 0.85
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="task_error",
+                    timestamp=time.time(),
+                    node_name="TaskExecutorNode",
+                    task_id=task.id,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=task_duration,
+                    metadata={
+                        "error": str(e),
+                        "error_message": str(e),
+                        "error_type": type(e).__name__,
+                        "task_type": task.type,
+                        "retry_count": task.retry_count,
+                        "task": asdict(task),
+                    }
+                ))
+
+                await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="error",
                     timestamp=time.time(),
                     node_name="TaskExecutorNode",
@@ -2301,13 +1485,15 @@ confidence: 0.85
                     node_duration=task_duration,
                     metadata={
                         "error": str(e),
+                        "error_message": str(e),
                         "error_type": type(e).__name__,
-                        "task_type": task.type,
-                        "retry_count": task.retry_count
+                        "source": "task_execution",
+                        "task_id": task.id,
+                        "task_type": task.type
                     }
                 ))
 
-            logger.error(f"Task {task.id} failed: {e}")
+            eprint(f"Task {task.id} failed: {e}")
             return {
                 "task_id": task.id,
                 "status": "failed",
@@ -2326,7 +1512,7 @@ confidence: 0.85
 
                 # Log if variables weren't resolved (debugging)
                 if "{{" in resolved_value and "}}" in resolved_value:
-                    logger.warning(f"Unresolved variables in argument '{key}': {resolved_value}")
+                    wprint(f"Unresolved variables in argument '{key}': {resolved_value}")
 
                 resolved[key] = resolved_value
             else:
@@ -2364,7 +1550,7 @@ confidence: 0.85
             ))
 
         try:
-            logger.info(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
+            rprint(f"Executing tool {task.tool_name} with resolved args: {resolved_args}")
 
             # Execute tool with timeout and retry logic
             result = await self._execute_tool_with_retries(task.tool_name, resolved_args, agent)
@@ -2407,6 +1593,8 @@ confidence: 0.85
 
         except Exception as e:
             tool_duration = time.perf_counter() - tool_start
+            import traceback
+            print(traceback.format_exc())
 
             # Detailed error tracking
             if self.progress_tracker:
@@ -2428,7 +1616,7 @@ confidence: 0.85
                     }
                 ))
 
-            logger.error(f"Tool execution failed for {task.tool_name}: {e}")
+            eprint(f"Tool execution failed for {task.tool_name}: {e}")
             raise
     async def _execute_llm_via_llmtool(self, task: LLMTask) -> Any:
         """Execute LLM task via LLMToolNode for consistency"""
@@ -2464,7 +1652,7 @@ confidence: 0.85
             # shared["synthesized_response"]
             return llm_shared["current_response"]
         except Exception as e:
-            logger.error(f"LLMToolNode execution failed for task {task.id}: {e}")
+            eprint(f"LLMToolNode execution failed for task {task.id}: {e}")
             # Fallback to direct execution
             import traceback
             print(traceback.format_exc())
@@ -2499,22 +1687,6 @@ confidence: 0.85
 
         llm_start = time.perf_counter()
 
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="llm_call",
-                timestamp=time.time(),
-                node_name="TaskExecutorNode",
-                status=NodeStatus.RUNNING,
-                task_id=task.id,
-                llm_model=model_to_use,
-                llm_temperature=llm_config.get("temperature", 0.7),
-                metadata={
-                    "task_type": "LLMTask",
-                    "model_preference": model_preference,
-                    "prompt_length": len(final_prompt)
-                }
-            ))
-
         try:
 
             response = await litellm.acompletion(
@@ -2524,38 +1696,8 @@ confidence: 0.85
                 max_tokens=llm_config.get("max_tokens", 1024)
             )
 
-            llm_duration = time.perf_counter() - llm_start
-            result = response.choices[0].message.content
+            result = response
 
-            # Extract token usage and cost
-            usage = response.usage
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            total_tokens = usage.total_tokens if usage else 0
-
-            call_cost = self.progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
-                                                                 output_tokens) if self.progress_tracker else 0.0
-
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="llm_call",
-                    timestamp=time.time(),
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    status=NodeStatus.COMPLETED,
-                    llm_model=model_to_use,
-                    llm_prompt_tokens=input_tokens,
-                    llm_completion_tokens=output_tokens,
-                    llm_total_tokens=total_tokens,
-                    llm_cost=call_cost,
-                    llm_duration=llm_duration,
-                    llm_temperature=llm_config.get("temperature", 0.7),
-                    metadata={
-                        "success": True,
-                        "result_length": len(result),
-                        "task_type": "LLMTask"
-                    }
-                ))
 
             # Store intermediate result for other tasks
             self.variable_manager.set(f"tasks.{task.id}.result", result)
@@ -2611,6 +1753,57 @@ confidence: 0.85
 
             raise
 
+    async def _execute_generic_via_llmtool(self, task: Task) -> Any:
+        """
+        Execute a generic task by treating its description as a query for the LLMToolNode.
+        This provides a flexible fallback for undefined task types, leveraging the full
+        reasoning and tool-use capabilities of the LLMToolNode.
+        """
+        # Prepare a shared context dictionary for the LLMToolNode, treating the
+        # generic task's description as the primary query.
+        llm_shared = {
+            "current_task_description": task.description,
+            "current_query": task.description,
+            "formatted_context": {
+                "recent_interaction": f"Executing generic task: {task.description}",
+                "session_summary": f"The system needs to complete the following task: {task.description}",
+                "task_context": f"Task ID: {task.id}, Priority: {task.priority}, Type: Generic"
+            },
+            "variable_manager": self.variable_manager,
+            "agent_instance": self.agent_instance,
+            # Generic tasks might require tools, so provide full tool context.
+            "available_tools": self.agent_instance.shared.get("available_tools", []) if self.agent_instance else [],
+            "tool_capabilities": self.agent_instance._tool_capabilities if self.agent_instance else {},
+            "fast_llm_model": self.fast_llm_model,
+            "complex_llm_model": self.complex_llm_model,
+            "progress_tracker": self.progress_tracker,
+            "session_id": getattr(self, 'session_id', 'task_executor_generic'),
+            # Default to a fast model, assuming generic tasks are often straightforward.
+            "use_fast_response": True
+        }
+
+        # Instantiate the LLMToolNode for this specific execution.
+        llm_node = LLMToolNode()
+
+        try:
+            # Execute the node. It will run its internal loop for reasoning, tool calling, and response generation.
+            # The results of the execution will be populated back into the `llm_shared` dictionary.
+            await llm_node.run_async(llm_shared)
+
+            # Extract the final response from the shared context populated by the node.
+            # Prioritize the structured 'synthesized_response' but fall back to 'current_response'.
+            final_response = llm_shared.get("synthesized_response", {}).get("synthesized_response")
+            if not final_response:
+                final_response = llm_shared.get("current_response", f"Generic task '{task.id}' processed.")
+
+            return final_response
+
+        except Exception as e:
+            eprint(f"LLMToolNode execution for generic task {task.id} failed: {e}")
+            # Re-raise the exception to allow the higher-level execution loop in
+            # _execute_single_task to catch and handle it appropriately (e.g., for retries).
+            raise
+
     async def _execute_decision_task_enhanced(self, task: DecisionTask) -> str:
         """Enhanced DecisionTask with intelligent replan assessment"""
 
@@ -2622,27 +1815,27 @@ confidence: 0.85
 
         # Enhanced decision prompt with full context
         enhanced_prompt = f"""
-    You are making a critical routing decision for task execution. Analyze all context carefully.
+You are making a critical routing decision for task execution. Analyze all context carefully.
 
-    ## Current Situation
-    {task.decision_prompt}
+## Current Situation
+{task.decision_prompt}
 
-    ## Execution Context
-    {decision_context}
+## Execution Context
+{decision_context}
 
-    ## Available Routing Options
-    {json.dumps(task.routing_map, indent=2)}
+## Available Routing Options
+{json.dumps(task.routing_map, indent=2)}
 
-    ## Decision Guidelines
-    1. Only trigger "replan_from_here" if there's a genuine failure that cannot be recovered
-    2. Use "route_to_task" for normal flow continuation
-    3. Consider the full context, not just immediate results
-    4. Be conservative with replanning - it's expensive and can cause loops
+## Decision Guidelines
+1. Only trigger "replan_from_here" if there's a genuine failure that cannot be recovered
+2. Use "route_to_task" for normal flow continuation
+3. Consider the full context, not just immediate results
+4. Be conservative with replanning - it's expensive and can cause loops
 
-    Based on ALL the context above, what is your decision?
-    Respond with EXACTLY one of these options: {', '.join(task.routing_map.keys())}
+Based on ALL the context above, what is your decision?
+Respond with EXACTLY one of these options: {', '.join(task.routing_map.keys())}
 
-    Your decision:"""
+Your decision:"""
 
         model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
 
@@ -2654,7 +1847,7 @@ confidence: 0.85
                 max_tokens=50
             )
 
-            decision = response.choices[0].message.content.strip().lower()
+            decision = response.choices[0].message.content.strip().lower().split('\n')[0]
 
             # Find matching key (case-insensitive)
             matched_key = None
@@ -2664,7 +1857,7 @@ confidence: 0.85
                     break
 
             if not matched_key:
-                logger.warning(f"Decision '{decision}' not in routing map, using first option")
+                wprint(f"Decision '{decision}' not in routing map, using first option")
                 matched_key = list(task.routing_map.keys())[0] if task.routing_map else "continue"
 
             routing_instruction = task.routing_map.get(matched_key, matched_key)
@@ -2722,14 +1915,14 @@ confidence: 0.85
                 return matched_key
 
         except Exception as e:
-            logger.error(f"Enhanced decision task failed: {e}")
+            eprint(f"Enhanced decision task failed: {e}")
             raise
 
     async def post_async(self, shared, prep_res, exec_res):
         """Erweiterte Post-Processing mit dynamischer Plan-Anpassung"""
 
         # Results store in shared state integrieren
-        shared["results_store"] = self.results_store
+        shared["results"] = self.results_store
 
         if exec_res is None or "error" in exec_res:
             shared["executor_performance"] = {"status": "error", "last_error": exec_res.get("error")}
@@ -2770,13 +1963,13 @@ confidence: 0.85
                             shared["needs_dynamic_replan"] = True
                             shared["replan_context"] = task.metadata.get("replan_context", {})
                             planning_action_detected = True
-                            logger.info(f"Dynamic replan triggered by task {task_id}")
+                            rprint(f"Dynamic replan triggered by task {task_id}")
 
                         elif routing_action == "append_plan":
                             shared["needs_plan_append"] = True
                             shared["append_context"] = task.metadata.get("append_context", {})
                             planning_action_detected = True
-                            logger.info(f"Plan append triggered by task {task_id}")
+                            rprint(f"Plan append triggered by task {task_id}")
 
                     # Store verification results if available
                     if result.get("verification"):
@@ -2805,7 +1998,7 @@ confidence: 0.85
             if all_finished:
                 current_plan.status = "completed"
                 shared["plan_completion_time"] = datetime.now().isoformat()
-                logger.info(f"Plan {current_plan.id} finished")
+                rprint(f"Plan {current_plan.id} finished")
                 return "plan_completed"
             else:
                 ready_tasks = [
@@ -2943,7 +2136,7 @@ confidence: 0.85
                 if self._is_tool_result_success(result):
                     return result
                 elif attempt < max_retries:
-                    logger.warning(f"Tool {tool_name} returned unclear result, retrying...")
+                    wprint(f"Tool {tool_name} returned unclear result, retrying...")
                     continue
                 else:
                     return result
@@ -2951,10 +2144,10 @@ confidence: 0.85
             except Exception as e:
                 last_exception = e
                 if attempt < max_retries:
-                    logger.warning(f"Tool {tool_name} failed (attempt {attempt + 1}), retrying: {e}")
+                    wprint(f"Tool {tool_name} failed (attempt {attempt + 1}), retrying: {e}")
                     await asyncio.sleep(0.5 * (attempt + 1))  # Progressive delay
                 else:
-                    logger.error(f"Tool {tool_name} failed after {max_retries + 1} attempts")
+                    eprint(f"Tool {tool_name} failed after {max_retries + 1} attempts")
 
         if last_exception:
             raise last_exception
@@ -2987,7 +2180,7 @@ confidence: 0.85
 
             # At least one expectation keyword should be present
             if not any(keyword in result_text for keyword in expectation_keywords):
-                logger.warning(f"Tool result doesn't match expectation: {task.expectation}")
+                wprint(f"Tool result doesn't match expectation: {task.expectation}")
 
         return True
 
@@ -3120,803 +2313,6 @@ confidence: 0.85
         return max(0.1, min(1.0, base_confidence))
 
 @with_progress_tracking
-class PlanReflectorNode(AsyncNode):
-    """Unified Adaptive Plan Reflection and Dynamic Adjustment"""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    async def prep_async(self, shared):
-        current_plan = shared.get("current_plan")
-        tasks = shared.get("tasks", {})
-        results_store = shared.get("results_store", {})
-
-        # Standard reflection on recently completed tasks
-        recently_completed = [
-            task for task in (current_plan.tasks if current_plan else [])
-            if task.status == "completed" and
-               task.completed_at and
-               (datetime.now() - task.completed_at).seconds < 300  # Last 5 minutes
-        ]
-
-        # Dynamic replanning context (triggered by DecisionTasks)
-        needs_dynamic_replan = shared.get("needs_dynamic_replan", False)
-        replan_context = shared.get("replan_context", {})
-
-        # Plan append context (triggered by DecisionTasks)
-        needs_plan_append = shared.get("needs_plan_append", False)
-        append_context = shared.get("append_context", {})
-
-        return {
-            "current_plan": current_plan,
-            "tasks": tasks,
-            "results_store": results_store,
-            "recently_completed": recently_completed,
-            "fast_llm_model": shared.get("fast_llm_model"),
-            "complex_llm_model": shared.get("complex_llm_model"),
-            "agent_instance": shared.get("agent_instance"),
-            "original_query": shared.get("current_query", ""),
-            # Dynamic planning contexts
-            "needs_dynamic_replan": needs_dynamic_replan,
-            "replan_context": replan_context,
-            "needs_plan_append": needs_plan_append,
-            "append_context": append_context,
-            # Additional context
-            "plan_adaptations": shared.get("plan_adaptations", 0),
-            "execution_performance": shared.get("executor_performance", {}),
-            "agent_instance": shared.get("agent_instance")
-        }
-
-    async def exec_async(self, prep_res):
-        """Unified execution handling all reflection scenarios"""
-
-        # Priority 1: Handle dynamic replanning (triggered by DecisionTask)
-        if prep_res["needs_dynamic_replan"]:
-            logger.info("Handling dynamic replan request")
-            return await self._handle_dynamic_replan(prep_res)
-
-        # Priority 2: Handle plan append (triggered by DecisionTask)
-        if prep_res["needs_plan_append"]:
-            logger.info("Handling plan append request")
-            return await self._handle_plan_append(prep_res)
-
-        # Priority 3: Standard reflection on completed tasks
-        if prep_res["recently_completed"]:
-            logger.info("Analyzing recently completed tasks")
-            return await self._handle_standard_reflection(prep_res)
-
-        # Priority 4: Check execution performance issues
-        performance = prep_res["execution_performance"]
-        if performance.get("status") == "error" or performance.get("success_rate", 1.0) < 0.3:
-            logger.info("Handling performance issues")
-            return await self._handle_performance_issues(prep_res)
-
-        # Default: Continue normal execution
-        return {
-            "action": "CONTINUE",
-            "reason": "No reflection triggers detected, continuing normal execution"
-        }
-
-    async def _handle_dynamic_replan(self, prep_res: Dict) -> Dict[str, Any]:
-        """Enhanced dynamic replanning with extensive context validation"""
-
-        replan_context = prep_res.get("replan_context", {})
-        current_plan = prep_res["current_plan"]
-
-        # Find the triggering task and validate replan necessity
-        triggering_task_id = replan_context.get("original_task")
-        triggering_task = prep_res["tasks"].get(triggering_task_id) if triggering_task_id else None
-
-        # Enhanced validation - check if replan is actually necessary
-        replan_justification = self._validate_replan_necessity(triggering_task, replan_context, prep_res)
-
-        if not replan_justification["is_necessary"]:
-            logger.info(f"Replan request rejected: {replan_justification['reason']}")
-            return {
-                "action": "CONTINUE",
-                "reason": f"Replan not necessary: {replan_justification['reason']}",
-                "alternative_action": replan_justification.get("alternative", "continue_execution")
-            }
-
-        # Extract comprehensive learned context
-        completed_tasks = [t for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"]
-        learned_context = self._extract_comprehensive_context(completed_tasks, prep_res)
-
-        # Build enhanced replan context with failure analysis
-        enhanced_replan_context = {
-            "original_query": prep_res.get("original_query", ""),
-            "new_goal": replan_context.get("new_goal", ""),
-            "failure_reason": replan_context.get("failure_reason", ""),
-            "learned_context": learned_context,
-            "completed_task_ids": [t.id for t in completed_tasks],
-            "triggering_decision": replan_context.get("context", ""),
-            "avoid_approaches": replan_context.get("failed_approaches", []),
-            "success_patterns": replan_context.get("success_indicators", []),
-            "execution_history": replan_context.get("execution_history", ""),
-            "variable_context": self._build_variable_context_for_replanning(prep_res),
-            "confidence_factors": self._analyze_confidence_factors(prep_res),
-            "dynamic_replan": True,
-            "justification": replan_justification
-        }
-
-        logger.info(f"Dynamic replan approved: {replan_context.get('new_goal', 'No goal specified')}")
-
-        return {
-            "action": "DYNAMIC_REPLAN_TRIGGERED",
-            "replan_context": enhanced_replan_context,
-            "reason": f"DecisionTask {triggering_task_id} triggered justified replanning",
-            "previous_plan_id": current_plan.id,
-            "preserve_completed": True,
-            "priority": "high",  # Reduced from critical to high
-            "confidence": replan_justification["confidence"]
-        }
-
-    def _validate_replan_necessity(self, triggering_task: Task, replan_context: Dict, prep_res: Dict) -> Dict[str, Any]:
-        """Validate whether replanning is actually necessary"""
-
-        validation = {
-            "is_necessary": False,
-            "reason": "",
-            "confidence": 0.0,
-            "alternative": "continue_execution"
-        }
-
-        # Check if we have genuine failure indicators
-        failure_reason = replan_context.get("failure_reason", "")
-        new_goal = replan_context.get("new_goal", "")
-
-        # Analyze completed tasks for alternative solutions
-        completed_count = len([t for t in prep_res["tasks"].values() if t.status == "completed"])
-        failed_count = len([t for t in prep_res["tasks"].values() if t.status == "failed"])
-
-        # Decision factors
-        has_alternatives = completed_count > 0
-        failure_is_critical = "critical" in failure_reason.lower() or "error" in failure_reason.lower()
-        goal_is_specific = len(new_goal.split()) > 3
-
-        # Conservative validation - only replan if really necessary
-        if failure_is_critical and not has_alternatives and goal_is_specific:
-            validation.update({
-                "is_necessary": True,
-                "reason": "Critical failure with no alternatives and specific recovery goal",
-                "confidence": 0.8
-            })
-        elif failed_count > completed_count and goal_is_specific:
-            validation.update({
-                "is_necessary": True,
-                "reason": "More failures than successes, specific recovery needed",
-                "confidence": 0.6
-            })
-        else:
-            # Suggest alternatives instead of replanning
-            if has_alternatives:
-                validation.update({
-                    "reason": "Existing results can be used instead of replanning",
-                    "alternative": "synthesize_from_existing",
-                    "confidence": 0.7
-                })
-            else:
-                validation.update({
-                    "reason": "Failure not critical enough to warrant full replan",
-                    "alternative": "continue_with_fallback",
-                    "confidence": 0.5
-                })
-
-        return validation
-
-    def _extract_comprehensive_context(self, completed_tasks: List[Task], prep_res: Dict) -> str:
-        """Extract comprehensive context including variable state"""
-
-        context_parts = []
-        results_store = prep_res["results_store"]
-
-        # Successful task results
-        for task in completed_tasks:
-            result_data = results_store.get(task.id, {})
-            if result_data.get("metadata", {}).get("success", False):
-                task_context = f"Task {task.id} ({task.type}): {task.description}"
-
-                data_preview = str(result_data.get("data", ""))
-                if len(data_preview) > 200:
-                    data_preview = data_preview[:200] + "..."
-
-                task_context += f"\nResult: {data_preview}"
-
-                # Add verification if available
-                if hasattr(task, 'metadata') and task.metadata and "verification" in task.metadata:
-                    verification = task.metadata["verification"]
-                    if isinstance(verification, dict):
-                        confidence = verification.get("confidence", 0.0)
-                        task_context += f"\nVerification confidence: {confidence:.2f}"
-
-                context_parts.append(task_context)
-
-        # Current variable state
-        if hasattr(prep_res.get("agent_instance"), "variable_manager"):
-            vm = prep_res["agent_instance"].variable_manager
-            var_summary = []
-
-            for scope_name, scope_data in vm.scopes.items():
-                if isinstance(scope_data, dict) and scope_data:
-                    var_summary.append(f"{scope_name}: {len(scope_data)} variables")
-
-            if var_summary:
-                context_parts.append("Variable state: " + ", ".join(var_summary))
-
-        return "\n\n".join(context_parts) if context_parts else "No significant context available"
-
-    def _build_variable_context_for_replanning(self, prep_res: Dict) -> Dict[str, Any]:
-        """Build variable context specifically for replanning"""
-
-        variable_context = {}
-
-        agent_instance = prep_res.get("agent_instance")
-        if agent_instance and hasattr(agent_instance, "variable_manager"):
-            vm = agent_instance.variable_manager
-
-            # Get key variables that might be useful for replanning
-            variable_context["available_scopes"] = list(vm.scopes.keys())
-            variable_context["results_available"] = len(vm.scopes.get("results", {}))
-            variable_context["world_facts"] = len(vm.scopes.get("world", {}))
-
-            # Get user context
-            user_data = vm.scopes.get("user", {})
-            if user_data:
-                variable_context["user_context"] = {
-                    "session": user_data.get("session", "unknown"),
-                    "query": user_data.get("query", "")[:100] + "..." if len(
-                        user_data.get("query", "")) > 100 else user_data.get("query", "")
-                }
-
-        return variable_context
-
-    def _analyze_confidence_factors(self, prep_res: Dict) -> Dict[str, float]:
-        """Analyze various confidence factors for replanning decision"""
-
-        confidence_factors = {}
-
-        # Task completion rate
-        tasks = prep_res["tasks"]
-        if tasks:
-            completed = len([t for t in tasks.values() if t.status == "completed"])
-            total = len(tasks)
-            confidence_factors["completion_rate"] = completed / total
-
-        # Result quality (based on verification scores)
-        results_store = prep_res["results_store"]
-        verification_scores = []
-
-        for result_data in results_store.values():
-            if "verification" in result_data.get("metadata", {}):
-                verification = result_data["metadata"]["verification"]
-                if isinstance(verification, dict) and "confidence" in verification:
-                    verification_scores.append(verification["confidence"])
-
-        if verification_scores:
-            confidence_factors["average_verification"] = sum(verification_scores) / len(verification_scores)
-
-        # Information richness
-        total_result_length = sum(len(str(r.get("data", ""))) for r in results_store.values())
-        confidence_factors["information_richness"] = min(total_result_length / 1000, 1.0)  # Normalize
-
-        return confidence_factors
-
-    async def _handle_plan_append(self, prep_res: Dict) -> Dict[str, Any]:
-        """Handle plan append operation triggered by DecisionTask"""
-
-        append_context = prep_res.get("append_context", {})
-        current_plan = prep_res["current_plan"]
-
-        # Create append-specific planning context
-        append_planning_context = {
-            "original_query": prep_res.get("original_query", ""),
-            "append_goal": append_context.get("new_goal", ""),
-            "extend_from_task": append_context.get("extend_from", ""),
-            "completed_tasks": [t.id for t in current_plan.tasks if prep_res["tasks"][t.id].status == "completed"],
-            "current_results": self._summarize_current_results(prep_res),
-            "append_operation": True  # Flag for TaskPlannerNode
-        }
-
-        logger.info(f"Plan append triggered: {append_context.get('new_goal', 'No goal specified')}")
-
-        return {
-            "action": "PLAN_APPEND_TRIGGERED",
-            "append_context": append_planning_context,
-            "reason": f"DecisionTask requested plan extension",
-            "current_plan_id": current_plan.id,
-            "preserve_existing": True,
-            "priority": "high"
-        }
-
-    async def _handle_standard_reflection(self, prep_res: Dict) -> Dict[str, Any]:
-        """Handle standard reflection on recently completed tasks"""
-
-        # Analyze recent completions
-        reflection_result = await self._analyze_recent_completions(prep_res)
-
-        # Decide on next action using LLM
-        action_decision = await self._decide_next_action(reflection_result, prep_res)
-
-        # Execute the decided action
-        if action_decision["action"] == "ADAPT":
-            adaptation_result = await self._adapt_plan(action_decision, prep_res)
-            return adaptation_result
-        elif action_decision["action"] == "REPLAN":
-            replan_result = await self._trigger_standard_replanning(action_decision, prep_res)
-            return replan_result
-        elif action_decision["action"] == "HALT_FAILURE":
-            return {
-                "action": "HALT_FAILURE",
-                "reason": action_decision.get("reasoning", "Critical failure detected"),
-                "halt_details": action_decision,
-                "priority": "critical"
-            }
-        else:
-            return action_decision
-
-    async def _handle_performance_issues(self, prep_res: Dict) -> Dict[str, Any]:
-        """Handle execution performance issues"""
-
-        performance = prep_res["execution_performance"]
-
-        if performance.get("success_rate", 1.0) < 0.3:
-            return {
-                "action": "PERFORMANCE_REPLAN",
-                "reason": f"Low success rate: {performance.get('success_rate', 0.0):.1%}",
-                "performance_context": {
-                    "failed_tasks": performance.get("failed_tasks", 0),
-                    "completed_tasks": performance.get("completed_tasks", 0),
-                    "strategy_used": performance.get("strategy_used", "unknown")
-                },
-                "priority": "high"
-            }
-        else:
-            return {
-                "action": "CONTINUE",
-                "reason": "Performance issues detected but not critical"
-            }
-
-    def _summarize_current_results(self, prep_res: Dict) -> str:
-        """Summarize current results for context"""
-
-        results_store = prep_res["results_store"]
-        current_plan = prep_res["current_plan"]
-
-        summary_items = []
-
-        for task in current_plan.tasks:
-            if prep_res["tasks"][task.id].status == "completed":
-                result = results_store.get(task.id, {})
-                data_preview = str(result.get("data", ""))[:100]
-                summary_items.append(f"{task.id}: {data_preview}...")
-
-        return "; ".join(summary_items) if summary_items else "No results yet"
-
-    async def _analyze_recent_completions(self, prep_res) -> Dict[str, Any]:
-        """Analyze recently completed tasks for issues and successes"""
-
-        recently_completed = prep_res["recently_completed"]
-        results_store = prep_res["results_store"]
-
-        analysis = {
-            "successful_tasks": [],
-            "problematic_tasks": [],
-            "verification_issues": [],
-            "unexpected_results": [],
-            "dynamic_decisions": []  # Track DecisionTask outcomes
-        }
-
-        for task in recently_completed:
-            task_analysis = await self._analyze_single_task(task, results_store)
-
-            if task_analysis["status"] == "successful":
-                analysis["successful_tasks"].append(task_analysis)
-            elif task_analysis["status"] == "problematic":
-                analysis["problematic_tasks"].append(task_analysis)
-            elif task_analysis["status"] == "unexpected":
-                analysis["unexpected_results"].append(task_analysis)
-            elif task_analysis["status"] == "dynamic_decision":
-                analysis["dynamic_decisions"].append(task_analysis)
-
-        return analysis
-
-    async def _analyze_single_task(self, task: Task, results_store: Dict) -> Dict[str, Any]:
-        """Enhanced single task analysis including DecisionTask dynamics"""
-
-        task_result = results_store.get(task.id, {})
-        verification = task.metadata.get("verification", {}) if hasattr(task, 'metadata') else {}
-
-        # Enhanced DecisionTask analysis
-        if isinstance(task, DecisionTask):
-            if hasattr(task, 'metadata') and task.metadata:
-                routing_action = task.metadata.get("routing_action")
-                decision_made = task.metadata.get("decision_made", "")
-
-                if routing_action in ["replan_from_here", "append_plan"]:
-                    return {
-                        "task_id": task.id,
-                        "status": "dynamic_decision",
-                        "action": routing_action,
-                        "decision": decision_made,
-                        "details": task.metadata.get("routing_instruction", {})
-                    }
-                elif decision_made and decision_made in task.routing_map:
-                    return {
-                        "task_id": task.id,
-                        "status": "successful",
-                        "decision": decision_made,
-                        "routing_action": routing_action or "route_to_task"
-                    }
-
-            return {
-                "task_id": task.id,
-                "status": "problematic",
-                "issue": "decision_task_incomplete",
-                "decision": task.metadata.get("decision_made", "") if hasattr(task, 'metadata') else ""
-            }
-
-        # ToolTask analysis (existing logic)
-        elif isinstance(task, ToolTask) and task.hypothesis:
-            hypothesis_score = verification.get("hypothesis_score", 0.5)
-            criteria_score = verification.get("criteria_score", 0.5)
-
-            if hypothesis_score < 0.3 or criteria_score < 0.3:
-                return {
-                    "task_id": task.id,
-                    "status": "problematic",
-                    "issue": "hypothesis_not_met",
-                    "details": {
-                        "hypothesis": task.hypothesis,
-                        "hypothesis_score": hypothesis_score,
-                        "criteria_score": criteria_score,
-                        "tool_name": task.tool_name
-                    }
-                }
-            elif 0.3 <= hypothesis_score < 0.7 or 0.3 <= criteria_score < 0.7:
-                return {
-                    "task_id": task.id,
-                    "status": "unexpected",
-                    "issue": "partial_success",
-                    "details": {
-                        "hypothesis": task.hypothesis,
-                        "actual_result": task_result.get("data", ""),
-                        "verification": verification
-                    }
-                }
-            else:
-                return {
-                    "task_id": task.id,
-                    "status": "successful",
-                    "details": verification
-                }
-
-        # Standard Task analysis
-        else:
-            if task.result and not task.error:
-                return {"task_id": task.id, "status": "successful"}
-            else:
-                return {
-                    "task_id": task.id,
-                    "status": "problematic",
-                    "issue": "execution_error",
-                    "error": task.error
-                }
-
-    async def _trigger_standard_replanning(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
-        """Trigger standard replanning (not dynamic)"""
-
-        original_query = prep_res.get("original_query", "")
-        learned_context = self._extract_learned_context(prep_res)
-
-        replan_context = {
-            "original_query": original_query,
-            "previous_attempt_failed": True,
-            "learned_context": learned_context,
-            "failure_reason": decision.get("reasoning", ""),
-            "avoid_approaches": self._extract_failed_approaches(prep_res),
-            "standard_replan": True
-        }
-
-        return {
-            "action": "STANDARD_REPLAN_TRIGGERED",
-            "replan_context": replan_context,
-            "reason": decision.get("reasoning", ""),
-            "previous_plan_id": prep_res["current_plan"].id if prep_res["current_plan"] else None
-        }
-
-    # Helper methods for dynamic replanning
-    def _extract_learned_context_from_tasks(self, completed_tasks: List[Task], results_store: Dict) -> str:
-        """Extract learned context from completed tasks for replanning"""
-
-        context_items = []
-
-        for task in completed_tasks:
-            result_data = results_store.get(task.id, {})
-
-            if isinstance(task, ToolTask):
-                if result_data.get("metadata", {}).get("success", False):
-                    context_items.append(f"Tool {task.tool_name}: {str(result_data.get('data', ''))[:150]}...")
-
-            elif isinstance(task, LLMTask):
-                if task.result:
-                    context_items.append(f"Analysis result: {str(task.result)[:100]}...")
-
-            elif isinstance(task, DecisionTask):
-                decision = task.metadata.get("decision_made") if hasattr(task, 'metadata') else None
-                if decision:
-                    context_items.append(f"Decision made: {decision}")
-
-        return "\n".join(context_items) if context_items else "No significant context from previous tasks"
-
-    def _extract_failed_approaches_from_context(self, replan_context: Dict) -> List[str]:
-        """Extract failed approaches to avoid in replanning"""
-
-        failed_approaches = []
-
-        failure_reason = replan_context.get("failure_reason", "")
-        if "search" in failure_reason.lower():
-            failed_approaches.append("initial_search_approach")
-
-        if "tool" in failure_reason.lower():
-            failed_approaches.append("direct_tool_usage")
-
-        # Add context-specific failures
-        context = replan_context.get("context", "")
-        if context:
-            failed_approaches.append(f"approach_described_as: {context[:50]}...")
-
-        return failed_approaches
-
-    async def post_async(self, shared, prep_res, exec_res):
-        """Unified post-processing with complete action spectrum"""
-
-        action = exec_res.get("action", "CONTINUE")
-
-        # Clear trigger flags
-        shared["needs_dynamic_replan"] = False
-        shared["needs_plan_append"] = False
-        shared["replan_context"] = {}
-        shared["append_context"] = {}
-
-        # Handle all possible actions
-        if action == "DYNAMIC_REPLAN_TRIGGERED":
-            shared["replan_context"] = exec_res.get("replan_context", {})
-            shared["needs_replanning"] = True
-            return "needs_replan"
-
-        elif action == "PLAN_APPEND_TRIGGERED":
-            shared["append_context"] = exec_res.get("append_context", {})
-            shared["needs_plan_extension"] = True
-            return "needs_plan_append"
-
-        elif action == "STANDARD_REPLAN_TRIGGERED":
-            shared["replan_context"] = exec_res.get("replan_context", {})
-            shared["needs_replanning"] = True
-            return "needs_replan"
-
-        elif action == "PERFORMANCE_REPLAN":
-            shared["replan_context"] = {
-                "performance_failure": True,
-                "performance_context": exec_res.get("performance_context", {}),
-                "original_query": shared.get("current_query", "")
-            }
-            shared["needs_replanning"] = True
-            return "needs_replan"
-
-        elif action == "ADAPT_COMPLETED":
-            shared["plan_adaptations"] = shared.get("plan_adaptations", 0) + 1
-            shared["last_adaptation"] = datetime.now()
-            return "adapted"
-
-        elif action == "HALT_FAILURE":
-            shared["plan_halted"] = True
-            shared["halt_reason"] = exec_res.get("reason", "Critical failure")
-            shared["halt_details"] = exec_res.get("halt_details", {})
-            return "plan_halted"
-
-        elif action == "CONTINUE":
-            return "continue"
-
-        else:
-            # Unknown action - default to continue
-            logger.warning(f"Unknown reflection action: {action}")
-            return "continue"
-
-    async def _decide_next_action(self, reflection_result: Dict, prep_res: Dict) -> Dict[str, Any]:
-        """LLM-basierte Entscheidung über nächste Aktionen"""
-
-        if not LITELLM_AVAILABLE:
-            return {"action": "CONTINUE", "reason": "No LLM available for decision making"}
-
-        prompt = f"""
-Du bist ein Plan-Reflexionssystem. Analysiere die Task-Ergebnisse und entscheide über die nächste Aktion.
-
-## Analyse der kürzlich abgeschlossenen Tasks
-Erfolgreiche Tasks: {len(reflection_result['successful_tasks'])}
-Problematische Tasks: {len(reflection_result['problematic_tasks'])}
-Unerwartete Ergebnisse: {len(reflection_result['unexpected_results'])}
-
-## Detaillierte Probleme
-{self._format_analysis_for_prompt(reflection_result)}
-
-## Verfügbare Aktionen
-- CONTINUE: Alles läuft nach Plan, weitermachen
-- ADAPT: Plan um zusätzliche Tasks erweitern (für unerwartete Ergebnisse)
-- REPLAN: Kompletter Neustart der Planung (bei kritischen Fehlern)
-- HALT_FAILURE: Plan abbrechen (bei unüberwindbaren Problemen)
-
-## Entscheidung
-Antworte mit YAML:
-
-```yaml
-action: "ADAPT"  # Eine der obigen Aktionen
-confidence: 0.85  # Wie sicher ist diese Entscheidung?
-reasoning: "Brief explanation of the decision"
-priority: "high"  # high | medium | low
-adaptation_suggestions:
-  - task_type: "tool_call"
-    description: "Additional search with refined query"
-    reason: "Original search didn't find expected information"
-  - task_type: "llm_call"
-    description: "Analyze alternative data sources"
-    reason: "Need to explore different approaches"
-```"""
-
-        try:
-            model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
-            agent_instance = prep_res["agent_instance"]
-            content = await agent_instance.a_run_llm_completion(
-                model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=600, node_name="PlanReflectionNode", task_id="plan_reflection"
-            )
-
-            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
-            yaml_str = yaml_match.group(1) if yaml_match else content.strip()
-
-            decision = yaml.safe_load(yaml_str)
-
-            # Validierung
-            valid_actions = ["CONTINUE", "ADAPT", "REPLAN", "HALT_FAILURE"]
-            if decision.get("action") not in valid_actions:
-                decision["action"] = "CONTINUE"
-
-            logger.info(
-                f"Plan reflection decision: {decision.get('action')} (confidence: {decision.get('confidence', 0.0)})")
-            return decision
-
-        except Exception as e:
-            logger.error(f"Plan reflection decision failed: {e}")
-            return {"action": "CONTINUE", "reason": f"Decision error: {e}"}
-
-    def _format_analysis_for_prompt(self, reflection_result: Dict) -> str:
-        """Formatiere Analyse-Ergebnisse für LLM-Prompt"""
-        formatted = []
-
-        for problematic in reflection_result.get("problematic_tasks", []):
-            formatted.append(f"PROBLEM - Task {problematic['task_id']}: {problematic.get('issue', 'Unknown')}")
-
-        for unexpected in reflection_result.get("unexpected_results", []):
-            formatted.append(f"UNEXPECTED - Task {unexpected['task_id']}: {unexpected.get('issue', 'Unknown')}")
-
-        return "\n".join(formatted) if formatted else "No significant issues detected."
-
-    async def _adapt_plan(self, decision: Dict, prep_res: Dict) -> Dict[str, Any]:
-        """Führe Plan-Adaptation aus basierend auf Entscheidung"""
-
-        current_plan = prep_res["current_plan"]
-        agent_instance = prep_res["agent_instance"]
-
-        adaptation_suggestions = decision.get("adaptation_suggestions", [])
-        new_tasks = []
-
-        for suggestion in adaptation_suggestions:
-            # Erstelle neue Tasks basierend auf Suggestions
-            task_id = f"adapt_{str(uuid.uuid4())[:8]}"
-
-            if suggestion.get("task_type") == "tool_call":
-                new_task = ToolTask(
-                    id=task_id,
-                    type="tool_call",
-                    description=suggestion.get("description", ""),
-                    priority=2,  # Mittlere Priorität für adaptive Tasks
-                    dependencies=[],  # Können sofort ausgeführt werden
-                    tool_name=self._infer_tool_name(suggestion, agent_instance),
-                    arguments=self._generate_tool_arguments(suggestion),
-                    hypothesis=f"This adaptation will address: {suggestion.get('reason', '')}",
-                    validation_criteria="Results should provide the missing information"
-                )
-            elif suggestion.get("task_type") == "llm_call":
-                new_task = LLMTask(
-                    id=task_id,
-                    type="llm_call",
-                    description=suggestion.get("description", ""),
-                    priority=2,
-                    dependencies=[],
-                    prompt_template=f"Analyze the situation: {suggestion.get('reason', '')}",
-                    llm_config={"model_preference": "fast"}
-                )
-            else:
-                new_task = create_task("generic",
-                                       id=task_id,
-                                       description=suggestion.get("description", ""),
-                                       priority=2
-                                       )
-
-            new_tasks.append(new_task)
-
-        # Füge neue Tasks zum Plan hinzu
-        current_plan.tasks.extend(new_tasks)
-
-        # Update shared state
-        task_dict = {task.id: task for task in new_tasks}
-        prep_res["tasks"].update(task_dict)
-
-        logger.info(f"Plan adapted with {len(new_tasks)} additional tasks")
-
-        return {
-            "action": "ADAPT_COMPLETED",
-            "new_tasks": [task.id for task in new_tasks],
-            "reason": decision.get("reasoning", ""),
-            "total_tasks": len(current_plan.tasks)
-        }
-
-    def _infer_tool_name(self, suggestion: Dict, agent_instance) -> str:
-        """Inferiere Tool-Name basierend auf Suggestion"""
-        description = suggestion.get("description", "").lower()
-        available_tools = getattr(agent_instance, 'shared', {}).get("available_tools", [])
-
-        # Simple Heuristik für Tool-Auswahl
-        if "search" in description and any("search" in tool for tool in available_tools):
-            return next(tool for tool in available_tools if "search" in tool)
-        elif "analyze" in description and any("analy" in tool for tool in available_tools):
-            return next(tool for tool in available_tools if "analy" in tool)
-        else:
-            return available_tools[0] if available_tools else "generic_tool"
-
-    def _generate_tool_arguments(self, suggestion: Dict) -> Dict[str, Any]:
-        """Generiere Tool-Argumente basierend auf Suggestion"""
-        description = suggestion.get("description", "")
-        reason = suggestion.get("reason", "")
-
-        # Basis-Argumente basierend auf Kontext
-        if "search" in description.lower():
-            return {
-                "query": f"refined search based on: {reason}",
-                "max_results": 5
-            }
-        elif "analyze" in description.lower():
-            return {
-                "text": "{{ results.previous_task.data }}",
-                "analysis_type": "comprehensive"
-            }
-        else:
-            return {"input": f"{description} - {reason}"}
-
-    def _extract_learned_context(self, prep_res: Dict) -> str:
-        """Extrahiere gelernten Kontext aus bisherigen Ergebnissen"""
-        results_store = prep_res.get("results_store", {})
-        learned_facts = []
-
-        for task_id, result in results_store.items():
-            if result.get("metadata", {}).get("success", False):
-                learned_facts.append(f"Task {task_id} discovered: {str(result.get('data', ''))[:100]}...")
-
-        return "\\n".join(learned_facts)
-
-    def _extract_failed_approaches(self, prep_res: Dict) -> List[str]:
-        """Extrahiere fehlgeschlagene Ansätze um sie zu vermeiden"""
-        failed_approaches = []
-        tasks = prep_res.get("tasks", {})
-
-        for task in tasks.values():
-            if task.status == "failed" and isinstance(task, ToolTask):
-                failed_approaches.append(f"Tool {task.tool_name} with args {task.arguments}")
-
-        return failed_approaches
-
-@with_progress_tracking
 class LLMToolNode(AsyncNode):
     """Enhanced LLM tool with automatic tool calling and agent loop integration"""
 
@@ -3947,6 +2343,7 @@ class LLMToolNode(AsyncNode):
         return {
             "task_description": task_description,
             "context": context,
+            "context_manager": shared.get("context_manager"),
             "session_id": shared.get("session_id"),
             "variable_manager": variable_manager,
             "agent_instance": agent_instance,
@@ -3981,7 +2378,7 @@ class LLMToolNode(AsyncNode):
         system_message = self._build_tool_aware_system_message(prep_res)
 
         # Initial user prompt with variable resolution
-        initial_prompt = self._build_context_aware_prompt(prep_res)
+        initial_prompt = await self._build_context_aware_prompt(prep_res)
         conversation_history.append({"role": "user", "content":  prep_res["variable_manager"].format_text(initial_prompt)})
         runs = 0
         while tool_call_count < self.max_tool_calls:
@@ -3992,44 +2389,17 @@ class LLMToolNode(AsyncNode):
             model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
 
             llm_start = time.perf_counter()
-            if progress_tracker:
-                await progress_tracker.emit_event(ProgressEvent(
-                    event_type="llm_call",
-                    timestamp=time.time(),
-                    node_name="LLMToolNode",
-                    status=NodeStatus.RUNNING,
-                    llm_model=model_to_use,
-                    session_id=prep_res.get("session_id"),
-                    metadata={
-                        "call_number": total_llm_calls + 1,
-                        "conversation_turns": len(conversation_history),
-                        "system_message_length": len(system_message),
-                    }
-                ))
+
             try:
-                response = await litellm.acompletion(
+                agent_instance = prep_res["agent_instance"]
+                response = await agent_instance.a_run_llm_completion(
                     model=model_to_use,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=2048
+                    max_tokens=2048, node_name="LLMToolNode", task_id="llm_phase_" + str(runs)
                 )
 
-                llm_duration = time.perf_counter() - llm_start
-                total_llm_calls += 1
-
-                # Extract token usage and calculate cost
-                usage = response.usage
-                input_tokens = usage.prompt_tokens if usage else 0
-                output_tokens = usage.completion_tokens if usage else 0
-                total_tokens_call = usage.total_tokens if usage else 0
-
-                # Calculate cost (simplified)
-                call_cost = progress_tracker.calculate_llm_cost(model_to_use, input_tokens,
-                                                                output_tokens) if progress_tracker else 0.0
-                total_cost += call_cost
-                total_tokens += total_tokens_call
-
-                llm_response = response.choices[0].message.content
+                llm_response = response
                 if not llm_response:
                     final_response = "I encountered an error while processing your request."
                     break
@@ -4041,35 +2411,11 @@ class LLMToolNode(AsyncNode):
                 llm_response = prep_res["variable_manager"].format_text(llm_response)
                 conversation_history.append({"role": "assistant", "content": llm_response})
 
-                # Track successful LLM call
-                if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="llm_call",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        llm_model=model_to_use,
-                        status=NodeStatus.COMPLETED,
-                        llm_prompt_tokens=input_tokens,
-                        llm_completion_tokens=output_tokens,
-                        llm_total_tokens=total_tokens_call,
-                        llm_cost=call_cost,
-                        llm_duration=llm_duration,
-                        llm_temperature=0.7,
-                        session_id=prep_res.get("session_id"),
-                        metadata={
-                            "success": True,
-                            "response_length": len(llm_response),
-                            "call_number": total_llm_calls,
-                            "response": llm_response,
-                        }
-                    ))
-
 
                 if not tool_calls:
                     # No more tool calls, this is the final response
                     final_response = llm_response
-                    if not (runs == 1 and '{{' in llm_response):
-                        break
+                    break
 
                 # Execute tool calls
                 tool_results = await self._execute_tool_calls(tool_calls, prep_res)
@@ -4097,7 +2443,7 @@ class LLMToolNode(AsyncNode):
                         session_id=prep_res.get("session_id"),
                         metadata={"error": str(e), "call_number": total_llm_calls + 1}
                     ))
-                logger.error(f"LLM tool execution failed: {e}")
+                eprint(f"LLM tool execution failed: {e}")
                 final_response = f"I encountered an error while processing: {str(e)}"
                 import traceback
                 print(traceback.format_exc())
@@ -4223,43 +2569,22 @@ class LLMToolNode(AsyncNode):
         import re
 
         tool_calls = []
-        pattern = r'TOOL_CALL:\s*(\w+)\((.*?)\)'
 
-        matches = re.findall(pattern, text, re.MULTILINE)
+        pattern = r'TOOL_CALL:'
+        matches = _extract_meta_tool_calls(text, pattern)
 
         for tool_name, args_str in matches:
             try:
                 # Parse arguments
-                args = self._parse_tool_arguments(args_str)
+                args = _parse_tool_args(args_str)
                 tool_calls.append({
                     "tool_name": tool_name,
                     "arguments": args
                 })
             except Exception as e:
-                logger.warning(f"Failed to parse tool call {tool_name}: {e}")
+                wprint(f"Failed to parse tool call {tool_name}: {e}")
 
         return tool_calls
-
-    def _parse_tool_arguments(self, args_str: str) -> Dict:
-        """Parse tool arguments from string"""
-        import ast
-        # Try to evaluate as Python dict
-        if args_str.strip():
-            # Wrap in dict if not already
-            if args_str.strip().startswith('{'):
-                try:
-                    return ast.literal_eval(args_str)
-                except:
-                    pass
-        # Fallback: simple key=value parsing
-        args = {}
-        for pair in args_str.split(','):
-            if '=' in pair:
-                key, value = pair.split('=', 1)
-                key = key.strip().strip("'")
-                value = value.strip().strip("'")
-                args[key] = value
-        return args
 
     def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
         """Select optimal model based on task complexity and available resources"""
@@ -4283,7 +2608,7 @@ class LLMToolNode(AsyncNode):
 
     async def _fallback_response(self, prep_res: Dict) -> Dict:
         """Fallback response if LiteLLM is not available"""
-        logger.warning("LiteLLM not available — using fallback response.")
+        wprint("LiteLLM not available — using fallback response.")
         return {
             "success": False,
             "final_response": (
@@ -4364,6 +2689,11 @@ class LLMToolNode(AsyncNode):
 
             except Exception as e:
                 tool_duration = time.perf_counter() - tool_start
+                error_message = str(e)
+                error_type = type(e).__name__
+                import traceback
+                print(traceback.format_exc())
+
 
                 if progress_tracker:
                     await progress_tracker.emit_event(ProgressEvent(
@@ -4375,11 +2705,33 @@ class LLMToolNode(AsyncNode):
                         tool_args=arguments,
                         tool_duration=tool_duration,
                         tool_success=False,
-                        tool_error=str(e),
+                        tool_error=error_message,
                         session_id=prep_res.get("session_id"),
-                        metadata={"error_type": type(e).__name__}
+                        metadata={
+                            "error": error_message,
+                            "error_message": error_message,
+                            "error_type": error_type
+                        }
                     ))
-                logger.error(f"Tool execution failed {tool_name}: {e}")
+
+                    # FIXED: Also send generic error event for error log
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="error",
+                        timestamp=time.time(),
+                        node_name="LLMToolNode",
+                        status=NodeStatus.FAILED,
+                        success=False,
+                        tool_name=tool_name,
+                        metadata={
+                            "error": error_message,
+                            "error_message": error_message,
+                            "error_type": error_type,
+                            "source": "tool_execution",
+                            "tool_name": tool_name,
+                            "tool_args": arguments
+                        }
+                    ))
+                eprint(f"Tool execution failed {tool_name}: {e}")
                 results.append({
                     "tool_name": tool_name,
                     "arguments": arguments,
@@ -4419,37 +2771,101 @@ class LLMToolNode(AsyncNode):
                 var_key = f"tool_result_{tool_name}_{i}"
                 variable_manager.set(var_key, result_data)
 
-    def _build_context_aware_prompt(self, prep_res: Dict) -> str:
-        """Build context-aware prompt with variable resolution"""
+    async def _build_context_aware_prompt(self, prep_res: Dict) -> str:
+        """Build context-aware prompt mit UnifiedContextManager Integration"""
         variable_manager = prep_res.get("variable_manager")
+        agent_instance = prep_res.get("agent_instance")
+        context = prep_res.get("context", {})
 
+        #Get unified context if available
+        context_manager = prep_res.get("context_manager")
+        session_id = prep_res.get("session_id", "default")
+
+        unified_context_parts = []
+
+        if context_manager:
+            try:
+                # Get unified context für LLM Tool usage
+                unified_context = await context_manager.build_unified_context(session_id, prep_res.get("task_description", ""))
+
+                # Format unified context for LLM consumption
+                chat_history = unified_context.get("chat_history", [])
+                if chat_history:
+                    unified_context_parts.append("## Recent Conversation from Session")
+                    for msg in chat_history[-5:]:  # Last 5 messages
+                        timestamp = msg.get('timestamp', '')[:19]
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')[:300] + ("..." if len(msg.get('content', '')) > 300 else "")
+                        unified_context_parts.append(f"[{timestamp}] {role}: {content}")
+
+                # Execution state from unified context
+                execution_state = unified_context.get("execution_state", {})
+                if execution_state:
+                    system_status = execution_state.get('system_status', 'unknown')
+                    active_tasks = execution_state.get('active_tasks', [])
+                    recent_completions = execution_state.get('recent_completions', [])
+
+                    unified_context_parts.append(f"\n## Current System State")
+                    unified_context_parts.append(f"Status: {system_status}")
+                    if active_tasks:
+                        unified_context_parts.append(f"Active Tasks: {len(active_tasks)}")
+                    if recent_completions:
+                        unified_context_parts.append(f"Recent Completions: {len(recent_completions)}")
+
+                # Available results from unified context
+                variables_context = unified_context.get("variables", {})
+                recent_results = variables_context.get("recent_results", [])
+                if recent_results:
+                    unified_context_parts.append(f"\n## Available Results")
+                    for result in recent_results[:3]:  # Top 3 results
+                        task_id = result.get("task_id", "unknown")
+                        preview = result.get("preview", "")[:100] + "..."
+                        success = "✅" if result.get("success") else "❌"
+                        unified_context_parts.append(f"{success} {task_id}: {preview}")
+
+                # World model facts from unified context
+                relevant_facts = unified_context.get("relevant_facts", [])
+                if relevant_facts:
+                    unified_context_parts.append(f"\n## Relevant Known Facts")
+                    for key, value in relevant_facts[:3]:  # Top 3 facts
+                        fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
+                        unified_context_parts.append(f"- {key}: {fact_preview}")
+
+            except Exception as e:
+                unified_context_parts.append(f"## Context Error\nUnified context unavailable: {str(e)}")
+
+        # EXISTIEREND: Keep existing context building (backwards compatibility)
         prompt_parts = []
 
-        # Add context sections
+        # Add unified context first (primary)
+        if unified_context_parts:
+            prompt_parts.extend(unified_context_parts)
+
+        # Add existing context sections (secondary)
         recent_interaction = prep_res.get("recent_interaction", "")
         session_summary = prep_res.get("session_summary", "")
         task_context = prep_res.get("task_context", "")
 
         if recent_interaction:
-            prompt_parts.append(recent_interaction)
+            prompt_parts.append(f"\n## Recent Interaction Context\n{recent_interaction}")
         if session_summary:
-            prompt_parts.append(session_summary)
+            prompt_parts.append(f"\n## Session Summary\n{session_summary}")
         if task_context:
-            prompt_parts.append(task_context)
+            prompt_parts.append(f"\n## Task Context\n{task_context}")
 
         # Add main task
         task_description = prep_res.get("task_description", "")
         if task_description:
-            prompt_parts.append(f"## Current Request\n{task_description}")
+            prompt_parts.append(f"\n## Current Request\n{task_description}")
 
-        # Variable suggestions
+        # Variable suggestions (existing functionality)
         if variable_manager and task_description:
             suggestions = variable_manager.get_variable_suggestions(task_description)
             if suggestions:
-                prompt_parts.append(f"## Available Variables\nYou can use: {', '.join(suggestions)}")
+                prompt_parts.append(f"\n## Available Variables\nYou can use: {', '.join(suggestions)}")
 
         # Final variable resolution
-        final_prompt = "\n\n".join(prompt_parts)
+        final_prompt = "\n".join(prompt_parts)
         if variable_manager:
             final_prompt = variable_manager.format_text(final_prompt)
 
@@ -4533,9 +2949,8 @@ class StateSyncNode(AsyncNode):
             shared["last_sync"] = datetime.now()
             return "sync_complete"
         else:
-            logger.warning("State synchronization failed")
+            wprint("State synchronization failed")
             return "sync_failed"
-
 
 @with_progress_tracking
 class CompletionCheckerNode(AsyncNode):
@@ -4561,7 +2976,7 @@ class CompletionCheckerNode(AsyncNode):
 
         # Safety check: prevent infinite loops
         if self.execution_count > self.max_cycles:
-            logger.warning(f"Max execution cycles ({self.max_cycles}) reached, terminating")
+            wprint(f"Max execution cycles ({self.max_cycles}) reached, terminating")
             return {
                 "action": "force_terminate",
                 "reason": "Max cycles reached"
@@ -4614,133 +3029,68 @@ class CompletionCheckerNode(AsyncNode):
             self.execution_count = 0
             shared["flow_completion_reason"] = f"Force terminated: {exec_res['reason']}"
             shared["force_terminated"] = True
-            logger.warning(f"Flow force terminated: {exec_res['reason']}")
+            wprint(f"Flow force terminated: {exec_res['reason']}")
 
         return action
 
-# ===== ADVANCED BATCH NODE FOR PARALLEL EXECUTION =====
-
-@with_progress_tracking
-class ParallelTaskBatch(BatchNode):
-    """Batch node for parallel task execution"""
-    def prep(self, shared):
-        ready_tasks = []
-        for task_id, task in shared.get("tasks", {}).items():
-            if task.status == "pending":
-                ready_tasks.append(task)
-        return ready_tasks
-
-    def exec(self, task: Task):
-        # This runs in parallel for each task
-        try:
-            # Simulate task execution
-            time.sleep(0.1)
-            result = f"Batch result for task: {task.description}"
-            return {
-                "task_id": task.id,
-                "status": "completed",
-                "result": result
-            }
-        except Exception as e:
-            return {
-                "task_id": task.id,
-                "status": "failed",
-                "error": str(e)
-            }
-
-    def post(self, shared, prep_res, exec_res_list):
-        # Process all batch results
-        completed_count = 0
-        failed_count = 0
-
-        for result in exec_res_list:
-            task_id = result["task_id"]
-            if task_id in shared["tasks"]:
-                task = shared["tasks"][task_id]
-                task.status = result["status"]
-                if result["status"] == "completed":
-                    task.result = result["result"]
-                    completed_count += 1
-                else:
-                    task.error = result.get("error", "Unknown error")
-                    failed_count += 1
-
-        shared["batch_execution_stats"] = {
-            "completed": completed_count,
-            "failed": failed_count,
-            "total": len(exec_res_list)
-        }
-
-        return "batch_complete"
-
 # ===== FLOW COMPOSITIONS =====
-
 @with_progress_tracking
 class TaskManagementFlow(AsyncFlow):
-    """Fixed Task-Management-Flow with proper termination"""
+    """
+    Enhanced Task-Management-Flow with LLMReasonerNode as strategic core.
+    The flow now starts with strategic reasoning and delegates to specialized sub-systems.
+    """
 
     def __init__(self, max_parallel_tasks: int = 3):
-        # Create all nodes
-        self.strategy_node = StrategyOrchestratorNode()
+        # Create the strategic reasoning core (new primary node)
+        self.llm_reasoner = LLMReasonerNode()
+
+        # Create specialized sub-system nodes (now supporting nodes)
         self.planner_node = TaskPlannerNode()
         self.executor_node = TaskExecutorNode(max_parallel=max_parallel_tasks)
-        self.reflector_node = PlanReflectorNode()
         self.sync_node = StateSyncNode()
         self.llm_tool_node = LLMToolNode()
 
-        # Add a completion checker node to break cycles
-        self.completion_checker = CompletionCheckerNode()
+        # Store references for the reasoner to access sub-systems
+        # These will be injected into shared state during execution
 
-        # === MAIN FLOW (Linear with controlled cycles) ===
+        # === NEW HIERARCHICAL FLOW STRUCTURE ===
 
-        # Strategy -> Planning Phase
-        self.strategy_node - "fast_simple_planning" >> self.planner_node
-        self.strategy_node - "slow_complex_planning" >> self.planner_node
-        self.strategy_node - "research_and_analyze" >> self.planner_node
-        self.strategy_node - "creative_generation" >> self.planner_node
-        self.strategy_node - "problem_solving" >> self.planner_node
+        # Primary flow: LLMReasonerNode is the main orchestrator
+        # It makes strategic decisions and routes to appropriate sub-systems
 
-        self.strategy_node - "direct_response" >> self.llm_tool_node
-        self.llm_tool_node - "llm_tool_complete" >> self.sync_node
-        self.strategy_node - "default" >> self.planner_node
+        # The reasoner can internally call any of these sub-systems:
+        # - LLMToolNode for direct tool usage
+        # - TaskPlanner + TaskExecutor for complex project management
+        # - Direct response for simple queries
 
-        # Planning -> Execution
-        self.planner_node - "planned" >> self.executor_node
-        self.planner_node - "planning_failed" >> self.sync_node
-        self.planner_node - "default" >> self.sync_node
+        # Only one main connection: reasoner completes -> response generation
+        self.llm_reasoner - "reasoner_complete" >> self.sync_node
 
-        # === EXECUTION CYCLE WITH TERMINATION CONTROL ===
+        # Fallback connections for error handling
+        self.llm_reasoner - "error" >> self.sync_node
+        self.llm_reasoner - "timeout" >> self.sync_node
 
-        # Executor -> Completion Checker (instead of direct to reflector)
-        self.executor_node - "plan_completed" >> self.completion_checker
-        self.executor_node - "continue_execution" >> self.completion_checker
-        self.executor_node - "execution_error" >> self.reflector_node
-        self.executor_node - "waiting" >> self.completion_checker
-        self.executor_node - "execution_complete" >> self.completion_checker  # HINZUGEFÜGT
+        # The old linear connections are removed - the reasoner now controls the flow internally
 
-        # für dynamische Aktionen
-        self.executor_node - "needs_dynamic_replan" >> self.reflector_node
-        self.executor_node - "needs_plan_append" >> self.reflector_node
+        super().__init__(start=self.llm_reasoner)
 
+    async def run_async(self, shared):
+        """Enhanced run with sub-system injection"""
 
-        self.executor_node - "default" >> self.completion_checker  # GEÄNDERT von sync_node
+        # Inject sub-system references into shared state so reasoner can access them
+        shared["llm_tool_node_instance"] = self.llm_tool_node
+        shared["task_planner_instance"] = self.planner_node
+        shared["task_executor_instance"] = self.executor_node
 
-        # Completion Checker decides next action
-        self.completion_checker - "truly_complete" >> self.sync_node  # TERMINATE
-        self.completion_checker - "needs_reflection" >> self.reflector_node
-        self.completion_checker - "force_terminate" >> self.sync_node  # HINZUGEFÜGT
-        self.completion_checker - "continue_execution" >> self.executor_node
-        self.completion_checker - "default" >> self.sync_node
+        # Store tool registry access for the reasoner
+        agent_instance = shared.get("agent_instance")
+        if agent_instance:
+            shared["tool_registry"] = agent_instance._tool_registry
+            shared["tool_capabilities"] = agent_instance._tool_capabilities
 
-        # Reflector actions (limited cycles)
-        self.reflector_node - "needs_replan" >> self.planner_node
-        self.reflector_node - "needs_plan_append" >> self.planner_node
-        self.reflector_node - "adapted" >> self.completion_checker
-        self.reflector_node - "continue" >> self.completion_checker
-        self.reflector_node - "plan_halted" >> self.sync_node
-        self.reflector_node - "default" >> self.sync_node
-
-        super().__init__(start=self.strategy_node)
+        # Execute the flow with the reasoner as starting point
+        return await super().run_async(shared)
 
 
 @with_progress_tracking
@@ -4781,73 +3131,203 @@ class ResponseGenerationFlow(AsyncFlow):
 
 @with_progress_tracking
 class ContextAggregatorNode(AsyncNode):
-    """Aggregiere alle relevanten Kontexte und Ergebnisse"""
+    """Vereinfachte Context-Aggregation über UnifiedContextManager"""
 
     async def prep_async(self, shared):
+        """Simplified preparation - delegate to UnifiedContextManager"""
         return {
-            "results_store": shared.get("results_store", {}),
+            "context_manager": shared.get("context_manager"),
+            "session_id": shared.get("session_id", "default"),
+            "original_query": shared.get("current_query", ""),
             "tasks": shared.get("tasks", {}),
             "current_plan": shared.get("current_plan"),
-            "original_query": shared.get("current_query", ""),
-            "conversation_history": shared.get("conversation_history", []),
             "world_model": shared.get("world_model", {}),
-            "plan_adaptations": shared.get("plan_adaptations", 0)
+            "results": shared.get("results", {})
         }
 
     async def exec_async(self, prep_res):
-        """Aggregiere intelligente Kontextinformationen"""
+        """VEREINFACHT: Get aggregated context from UnifiedContextManager"""
 
-        aggregated_context = {
-            "original_query": prep_res["original_query"],
+        context_manager = prep_res.get("context_manager")
+        session_id = prep_res.get("session_id", "default")
+        query = prep_res.get("original_query", "")
+
+        if not context_manager:
+            # Fallback: Create basic aggregated context
+            return self._create_fallback_context(prep_res)
+
+        try:
+            #Get unified context from context manager
+            unified_context = await context_manager.build_unified_context(session_id, query, "full")
+
+            # Transform to expected aggregated_context format for compatibility
+            aggregated_context = {
+                "original_query": query,
+                "successful_results": self._extract_successful_results(unified_context),
+                "failed_attempts": self._extract_failed_attempts(prep_res["tasks"]),
+                "key_discoveries": self._extract_key_discoveries(unified_context),
+                "adaptation_summary": self._extract_adaptation_summary(prep_res),
+                "confidence_scores": self._calculate_confidence_scores(unified_context),
+                "unified_context": unified_context,  # Include full unified context
+                "context_source": "unified_context_manager"
+            }
+
+            return aggregated_context
+
+        except Exception as e:
+            eprint(f"UnifiedContextManager aggregation failed: {e}")
+            return self._create_fallback_context(prep_res)
+
+    def _extract_successful_results(self, unified_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract successful results from unified context"""
+        successful_results = {}
+
+        try:
+            # Get from variables context
+            variables = unified_context.get("variables", {})
+            recent_results = variables.get("recent_results", [])
+
+            for result in recent_results:
+                if result.get("success"):
+                    task_id = result.get("task_id", f"result_{len(successful_results)}")
+                    successful_results[task_id] = {
+                        "task_description": f"Task {task_id}",
+                        "task_type": "unified_context_result",
+                        "result": result.get("preview", ""),
+                        "metadata": {
+                            "timestamp": result.get("timestamp"),
+                            "source": "unified_context"
+                        }
+                    }
+
+            # Also check execution state for completions
+            execution_state = unified_context.get("execution_state", {})
+            recent_completions = execution_state.get("recent_completions", [])
+
+            for completion in recent_completions:
+                task_id = completion.get("id", f"completion_{len(successful_results)}")
+                successful_results[task_id] = {
+                    "task_description": completion.get("description", "Completed task"),
+                    "task_type": "execution_completion",
+                    "result": f"Task completed at {completion.get('completed_at', 'unknown time')}",
+                    "metadata": {
+                        "completion_time": completion.get("completed_at"),
+                        "source": "execution_state"
+                    }
+                }
+
+            return successful_results
+
+        except Exception as e:
+            eprint(f"Error extracting successful results: {e}")
+            return {}
+
+    def _extract_failed_attempts(self, tasks: Dict) -> Dict[str, Any]:
+        """Extract failed attempts from tasks (existing functionality)"""
+        failed_attempts = {}
+
+        try:
+            for task_id, task in tasks.items():
+                if task.status == "failed":
+                    failed_attempts[task_id] = {
+                        "description": task.description,
+                        "error": task.error,
+                        "retry_count": task.retry_count
+                    }
+            return failed_attempts
+        except:
+            return {}
+
+    def _extract_key_discoveries(self, unified_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract key discoveries from unified context"""
+        discoveries = []
+
+        try:
+            # Extract from relevant facts
+            relevant_facts = unified_context.get("relevant_facts", [])
+            for key, value in relevant_facts[:3]:  # Top 3 facts
+                discoveries.append({
+                    "discovery": f"Fact discovered: {key}",
+                    "confidence": 0.8,  # Default confidence for facts
+                    "result": value
+                })
+
+            # Extract from successful results
+            variables = unified_context.get("variables", {})
+            recent_results = variables.get("recent_results", [])
+
+            for result in recent_results[:2]:  # Top 2 results
+                if result.get("success"):
+                    discoveries.append({
+                        "discovery": f"Task result: {result.get('task_id', 'unknown')}",
+                        "confidence": 0.7,
+                        "result": result.get("preview", "")
+                    })
+
+            return discoveries
+
+        except Exception as e:
+            eprint(f"Error extracting discoveries: {e}")
+            return []
+
+    def _extract_adaptation_summary(self, prep_res: Dict) -> str:
+        """Extract adaptation summary"""
+        try:
+            current_plan = prep_res.get("current_plan")
+            if current_plan and hasattr(current_plan, 'metadata'):
+                adaptations = current_plan.metadata.get("adaptations", 0)
+                if adaptations > 0:
+                    return f"Plan was adapted {adaptations} times to handle unexpected results."
+            return ""
+        except:
+            return ""
+
+    def _calculate_confidence_scores(self, unified_context: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate confidence scores based on unified context"""
+        try:
+            scores = {"overall": 0.5}
+
+            # Base confidence on available data
+            chat_history = unified_context.get("chat_history", [])
+            if chat_history:
+                scores["conversation_context"] = min(len(chat_history) / 10, 1.0)
+
+            variables = unified_context.get("variables", {})
+            recent_results = variables.get("recent_results", [])
+            successful_results = [r for r in recent_results if r.get("success")]
+
+            if recent_results:
+                scores["execution_results"] = len(successful_results) / len(recent_results)
+
+            # Calculate overall confidence
+            scores["overall"] = sum(scores.values()) / len(scores)
+
+            return scores
+
+        except:
+            return {"overall": 0.3}
+
+    def _create_fallback_context(self, prep_res: Dict) -> Dict[str, Any]:
+        """Create fallback context when UnifiedContextManager is unavailable"""
+        return {
+            "original_query": prep_res.get("original_query", ""),
             "successful_results": {},
-            "failed_attempts": {},
+            "failed_attempts": self._extract_failed_attempts(prep_res.get("tasks", {})),
             "key_discoveries": [],
-            "adaptation_summary": "",
-            "confidence_scores": {}
+            "adaptation_summary": "Fallback context - UnifiedContextManager unavailable",
+            "confidence_scores": {"overall": 0.2},
+            "context_source": "fallback"
         }
 
-        # Sammle erfolgreiche Task-Ergebnisse
-        for task_id, task in prep_res["tasks"].items():
-            if task.status == "completed" and task.result:
-                result_data = prep_res["results_store"].get(task_id, {})
-
-                aggregated_context["successful_results"][task_id] = {
-                    "task_description": task.description,
-                    "task_type": task.type,
-                    "result": task.result,
-                    "metadata": getattr(task, 'metadata', {}),
-                    "verification": result_data.get("verification", {})
-                }
-
-                # Extrahiere key discoveries
-                if isinstance(task, ToolTask) and task.hypothesis:
-                    verification = result_data.get("verification", {})
-                    if verification.get("hypothesis_score", 0) > 0.7:
-                        aggregated_context["key_discoveries"].append({
-                            "discovery": f"Tool {task.tool_name} confirmed: {task.hypothesis}",
-                            "confidence": verification.get("hypothesis_score", 0.0),
-                            "result": task.result
-                        })
-
-        # Sammle fehlgeschlagene Versuche
-        for task_id, task in prep_res["tasks"].items():
-            if task.status == "failed":
-                aggregated_context["failed_attempts"][task_id] = {
-                    "description": task.description,
-                    "error": task.error,
-                    "retry_count": task.retry_count
-                }
-
-        # Plan adaptations summary
-        if prep_res["plan_adaptations"] > 0:
-            aggregated_context[
-                "adaptation_summary"] = f"Plan was adapted {prep_res['plan_adaptations']} times to handle unexpected results."
-
-        return aggregated_context
-
     async def post_async(self, shared, prep_res, exec_res):
+        """Store aggregated context for downstream nodes"""
         shared["aggregated_context"] = exec_res
-        if exec_res["successful_results"] or exec_res["key_discoveries"]:
+
+        #Also store unified context reference for other nodes
+        if "unified_context" in exec_res:
+            shared["unified_context"] = exec_res["unified_context"]
+
+        if exec_res.get("successful_results") or exec_res.get("key_discoveries"):
             return "context_ready"
         else:
             return "no_context"
@@ -4919,13 +3399,13 @@ Erstelle eine finale Antwort:"""
             }
 
         except Exception as e:
-            logger.error(f"LLM synthesis failed: {e}")
+            eprint(f"LLM synthesis failed: {e}")
             return await self._fallback_synthesis(prep_res)
 
     def _format_successful_results(self, results: Dict) -> str:
         formatted = []
         for task_id, result_info in results.items():
-            formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:200]}...")
+            formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:20000]}...")
         return "\n".join(formatted) if formatted else "No successful results to report."
 
     def _format_key_discoveries(self, discoveries: List) -> str:
@@ -5041,7 +3521,6 @@ class ResponseFormatterNode(AsyncNode):
     async def post_async(self, shared, prep_res, exec_res):
         shared["formatted_response"] = exec_res
         return "formatted"
-
 
 @with_progress_tracking
 class ResponseQualityNode(AsyncNode):
@@ -5221,18 +3700,18 @@ Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
         try:
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
             agent_instance = prep_res["agent_instance"]
-            score_text = await agent_instance.a_run_llm_completion(
+            score_text = (await agent_instance.a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=10,
                 node_name="QualityAssessmentNode", task_id="format_quality_assessment"
-            ).strip()
+            )).strip()
 
             return float(score_text)
 
         except Exception as e:
-            logger.warning(f"LLM format quality check failed: {e}")
+            wprint(f"LLM format quality check failed: {e}")
             return 0.6  # Neutral fallback
 
     def _generate_format_quality_suggestions(
@@ -5415,14 +3894,14 @@ class ResponseFinalProcessorNode(AsyncNode):
             max_tokens = 600
         else:  # heavy
             style_prompt = f"""
-    Completely transform as {persona.name}:
-    Style: {persona.style}, Tone: {persona.tone}
-    Traits: {', '.join(persona.personality_traits)}
-    Instructions: {persona.custom_instructions}
+Completely transform as {persona.name}:
+Style: {persona.style}, Tone: {persona.tone}
+Traits: {', '.join(persona.personality_traits)}
+Instructions: {persona.custom_instructions}
 
-    Original: {response}
+Original: {response}
 
-    As {persona.name}:"""
+As {persona.name}:"""
             max_tokens = 1000
 
         try:
@@ -5446,13 +3925,3101 @@ class ResponseFinalProcessorNode(AsyncNode):
             return response.strip()
 
         except Exception as e:
-            logger.warning(f"Persona styling failed: {e}")
+            wprint(f"Persona styling failed: {e}")
             return response
 
     async def post_async(self, shared, prep_res, exec_res):
         shared["current_response"] = exec_res["final_response"]
         shared["response_metadata"] = exec_res["metadata"]
         return "response_ready"
+
+
+@with_progress_tracking
+class LLMReasonerNode(AsyncNode):
+    """
+    Enhanced strategic reasoning core with outline-driven execution,
+    context management, auto-recovery, and intensive variable system integration.
+    """
+
+    def __init__(self, max_reasoning_loops: int = 12, **kwargs):
+        super().__init__(**kwargs)
+        self.max_reasoning_loops = max_reasoning_loops
+        self.reasoning_context = []
+        self.internal_task_stack = []
+        self.meta_tools_registry = {}
+        self.current_loop_count = 0
+        self.current_reasoning_count = 0
+        self.agent_instance: FlowAgent = None
+
+        # Enhanced tracking systems
+        self.outline = None
+        self.current_outline_step = 0
+        self.step_completion_tracking = {}
+        self.loop_detection_memory = []
+        self.context_summary_threshold = 15
+        self.max_context_size = 30
+        self.performance_metrics = {
+                "loop_times": [],
+                "progress_loops": 0,
+                "total_loops": 0
+            }
+        self.auto_recovery_attempts = 0
+        self.max_auto_recovery = 8
+        self.variable_manager = None
+
+        # Anti-loop mechanisms
+        self.last_action_signatures = []
+        self.step_enforcement_active = True
+        self.mandatory_progress_check = True
+
+    async def prep_async(self, shared):
+        """Enhanced initialization with variable system integration"""
+        # Reset for new execution
+        self.reasoning_context = []
+        self.internal_task_stack = []
+        self.current_loop_count = 0
+        self.current_reasoning_count = 0
+        self.outline = None
+        self.current_outline_step = 0
+        self.step_completion_tracking = {}
+        self.loop_detection_memory = []
+        self.performance_metrics = {
+            "loop_times": [],
+            "progress_loops": 0,
+            "total_loops": 0
+        }
+        self.auto_recovery_attempts = 0
+        self.last_action_signatures = []
+
+        self.agent_instance = shared.get("agent_instance")
+
+        # Enhanced variable manager integration
+        self.variable_manager = shared.get("variable_manager")
+        context_manager = shared.get("context_manager")
+
+        if self.variable_manager:
+            # Store reasoning session context
+            session_context = {
+                "session_id": shared.get("session_id", "default"),
+                "start_time": datetime.now().isoformat(),
+                "query": shared.get("current_query", ""),
+                "reasoning_mode": "outline_driven"
+            }
+            self.variable_manager.set("reasoning.current_session", session_context)
+            # Load previous successful patterns from variables
+            self._load_historical_patterns()
+
+        #Build comprehensive system context via UnifiedContextManager
+        system_context = await self._build_enhanced_system_context_unified(shared, context_manager)
+
+        return {
+            "original_query": shared.get("current_query", ""),
+            "session_id": shared.get("session_id", "default"),
+            "agent_instance": shared.get("agent_instance"),
+            "variable_manager": self.variable_manager,
+            "context_manager": context_manager,  #Context Manager Reference
+            "system_context": system_context,
+            "available_tools": shared.get("available_tools", []),
+            "tool_capabilities": shared.get("tool_capabilities", {}),
+            "fast_llm_model": shared.get("fast_llm_model"),
+            "complex_llm_model": shared.get("complex_llm_model"),
+            "progress_tracker": shared.get("progress_tracker"),
+            "formatted_context": shared.get("formatted_context", {}),
+            "historical_context": await self._get_historical_context_unified(context_manager, shared.get("session_id")),
+            "capabilities_summary": shared.get("capabilities_summary", ""),
+            # Sub-system references
+            "llm_tool_node": shared.get("llm_tool_node_instance"),
+            "task_planner": shared.get("task_planner_instance"),
+            "task_executor": shared.get("task_executor_instance"),
+        }
+
+    async def exec_async(self, prep_res):
+        """Enhanced main reasoning loop with outline-driven execution"""
+        if not LITELLM_AVAILABLE:
+            return await self._fallback_direct_response(prep_res)
+
+        original_query = prep_res["original_query"]
+        agent_instance = prep_res["agent_instance"]
+        progress_tracker = prep_res.get("progress_tracker")
+
+        # Initialize enhanced reasoning context
+        await self._initialize_reasoning_session(prep_res, original_query)
+
+        # STEP 1: MANDATORY OUTLINE CREATION
+        if not self.outline:
+            outline_result = await self._create_initial_outline(prep_res)
+            if not outline_result:
+                return await self._create_error_response(original_query, "Failed to create initial outline")
+
+        final_result = None
+        consecutive_no_progress = 0
+        max_no_progress = 3
+
+        # Enhanced main reasoning loop with strict progress tracking
+        while self.current_reasoning_count < self.max_reasoning_loops:
+            self.current_loop_count += 1
+            loop_start_time = time.time()
+
+            # Check for infinite loops
+            if self._detect_infinite_loop():
+                await self._trigger_auto_recovery(prep_res)
+                if self.auto_recovery_attempts >= self.max_auto_recovery:
+                    break
+
+            # Auto-context management
+            await self._manage_context_size()
+
+            # Progress tracking
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="reasoning_loop",
+                    timestamp=time.time(),
+                    node_name="LLMReasonerNode",
+                    status=NodeStatus.RUNNING,
+                    metadata={
+                        "loop_number": self.current_loop_count,
+                        "outline_step": self.current_outline_step,
+                        "outline_total": len(self.outline.get("steps", [])) if self.outline else 0,
+                        "context_size": len(self.reasoning_context),
+                        "task_stack_size": len(self.internal_task_stack),
+                        "auto_recovery_attempts": self.auto_recovery_attempts,
+                        "performance_metrics": self.performance_metrics
+                    }
+                ))
+
+            try:
+                # Build enhanced reasoning prompt with outline context
+                reasoning_prompt = await self._build_outline_driven_prompt(prep_res)
+
+                # Force progress check if needed
+                if self.mandatory_progress_check and consecutive_no_progress >= 2:
+                    reasoning_prompt += "\n\n**MANDATORY**: You must either complete current outline step or move to next step. No more analysis without action!"
+
+                # LLM reasoning call
+                model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
+
+                llm_response = await agent_instance.a_run_llm_completion(
+                    model=model_to_use,
+                    messages=[{"role": "user", "content": reasoning_prompt}],
+                    temperature=0.2,  # Lower temperature for more focused execution
+                    # max_tokens=3072,
+                    node_name="LLMReasonerNode",
+                    task_id=f"reasoning_loop_{self.current_loop_count}_step_{self.current_outline_step}"
+                )
+
+                # Add LLM response to context
+                self.reasoning_context.append({
+                    "type": "reasoning",
+                    "content": llm_response,
+                    "loop": self.current_loop_count,
+                    "outline_step": self.current_outline_step,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                # Parse and execute meta-tool calls with enhanced tracking
+                progress_made = await self._parse_and_execute_meta_tools(llm_response, prep_res)
+
+                action_taken = progress_made.get("action_taken", False)
+                actual_progress = progress_made.get("progress_made", False)
+
+                # Update performance with correct progress indication
+                self._update_performance_metrics(loop_start_time, actual_progress)
+
+                if not action_taken:
+                    self.current_reasoning_count += 1
+                    if self.current_outline_step > len(self.outline.get("steps", [])):
+                        progress_made["final_result"] = llm_response
+                    if self.current_outline_step < len(self.outline.get("steps", [])) and self.outline.get("steps", [])[self.current_outline_step].get("is_final", False):
+                        progress_made["final_result"] = llm_response
+                else:
+                    self.current_reasoning_count = 0
+
+
+
+                # Check for final result
+                if progress_made.get("final_result"):
+                    final_result = progress_made["final_result"]
+                    await self._finalize_reasoning_session(prep_res, final_result)
+                    break
+
+                # Progress monitoring
+                if progress_made.get("action_taken"):
+                    consecutive_no_progress = 0
+                    self._update_performance_metrics(loop_start_time, True)
+                else:
+                    consecutive_no_progress += 1
+                    self._update_performance_metrics(loop_start_time, False)
+
+                # Check outline completion
+                if self.outline and self.current_outline_step >= len(self.outline.get("steps", []))+self.max_reasoning_loops:
+                    # All outline steps completed, force final response
+                    final_result = await self._create_outline_completion_response(prep_res)
+                    break
+
+                # Emergency break for excessive no-progress
+                if consecutive_no_progress >= max_no_progress:
+                    await self._trigger_auto_recovery(prep_res)
+
+            except Exception as e:
+                await self._handle_reasoning_error(e, prep_res, progress_tracker)
+                import traceback
+                print(traceback.format_exc())
+                if self.auto_recovery_attempts >= self.max_auto_recovery:
+                    final_result = await self._create_error_response(original_query, str(e))
+                    break
+
+
+        # If no final result after max loops, create a comprehensive summary
+        if not final_result:
+            final_result = await self._create_enhanced_timeout_response(original_query, prep_res)
+
+        return {
+            "final_result": final_result,
+            "reasoning_loops": self.current_loop_count,
+            "reasoning_context": self.reasoning_context.copy(),
+            "internal_task_stack": self.internal_task_stack.copy(),
+            "outline": self.outline,
+            "outline_completion": self.current_outline_step,
+            "performance_metrics": self.performance_metrics,
+            "auto_recovery_attempts": self.auto_recovery_attempts
+        }
+
+    async def _build_enhanced_system_context_unified(self, shared, context_manager) -> str:
+        """Build comprehensive system context mit UnifiedContextManager"""
+        context_parts = []
+
+        # Enhanced agent capabilities
+        available_tools = shared.get("available_tools", [])
+        if available_tools:
+            context_parts.append(f"Available external tools: {', '.join(available_tools)}")
+
+        #Context Manager Status
+        if context_manager:
+            session_stats = context_manager.get_session_statistics()
+            context_parts.append(f"Context System: Advanced with {session_stats['total_sessions']} active sessions")
+            context_parts.append(f"Cache Status: {session_stats['cache_entries']} cached contexts")
+
+        # Variable system context
+        if self.variable_manager:
+            var_info = self.variable_manager.get_scope_info()
+            context_parts.append(f"Variable System: {len(var_info)} scopes available")
+
+            # Recent results availability
+            results_count = len(self.variable_manager.get("results", {}))
+            if results_count:
+                context_parts.append(f"Previous results: {results_count} task results available")
+
+        #Enhanced system state mit Context-Awareness
+        session_id = shared.get("session_id", "default")
+        if context_manager and session_id in context_manager.session_managers:
+            session = context_manager.session_managers[session_id]
+            if hasattr(session, 'history'):
+                context_parts.append(f"Session History: {len(session.history)} conversation entries available")
+            elif isinstance(session, dict) and 'history' in session:
+                context_parts.append(f"Session History: {len(session['history'])} conversation entries (fallback mode)")
+
+        # System state with enhanced details
+        tasks = shared.get("tasks", {})
+        if tasks:
+            active_tasks = len([t for t in tasks.values() if t.status == "running"])
+            completed_tasks = len([t for t in tasks.values() if t.status == "completed"])
+            context_parts.append(f"Execution state: {active_tasks} active, {completed_tasks} completed tasks")
+
+        # Performance history
+        if hasattr(self, 'historical_successful_patterns'):
+            context_parts.append(
+                f"Historical patterns: {len(self.historical_successful_patterns)} successful patterns loaded")
+
+        return "\n".join(context_parts) if context_parts else "Basic system context available"
+
+    async def _get_historical_context_unified(self, context_manager, session_id: str) -> str:
+        """Get historical context from UnifiedContextManager"""
+        if not context_manager:
+            return ""
+
+        try:
+            #Get unified context for historical analysis
+            unified_context = await context_manager.build_unified_context(session_id, None, "historical")
+
+            context_parts = []
+
+            # Chat history insights
+            chat_history = unified_context.get("chat_history", [])
+            if chat_history:
+                context_parts.append(f"Conversation History: {len(chat_history)} messages available")
+
+                # Analyze conversation patterns
+                user_queries = [msg['content'] for msg in chat_history if msg.get('role') == 'user']
+                if user_queries:
+                    avg_query_length = sum(len(q) for q in user_queries) / len(user_queries)
+                    context_parts.append(f"Query patterns: Avg length {avg_query_length:.0f} chars")
+
+            # Execution history from variables
+            if self.variable_manager:
+                # Recent successful queries
+                recent_successes = self.variable_manager.get("reasoning.recent_successes", [])
+                if recent_successes:
+                    context_parts.append(f"Recent successful queries: {len(recent_successes)}")
+
+                # Performance history
+                avg_loops = self.variable_manager.get("reasoning.performance.avg_loops", 0)
+                if avg_loops:
+                    context_parts.append(f"Average reasoning loops: {avg_loops}")
+
+            # System insights from unified context
+            execution_state = unified_context.get("execution_state", {})
+            if execution_state.get("recent_completions"):
+                completions = execution_state["recent_completions"]
+                context_parts.append(f"Recent completions: {len(completions)} tasks finished")
+
+            return "\n".join(context_parts)
+
+        except Exception as e:
+            eprint(f"Failed to get historical context: {e}")
+            return "Historical context unavailable"
+
+    def _load_historical_patterns(self):
+        """Load successful patterns from previous reasoning sessions"""
+        if not self.variable_manager:
+            return
+
+        # Load successful outline patterns
+        successful_outlines = self.variable_manager.get("reasoning.successful_patterns.outlines", [])
+        failed_patterns = self.variable_manager.get("reasoning.failed_patterns", [])
+
+        self.historical_successful_patterns = successful_outlines[-5:]  # Last 5 successful
+        self.historical_failed_patterns = failed_patterns[-10:]  # Last 10 failed
+
+    def _get_historical_context(self) -> str:
+        """Get historical context from variable system"""
+        if not self.variable_manager:
+            return ""
+
+        context_parts = []
+
+        # Recent successful queries
+        recent_successes = self.variable_manager.get("reasoning.recent_successes", [])
+        if recent_successes:
+            context_parts.append(f"Recent successful queries: {len(recent_successes)}")
+
+        # Performance history
+        avg_loops = self.variable_manager.get("reasoning.performance.avg_loops", 0)
+        if avg_loops:
+            context_parts.append(f"Average reasoning loops: {avg_loops}")
+
+        # Common failure patterns to avoid
+        failure_patterns = self.variable_manager.get("reasoning.failure_patterns", [])
+        if failure_patterns:
+            context_parts.append(f"Known failure patterns: {len(failure_patterns)}")
+
+        return "\n".join(context_parts)
+
+    async def _initialize_reasoning_session(self, prep_res, original_query):
+        """Initialize enhanced reasoning session with variable tracking"""
+        # Initialize reasoning context
+        self.reasoning_context.append({
+            "type": "session_start",
+            "content": f"Enhanced reasoning session started for: {original_query}",
+            "timestamp": datetime.now().isoformat(),
+            "session_id": prep_res.get("session_id")
+        })
+
+        # Store session in variables
+        if self.variable_manager:
+            session_data = {
+                "query": original_query,
+                "start_time": datetime.now().isoformat(),
+                "max_loops": self.max_reasoning_loops,
+                "context_management": "auto_summary",
+                "outline_driven": True
+            }
+            self.variable_manager.set("reasoning.current_session.data", session_data)
+
+        # Add enhanced system context
+        self.reasoning_context.append({
+            "type": "system_context",
+            "content": prep_res["system_context"],
+            "timestamp": datetime.now().isoformat()
+        })
+
+        # Add historical context if available
+        historical = prep_res.get("historical_context")
+        if historical:
+            self.reasoning_context.append({
+                "type": "historical_context",
+                "content": historical,
+                "timestamp": datetime.now().isoformat()
+            })
+
+    async def _create_initial_outline(self, prep_res) -> bool:
+        """Create mandatory initial outline, with a fast path for simple queries."""
+        original_query = prep_res["original_query"]
+        agent_instance = prep_res["agent_instance"]
+
+        outline_prompt = f"""You MUST create an initial execution outline for this query. This is mandatory.
+
+**Query:** {original_query}
+
+**Available Resources:**
+- Tools: {', '.join(prep_res.get('available_tools', []))}
+- Sub-systems: LLM Tool Node, Task Planner, Task Executor
+
+LLM Tool Node is for all tool calls!
+LLM Tool Node is best for simple multi-step tasks like fetching data from a tool and summarizing it.
+Task Planner is best for complex tasks with multiple dependencies and complex task flows.
+
+**Historical Context:** {prep_res.get('historical_context', 'None')}
+
+**Fast Path for Simple Queries:**
+If the query is simple and can be answered directly without needing tools or complex reasoning, you MUST create a single-step outline using the `direct_response` method.
+
+Create a structured outline using this EXACT format:
+
+OUTLINE_START
+Step 1: [Brief description of first step]
+- Method: [internal_reasoning | delegate_to_llm_tool_node | create_and_execute_plan | direct_response]
+- Expected outcome: [What this step should achieve]
+- Success criteria: [How to know this step is complete]
+
+[For complex queries, continue with more steps as needed.]
+
+Final Step: Synthesize results and provide comprehensive response
+- Method: direct_response
+- Expected outcome: Complete answer to user query
+- Success criteria: User query fully addressed
+OUTLINE_END
+
+**Requirements:**
+1. Outline must have between 1 and 7 steps.
+2. For simple queries, a single "Final Step" using the 'direct_response' method is the correct approach.
+3. Each step must have clear success criteria and build logically toward the answer.
+4. Be specific about which meta-tools to use for each step. meta-tools ar not Tools ! avalabel meta-tools *Method* (internal_reasoning, delegate_to_llm_tool_node, create_and_execute_plan, direct_response) no exceptions
+
+Create the outline now:"""
+
+        try:
+            llm_response = await agent_instance.a_run_llm_completion(
+                model=prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o"),
+                messages=[{"role": "user", "content": outline_prompt}],
+                temperature=0.2,  # Lower temperature for more deterministic outlining
+                max_tokens=2048,
+                node_name="LLMReasonerNode",
+                task_id="create_initial_outline"
+            )
+
+            # Parse outline from response
+            outline = self._parse_outline_from_response(llm_response)
+
+            if outline:
+                self.outline = outline
+                self.current_outline_step = 0
+
+                # Store outline in variables
+                if self.variable_manager:
+                    self.variable_manager.set("reasoning.current_session.outline", outline)
+
+                # Add to reasoning context
+                self.reasoning_context.append({
+                    "type": "outline_created",
+                    "content": f"Created outline with {len(outline.get('steps', []))} steps",
+                    "outline": outline,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            eprint(f"Failed to create initial outline: {e}")
+            return False
+
+    def _parse_outline_from_response(self, response: str) -> Dict[str, Any]:
+        """Parse structured outline from LLM response"""
+        import re
+
+        # Find outline section
+        outline_match = re.search(r'OUTLINE_START(.*?)OUTLINE_END', response, re.DOTALL)
+        if not outline_match:
+            return None
+
+        outline_text = outline_match.group(1).strip()
+
+        # Parse steps
+        steps = []
+        current_step = None
+
+        for line in outline_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+
+            # New step
+            if re.match(r'^Step \d+:', line):
+                if current_step:
+                    steps.append(current_step)
+
+                current_step = {
+                    "description": re.sub(r'^Step \d+:\s*', '', line),
+                    "method": "",
+                    "expected_outcome": "",
+                    "success_criteria": "",
+                    "status": "pending"
+                }
+            elif re.match(r'^Final Step:', line):
+                if current_step:
+                    steps.append(current_step)
+
+                current_step = {
+                    "description": re.sub(r'^Final Step:\s*', '', line),
+                    "method": "direct_response",
+                    "expected_outcome": "",
+                    "success_criteria": "",
+                    "status": "pending",
+                    "is_final": True
+                }
+            elif current_step and line.startswith('- Method:'):
+                current_step["method"] = line.replace('- Method:', '').strip()
+            elif current_step and line.startswith('- Expected outcome:'):
+                current_step["expected_outcome"] = line.replace('- Expected outcome:', '').strip()
+            elif current_step and line.startswith('- Success criteria:'):
+                current_step["success_criteria"] = line.replace('- Success criteria:', '').strip()
+
+        # Add final step if exists
+        if current_step:
+            steps.append(current_step)
+
+        if not steps:
+            return None
+
+        return {
+            "steps": steps,
+            "created_at": datetime.now().isoformat(),
+            "total_steps": len(steps)
+        }
+
+    def _build_enhanced_system_context(self, shared) -> str:
+        """Build comprehensive system context with variable system info"""
+        context_parts = []
+
+        # Enhanced agent capabilities
+        available_tools = shared.get("available_tools", [])
+        if available_tools:
+            context_parts.append(f"Available external tools: {', '.join(available_tools)}")
+
+        # Variable system context
+        if self.variable_manager:
+            var_info = self.variable_manager.get_scope_info()
+            context_parts.append(f"Variable System: {len(var_info)} scopes available")
+
+            # Recent results availability
+            results_count = len(self.variable_manager.get("results", {}))
+            if results_count:
+                context_parts.append(f"Previous results: {results_count} task results available")
+
+        # System state with enhanced details
+        tasks = shared.get("tasks", {})
+        if tasks:
+            active_tasks = len([t for t in tasks.values() if t.status == "running"])
+            completed_tasks = len([t for t in tasks.values() if t.status == "completed"])
+            context_parts.append(f"Execution state: {active_tasks} active, {completed_tasks} completed tasks")
+
+        # Session context with history
+        formatted_context = shared.get("formatted_context", {})
+        if formatted_context:
+            recent_interaction = formatted_context.get("recent_interaction", "")
+            if recent_interaction:
+                context_parts.append(f"Recent interaction: {recent_interaction[:100]}...")
+
+        # Performance history
+        if hasattr(self, 'historical_successful_patterns'):
+            context_parts.append(
+                f"Historical patterns: {len(self.historical_successful_patterns)} successful patterns loaded")
+
+        return "\n".join(context_parts) if context_parts else "Basic system context available"
+
+    async def _manage_context_size(self):
+        """Auto-manage context size with intelligent summarization"""
+        if len(self.reasoning_context) <= self.context_summary_threshold:
+            return
+
+        # Trigger summarization
+        if len(self.reasoning_context) >= self.max_context_size:
+            # Emergency summarization
+            await self._emergency_context_summary()
+        elif len(self.reasoning_context) >= self.context_summary_threshold:
+            # Regular summarization
+            await self._regular_context_summary()
+
+    async def _regular_context_summary(self):
+        """Regular context summarization when threshold is reached"""
+        # Keep last 10 entries, summarize the rest
+        keep_recent = self.reasoning_context[-10:]
+        to_summarize = self.reasoning_context[:-10]
+
+        summary = self._create_context_summary(to_summarize, "regular")
+
+        # Replace old context with summary + recent
+        self.reasoning_context = [
+                                     {
+                                         "type": "context_summary",
+                                         "content": summary,
+                                         "summarized_entries": len(to_summarize),
+                                         "summary_type": "regular",
+                                         "timestamp": datetime.now().isoformat()
+                                     }
+                                 ] + keep_recent
+
+    async def _emergency_context_summary(self):
+        """Emergency context summarization when max size is reached"""
+        # Keep last 5 entries, summarize everything else
+        keep_recent = self.reasoning_context[-5:]
+        to_summarize = self.reasoning_context[:-5]
+
+        summary = self._create_context_summary(to_summarize, "emergency")
+
+        # Replace with emergency summary
+        self.reasoning_context = [
+                                     {
+                                         "type": "context_summary",
+                                         "content": summary,
+                                         "summarized_entries": len(to_summarize),
+                                         "summary_type": "emergency",
+                                         "timestamp": datetime.now().isoformat()
+                                     }
+                                 ] + keep_recent
+
+    def _create_context_summary(self, entries: List[Dict], summary_type: str) -> str:
+        """Create intelligent context summary"""
+        if not entries:
+            return "No context to summarize"
+
+        summary_parts = []
+
+        # Group by type
+        by_type = {}
+        for entry in entries:
+            entry_type = entry.get("type", "unknown")
+            if entry_type not in by_type:
+                by_type[entry_type] = []
+            by_type[entry_type].append(entry)
+
+        # Summarize each type
+        for entry_type, type_entries in by_type.items():
+            if entry_type == "reasoning":
+                reasoning_summary = f"Completed {len(type_entries)} reasoning cycles"
+                # Extract key insights
+                insights = []
+                for entry in type_entries[-3:]:  # Last 3 reasoning entries
+                    content = entry.get("content", "")[:100] + "..."
+                    insights.append(content)
+                if insights:
+                    reasoning_summary += f"\nKey recent reasoning: {'; '.join(insights)}"
+                summary_parts.append(reasoning_summary)
+
+            elif entry_type == "meta_tool_result":
+                results_summary = f"Executed {len(type_entries)} meta-tool operations"
+                # Extract significant results
+                significant_results = [
+                    entry.get("content", "")[:80]
+                    for entry in type_entries
+                    if len(entry.get("content", "")) > 50
+                ]
+                if significant_results:
+                    results_summary += f"\nSignificant results: {'; '.join(significant_results[-3:])}"
+                summary_parts.append(results_summary)
+
+            else:
+                summary_parts.append(f"{entry_type}: {len(type_entries)} entries")
+
+        summary = f"[{summary_type.upper()} SUMMARY] " + "; ".join(summary_parts)
+
+        # Store summary in variables for future reference
+        if self.variable_manager:
+            summary_data = {
+                "type": summary_type,
+                "entries_summarized": len(entries),
+                "summary": summary,
+                "timestamp": datetime.now().isoformat()
+            }
+            summaries = self.variable_manager.get("reasoning.context_summaries", [])
+            summaries.append(summary_data)
+            self.variable_manager.set("reasoning.context_summaries", summaries[-10:])  # Keep last 10
+
+        return summary
+
+    def _get_pending_tasks_summary(self) -> str:
+        """Get summary of pending tasks requiring attention"""
+        if not self.internal_task_stack:
+            return "⚠️ NO TASKS IN STACK - You must create tasks from your outline immediately!"
+
+        pending_tasks = [task for task in self.internal_task_stack if task.get("status", "pending") == "pending"]
+
+        if not pending_tasks:
+            return "✅ No pending tasks - ready for next outline step or completion"
+
+        task_summaries = []
+        for i, task in enumerate(pending_tasks[:3], 1):
+            desc = task.get("description", "No description")[:50] + "..." if len(
+                task.get("description", "")) > 50 else task.get("description", "")
+            step_ref = task.get("outline_step_ref", "")
+            step_info = f" ({step_ref})" if step_ref else ""
+            task_summaries.append(f"{i}. {desc}{step_info}")
+
+        if len(pending_tasks) > 3:
+            task_summaries.append(f"... +{len(pending_tasks) - 3} more pending tasks")
+
+        return f"📋 {len(pending_tasks)} pending tasks:\n" + "\n".join(task_summaries)
+
+    async def _build_outline_driven_prompt(self, prep_res) -> str:
+        """Build outline-driven reasoning prompt mit UnifiedContextManager Integration"""
+
+        # Get current task with enhanced visibility
+        current_stack_task = self._get_current_stack_task()
+
+        #Enhanced context aus UnifiedContextManager
+        context_manager = prep_res.get("context_manager")
+        session_id = prep_res.get("session_id", "default")
+
+        # Build unified context sections
+        unified_context_summary = ""
+        recent_results_context = ""
+
+        if context_manager:
+            try:
+                # Get full unified context
+                unified_context = await  context_manager.build_unified_context(session_id, prep_res.get('original_query'))
+
+                unified_context_summary = self._format_unified_context_for_reasoning(unified_context)
+                recent_results_context = self._build_recent_results_from_unified_context(unified_context)
+            except Exception as e:
+                eprint(f"Failed to get unified context in reasoning prompt: {e}")
+                unified_context_summary = "Unified context unavailable"
+                recent_results_context = "**No recent results available**"
+
+        # Enhanced context summaries (keeping existing functionality)
+        context_summary = self._summarize_reasoning_context()
+        task_stack_summary = self._summarize_task_stack()
+        outline_status = self._get_current_step_requirements()
+        performance_context = self._get_performance_context()
+
+        # Enhanced variable system integration with better suggestions
+        variable_context = ""
+        variable_suggestions = []
+        if self.variable_manager:
+            variable_context = self.variable_manager.get_llm_variable_context()
+            query_text = prep_res.get('original_query', '')
+            if current_stack_task:
+                query_text += " " + current_stack_task.get('description', '')
+            variable_suggestions = self.variable_manager.get_variable_suggestions(query_text)
+
+        immediate_context = self._get_immediate_context_for_prompt()
+        # Detect if we're in a potential loop situation
+        loop_warning = self._generate_loop_warning()
+
+        prompt = f"""You are the enhanced strategic reasoning core operating in OUTLINE-DRIVEN MODE with MANDATORY TASK STACK enforcement.
+## ABSOLUTE REQUIREMENTS - VIOLATION = IMMEDIATE STOP:
+1. **WORK ONLY THROUGH TASK STACK** - No work outside the stack permitted
+2. **SEE CURRENT TASK DIRECTLY** - Your current task is shown below
+3. **USE VARIABLE SYSTEM** - All results are automatically stored and accessible
+4. **USE UNIFIED CONTEXT** - Rich conversation and execution history is available
+5. **MARK TASKS COMPLETE** - Every finished task must be marked complete
+6. **NO REPEATED ACTIONS** - Check variables first before re-doing work
+
+{loop_warning}
+
+## CURRENT SITUATION:
+**Original Query:** {prep_res['original_query']}
+
+**Unified Context Summary:**
+{unified_context_summary}
+
+**Current Context Summary:**
+{context_summary}
+
+**Current Outline Status:**
+{outline_status}
+
+** CURRENT TASK FROM STACK:**
+{current_stack_task}
+
+**Internal Task Stack:**
+{task_stack_summary}
+
+**Performance Metrics:**
+{performance_context}
+
+## ENHANCED CONTEXT INTEGRATION:
+{variable_context}
+
+** SUGGESTED VARIABLES for current task:**
+{', '.join(variable_suggestions[:10]) if variable_suggestions else 'tool_capabilities, query, model_complex, available_tools, timestamp, use_fast_response, tool_registry, name, current_query, current_session'}
+
+** UNIFIED CONTEXT RESULTS ACCESS:**
+{recent_results_context}
+
+## MANDATORY TASK STACK ENFORCEMENT:
+**CRITICAL RULE**: You MUST work exclusively through your internal task stack.
+
+**TASK STACK WORKFLOW (MANDATORY):**
+1. **CHECK CURRENT TASK**: Your current task is: {current_stack_task.get('description', 'NO CURRENT TASK - ADD TASKS FROM OUTLINE!') if current_stack_task else 'NO CURRENT TASK - VIOLATION!'}
+
+2. **WORK ONLY ON STACK TASKS**: You can ONLY work on tasks that exist in your internal task stack
+   - The task you're working on MUST be in the stack with status "pending"
+   - Before any action: Verify the task exists in your stack
+
+3. **MANDATORY TASK COMPLETION**: After completing any work, you MUST mark the task as complete
+   - Use: META_TOOL_CALL: manage_internal_task_stack(action="complete", task_description="[exact task description]", outline_step_ref="step_X")
+
+4. **CHECK UNIFIED CONTEXT FIRST**: Before any major action, check if results already exist
+   - Use: META_TOOL_CALL: read_from_variables(scope="delegation", key="latest", purpose="Check latest results")
+   - The unified context above shows available conversation history and execution state
+
+**CURRENT TASK ANALYSIS:**
+{self._analyze_current_task(current_stack_task) if current_stack_task else "❌ NO CURRENT TASK - You must add tasks from your outline!"}
+
+## AVAILABLE META-TOOLS:
+You have access to these meta-tools to control sub-systems. Use the EXACT syntax shown:
+
+**META_TOOL_CALL: internal_reasoning(thought: str, thought_number: int, total_thoughts: int, next_thought_needed: bool, current_focus: str, key_insights: list[str], potential_issues: list[str], confidence_level: float)**
+- Purpose: Structure your thinking process explicitly
+- Use for: Any complex analysis, planning, or problem decomposition
+- Example: META_TOOL_CALL: internal_reasoning(thought="I need to break this down into steps", thought_number=1, total_thoughts=3, next_thought_needed=true, current_focus="problem analysis", key_insights=["Query requires multiple data sources"], potential_issues=["Data might not be available"], confidence_level=0.8)
+
+**META_TOOL_CALL: manage_internal_task_stack(action: str, task_description: str)**
+- Purpose: Manage your high-level to-do list
+- Actions: "add", "remove", "complete", "get_current"
+- Example: META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research competitor analysis data")
+
+**META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
+- Purpose: Delegate specific, self-contained tasks requiring external tools
+- Use for: Web searches, file operations, API calls, single-step tool usage
+- Example: META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for latest news about AI developments", tools_list=["search_web"])
+
+**META_TOOL_CALL: create_and_execute_plan(goals: list[str])**
+- Purpose: Handle complex, multi-step projects with dependencies
+- Use for: Tasks requiring coordination, parallel execution, or complex workflows
+- Example: META_TOOL_CALL: create_and_execute_plan(goals=["Research company A financial data", "Research company B financial data", "Compare {{results.task_1.data}} and {{results.task_2.data}} and create report"])
+
+**META_TOOL_CALL: read_from_variables(scope: str, key: str, purpose: str)**
+- **USE FIRST** - Check existing results before new actions
+- Unified context data is available in various scopes
+- Example: META_TOOL_CALL: read_from_variables(scope="delegation", key="latest", purpose="Get latest delegation results")
+
+**META_TOOL_CALL: write_to_variables(scope: str, key: str, value: any, description: str)**
+- Store important findings immediately
+- Example: META_TOOL_CALL: write_to_variables(scope="user", key="name", value="User-Name", description="The users name for later reference")
+
+**META_TOOL_CALL: advance_outline_step(step_completed: bool, completion_evidence: str, next_step_focus: str)**
+- Mark outline steps complete when all related tasks done
+
+**META_TOOL_CALL: direct_response(final_answer: str, outline_completion: bool, steps_completed: list[str])**
+- ONLY when ALL outline steps complete
+- final_answer must contain the full final answer for the user with all necessary context and informations ( format in persona style )
+- Purpose: End reasoning and provide final answer to user
+- Use when: Query is complete or can be answered directly
+- Example: META_TOOL_CALL: direct_response(final_answer="Based on my analysis, here are the key findings...")
+
+## REASONING STRATEGY:
+1. **Start with internal_reasoning** to understand the query and plan approach
+2. **Use manage_internal_task_stack** to track high-level steps
+3. **Choose the right delegation strategy:**
+   - Simple queries → direct_response
+   - Up to 3 tool tasks with llm action → delegate_to_llm_tool_node
+   - Complex projects → create_and_execute_plan
+4. **Monitor progress** and adapt your approach
+5. **End with direct_response** when complete
+
+## EXAMPLES OF GOOD REASONING PATTERNS:
+
+**Simple Query Pattern:**
+META_TOOL_CALL: internal_reasoning(thought="This is a straightforward question I can answer directly", thought_number=1, total_thoughts=1, next_thought_needed=false, current_focus="direct response", key_insights=["No external data needed"], potential_issues=[], confidence_level=0.9)
+META_TOOL_CALL: direct_response(final_answer="...")
+
+**Research Task Pattern:**
+META_TOOL_CALL: internal_reasoning(thought="I need to gather information from external sources", ...)
+META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research topic X")
+META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for information about X", tools_list=["search_web"])
+[Wait for result]
+META_TOOL_CALL: internal_reasoning(thought="I have the research data, now I can formulate response", ...)
+META_TOOL_CALL: direct_response(final_answer="Based on my research: ...")
+
+**Complex Project Pattern:**
+META_TOOL_CALL: internal_reasoning(thought="This requires multiple steps with dependencies", ...)
+META_TOOL_CALL: create_and_execute_plan(goals=["Step 1: Gather data A", "Step 2: Gather data B", "Step 3: Analyze A and B together", "Step 4: Create final report"])
+[Wait for plan completion]
+META_TOOL_CALL: direct_response(final_answer="I've completed your complex request...")
+
+## ENHANCED ANTI-LOOP ENFORCEMENT:
+- Current Loop: {self.current_loop_count}/{self.max_reasoning_loops}
+- Auto-Recovery Attempts: {getattr(self, 'auto_recovery_attempts', 0)}/{getattr(self, 'max_auto_recovery', 3)}
+- Last Actions: {', '.join(getattr(self, 'last_action_signatures', [])[-3:]) if hasattr(self, 'last_action_signatures') else 'None'}
+
+**⚠️ LOOP PREVENTION RULES:**
+1. If you just read a variable, DO NOT read the same variable again
+2. If you completed a task, DO NOT repeat the same work
+3. If results exist in unified context, DO NOT recreate them
+4. Always advance to next logical step
+
+{self._get_current_step_requirements()}
+
+## YOUR NEXT ACTION (Choose ONE):
+Based on your current task, unified context, and available variables, what is your next concrete action?
+
+**DECISION TREE:**
+1. ❓ No current task? → Add tasks from outline
+2. 📖 Current task needs data? → Check variables and unified context first (read_from_variables)
+3. 🔧 Need to execute tools and reason over up to 3 steps? → Use delegate_to_llm_tool_node
+4. ✅ Task complete? → Mark complete and advance
+5. 🎯 All outline done? → Provide direct_response
+
+Latest unified context: (note delegation results could be wrong or misleading)
+{immediate_context}
+
+**Remember**: Your job is to work systematically through your outline using your task stack, while leveraging the unified context system to avoid duplicate work and maintain context."""
+
+        return prompt
+
+    def _format_unified_context_for_reasoning(self, unified_context: Dict[str, Any]) -> str:
+        """Format unified context für reasoning prompt"""
+        try:
+            context_parts = []
+
+            # Session info
+            session_stats = unified_context.get('session_stats', {})
+            context_parts.append(
+                f"Session: {unified_context.get('session_id', 'unknown')} with {session_stats.get('current_session_length', 0)} messages")
+
+            # Chat history summary
+            chat_history = unified_context.get('chat_history', [])
+            if chat_history:
+                recent_messages = len([msg for msg in chat_history if msg.get('role') == 'user'])
+                context_parts.append(f"Conversation: {recent_messages} user queries in current context")
+
+                # Show last user message for reference
+                last_user_msg = None
+                for msg in reversed(chat_history):
+                    if msg.get('role') == 'user':
+                        last_user_msg = msg.get('content', '')[:100] + "..."
+                        break
+                if last_user_msg:
+                    context_parts.append(f"Latest user query: {last_user_msg}")
+
+            # Execution state
+            execution_state = unified_context.get('execution_state', {})
+            active_tasks = execution_state.get('active_tasks', [])
+            recent_completions = execution_state.get('recent_completions', [])
+            if active_tasks or recent_completions:
+                context_parts.append(
+                    f"Execution: {len(active_tasks)} active, {len(recent_completions)} completed tasks")
+
+            # Available data
+            variables = unified_context.get('variables', {})
+            recent_results = variables.get('recent_results', [])
+            if recent_results:
+                context_parts.append(f"Available Results: {len(recent_results)} recent task results accessible")
+
+            return "\n".join(context_parts)
+
+        except Exception as e:
+            return f"Error formatting unified context: {str(e)}"
+
+    def _build_recent_results_from_unified_context(self, unified_context: Dict[str, Any]) -> str:
+        """Build recent results context from unified context"""
+        try:
+            variables = unified_context.get('variables', {})
+            recent_results = variables.get('recent_results', [])
+
+            if not recent_results:
+                return "**No recent results available from unified context**"
+
+            result_context = f"""**🔍 RECENT RESULTS FROM UNIFIED CONTEXT:**"""
+
+            for i, result in enumerate(recent_results[:3], 1):  # Top 3 results
+                task_id = result.get('task_id', f'result_{i}')
+                preview = result.get('preview', 'No preview')
+                success = result.get('success', False)
+                status_icon = "✅" if success else "❌"
+
+                result_context += f"\n{status_icon} {task_id}: {preview}"
+
+            result_context += f"\n\n**Quick Access Keys Available:**"
+            result_context += f"\n- Use read_from_variables(scope='results', key='task_id.data') for specific results"
+            result_context += f"\n- Check delegation.latest for most recent delegation results"
+
+            return result_context
+
+        except Exception as e:
+            return f"**Error accessing recent results: {str(e)}**"
+
+    def _generate_loop_warning(self) -> str:
+        """Generate loop warning if repetitive behavior detected"""
+        if len(self.last_action_signatures) >= 3:
+            recent_actions = self.last_action_signatures[-3:]
+            if len(set(recent_actions)) <= 2:
+                return """
+⚠️ **LOOP WARNING DETECTED** ⚠️
+You are repeating similar actions. MUST change approach:
+- If you just read variables, act on the results
+- If you delegated tasks, check the results
+- Complete current task and advance to next step
+- DO NOT repeat the same meta-tool calls
+    """
+        return ""
+
+    def _get_current_stack_task(self) -> Dict[str, Any]:
+        """Get current pending task from stack for direct visibility"""
+        if not self.internal_task_stack:
+            return {}
+
+        pending_tasks = [task for task in self.internal_task_stack if task.get("status", "pending") == "pending"]
+        if pending_tasks:
+            current_task = pending_tasks[0]  # Get first pending task
+            return {
+                "description": current_task.get("description", ""),
+                "outline_step_ref": current_task.get("outline_step_ref", ""),
+                "status": current_task.get("status", "pending"),
+                "added_at": current_task.get("added_at", ""),
+                "task_index": self.internal_task_stack.index(current_task) + 1,
+                "total_tasks": len(self.internal_task_stack)
+            }
+
+        return {}
+
+    def _analyze_current_task(self, current_task: Dict[str, Any]) -> str:
+        """Analyze current task and provide guidance"""
+        if not current_task:
+            return "❌ NO CURRENT TASK - Add tasks from your outline immediately!"
+
+        description = current_task.get("description", "")
+        outline_ref = current_task.get("outline_step_ref", "")
+
+        analysis = f"""CURRENT TASK IDENTIFIED:
+Task: {description}
+Outline Reference: {outline_ref}
+Position: {current_task.get('task_index', '?')}/{current_task.get('total_tasks', '?')}
+
+RECOMMENDED ACTION:"""
+
+        # Analyze task content for recommendations
+        if "read" in description.lower() or "file" in description.lower():
+            analysis += "\n1. Check if file content already exists in variables (read_from_variables)"
+            analysis += "\n2. If not found, use delegate_to_llm_tool_node with read_file tool"
+        elif "write" in description.lower() or "create" in description.lower():
+            analysis += "\n1. Check if content is ready in variables"
+            analysis += "\n2. Use delegate_to_llm_tool_node with write_file tool"
+        elif "analyze" in description.lower() or "question" in description.lower():
+            analysis += "\n1. Read existing data from variables"
+            analysis += "\n2. Process the information and provide direct_response"
+        else:
+            analysis += "\n1. Break down the task into specific actions"
+            analysis += "\n2. Check variables for existing relevant data"
+
+        return analysis
+
+    def _get_immediate_context_for_prompt(self) -> str:
+        """Get immediate context additions from recent meta-tool executions"""
+        recent_results = [
+            entry for entry in self.reasoning_context[-5:]  # Last 5 entries
+            if entry.get("type") == "meta_tool_result"
+        ]
+
+        if not recent_results:
+            return "No recent meta-tool results"
+
+        context_parts = ["📊 IMMEDIATE CONTEXT FROM RECENT ACTIONS:"]
+
+        for result in recent_results:
+            meta_tool = result.get("meta_tool", "unknown")
+            content = result.get("content", "")
+            loop = result.get("loop", "?")
+
+            # Format based on meta-tool type
+            if meta_tool == "delegate_to_llm_tool_node":
+                context_parts.append(f"✅ DELEGATION RESULT (Loop {loop}):")
+                context_parts.append(f"   {content}")
+            elif meta_tool == "read_from_variables":
+                context_parts.append(f"📖 VARIABLE READ (Loop {loop}):")
+                context_parts.append(f"   {content}")
+            elif meta_tool == "manage_internal_task_stack":
+                context_parts.append(f"📋 TASK UPDATE (Loop {loop}):")
+                context_parts.append(f"   {content}")
+            else:
+                context_parts.append(f"🔧 {meta_tool.upper()} (Loop {loop}):")
+                context_parts.append(f"   {content}")
+
+        return "\n".join(context_parts)
+
+    def _summarize_reasoning_context(self) -> str:
+        """Enhanced reasoning context summary with immediate result visibility"""
+        if not self.reasoning_context:
+            return "No previous reasoning steps"
+
+        # Separate different types of context entries
+        reasoning_entries = []
+        meta_tool_results = []
+        errors = []
+
+        for entry in self.reasoning_context:
+            entry_type = entry.get("type", "unknown")
+
+            if entry_type == "reasoning":
+                reasoning_entries.append(entry)
+            elif entry_type == "meta_tool_result":
+                meta_tool_results.append(entry)
+            elif entry_type == "error":
+                errors.append(entry)
+
+        summary_parts = []
+
+        # Show recent meta-tool results FIRST for immediate visibility
+        if meta_tool_results:
+            summary_parts.append("🔍 RECENT RESULTS:")
+            for result in meta_tool_results[-3:]:  # Last 3 results
+                meta_tool = result.get("meta_tool", "unknown")
+                content = result.get("content", "")[:300]  # Show more content
+                loop = result.get("loop", "?")
+                summary_parts.append(f"  [{meta_tool}] Loop {loop}: {content}")
+
+        # Show reasoning summary
+        if reasoning_entries:
+            summary_parts.append(f"\n💭 REASONING: {len(reasoning_entries)} reasoning cycles completed")
+
+        # Show errors if any
+        if errors:
+            summary_parts.append(f"\n⚠️ ERRORS: {len(errors)} errors encountered")
+            for error in errors[-2:]:  # Last 2 errors
+                content = error.get("content", "")[:150]
+                summary_parts.append(f"  Error: {content}")
+
+        return "\n".join(summary_parts)
+
+    def _get_current_step_requirements(self) -> str:
+        """Get requirements for current outline step"""
+        if not self.outline or not self.outline.get("steps"):
+            return "ERROR: No outline available"
+
+        steps = self.outline["steps"]
+        if self.current_outline_step >= len(steps):
+            return "All outline steps completed - must provide final response"
+
+        current_step = steps[self.current_outline_step]
+
+        requirements = f"""CURRENT STEP FOCUS:
+Description: {current_step.get('description', 'Unknown')}
+Required Method: {current_step.get('method', 'Unknown')}
+Expected Outcome: {current_step.get('expected_outcome', 'Unknown')}
+Success Criteria: {current_step.get('success_criteria', 'Unknown')}
+Current Status: {current_step.get('status', 'pending')}
+
+You MUST use the specified method and achieve the expected outcome before advancing."""
+
+        return requirements
+
+    def _get_performance_context(self) -> str:
+        """Get performance context with accurate metrics"""
+        if not self.performance_metrics:
+            return "No performance metrics available"
+
+        metrics_parts = []
+
+        # Core metrics
+        avg_time = self.performance_metrics.get("avg_loop_time", 0)
+        efficiency = self.performance_metrics.get("action_efficiency", 0)
+        total_loops = self.performance_metrics.get("total_loops", 0)
+        progress_loops = self.performance_metrics.get("progress_loops", 0)
+
+        metrics_parts.append(f"Avg Loop Time: {avg_time:.2f}s")
+        metrics_parts.append(f"Progress Rate: {efficiency:.1%}")
+        metrics_parts.append(f"Action Efficiency: {efficiency:.1%}")
+
+        # Performance warnings
+        if total_loops > 3 and efficiency < 0.5:
+            metrics_parts.append("⚠️ LOW EFFICIENCY - Need more progress actions")
+        elif total_loops > 5 and efficiency < 0.3:
+            metrics_parts.append("🔴 VERY LOW EFFICIENCY - Review approach")
+
+        # Loop detection warning based on actual metrics
+        if len(self.last_action_signatures) > 3:
+            unique_recent = len(set(self.last_action_signatures[-3:]))
+            if unique_recent <= 1:
+                metrics_parts.append("⚠️ LOOP PATTERN DETECTED - Change approach required")
+
+        return "; ".join(metrics_parts)
+
+    def _track_action_type(self, action_type: str, success: bool = True):
+        """Track specific action types for detailed performance analysis"""
+        if not hasattr(self, 'action_tracking'):
+            self.action_tracking = {}
+
+        if action_type not in self.action_tracking:
+            self.action_tracking[action_type] = {"total": 0, "successful": 0}
+
+        self.action_tracking[action_type]["total"] += 1
+        if success:
+            self.action_tracking[action_type]["successful"] += 1
+
+        # Update overall action efficiency based on all action types
+        total_actions = sum(stats["total"] for stats in self.action_tracking.values())
+        successful_actions = sum(stats["successful"] for stats in self.action_tracking.values())
+
+        if total_actions > 0:
+            self.performance_metrics["detailed_action_efficiency"] = successful_actions / total_actions
+
+
+    def _detect_infinite_loop(self) -> bool:
+        """Enhanced infinite loop detection with multiple patterns"""
+        if len(self.last_action_signatures) < 3:
+            return False
+
+        # 1. Immediate repetition (same action 3+ times)
+        recent_actions = self.last_action_signatures[-3:]
+        if len(set(recent_actions)) == 1:
+            return True
+
+        # 2. Pattern repetition (AB-AB-AB pattern)
+        if len(self.last_action_signatures) >= 6:
+            pattern1 = self.last_action_signatures[-6:-3]
+            pattern2 = self.last_action_signatures[-3:]
+            if pattern1 == pattern2:
+                return True
+
+        # 3. Variable read loops (multiple reads of same variable)
+        variable_reads = [sig for sig in self.last_action_signatures if sig.startswith("read_from_variables")]
+        if len(variable_reads) >= 3:
+            # Extract variable signatures from recent reads
+            recent_var_reads = variable_reads[-3:]
+            if len(set(recent_var_reads)) <= 2:  # Repeated variable reads
+                return True
+
+        # 4. No outline progress for extended loops
+        if self.current_loop_count > 5:
+            if not hasattr(self, '_last_step_progress_loop'):
+                self._last_step_progress_loop = {}
+
+            last_progress = self._last_step_progress_loop.get(self.current_outline_step, 0)
+            if self.current_loop_count - last_progress > 4:  # No step progress for 4+ loops
+                return True
+
+        # 5. Same task stack state for multiple loops
+        if hasattr(self, '_task_stack_states'):
+            stack_signature = hash(
+                str([(t.get('status'), t.get('description')[:20]) for t in self.internal_task_stack]))
+            if stack_signature in self._task_stack_states:
+                repetitions = self._task_stack_states[stack_signature]
+                if repetitions >= 4:
+                    return True
+                self._task_stack_states[stack_signature] = repetitions + 1
+            else:
+                self._task_stack_states[stack_signature] = 1
+        else:
+            self._task_stack_states = {}
+
+        return False
+
+    async def _trigger_auto_recovery(self, prep_res):
+        """Trigger auto-recovery mechanism"""
+        self.auto_recovery_attempts += 1
+
+        # Store failure pattern
+        if self.variable_manager:
+            failure_data = {
+                "timestamp": datetime.now().isoformat(),
+                "loop_count": self.current_loop_count,
+                "outline_step": self.current_outline_step,
+                "last_actions": self.last_action_signatures[-5:],
+                "recovery_attempt": self.auto_recovery_attempts
+            }
+            failures = self.variable_manager.get("reasoning.failure_patterns", [])
+            failures.append(failure_data)
+            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])  # Keep last 20
+
+        # Recovery strategies
+        if self.auto_recovery_attempts == 1:
+            # Force outline step advancement
+            await self._force_outline_advancement(prep_res)
+        elif self.auto_recovery_attempts == 2:
+            # Skip current step and move to next
+            await self._emergency_step_skip(prep_res)
+        else:
+            # Final emergency: force completion
+            await self._emergency_completion(prep_res)
+
+    async def _force_outline_advancement(self, prep_res):
+        """Force advancement to next outline step"""
+        if self.outline and self.current_outline_step < len(self.outline["steps"]):
+            current_step = self.outline["steps"][self.current_outline_step]
+            current_step["status"] = "force_completed"
+            current_step["completion_method"] = "auto_recovery"
+
+            self.current_outline_step += 1
+
+            # Add to context
+            self.reasoning_context.append({
+                "type": "auto_recovery",
+                "content": f"Force advanced to step {self.current_outline_step + 1} due to loop detection",
+                "recovery_attempt": self.auto_recovery_attempts,
+                "timestamp": datetime.now().isoformat()
+            })
+
+    async def _emergency_step_skip(self, prep_res):
+        """Emergency skip of problematic step"""
+        if self.outline and self.current_outline_step < len(self.outline["steps"]) - 1:
+            current_step = self.outline["steps"][self.current_outline_step]
+            current_step["status"] = "emergency_skipped"
+            current_step["skip_reason"] = "loop_recovery"
+
+            self.current_outline_step += 1
+
+            # Add to context
+            self.reasoning_context.append({
+                "type": "emergency_skip",
+                "content": f"Emergency skipped step {self.current_outline_step} and advanced to step {self.current_outline_step + 1}",
+                "recovery_attempt": self.auto_recovery_attempts,
+                "timestamp": datetime.now().isoformat()
+            })
+
+    async def _emergency_completion(self, prep_res):
+        """Emergency completion of reasoning"""
+        # Mark all remaining steps as emergency completed
+        if self.outline:
+            for i in range(self.current_outline_step, len(self.outline["steps"])):
+                self.outline["steps"][i]["status"] = "emergency_completed"
+
+            self.current_outline_step = len(self.outline["steps"])
+
+        # Add to context
+        self.reasoning_context.append({
+            "type": "emergency_completion",
+            "content": "Emergency completion triggered due to excessive recovery attempts",
+            "recovery_attempt": self.auto_recovery_attempts,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    def _update_performance_metrics(self, loop_start_time: float, progress_made: bool):
+        """Update performance metrics with accurate action efficiency tracking"""
+        loop_duration = time.time() - loop_start_time
+
+        # Initialize metrics if needed
+        if not hasattr(self, 'performance_metrics') or not self.performance_metrics:
+            self.performance_metrics = {
+                "loop_times": [],
+                "progress_loops": 0,
+                "total_loops": 0
+            }
+
+        # Update core metrics
+        self.performance_metrics["loop_times"].append(loop_duration)
+        self.performance_metrics["total_loops"] += 1
+
+        if progress_made:
+            self.performance_metrics["progress_loops"] += 1
+
+        # Calculate derived metrics
+        total = self.performance_metrics["total_loops"]
+        progress = self.performance_metrics["progress_loops"]
+
+        self.performance_metrics["avg_loop_time"] = sum(self.performance_metrics["loop_times"]) / len(
+            self.performance_metrics["loop_times"])
+        self.performance_metrics["action_efficiency"] = progress / total if total > 0 else 0.0
+        self.performance_metrics["progress_rate"] = self.performance_metrics["action_efficiency"]  # Same metric
+
+        # Keep only recent loop times for memory efficiency
+        if len(self.performance_metrics["loop_times"]) > 10:
+            self.performance_metrics["loop_times"] = self.performance_metrics["loop_times"][-10:]
+
+    def _add_context_to_reasoning(self, context_addition: str, meta_tool_name: str,
+                                  execution_details: Dict = None) -> None:
+        """Add context addition to reasoning context for immediate visibility in next LLM prompt"""
+        if not context_addition:
+            return
+
+        # Create structured context entry
+        context_entry = {
+            "type": "meta_tool_result",
+            "content": context_addition,
+            "meta_tool": meta_tool_name,
+            "loop": self.current_loop_count,
+            "outline_step": getattr(self, 'current_outline_step', 0),
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Add execution details if provided
+        if execution_details:
+            context_entry["execution_details"] = {
+                "duration": execution_details.get("execution_duration", 0),
+                "success": execution_details.get("execution_success", False),
+                "tool_category": execution_details.get("tool_category", "unknown")
+            }
+
+        # Add to reasoning context for immediate visibility
+        self.reasoning_context.append(context_entry)
+
+        # Store in variables for persistent access
+        if self.agent_instance:
+            if not self.agent_instance.shared.get("system_context"):
+                self.agent_instance.shared["system_context"] = {}
+            if not self.agent_instance.shared["system_context"].get("reasoning_context"):
+                self.agent_instance.shared["system_context"]["reasoning_context"] = {}
+
+            result_key = f"reasoning.loop_{self.current_loop_count}_{meta_tool_name}"
+            self.agent_instance.shared["system_context"]["reasoning_context"][result_key] = {
+                "context_addition": context_addition,
+                "meta_tool": meta_tool_name,
+                "timestamp": datetime.now().isoformat(),
+                "loop": self.current_loop_count
+            }
+
+    async def _parse_and_execute_meta_tools(self, llm_response: str, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced meta-tool parsing with comprehensive progress tracking"""
+        import re
+
+        result = {
+            "final_result": None,
+            "action_taken": None,
+            "progress_made": False,
+            "context_addition": None
+        }
+
+        progress_tracker = prep_res.get("progress_tracker")
+        session_id = prep_res.get("session_id")
+
+        # Pattern to match META_TOOL_CALL: tool_name(args...)
+        pattern = r'META_TOOL_CALL:'
+        matches = _extract_meta_tool_calls(llm_response, pattern)
+
+        if not matches and progress_tracker:
+            # No meta-tools found in response
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="meta_tool_analysis",
+                timestamp=time.time(),
+                node_name="LLMReasonerNode",
+                status=NodeStatus.COMPLETED,
+                session_id=session_id,
+                metadata={
+                    "meta_tools_found": 0,
+                    "llm_response_length": len(llm_response),
+                    "reasoning_loop": self.current_loop_count,
+                    "analysis_result": "no_meta_tools_detected",
+                    "llm_response_preview": llm_response[:200] + "..." if len(llm_response) > 200 else llm_response,
+                    "execution_phase": "analysis_complete",
+                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                    "context_size": len(self.reasoning_context),
+                    "performance_warning": len(self.reasoning_context) > 10 and self.current_loop_count > 5
+                }
+            ))
+            result["context_addition"] = "No action taken - this violates outline-driven execution requirements"
+            self._add_context_to_reasoning(result["context_addition"], "invalid", {})
+
+            return result
+
+        for i, (tool_name, args_str) in enumerate(matches):
+            meta_tool_start = time.perf_counter()
+
+            # Track action signature for loop detection
+            action_signature = f"{tool_name}:{hash(args_str) % 1000}"
+            self.last_action_signatures.append(action_signature)
+            if len(self.last_action_signatures) > 10:
+                self.last_action_signatures = self.last_action_signatures[-10:]
+
+            if progress_tracker:
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="meta_tool_call",
+                    timestamp=time.time(),
+                    node_name="LLMReasonerNode",
+                    status=NodeStatus.STARTING,
+                    session_id=session_id,
+                    task_id=f"meta_tool_{tool_name}_{i + 1}",
+                    metadata={
+                        "meta_tool_name": tool_name,
+                        "meta_tool_index": i + 1,
+                        "total_meta_tools": len(matches),
+                        "reasoning_loop": self.current_loop_count,
+                        "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                        "raw_args_string": args_str,
+                        "internal_task_stack_size": len(self.internal_task_stack),
+                        "reasoning_context_size": len(self.reasoning_context),
+                        "execution_phase": "meta_tool_start",
+                        "tool_category": self._get_tool_category(tool_name),
+                        "action_signature": action_signature,
+                        "loop_detection_memory": len(self.last_action_signatures),
+                        "performance_metrics": self.performance_metrics.copy() if hasattr(self,
+                                                                                          'performance_metrics') else {},
+                        "auto_recovery_attempts": getattr(self, 'auto_recovery_attempts', 0),
+                        "context_management": {
+                            "current_size": len(self.reasoning_context),
+                            "threshold": getattr(self, 'context_summary_threshold', 15),
+                            "max_size": getattr(self, 'max_context_size', 30)
+                        }
+                    }
+                ))
+
+            try:
+                # Parse arguments with enhanced error handling
+                args = _parse_tool_args(args_str)
+                rprint(f"Parsed args: {args}")
+
+                # Execute meta-tool with detailed tracking
+                meta_result = None
+                execution_details = {
+                    "meta_tool_name": tool_name,
+                    "parsed_args": args,
+                    "execution_success": False,
+                    "execution_duration": 0.0,
+                    "reasoning_loop": self.current_loop_count,
+                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                    "context_before_size": len(self.reasoning_context),
+                    "task_stack_before_size": len(self.internal_task_stack),
+                    "tool_category": self._get_tool_category(tool_name),
+                    "execution_phase": "executing"
+                }
+
+                if tool_name == "internal_reasoning":
+                    meta_result = await self._execute_enhanced_internal_reasoning(args, prep_res)
+                    execution_details.update({
+                        "thought_number": args.get("thought_number", 1),
+                        "total_thoughts": args.get("total_thoughts", 1),
+                        "current_focus": args.get("current_focus", ""),
+                        "confidence_level": args.get("confidence_level", 0.5),
+                        "key_insights": args.get("key_insights", []),
+                        "key_insights_count": len(args.get("key_insights", [])),
+                        "potential_issues_count": len(args.get("potential_issues", [])),
+                        "next_thought_needed": args.get("next_thought_needed", False),
+                        "internal_reasoning_log_size": len(getattr(self, 'internal_reasoning_log', [])),
+                        "reasoning_depth": self._calculate_reasoning_depth(),
+                        "outline_step_progress": args.get("outline_step_progress", "")
+                    })
+                    result["action_taken"] = False
+
+                elif tool_name == "manage_internal_task_stack":
+                    meta_result = await self._execute_enhanced_task_stack(args, prep_res)
+                    execution_details.update({
+                        "stack_action": args.get("action", "unknown"),
+                        "task_description": args.get("task_description", ""),
+                        "outline_step_ref": args.get("outline_step_ref", ""),
+                        "stack_size_before": len(self.internal_task_stack),
+                        "stack_size_after": 0  # Will be updated below
+                    })
+                    execution_details["stack_size_after"] = len(self.internal_task_stack)
+                    execution_details["stack_change"] = execution_details["stack_size_after"] - execution_details[
+                        "stack_size_before"]
+                    result["action_taken"] = True
+
+                elif tool_name == "delegate_to_llm_tool_node":
+                    meta_result = await self._execute_enhanced_delegate_llm_tool(args, prep_res)
+                    execution_details.update({
+                        "delegated_task_description": args.get("task_description", ""),
+                        "tools_list": args.get("tools_list", []),
+                        "tools_count": len(args.get("tools_list", [])),
+                        "delegation_target": "LLMToolNode",
+                        "sub_system_execution": True,
+                        "delegation_complexity": self._assess_delegation_complexity(args),
+                        "outline_step_completion": args.get("outline_step_completion", False)
+                    })
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+
+                elif tool_name == "create_and_execute_plan":
+                    meta_result = await self._execute_enhanced_create_plan(args, prep_res)
+                    execution_details.update({
+                        "goals_list": args.get("goals", []),
+                        "goals_count": len(args.get("goals", [])),
+                        "plan_execution_target": "TaskPlanner_TaskExecutor",
+                        "sub_system_execution": True,
+                        "complex_workflow": True,
+                        "estimated_complexity": self._estimate_plan_complexity(args.get("goals", [])),
+                        "outline_step_completion": args.get("outline_step_completion", False)
+                    })
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+
+                elif tool_name == "advance_outline_step":
+                    meta_result = await self._execute_advance_outline_step(args, prep_res)
+                    execution_details.update({
+                        "step_completed": args.get("step_completed", False),
+                        "completion_evidence": args.get("completion_evidence", ""),
+                        "next_step_focus": args.get("next_step_focus", ""),
+                        "outline_advancement": True,
+                        "step_progression": f"{self.current_outline_step}/{len(self.outline.get('steps', [])) if self.outline else 0}"
+                    })
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+
+                elif tool_name == "write_to_variables":
+                    meta_result = await self._execute_write_to_variables(args)
+                    execution_details.update({
+                        "variable_scope": args.get("scope", "reasoning"),
+                        "variable_key": args.get("key", ""),
+                        "variable_description": args.get("description", ""),
+                        "data_persistence": True,
+                        "variable_system_operation": "write"
+                    })
+                    result["action_taken"] = True
+
+                elif tool_name == "read_from_variables":
+                    meta_result = await self._execute_read_from_variables(args)
+                    execution_details.update({
+                        "variable_scope": args.get("scope", "reasoning"),
+                        "variable_key": args.get("key", ""),
+                        "read_purpose": args.get("purpose", ""),
+                        "variable_system_operation": "read",
+                        "data_retrieval": True
+                    })
+                    result["action_taken"] = True
+
+                elif tool_name == "direct_response":
+
+                    final_answer = args.get("final_answer", "Task completed.").replace('\\n', '\n').replace('\\t', '\t')
+                    execution_details.update({
+                        "final_answer": final_answer,
+                        "final_answer_length": len(final_answer),
+                        "reasoning_complete": True,
+                        "flow_termination": True,
+                        "reasoning_summary": self._create_reasoning_summary(),
+                        "total_reasoning_steps": len(self.reasoning_context),
+                        "outline_completion": True,
+                        "steps_completed": args.get("steps_completed", []),
+                        "session_completion": True
+                    })
+
+                    completion_context = f"✅ REASONING COMPLETE: {final_answer}"
+                    self._add_context_to_reasoning(completion_context, tool_name, execution_details)
+
+                    # Store successful completion
+                    await self._store_successful_completion(prep_res, final_answer)
+
+                    if progress_tracker:
+                        meta_tool_duration = time.perf_counter() - meta_tool_start
+                        execution_details["execution_duration"] = meta_tool_duration
+                        execution_details["execution_success"] = True
+
+                        await progress_tracker.emit_event(ProgressEvent(
+                            event_type="meta_tool_call",
+                            timestamp=time.time(),
+                            node_name="LLMReasonerNode",
+                            status=NodeStatus.COMPLETED,
+                            session_id=session_id,
+                            task_id=f"meta_tool_{tool_name}_{i + 1}",
+                            node_duration=meta_tool_duration,
+                            success=True,
+                            metadata=execution_details
+                        ))
+
+                    result["final_result"] = final_answer
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+                    return result
+
+                else:
+                    execution_details.update({
+                        "error_type": "unknown_meta_tool",
+                        "error_message": f"Unknown meta-tool: {tool_name}",
+                        "execution_success": False,
+                        "available_meta_tools": ["internal_reasoning", "manage_internal_task_stack",
+                                            "delegate_to_llm_tool_node", "create_and_execute_plan",
+                                            "advance_outline_step", "write_to_variables", "read_from_variables",
+                                            "direct_response"]
+                    })
+
+                    if progress_tracker:
+                        meta_tool_duration = time.perf_counter() - meta_tool_start
+                        await progress_tracker.emit_event(ProgressEvent(
+                            event_type="meta_tool_call",
+                            timestamp=time.time(),
+                            node_name="LLMReasonerNode",
+                            status=NodeStatus.FAILED,
+                            session_id=session_id,
+                            task_id=f"meta_tool_{tool_name}_{i + 1}",
+                            node_duration=meta_tool_duration,
+                            success=False,
+                            metadata=execution_details
+                        ))
+
+                    error_context = f"❌ Unknown meta-tool: {tool_name}"
+                    self._add_context_to_reasoning(error_context, tool_name, execution_details)
+                    wprint(f"Unknown meta-tool: {tool_name}")
+                    continue
+
+                # Update execution details with results
+                meta_tool_duration = time.perf_counter() - meta_tool_start
+                execution_details.update({
+                    "execution_duration": meta_tool_duration,
+                    "execution_success": True,
+                    "context_after_size": len(self.reasoning_context),
+                    "task_stack_after_size": len(self.internal_task_stack),
+                    "performance_score": self._calculate_tool_performance_score(meta_tool_duration, tool_name),
+                    "execution_phase": "completed"
+                })
+                self._track_action_type(tool_name, success=True)
+
+                # Add result to context
+                if meta_result and meta_result.get("context_addition"):
+                    result["context_addition"] = meta_result["context_addition"]
+                    execution_details["context_addition_length"] = len(meta_result["context_addition"])
+
+                    self._add_context_to_reasoning(meta_result["context_addition"], tool_name, execution_details)
+
+                # Emit success event
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="meta_tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMReasonerNode",
+                        status=NodeStatus.COMPLETED,
+                        session_id=session_id,
+                        task_id=f"meta_tool_{tool_name}_{i + 1}",
+                        node_duration=meta_tool_duration,
+                        success=True,
+                        metadata=execution_details
+                    ))
+
+            except Exception as e:
+                meta_tool_duration = time.perf_counter() - meta_tool_start
+                error_details = {
+                    "meta_tool_name": tool_name,
+                    "execution_success": False,
+                    "execution_duration": meta_tool_duration,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "reasoning_loop": self.current_loop_count,
+                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                    "parsed_args": args if 'args' in locals() else None,
+                    "raw_args_string": args_str,
+                    "execution_phase": "meta_tool_error",
+                    "context_size_at_error": len(self.reasoning_context),
+                    "task_stack_size_at_error": len(self.internal_task_stack),
+                    "tool_category": self._get_tool_category(tool_name),
+                    "error_context": self._get_error_context(e),
+                    "recovery_recommended": self.auto_recovery_attempts < getattr(self, 'max_auto_recovery', 3)
+                }
+
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="meta_tool_call",
+                        timestamp=time.time(),
+                        node_name="LLMReasonerNode",
+                        status=NodeStatus.FAILED,
+                        session_id=session_id,
+                        task_id=f"meta_tool_{tool_name}_{i + 1}",
+                        node_duration=meta_tool_duration,
+                        success=False,
+                        metadata=error_details
+                    ))
+
+                eprint(f"Meta-tool execution failed for {tool_name}: {e}")
+                result["context_addition"] = f"Error executing {tool_name}: {str(e)}"
+
+                self._add_context_to_reasoning(result["context_addition"], tool_name, execution_details)
+
+        # Final summary event if multiple meta-tools were processed
+        if len(matches) > 1 and progress_tracker:
+            batch_performance = self._calculate_batch_performance(matches)
+            reasoning_progress = self._assess_reasoning_progress()
+
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="meta_tool_batch_complete",
+                timestamp=time.time(),
+                node_name="LLMReasonerNode",
+                status=NodeStatus.COMPLETED,
+                session_id=session_id,
+                metadata={
+                    "total_meta_tools_processed": len(matches),
+                    "reasoning_loop": self.current_loop_count,
+                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                    "batch_execution_complete": True,
+                    "final_context_size": len(self.reasoning_context),
+                    "final_task_stack_size": len(self.internal_task_stack),
+                    "meta_tools_executed": [match[0] for match in matches],
+                    "execution_phase": "meta_tool_batch_summary",
+                    "batch_performance": batch_performance,
+                    "reasoning_progress": reasoning_progress,
+                    "progress_made": result["progress_made"],
+                    "action_taken": result["action_taken"],
+                    "outline_status": {
+                        "current_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
+                        "total_steps": len(self.outline.get('steps', [])) if self.outline else 0,
+                        "completion_ratio": (
+                                self.current_outline_step / len(self.outline.get('steps', [1]))) if self.outline else 0
+                    },
+                    "performance_summary": {
+                        "loop_efficiency": self.performance_metrics.get("action_efficiency", 0) if hasattr(self,
+                                                                                                           'performance_metrics') else 0,
+                        "recovery_attempts": getattr(self, 'auto_recovery_attempts', 0),
+                        "context_management_active": len(self.reasoning_context) >= getattr(self,
+                                                                                            'context_summary_threshold',
+                                                                                            15)
+                    }
+                }
+            ))
+
+        return result
+
+    async def _execute_enhanced_internal_reasoning(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced internal reasoning with outline step tracking"""
+        # Standard internal reasoning execution
+        result = await self._execute_internal_reasoning(args, prep_res)
+
+        # Enhanced with outline step progress
+        outline_step_progress = args.get("outline_step_progress", "")
+        if outline_step_progress and result:
+            result["context_addition"] += f"\nOutline Step Progress: {outline_step_progress}"
+
+        # Track reasoning depth for current step
+        if not hasattr(self, '_step_reasoning_depth'):
+            self._step_reasoning_depth = {}
+
+        current_step = self.current_outline_step
+        self._step_reasoning_depth[current_step] = self._step_reasoning_depth.get(current_step, 0) + 1
+
+        # Warn if too much reasoning without action
+        if self._step_reasoning_depth[current_step] > 3:
+            result["context_addition"] += "\n⚠️ WARNING: Too much reasoning without concrete action for current step"
+
+        return result
+
+    async def _execute_enhanced_task_stack(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced task stack management with outline step tracking"""
+        # Get outline step reference
+        outline_step_ref = args.get("outline_step_ref", f"step_{self.current_outline_step}")
+
+        # Execute standard task stack management
+        result = await self._execute_manage_task_stack(args, prep_res)
+
+        # Enhanced with outline step reference
+        if result:
+            result["context_addition"] += f"\n[Linked to: {outline_step_ref}]"
+
+        return result
+
+    async def _execute_enhanced_delegate_llm_tool(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced delegation with immediate result visibility and guaranteed storage"""
+        task_description = args.get("task_description", "")
+        tools_list = args.get("tools_list", [])
+        outline_step_completion = args.get("outline_step_completion", False)
+
+        # Generate unique delegation ID for this execution
+        delegation_id = f"delegation_loop_{self.current_loop_count}"
+
+        # Prepare shared state for LLMToolNode with enhanced result capture
+        llm_tool_shared = {
+            "current_task_description": task_description,
+            "current_query": task_description,
+            "formatted_context": {
+                "recent_interaction": f"Reasoner delegating task: {task_description}",
+                "session_summary": self._get_reasoning_summary(),
+                "task_context": f"Loop {self.current_loop_count} delegation - CAPTURE ALL RESULTS"
+            },
+            "variable_manager": prep_res.get("variable_manager"),
+            "agent_instance": prep_res.get("agent_instance"),
+            "available_tools": tools_list,
+            "tool_capabilities": prep_res.get("tool_capabilities", {}),
+            "fast_llm_model": prep_res.get("fast_llm_model"),
+            "complex_llm_model": prep_res.get("complex_llm_model"),
+            "progress_tracker": prep_res.get("progress_tracker"),
+            "session_id": prep_res.get("session_id"),
+            "use_fast_response": True
+        }
+
+        try:
+            # Execute LLMToolNode
+            llm_tool_node = LLMToolNode()
+            await llm_tool_node.run_async(llm_tool_shared)
+
+            # IMMEDIATE RESULT EXTRACTION - Critical for visibility
+            final_response = llm_tool_shared.get("current_response", "No response captured")
+            tool_calls_made = llm_tool_shared.get("tool_calls_made", 0)
+            tool_results = llm_tool_shared.get("results", {})
+
+            # GUARANTEED STORAGE - Multiple storage patterns for reliability
+            delegation_result = {
+                "task_description": task_description,
+                "tools_used": tools_list,
+                "tool_calls_made": tool_calls_made,
+                "final_response": final_response,
+                "results": tool_results,
+                "timestamp": datetime.now().isoformat(),
+                "delegation_id": delegation_id,
+                "outline_step": self.current_outline_step,
+                "reasoning_loop": self.current_loop_count,
+                "success": True
+            }
+
+            # CRITICAL: Store immediately with multiple access patterns
+            if self.variable_manager:
+                # 1. Primary delegation storage
+                self.variable_manager.set(f"delegation.loop_{self.current_loop_count}", delegation_result)
+
+                # 2. Latest results quick access
+                self.variable_manager.set("delegation.latest", delegation_result)
+
+                # 3. Store individual tool results with direct access
+                for result_id, result_data in tool_results.items():
+                    self.variable_manager.set(f"results.{result_id}.data", result_data.get("data"))
+
+                # 4. Create smart access keys for common patterns
+                if "read_file" in tools_list and tool_results:
+                    file_content = next((res.get("data") for res in tool_results.values()
+                                         if res.get("data") and isinstance(res.get("data"), str)), None)
+                    if file_content:
+                        self.variable_manager.set("var.file_content", file_content)
+                        self.variable_manager.set("latest_file_content", file_content)
+
+                # 5. Update delegation index for discovery
+                index = self.variable_manager.get("delegation.index", [])
+                index.append({
+                    "loop": self.current_loop_count,
+                    "task": task_description[:100],
+                    "tools": tools_list,
+                    "timestamp": datetime.now().isoformat(),
+                    "results_available": len(tool_results) > 0
+                })
+                self.variable_manager.set("delegation.index", index[-20:])
+
+            # Create comprehensive context addition with IMMEDIATE VISIBILITY
+            context_addition = f"""DELEGATION COMPLETED (Loop {self.current_loop_count}):
+Task: {task_description}
+Tools: {', '.join(tools_list)}
+Calls Made: {tool_calls_made}
+Results Captured: {len(tool_results)} items
+
+FINAL RESULT: {final_response}
+
+- reference variable: delegation.loop_{self.current_loop_count}
+DELEGATION END
+"""
+
+            # Mark outline step completion if specified
+            if outline_step_completion:
+                await self._mark_step_completion(prep_res, "delegation_complete", context_addition)
+
+            return {"context_addition": context_addition}
+
+        except Exception as e:
+            error_msg = f"❌ DELEGATION FAILED: {str(e)}"
+            # Store error for debugging
+            if self.variable_manager:
+                error_data = {
+                    "task": task_description,
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                    "loop": self.current_loop_count
+                }
+                self.variable_manager.set(f"delegation.error.loop_{self.current_loop_count}", error_data)
+
+            return {"context_addition": error_msg}
+
+    async def _execute_enhanced_create_plan(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Enhanced plan creation with outline step completion tracking"""
+        # Check if this completes the outline step
+        outline_step_completion = args.get("outline_step_completion", False)
+
+        # Execute standard plan creation
+        result = await self._execute_create_plan(args, prep_res)
+
+        # Enhanced with step completion tracking
+        if outline_step_completion and result:
+            await self._mark_step_completion(prep_res, "create_and_execute_plan", result["context_addition"])
+            result["context_addition"] += f"\n✓ OUTLINE STEP {self.current_outline_step + 1} COMPLETED"
+
+        return result
+
+    async def _execute_advance_outline_step(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Execute outline step advancement"""
+        step_completed = args.get("step_completed", False)
+        completion_evidence = args.get("completion_evidence", "")
+        next_step_focus = args.get("next_step_focus", "")
+
+        if not self.outline or not self.outline.get("steps"):
+            return {"context_addition": "Cannot advance: No outline available"}
+
+        steps = self.outline["steps"]
+
+        if self.current_outline_step >= len(steps):
+            return {"context_addition": "Cannot advance: Already at final step"}
+
+        if step_completed:
+            # Mark current step as completed
+            if self.current_outline_step < len(steps):
+                current_step = steps[self.current_outline_step]
+                current_step["status"] = "completed"
+                current_step["completion_evidence"] = completion_evidence
+                current_step["completed_at"] = datetime.now().isoformat()
+
+            # Advance to next step
+            self.current_outline_step += 1
+
+            # Store advancement in variables
+            if self.variable_manager:
+                advancement_data = {
+                    "step_completed": self.current_outline_step,
+                    "completion_evidence": completion_evidence,
+                    "next_step_focus": next_step_focus,
+                    "timestamp": datetime.now().isoformat()
+                }
+                self.variable_manager.set(f"reasoning.step_completions.{self.current_outline_step - 1}",
+                                          advancement_data)
+
+            context_addition = f"""✓ STEP {self.current_outline_step} COMPLETED
+Evidence: {completion_evidence}
+Advanced to Step {self.current_outline_step + 1}/{len(steps)}"""
+
+            if next_step_focus:
+                context_addition += f"\nNext Step Focus: {next_step_focus}"
+
+            if self.current_outline_step >= len(steps):
+                context_addition += "\n🎯 ALL OUTLINE STEPS COMPLETED - Ready for direct_response"
+
+        else:
+            context_addition = f"Step {self.current_outline_step + 1} not yet completed - continue working on current step"
+
+        return {"context_addition": context_addition}
+
+    async def _execute_read_from_variables(self, args: Dict) -> Dict[str, Any]:
+        """Enhanced variable reading with intelligent discovery and loop prevention"""
+        if not self.variable_manager:
+            return {"context_addition": "❌ Variable system not available"}
+
+        scope = args.get("scope", args.get("query", "reasoning"))
+        key = args.get("key", "")
+        purpose = args.get("purpose", "")
+
+        # CRITICAL: Check for repeated reads - prevent infinite loops
+        read_signature = f"{scope}.{key}"
+        if not hasattr(self, '_variable_read_history'):
+            self._variable_read_history = []
+
+        # Prevent reading same variable multiple times in short succession
+        recent_reads = [r for r in self._variable_read_history if r['signature'] == read_signature]
+        if len(recent_reads) >= 2:
+            self._variable_read_history.append({
+                'signature': read_signature,
+                'timestamp': time.time(),
+                'loop': self.current_loop_count
+            })
+            return {
+                "context_addition": f"⚠️ LOOP PREVENTION: Already read {read_signature} {len(recent_reads)} times. Try different approach or advance to next task."
+            }
+
+        # Record this read attempt
+        self._variable_read_history.append({
+            'signature': read_signature,
+            'timestamp': time.time(),
+            'loop': self.current_loop_count
+        })
+
+        # Clean old read history (keep last 10)
+        if len(self._variable_read_history) > 10:
+            self._variable_read_history = self._variable_read_history[-10:]
+
+        if not key:
+            return {"context_addition": "❌ Cannot read: No key provided"}
+
+        try:
+            # Smart key resolution for common patterns
+            resolved_key = self._resolve_smart_key(scope, key)
+
+            # Try direct access first
+            value = self.variable_manager.get(resolved_key)
+
+            if value is not None:
+                # Format value for display
+                value_display = self._format_variable_value(value)
+
+                context_addition = f"""{resolved_key}={value_display}
+Access: Successfully retrieved from variable system"""
+
+                return {"context_addition": context_addition}
+
+            else:
+                # Enhanced discovery when not found
+                discovery_result = self._perform_smart_variable_discovery(scope, key, purpose)
+                return {"context_addition": discovery_result}
+
+        except Exception as e:
+            return {"context_addition": f"❌ Variable read error: {str(e)}"}
+
+    def _resolve_smart_key(self, scope: str, key: str) -> str:
+        """Resolve smart key patterns for common access cases"""
+        # Handle delegation results specially
+        if scope == "delegation" and "loop_" in key:
+            return f"delegation.{key}"
+        elif scope == "results" and key.endswith(".data"):
+            return f"results.{key}"
+        elif scope == "var" or key.startswith("var."):
+            return key if key.startswith("var.") else f"var.{key}"
+        else:
+            return f"{scope}.{key}" if scope != "reasoning" else f"reasoning.{key}"
+
+    def _format_variable_value(self, value: any) -> str:
+        """Format variable value for display with intelligent truncation"""
+        if isinstance(value, (dict, list)):
+            value_str = json.dumps(value, default=str, indent=2)
+        else:
+            value_str = str(value)
+
+        # Smart truncation based on content type
+        if len(value_str) > 200000:
+            if isinstance(value, dict) and "results" in str(value):
+                # For result dicts, show structure
+                return f"RESULTS DICT ({len(value)} keys):\n" + value_str[:150000] + "\n... [TRUNCATED]"
+            elif isinstance(value, str) and (value.startswith("# ") or "markdown" in value.lower()):
+                # For file content, show beginning
+                return f"FILE CONTENT ({len(value_str)} chars):\n" + value_str[:100000] + "\n... [FULL CONTENT AVAILABLE]"
+            else:
+                return value_str[:100000] + f"\n... [TRUNCATED - {len(value_str)} total chars]"
+
+        return value_str
+
+    def _perform_smart_variable_discovery(self, scope: str, key: str, purpose: str) -> str:
+        """Perform intelligent variable discovery when key not found"""
+        # Check latest delegation results first
+        latest = self.variable_manager.get("delegation.latest")
+        if latest:
+            discovery_msg = f"❌ Variable not found: {scope}.{key}\n\n✨ LATEST DELEGATION RESULTS AVAILABLE:"
+            discovery_msg += f"\nTask: {latest.get('task_description', 'Unknown')[:100]}"
+            discovery_msg += f"\nResults: {len(latest.get('results', {}))} items available"
+            discovery_msg += f"\nAccess with: delegation.latest"
+
+            # Show actual keys available
+            if latest.get('results'):
+                discovery_msg += f"\n\n🔍 Available result keys:"
+                for result_id in latest['results'].keys():
+                    discovery_msg += f"\n• results.{result_id}.data"
+
+            return discovery_msg
+
+        # Check delegation index for recent activity
+        index = self.variable_manager.get("delegation.index", [])
+        if index:
+            recent = index[-3:]  # Last 3 delegations
+            discovery_msg = f"❌ Variable not found: {scope}.{key}\n\n📚 RECENT DELEGATIONS:"
+            for entry in recent:
+                discovery_msg += f"\n• Loop {entry['loop']}: {entry['task'][:50]}..."
+                discovery_msg += f"  Access: delegation.loop_{entry['loop']}"
+            return discovery_msg
+
+        # Fallback: show available scopes
+        available_vars = self.variable_manager.get_available_variables()
+        return f"❌ Variable not found: {scope}.{key}\n\n📋 Available scopes: {', '.join(available_vars.keys())}"
+
+
+    async def _execute_write_to_variables(self, args: Dict) -> Dict[str, Any]:
+        """Enhanced variable writing with automatic result storage"""
+        if not self.variable_manager:
+            return {"context_addition": "❌ Variable system not available"}
+
+        scope = args.get("scope", "reasoning")
+        key = args.get("key", "")
+        value = args.get("value", "")
+        description = args.get("description", "")
+
+        if not key:
+            return {"context_addition": "❌ Cannot write to variables: No key provided"}
+
+        try:
+            # Create scoped key
+            full_key = f"{scope}.{key}" if scope != "reasoning" else f"reasoning.{key}"
+
+            # Write to variables
+            self.variable_manager.set(full_key, value)
+
+            # Store enhanced metadata
+            metadata = {
+                "description": description,
+                "written_at": datetime.now().isoformat(),
+                "outline_step": getattr(self, 'current_outline_step', 0),
+                "reasoning_loop": self.current_loop_count,
+                "value_type": type(value).__name__,
+                "value_size": len(str(value)) if value else 0,
+                "auto_stored": False  # Manual storage
+            }
+            self.variable_manager.set(f"{full_key}_metadata", metadata)
+
+            # Update storage index for easy discovery
+            storage_index = self.variable_manager.get("reasoning.storage_index", [])
+            storage_entry = {
+                "key": full_key,
+                "description": description,
+                "timestamp": datetime.now().isoformat(),
+                "loop": self.current_loop_count
+            }
+            storage_index.append(storage_entry)
+            self.variable_manager.set("reasoning.storage_index", storage_index[-20:])  # Keep last 20
+
+            context_addition = f"✅ Stored in variables: {full_key}"
+            if description:
+                context_addition += f"\n📄 Description: {description}"
+
+            # Show how to access it
+            context_addition += f"\n🔍 Access with: read_from_variables(scope=\"{scope}\", key=\"{key}\", purpose=\"...\")"
+
+            return {"context_addition": context_addition}
+
+        except Exception as e:
+            return {"context_addition": f"❌ Failed to write to variables: {str(e)}"}
+
+    def _auto_store_delegation_results(self, delegation_result: Dict, task_description: str) -> str:
+        """Automatically store delegation results with smart naming and comprehensive indexing"""
+        if not self.variable_manager:
+            return "\n❌ Variable system not available for auto-storage"
+
+        storage_summary = []
+
+        try:
+            # Store main delegation result with loop reference
+            main_key = f"delegation.loop_{self.current_loop_count}"
+            self.variable_manager.set(main_key, delegation_result)
+            storage_summary.append(f"• {main_key}")
+
+            # Store individual tool results with smart naming
+            results = delegation_result.get("results", {})
+            smart_keys_created = []
+
+            for result_id, result_data in results.items():
+                # Smart naming based on task content and result type
+                smart_key = self._generate_smart_key(task_description, result_id, result_data)
+
+                # Store full result
+                self.variable_manager.set(smart_key, result_data)
+                storage_summary.append(f"• {smart_key}")
+                smart_keys_created.append(smart_key)
+
+                # Store data separately for direct access
+                if result_data.get("data"):
+                    data_key = f"{smart_key}.data"
+                    self.variable_manager.set(data_key, result_data["data"])
+                    storage_summary.append(f"• {data_key} (direct access)")
+
+                    # Store with generic access pattern
+                    generic_data_key = f"results.{result_id}.data"
+                    self.variable_manager.set(generic_data_key, result_data["data"])
+                    storage_summary.append(f"• {generic_data_key} (standard access)")
+
+            # Update comprehensive quick access index
+            quick_access = {
+                "latest_delegation": main_key,
+                "latest_task": task_description,
+                "timestamp": datetime.now().isoformat(),
+                "loop": self.current_loop_count,
+                "outline_step": getattr(self, 'current_outline_step', 0),
+                "stored_keys": [item.replace("• ", "") for item in storage_summary],
+                "smart_keys": smart_keys_created,
+                "access_patterns": {
+                    "main_result": main_key,
+                    "by_loop": f"delegation.loop_{self.current_loop_count}",
+                    "latest": "reasoning.latest_results",
+                    "data_direct": [key for key in storage_summary if ".data" in key]
+                }
+            }
+            self.variable_manager.set("reasoning.latest_results", quick_access)
+
+            # Update global delegation index for easy discovery
+            delegation_index = self.variable_manager.get("delegation.index", [])
+            index_entry = {
+                "loop": self.current_loop_count,
+                "task": task_description[:100] + ("..." if len(task_description) > 100 else ""),
+                "keys_created": len(storage_summary),
+                "timestamp": datetime.now().isoformat(),
+                "main_key": main_key,
+                "smart_keys": smart_keys_created
+            }
+            delegation_index.append(index_entry)
+            self.variable_manager.set("delegation.index", delegation_index[-50:])  # Keep last 50
+
+            # Store task-specific quick access
+            task_hash = hash(task_description) % 10000
+            self.variable_manager.set(f"delegation.by_task.{task_hash}", {
+                "task_description": task_description,
+                "results": quick_access,
+                "created_at": datetime.now().isoformat()
+            })
+
+            return f"\n📊 Auto-stored results ({len(storage_summary)} entries):\n" + "\n".join(storage_summary[:8]) + (
+                f"\n... +{len(storage_summary) - 8} more" if len(storage_summary) > 8 else "")
+
+        except Exception as e:
+            return f"\n❌ Auto-storage failed: {str(e)}"
+
+    def _generate_smart_key(self, task_description: str, result_id: str, result_data: Dict) -> str:
+        """Generate intelligent storage keys based on task content and result type"""
+        task_lower = task_description.lower()
+
+        # Analyze task type
+        if "read" in task_lower and "file" in task_lower:
+            prefix = "file_content"
+        elif "write" in task_lower and "file" in task_lower:
+            prefix = "file_written"
+        elif "create" in task_lower and "file" in task_lower:
+            prefix = "file_created"
+        elif "search" in task_lower or "find" in task_lower:
+            prefix = "search_results"
+        elif "analyze" in task_lower or "analysis" in task_lower:
+            prefix = "analysis_results"
+        elif "list" in task_lower or "directory" in task_lower:
+            prefix = "directory_listing"
+        elif "download" in task_lower or "fetch" in task_lower:
+            prefix = "downloaded_content"
+        else:
+            # Analyze result data for hints
+            result_str = str(result_data).lower()
+            if "file" in result_str and "content" in result_str:
+                prefix = "file_content"
+            elif "search" in result_str or "results" in result_str:
+                prefix = "search_results"
+            elif "data" in result_str:
+                prefix = "task_data"
+            else:
+                prefix = "task_result"
+
+        # Create unique key with loop and result ID
+        return f"{prefix}.loop_{self.current_loop_count}_{result_id}"
+
+    async def _mark_step_completion(self, prep_res: Dict, method: str, evidence: str):
+        """Mark current outline step as completed"""
+        if not self.outline or not self.outline.get("steps"):
+            return
+
+        steps = self.outline["steps"]
+        if self.current_outline_step < len(steps):
+            current_step = steps[self.current_outline_step]
+            current_step["status"] = "completed"
+            current_step["completion_method"] = method
+            current_step["completion_evidence"] = evidence
+            current_step["completed_at"] = datetime.now().isoformat()
+
+            # Store in variables
+            if self.variable_manager:
+                completion_data = {
+                    "step_number": self.current_outline_step,
+                    "description": current_step.get("description", ""),
+                    "method": method,
+                    "evidence": evidence,
+                    "timestamp": datetime.now().isoformat()
+                }
+                self.variable_manager.set(f"reasoning.step_completions.{self.current_outline_step}", completion_data)
+
+    async def _store_successful_completion(self, prep_res: Dict, final_answer: str):
+        """Store successful completion data for future learning"""
+        if not self.variable_manager:
+            return
+
+        success_data = {
+            "query": prep_res["original_query"],
+            "final_answer": final_answer,
+            "reasoning_loops": self.current_loop_count,
+            "outline": self.outline,
+            "performance_metrics": self.performance_metrics,
+            "auto_recovery_attempts": self.auto_recovery_attempts,
+            "completion_timestamp": datetime.now().isoformat(),
+            "session_id": prep_res.get("session_id", "default")
+        }
+
+        # Store in successful patterns
+        successes = self.variable_manager.get("reasoning.successful_patterns", [])
+        successes.append(success_data)
+        self.variable_manager.set("reasoning.successful_patterns", successes[-20:])  # Keep last 20
+
+        # Update performance statistics
+        self._update_success_statistics()
+
+    def _update_success_statistics(self):
+        """Update success statistics in variables"""
+        if not self.variable_manager:
+            return
+
+        # Get current stats
+        current_stats = self.variable_manager.get("reasoning.performance.statistics", {})
+
+        # Update stats
+        current_stats["total_successful_sessions"] = current_stats.get("total_successful_sessions", 0) + 1
+        current_stats["avg_loops_per_success"] = current_stats.get("avg_loops_per_success", 0)
+
+        # Calculate new average
+        total_sessions = current_stats["total_successful_sessions"]
+        old_avg = current_stats["avg_loops_per_success"] * (total_sessions - 1)
+        current_stats["avg_loops_per_success"] = (old_avg + self.current_loop_count) / total_sessions
+
+        # Store updated stats
+        self.variable_manager.set("reasoning.performance.statistics", current_stats)
+
+    async def _create_outline_completion_response(self, prep_res: Dict) -> str:
+        """Create response when outline is completed"""
+        if not self.outline:
+            return "Outline completion response requested but no outline available"
+
+        steps = self.outline.get("steps", [])
+        completed_steps = [s for s in steps if
+                           s.get("status") in ["completed", "force_completed", "emergency_completed"]]
+
+        response_parts = []
+        response_parts.append("I have completed the structured approach outlined for your request:")
+
+        # Summarize completed steps
+        for i, step in enumerate(completed_steps):
+            status_indicator = "✓" if step.get("status") == "completed" else "⚠️"
+            response_parts.append(f"{status_indicator} Step {i + 1}: {step.get('description', 'Unknown step')}")
+
+            # Add evidence if available
+            evidence = step.get("completion_evidence", "")
+            if evidence and len(evidence) < 200:
+                response_parts.append(f"   Result: {evidence}")
+
+        # Get final results from variables if available
+        if self.variable_manager:
+            final_results = self.variable_manager.get("reasoning.final_results", {})
+            if final_results:
+                response_parts.append("\nKey findings:")
+                for key, value in final_results.items():
+                    if isinstance(value, str) and len(value) < 300:
+                        response_parts.append(f"- {key}: {value}")
+
+        response_parts.append(
+            f"\nCompleted in {self.current_loop_count} reasoning cycles using outline-driven execution.")
+
+        return "\n".join(response_parts)
+
+    async def _create_enhanced_timeout_response(self, query: str, prep_res: Dict) -> str:
+        """Create enhanced timeout response with comprehensive progress summary"""
+        response_parts = []
+        response_parts.append(
+            f"I reached my reasoning limit of {self.max_reasoning_loops} steps while working on: {query}")
+
+        # Outline progress
+        if self.outline:
+            steps = self.outline.get("steps", [])
+            completed_steps = [s for s in steps if
+                               s.get("status") in ["completed", "force_completed", "emergency_completed"]]
+            unfinished_steps = [s for s in steps if s not in completed_steps]
+
+            response_parts.append(f"\nOutline Progress: {len(completed_steps)}/{len(steps)} steps completed")
+
+            if completed_steps:
+                response_parts.append("Completed steps:")
+                for i, step in enumerate(completed_steps):
+                    response_parts.append(f"✓ {step.get('description', f'Step {i + 1}')}")
+
+            if unfinished_steps:
+                response_parts.append("Unfinished steps:")
+                for i, step in enumerate(unfinished_steps):
+                    response_parts.append(f"✗ {step.get('description', f'Step {i + 1}')}")
+
+        # Task stack progress
+        if self.internal_task_stack:
+            completed_tasks = [t for t in self.internal_task_stack if t.get("status") == "completed"]
+            pending_tasks = [t for t in self.internal_task_stack if t.get("status") == "pending"]
+
+            response_parts.append(f"\nTask Progress: {len(completed_tasks)} completed, {len(pending_tasks)} pending")
+
+        # Performance metrics
+        if self.performance_metrics:
+            response_parts.append(
+                f"\nPerformance: {self.performance_metrics.get('action_efficiency', 0):.1%} efficiency, {self.auto_recovery_attempts} recovery attempts")
+
+        # Available results from variables
+        if self.variable_manager:
+            reasoning_results = self.variable_manager.get("reasoning", {})
+            if reasoning_results:
+                response_parts.append(f"\nStored findings: {len(reasoning_results)} entries in reasoning variables")
+
+        return "\n".join(response_parts)
+
+    async def _finalize_reasoning_session(self, prep_res: Dict, final_result: str):
+        """Finalize reasoning session with comprehensive data storage"""
+        if not self.variable_manager:
+            return
+
+        # Store session completion data
+        session_data = {
+            "query": prep_res["original_query"],
+            "final_result": final_result,
+            "reasoning_loops": self.current_loop_count,
+            "outline_completion": self.current_outline_step,
+            "performance_metrics": self.performance_metrics,
+            "auto_recovery_attempts": self.auto_recovery_attempts,
+            "context_summaries": len([c for c in self.reasoning_context if c.get("type") == "context_summary"]),
+            "completion_timestamp": datetime.now().isoformat(),
+            "session_duration": time.time() - time.mktime(datetime.now().timetuple()),
+            "success": True
+        }
+
+        # Store in session history
+        session_history = self.variable_manager.get("reasoning.session_history", [])
+        session_history.append(session_data)
+        self.variable_manager.set("reasoning.session_history", session_history[-50:])  # Keep last 50 sessions
+
+        # Store outline pattern for reuse
+        if self.outline:
+            outline_pattern = {
+                "query_type": self._classify_query_type(prep_res["original_query"]),
+                "outline": self.outline,
+                "success": True,
+                "loops_used": self.current_loop_count,
+                "timestamp": datetime.now().isoformat()
+            }
+            patterns = self.variable_manager.get("reasoning.successful_patterns.outlines", [])
+            patterns.append(outline_pattern)
+            self.variable_manager.set("reasoning.successful_patterns.outlines", patterns[-10:])
+
+    def _classify_query_type(self, query: str) -> str:
+        """Classify query type for pattern matching"""
+        query_lower = query.lower()
+
+        if any(word in query_lower for word in ["search", "find", "look up", "research"]):
+            return "research"
+        elif any(word in query_lower for word in ["analyze", "compare", "evaluate"]):
+            return "analysis"
+        elif any(word in query_lower for word in ["create", "generate", "write", "build"]):
+            return "creation"
+        elif any(word in query_lower for word in ["plan", "strategy", "approach"]):
+            return "planning"
+        else:
+            return "general"
+
+    async def _handle_reasoning_error(self, error: Exception, prep_res: Dict, progress_tracker):
+        """Enhanced error handling with auto-recovery"""
+        eprint(f"Reasoning loop {self.current_loop_count} failed: {error}")
+
+        # Store error in context
+        self.reasoning_context.append({
+            "type": "error",
+            "content": f"Error in loop {self.current_loop_count}: {str(error)}",
+            "error_type": type(error).__name__,
+            "outline_step": self.current_outline_step,
+            "timestamp": datetime.now().isoformat()
+        })
+
+        # Store in variables for learning
+        if self.variable_manager:
+            error_data = {
+                "error": str(error),
+                "error_type": type(error).__name__,
+                "loop": self.current_loop_count,
+                "outline_step": self.current_outline_step,
+                "timestamp": datetime.now().isoformat(),
+                "query": prep_res["original_query"]
+            }
+            errors = self.variable_manager.get("reasoning.error_log", [])
+            errors.append(error_data)
+            self.variable_manager.set("reasoning.error_log", errors[-100:])  # Keep last 100 errors
+
+        # Trigger auto-recovery if not already in recovery
+        if self.auto_recovery_attempts < self.max_auto_recovery:
+            await self._trigger_auto_recovery(prep_res)
+
+    # Keep all existing helper methods like _execute_internal_reasoning, etc.
+    # but update them to use the enhanced variable system...
+
+    async def post_async(self, shared, prep_res, exec_res):
+        """Enhanced post-processing with comprehensive data storage"""
+        final_result = exec_res.get("final_result", "Task processing incomplete")
+
+        # Store comprehensive reasoning artifacts
+        shared["reasoning_artifacts"] = {
+            "reasoning_loops": exec_res.get("reasoning_loops", 0),
+            "reasoning_context": exec_res.get("reasoning_context", []),
+            "internal_task_stack": exec_res.get("internal_task_stack", []),
+            "outline": exec_res.get("outline"),
+            "outline_completion": exec_res.get("outline_completion", 0),
+            "performance_metrics": exec_res.get("performance_metrics", {}),
+            "auto_recovery_attempts": exec_res.get("auto_recovery_attempts", 0)
+        }
+
+        # Enhanced variable system updates
+        if self.variable_manager:
+            # Store final session results
+            final_session_data = {
+                "final_result": final_result,
+                "completion_timestamp": datetime.now().isoformat(),
+                "total_loops": exec_res.get("reasoning_loops", 0),
+                "session_success": final_result != "Task processing incomplete",
+                "outline_driven_execution": True
+            }
+            self.variable_manager.set("reasoning.current_session.final_data", final_session_data)
+
+            # Update global performance statistics
+            self._update_global_performance_stats(exec_res)
+
+        # Set enhanced response data
+        shared["llm_reasoner_result"] = final_result
+        shared["current_response"] = final_result
+
+        # Provide enhanced synthesis metadata
+        shared["synthesized_response"] = {
+            "synthesized_response": final_result,
+            "confidence": self._calculate_confidence(exec_res),
+            "metadata": {
+                "synthesis_method": "outline_driven_reasoner",
+                "reasoning_loops": exec_res.get("reasoning_loops", 0),
+                "outline_completion": exec_res.get("outline_completion", 0),
+                "performance_score": self._calculate_performance_score(exec_res),
+                "auto_recovery_used": exec_res.get("auto_recovery_attempts", 0) > 0
+            }
+        }
+
+        return "reasoner_complete"
+
+    def _update_global_performance_stats(self, exec_res: Dict):
+        """Update global performance statistics in variables"""
+        if not self.variable_manager:
+            return
+
+        stats = self.variable_manager.get("reasoning.global_performance", {})
+
+        # Update counters
+        stats["total_sessions"] = stats.get("total_sessions", 0) + 1
+        stats["total_loops"] = stats.get("total_loops", 0) + exec_res.get("reasoning_loops", 0)
+        stats["total_recoveries"] = stats.get("total_recoveries", 0) + exec_res.get("auto_recovery_attempts", 0)
+
+        # Calculate averages
+        stats["avg_loops_per_session"] = stats["total_loops"] / stats["total_sessions"]
+        stats["recovery_rate"] = stats["total_recoveries"] / stats["total_sessions"]
+
+        # Success tracking
+        if exec_res.get("final_result") != "Task processing incomplete":
+            stats["successful_sessions"] = stats.get("successful_sessions", 0) + 1
+            stats["success_rate"] = stats["successful_sessions"] / stats["total_sessions"]
+
+        self.variable_manager.set("reasoning.global_performance", stats)
+
+    def _calculate_confidence(self, exec_res: Dict) -> float:
+        """Calculate confidence score based on execution results"""
+        base_confidence = 0.5
+
+        # Outline completion boosts confidence
+        outline = exec_res.get("outline")
+        if outline:
+            completion_ratio = exec_res.get("outline_completion", 0) / len(outline.get("steps", [1]))
+            base_confidence += 0.3 * completion_ratio
+
+        # Low recovery attempts boost confidence
+        recovery_attempts = exec_res.get("auto_recovery_attempts", 0)
+        if recovery_attempts == 0:
+            base_confidence += 0.15
+        elif recovery_attempts == 1:
+            base_confidence += 0.05
+
+        # Reasonable loop count boosts confidence
+        loops = exec_res.get("reasoning_loops", 0)
+        if 3 <= loops <= 15:
+            base_confidence += 0.1
+
+        # Performance metrics
+        performance = exec_res.get("performance_metrics", {})
+        if performance.get("action_efficiency", 0) > 0.7:
+            base_confidence += 0.1
+
+        return min(1.0, max(0.0, base_confidence))
+
+    def _calculate_performance_score(self, exec_res: Dict) -> float:
+        """Calculate overall performance score"""
+        score = 0.5
+
+        # Efficiency score
+        performance = exec_res.get("performance_metrics", {})
+        action_efficiency = performance.get("action_efficiency", 0)
+        score += 0.3 * action_efficiency
+
+        # Completion score
+        outline = exec_res.get("outline")
+        if outline:
+            completion_ratio = exec_res.get("outline_completion", 0) / len(outline.get("steps", [1]))
+            score += 0.4 * completion_ratio
+
+        # Recovery penalty
+        recovery_attempts = exec_res.get("auto_recovery_attempts", 0)
+        score -= 0.1 * recovery_attempts
+
+        return min(1.0, max(0.0, score))
+
+
+    def _summarize_reasoning_context(self) -> str:
+        """Summarize the current reasoning context"""
+        if not self.reasoning_context:
+            return "No previous reasoning steps"
+
+        summary_parts = []
+        for entry in self.reasoning_context[-5:]:  # Last 5 entries
+            entry_type = entry.get("type", "unknown")
+            content = entry.get("content", "")
+
+            if entry_type == "reasoning":
+                # Truncate long reasoning content
+                content_preview = content[:20000] + "..." if len(content) > 20000 else content
+                summary_parts.append(f"Loop {entry.get('loop', '?')}: {content_preview}")
+            elif entry_type == "meta_tool_result":
+                summary_parts.append(f"Result: {content[:150]}...")
+            elif entry_type == "error":
+                summary_parts.append(f"Error: {content}")
+
+        return "\n".join(summary_parts)
+
+    def _summarize_task_stack(self) -> str:
+        """Summarize the internal task stack"""
+        if not self.internal_task_stack:
+            return "No tasks in stack"
+
+        summary_parts = []
+        for i, task in enumerate(self.internal_task_stack):
+            status = task.get("status", "pending")
+            description = task.get("description", "No description")
+            summary_parts.append(f"{i + 1}. [{status.upper()}] {description}")
+
+        return "\n".join(summary_parts)
+
+    def _get_tool_category(self, tool_name: str) -> str:
+        """Get category for meta-tool"""
+        categories = {
+            "internal_reasoning": "thinking",
+            "manage_internal_task_stack": "planning",
+            "delegate_to_llm_tool_node": "delegation",
+            "create_and_execute_plan": "orchestration",
+            "direct_response": "completion"
+        }
+        return categories.get(tool_name, "unknown")
+
+    def _calculate_reasoning_depth(self) -> int:
+        """Calculate current reasoning depth"""
+        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
+        return len(reasoning_entries)
+
+    def _assess_delegation_complexity(self, args: Dict) -> str:
+        """Assess complexity of delegation task"""
+        task_desc = args.get("task_description", "")
+        tools_count = len(args.get("tools_list", []))
+
+        if tools_count > 3 or len(task_desc) > 100:
+            return "high"
+        elif tools_count > 1 or len(task_desc) > 50:
+            return "medium"
+        else:
+            return "low"
+
+    def _estimate_plan_complexity(self, goals: list) -> str:
+        """Estimate complexity of plan"""
+        goal_count = len(goals)
+        total_text = sum(len(str(goal)) for goal in goals)
+
+        if goal_count > 5 or total_text > 500:
+            return "high"
+        elif goal_count > 2 or total_text > 200:
+            return "medium"
+        else:
+            return "low"
+
+    def _calculate_tool_performance_score(self, duration: float, tool_name: str) -> float:
+        """Calculate performance score for tool execution"""
+        # Expected durations by tool type
+        expected_durations = {
+            "internal_reasoning": 0.1,
+            "manage_internal_task_stack": 0.05,
+            "delegate_to_llm_tool_node": 3.0,
+            "create_and_execute_plan": 10.0,
+            "direct_response": 0.1
+        }
+
+        expected = expected_durations.get(tool_name, 1.0)
+        if duration <= expected:
+            return 1.0
+        else:
+            return max(0.0, expected / duration)
+
+    def _create_reasoning_summary(self) -> str:
+        """Create summary of reasoning process"""
+        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
+        task_entries = len(self.internal_task_stack)
+
+        return f"Completed {len(reasoning_entries)} reasoning steps with {task_entries} tasks tracked"
+
+    def _calculate_batch_performance(self, matches: list) -> Dict[str, Any]:
+        """Calculate performance metrics for batch execution"""
+        tool_types = [match[0] for match in matches]
+        return {
+            "total_tools": len(matches),
+            "tool_diversity": len(set(tool_types)),
+            "most_used_tool": max(set(tool_types), key=tool_types.count) if tool_types else "none"
+        }
+
+    def _assess_reasoning_progress(self) -> str:
+        """Assess overall reasoning progress"""
+        if len(self.reasoning_context) < 3:
+            return "early_stage"
+        elif len(self.reasoning_context) < 8:
+            return "developing"
+        elif len(self.reasoning_context) < 15:
+            return "mature"
+        else:
+            return "extensive"
+
+    def _get_error_context(self, error: Exception) -> Dict[str, Any]:
+        """Get contextual information about an error"""
+        return {
+            "error_class": type(error).__name__,
+            "reasoning_stage": f"loop_{self.current_loop_count}",
+            "context_available": len(self.reasoning_context) > 0,
+            "stack_state": "populated" if self.internal_task_stack else "empty"
+        }
+
+    async def _execute_internal_reasoning(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Execute internal reasoning meta-tool"""
+        thought = args.get("thought", "")
+        thought_number = args.get("thought_number", 1)
+        total_thoughts = args.get("total_thoughts", 1)
+        next_thought_needed = args.get("next_thought_needed", False)
+        current_focus = args.get("current_focus", "")
+        key_insights = args.get("key_insights", [])
+        potential_issues = args.get("potential_issues", [])
+        confidence_level = args.get("confidence_level", 0.5)
+
+        # Structure the reasoning entry
+        reasoning_entry = {
+            "thought": thought,
+            "thought_number": thought_number,
+            "total_thoughts": total_thoughts,
+            "next_thought_needed": next_thought_needed,
+            "current_focus": current_focus,
+            "key_insights": key_insights,
+            "potential_issues": potential_issues,
+            "confidence_level": confidence_level,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Add to internal reasoning log
+        if not hasattr(self, 'internal_reasoning_log'):
+            self.internal_reasoning_log = []
+        self.internal_reasoning_log.append(reasoning_entry)
+
+        # Format for context
+        context_addition = f"""Internal Reasoning Step {thought_number}/{total_thoughts}:
+Thought: {thought}
+Focus: {current_focus}
+Key Insights: {', '.join(key_insights) if key_insights else 'None'}
+Potential Issues: {', '.join(potential_issues) if potential_issues else 'None'}
+Confidence: {confidence_level}
+Next Thought Needed: {next_thought_needed}"""
+
+        return {"context_addition": context_addition}
+
+    async def _execute_manage_task_stack(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Execute task stack management meta-tool"""
+        action = args.get("action", "get_current").lower()
+        task_description = args.get("task_description", "")
+
+        if action == "add":
+            self.internal_task_stack.append({
+                "description": task_description,
+                "status": "pending",
+                "added_at": datetime.now().isoformat()
+            })
+            context_addition = f"Added to task stack: {task_description}"
+
+        elif action == "remove":
+            # Remove task by description match
+            original_count = len(self.internal_task_stack)
+            self.internal_task_stack = [
+                task for task in self.internal_task_stack
+                if task_description.lower() not in task["description"].lower()
+            ]
+            removed_count = original_count - len(self.internal_task_stack)
+            context_addition = f"Removed {removed_count} task(s) matching: {task_description}"
+
+        elif action == "complete":
+            # Mark task as completed
+            for task in self.internal_task_stack:
+                if task_description.lower() in task["description"].lower():
+                    task["status"] = "completed"
+                    task["completed_at"] = datetime.now().isoformat()
+            context_addition = f"Marked as completed: {task_description}"
+
+        elif action == "get_current":
+            if self.internal_task_stack:
+                stack_summary = []
+                for i, task in enumerate(self.internal_task_stack):
+                    status = task["status"]
+                    desc = task["description"]
+                    stack_summary.append(f"{i + 1}. [{status.upper()}] {desc}")
+                context_addition = f"Current task stack:\n" + "\n".join(stack_summary)
+            else:
+                context_addition = "Task stack is empty"
+
+        else:
+            context_addition = f"Unknown task stack action: {action}"
+
+        return {"context_addition": context_addition}
+
+    async def _execute_delegate_llm_tool(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Execute delegation to LLMToolNode"""
+        task_description = args.get("task_description", "")
+        tools_list = args.get("tools_list", [])
+
+        # Prepare shared state for LLMToolNode
+        llm_tool_shared = {
+            "current_task_description": task_description + '\nreturn all results in the final answer!',
+            "current_query": task_description,
+            "formatted_context": {
+                "recent_interaction": f"Reasoner delegating task: {task_description}",
+                "session_summary": self._get_reasoning_summary(),
+                "task_context": f"Reasoning loop {self.current_loop_count}, delegated task. return all results!"
+            },
+            "variable_manager": prep_res.get("variable_manager"),
+            "agent_instance": prep_res.get("agent_instance"),
+            "available_tools": tools_list,  # Restrict to specific tools
+            "tool_capabilities": prep_res.get("tool_capabilities", {}),
+            "fast_llm_model": prep_res.get("fast_llm_model"),
+            "complex_llm_model": prep_res.get("complex_llm_model"),
+            "progress_tracker": prep_res.get("progress_tracker"),
+            "session_id": prep_res.get("session_id"),
+            "use_fast_response": True  # Use fast model for delegated tasks
+        }
+
+        # Execute LLMToolNode
+        try:
+            llm_tool_node = LLMToolNode()
+            await llm_tool_node.run_async(llm_tool_shared)
+
+            # Get results
+            final_response = llm_tool_shared.get("current_response", "Task completed without specific result")
+            tool_calls_made = llm_tool_shared.get("tool_calls_made", 0)
+
+            context_addition = f"""Delegated Task Completed:
+Task: {task_description}
+Tools Available: {', '.join(tools_list)}
+Tools Used: {tool_calls_made} tool calls made
+Result: {final_response}"""
+
+            return {"context_addition": context_addition}
+
+        except Exception as e:
+            context_addition = f"Delegation failed for task '{task_description}': {str(e)}"
+            return {"context_addition": context_addition}
+
+    async def _execute_create_plan(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+        """Execute plan creation and execution"""
+        goals = args.get("goals", [])
+
+        if not goals:
+            return {"context_addition": "No goals provided for plan creation"}
+
+        try:
+            # Prepare shared state for TaskPlanner
+            planning_shared = prep_res.copy()
+            planning_shared.update({
+                "replan_context": {
+                    "goals": goals,
+                    "triggered_by": "llm_reasoner",
+                    "reasoning_context": self._get_reasoning_summary()
+                },
+                "current_task_description": f"Execute plan with {len(goals)} goals",
+                "current_query": f"Complex task: {'; '.join(goals)}"
+            })
+
+            # Execute TaskPlanner
+            planner_node = TaskPlannerNode()
+            plan = await planner_node.run_async(planning_shared)
+
+            if not isinstance(plan, TaskPlan):
+                return {"context_addition": f"Plan creation failed: {plan}"}
+
+            # Execute the plan using TaskExecutor
+            executor_shared = planning_shared.copy()
+            executor_shared.update({
+                "current_plan": plan,
+                "tasks": {task.id: task for task in plan.tasks}
+            })
+
+            executor_node = TaskExecutorNode()
+
+            # Execute plan to completion
+            max_execution_cycles = 10
+            execution_cycle = 0
+
+            while execution_cycle < max_execution_cycles:
+                execution_cycle += 1
+
+                result = await executor_node.run_async(executor_shared)
+
+                # Check completion status
+                if result == "plan_completed":
+                    break
+                elif result == "execution_error":
+                    break
+                elif result in ["continue_execution", "waiting"]:
+                    continue
+                else:
+                    # Handle other results like reflection needs
+                    if result in ["needs_dynamic_replan", "needs_plan_append"]:
+                        # For now, just continue - could add reflection logic here
+                        continue
+                    break
+
+            # Collect results
+            completed_tasks = [
+                task for task in plan.tasks
+                if executor_shared["tasks"][task.id].status == "completed"
+            ]
+
+            failed_tasks = [
+                task for task in plan.tasks
+                if executor_shared["tasks"][task.id].status == "failed"
+            ]
+
+            # Build context addition with results
+            results_summary = []
+            results_store = executor_shared.get("results", {})
+
+            for task in completed_tasks:
+                task_result = results_store.get(task.id, {})
+                if task_result.get("data"):
+                    result_preview = str(task_result["data"])[:150] + "..."
+                    results_summary.append(f"- {task.description}: {result_preview}")
+
+            context_addition = f"""Plan Execution Completed:
+Goals: {len(goals)} goals processed
+Tasks Created: {len(plan.tasks)}
+Tasks Completed: {len(completed_tasks)}
+Tasks Failed: {len(failed_tasks)}
+Execution Cycles: {execution_cycle}
+
+Results Summary:
+{chr(10).join(results_summary) if results_summary else 'No specific results captured'}"""
+
+            return {"context_addition": context_addition}
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            context_addition = f"Plan execution failed: {str(e)}"
+            return {"context_addition": context_addition}
+
+    def _get_reasoning_summary(self) -> str:
+        """Get a summary of the reasoning process so far"""
+        if not self.reasoning_context:
+            return "No reasoning context available"
+
+        summary_parts = []
+        reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
+
+        for entry in reasoning_entries[-3:]:  # Last 3 reasoning steps
+            content = entry.get("content", "")[:100] + "..."
+            loop_num = entry.get("loop", "?")
+            summary_parts.append(f"Loop {loop_num}: {content}")
+
+        return "\n".join(summary_parts)
+
+    async def _create_error_response(self, query: str, error: str) -> str:
+        """Create an error response"""
+        return f"I encountered an error while processing your request: {error}. I was working on: {query}"
+
+    async def _fallback_direct_response(self, prep_res: Dict) -> Dict[str, Any]:
+        """Fallback when LLM is not available"""
+        query = prep_res["original_query"]
+        fallback_response = f"I received your request: {query}. However, I'm currently unable to process complex requests due to limited capabilities."
+
+        return {
+            "final_result": fallback_response,
+            "reasoning_loops": 0,
+            "reasoning_context": [{"type": "fallback", "content": "LLM unavailable"}],
+            "internal_task_stack": []
+        }
 
 # ===== Foramt Helper =====
 class VariableManager:
@@ -5486,8 +7053,47 @@ class VariableManager:
         self.scopes['tasks'] = tasks_store
         self._cache.clear()
 
+    def _resolve_path(self, path: str):
+        """
+        Internal helper to navigate a path that can contain both
+        dictionary keys and list indices.
+        """
+        parts = path.split('.')
+
+        # Determine the starting point
+        if len(parts) == 1:
+            # Simple key in the top-level world_model
+            current = self.world_model
+        else:
+            scope_name = parts[0]
+            if scope_name not in self.scopes:
+                raise KeyError(f"Scope '{scope_name}' not found")
+            current = self.scopes[scope_name]
+            parts = parts[1:]  # Continue with the rest of the path
+
+        # Navigate through the parts
+        for part in parts:
+            if isinstance(current, list):
+                try:
+                    # It's a list, so the part must be an integer index
+                    index = int(part)
+                    current = current[index]
+                except (ValueError, IndexError):
+                    raise KeyError(f"Invalid list index '{part}' in path '{path}'")
+            elif isinstance(current, dict):
+                try:
+                    # It's a dictionary, so the part is a key
+                    current = current[part]
+                except KeyError:
+                    raise KeyError(f"Key '{part}' not found in path '{path}'")
+            else:
+                # We've hit a non-collection type (int, str, etc.) but the path continues
+                raise KeyError(f"Path cannot descend into non-collection type at '{part}' in path '{path}'")
+
+        return current
+
     def get(self, path: str, default=None, use_cache: bool = True):
-        """Get variable with dot notation path support"""
+        """Get variable with dot notation path support for dicts and lists."""
         if use_cache and path in self._cache:
             return self._cache[path]
 
@@ -5495,64 +7101,84 @@ class VariableManager:
             value = self._resolve_path(path)
             if use_cache:
                 self._cache[path] = value
-            return value if value is not None else default
-        except:
+            return value
+        except (KeyError, IndexError):
+            # A KeyError or IndexError during resolution means the path is invalid
             return default
 
     def set(self, path: str, value, create_scope: bool = True):
-        """Set variable with dot notation path support"""
+        """Set variable with dot notation path support for dicts and lists."""
+        # Invalidate cache for this path
+        if path in self._cache:
+            del self._cache[path]
+
         parts = path.split('.')
 
         if len(parts) == 1:
             # Simple key in world_model
             self.world_model[path] = value
-        else:
-            scope_name = parts[0]
+            return
 
-            if scope_name not in self.scopes:
-                if create_scope:
-                    self.scopes[scope_name] = {}
-                else:
-                    raise KeyError(f"Scope '{scope_name}' not found")
-
-            # Navigate to nested location
-            current = self.scopes[scope_name]
-            for part in parts[1:-1]:
-                if part not in current:
-                    current[part] = {}
-                current = current[part]
-            current[parts[-1]] = value
-
-        self._cache.clear()
-
-    def _resolve_path(self, path: str):
-        """Resolve dot notation path to actual value"""
-        parts = path.split('.')
-
-        if len(parts) == 1:
-            # Try world_model first, then other scopes
-            if path in self.world_model:
-                return self.world_model[path]
-
-            for scope in self.scopes.values():
-                if isinstance(scope, dict) and path in scope:
-                    return scope[path]
-            return None
-
-        # Multi-part path
         scope_name = parts[0]
         if scope_name not in self.scopes:
-            return None
+            if create_scope:
+                self.scopes[scope_name] = {}
+            else:
+                raise KeyError(f"Scope '{scope_name}' not found")
 
         current = self.scopes[scope_name]
 
-        for part in parts[1:]:
-            if isinstance(current, dict) and part in current:
-                current = current[part]
-            else:
-                return None
+        # Iterate to the second-to-last part to get the container
+        for i, part in enumerate(parts[1:-1]):
+            next_part = parts[i + 2]  # Look ahead to the next part in the path
 
-        return current
+            # Determine if the current part is a dictionary key or a list index
+            try:
+                # Try to treat it as a list index
+                key = int(part)
+                if not isinstance(current, list):
+                    # If current is not a list, we can't use an integer index
+                    raise TypeError(f"Attempted to use integer index '{key}' on non-list for path '{path}'")
+
+                # Ensure list is long enough
+                while len(current) <= key:
+                    current.append(None)  # Pad with None
+
+                # If the next level doesn't exist, create it based on the next part
+                if current[key] is None:
+                    current[key] = [] if next_part.isdigit() else {}
+
+                current = current[key]
+
+            except ValueError:
+                # It's a dictionary key
+                key = part
+                if not isinstance(current, dict):
+                    raise TypeError(f"Attempted to use string key '{key}' on non-dict for path '{path}'")
+
+                if key not in current:
+                    # Create the next level: a list if the next part is a number, else a dict
+                    current[key] = [] if next_part.isdigit() else {}
+
+                current = current[key]
+
+        # Handle the final part (the actual assignment)
+        last_part = parts[-1]
+
+        if isinstance(current, list):
+            try:
+                key = int(last_part)
+                while len(current) <= key:
+                    current.append(None)
+                current[key] = value
+            except ValueError:
+                current.append(value)
+        elif isinstance(current, dict):
+            current[last_part] = value
+        else:
+            raise TypeError(f"Final container is not a list or dictionary for path '{path}' its a {type(current)}")
+
+        self._cache.clear()
 
     def format_text(self, text: str, context: Dict = None) -> str:
         """Enhanced text formatting with multiple syntaxes"""
@@ -5591,7 +7217,7 @@ class VariableManager:
             if value is None:
                 # IMPROVED: Log missing variables for debugging
                 available_vars = list(self.get_available_variables().keys())
-                logger.warning(f"Variable '{var_path}' not found. Available: {available_vars[:10]}")
+                wprint(f"Variable '{var_path}' not found. Available: {available_vars[:10]}")
                 return match.group(0)  # Keep original if not found
 
             return self._value_to_string(value)
@@ -5635,31 +7261,6 @@ class VariableManager:
             return json.dumps(value, default=str)
         else:
             return str(value)
-
-    def get_available_variables(self) -> Dict[str, Dict]:
-        """Get comprehensive variable documentation"""
-        variables = {}
-
-        for scope_name, scope_data in self.scopes.items():
-            if isinstance(scope_data, dict):
-                variables[scope_name] = {}
-                for key, value in scope_data.items():
-                    if isinstance(value, str):
-                        preview = value[:50] + "..." if len(value) > 50 else value
-                    elif isinstance(value, dict):
-                        preview = f"Object with {len(value)} keys"
-                    elif isinstance(value, list):
-                        preview = f"Array with {len(value)} items"
-                    else:
-                        preview = str(type(value).__name__)
-
-                    variables[scope_name][key] = {
-                        'preview': preview,
-                        'type': type(value).__name__,
-                        'path': f"{scope_name}.{key}"
-                    }
-
-        return variables
 
     def validate_references(self, text: str) -> Dict[str, bool]:
         """Validate all variable references in text"""
@@ -5729,23 +7330,6 @@ class VariableManager:
 
         return validation_results
 
-    def get_llm_variable_context(self) -> str:
-        """Get variable context formatted for LLM consumption"""
-        context_parts = []
-        context_parts.append("## Variable System")
-        context_parts.append("You have access to a powerful variable system:")
-
-        # Show available scopes with examples
-        for scope_name, scope_data in self.scopes.items():
-            if isinstance(scope_data, dict) and scope_data:
-                sample_keys = list(scope_data.keys())[:3]
-                context_parts.append(f"- {scope_name}: {', '.join(sample_keys)}")
-
-        context_parts.append("\nSyntax: {{ variable.path }} or {variable} or $variable")
-        context_parts.append("Examples: {{ user.name }}, {{ results.search.data }}, {{ system_context.timestamp }}")
-
-        return "\n".join(context_parts)
-
     def get_variable_suggestions(self, query: str) -> List[str]:
         """Get variable suggestions based on query content"""
 
@@ -5755,6 +7339,9 @@ class VariableManager:
         # Check all variables for relevance
         for scope in self.scopes.values():
             for name, var_def in scope.items():
+                if name in ["system_context", "task_executor_instance",
+                            "index", "tool_capabilities", "use_fast_response", "task_planner_instance"]:
+                    continue
                 # Name similarity
                 if any(word in name.lower() for word in query_lower.split()):
                     suggestions.append(name)
@@ -5768,9 +7355,604 @@ class VariableManager:
 
         return list(set(suggestions))[:10]
 
+    def _document_structure(self, data: Any, path_prefix: str, docs: Dict[str, Dict]):
+        """A recursive helper to document nested dictionaries and lists."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                # Construct the full path for the current item
+                current_path = f"{path_prefix}.{key}" if path_prefix else key
+
+                # Generate a preview for the value
+                if isinstance(value, str):
+                    preview = value[:70] + "..." if len(value) > 70 else value
+                elif isinstance(value, dict):
+                    preview = f"Object with keys: {list(value.keys())[:3]}" + ("..." if len(value.keys()) > 3 else "")
+                elif isinstance(value, list):
+                    preview = f"List with {len(value)} items"
+                else:
+                    preview = str(value)
+
+                # Store the documentation for the current path
+                docs[current_path] = {
+                    'preview': preview,
+                    'type': type(value).__name__
+                }
+
+                # Recurse into nested structures
+                if isinstance(value, (dict, list)):
+                    self._document_structure(value, current_path, docs)
+
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                # Construct the full path for the list item
+                current_path = f"{path_prefix}.{i}"
+
+                # Generate a preview for the item
+                if isinstance(item, str):
+                    preview = item[:70] + "..." if len(item) > 70 else item
+                elif isinstance(item, dict):
+                    preview = f"Object with keys: {list(item.keys())[:3]}" + ("..." if len(item.keys()) > 3 else "")
+                elif isinstance(item, list):
+                    preview = f"List with {len(item)} items"
+                else:
+                    preview = str(item)
+
+                docs[current_path] = {
+                    'preview': preview,
+                    'type': type(item).__name__
+                }
+
+                # Recurse into nested structures
+                if isinstance(item, (dict, list)):
+                    self._document_structure(item, current_path, docs)
+
+    def get_available_variables(self) -> Dict[str, Dict]:
+        """
+        Recursively documents all available variables from world_model and scopes
+        to provide a comprehensive overview for an LLM.
+        """
+        all_vars_docs = {}
+
+        # 1. Document the world_model (top-level variables)
+        self._document_structure(self.world_model, "", all_vars_docs)
+
+        # 2. Document each scope
+        for scope_name, scope_data in self.scopes.items():
+            # Add documentation for the scope root itself
+            if isinstance(scope_data, dict):
+                preview = f"Object with keys: {list(scope_data.keys())[:3]}" + (
+                    "..." if len(scope_data.keys()) > 3 else "")
+            elif isinstance(scope_data, list):
+                preview = f"List with {len(scope_data)} items"
+            elif isinstance(scope_data, str) or isinstance(scope_data, int):
+                preview = str(scope_data)
+            else:
+                continue
+
+            all_vars_docs[scope_name] = {'preview': preview, 'type': type(scope_data).__name__}
+
+            # Recurse into the scope's data
+            self._document_structure(scope_data, scope_name, all_vars_docs)
+
+        return all_vars_docs
+
+    def get_llm_variable_context(self) -> str:
+        """
+        Generates a detailed variable context formatted for LLM consumption,
+        explaining structure, access patterns, and listing all available variables.
+        """
+        context_parts = [
+            "## Variable System Reference",
+            "You can access a state management system to retrieve data using dot notation.",
+            "Syntax: `{{ path.to.variable }}` or `$path.to.variable`.",
+            "",
+            "### How to Access Data",
+            "The system contains nested objects (dictionaries) and lists (arrays).",
+            "",
+            "**1. Object (Dictionary) Access (Primary Usage):**",
+            "Use a dot (`.`) to access values inside an object. This is the most common way to get data.",
+            "Example: If a `user` object exists with a `profile`, you can get the name with `{{ user.profile.name }}`.",
+            "",
+            "**2. List (Array) Access:**",
+            "If a variable is a list, use a dot (`.`) followed by a zero-based number (index) to access a specific item.",
+            "Example: To get the first email from a user's email list, use `{{ user.emails.0 }}`.",
+            "You can chain these access methods: `{{ user.emails.0.address }}`.",
+            "",
+            "### Available Variables",
+            "Below is a list of all currently available variable paths, their type, and a preview of their content. (Note: Previews may be truncated).",
+        ]
+
+        variables = self.get_available_variables()
+        if not variables:
+            context_parts.append("- No variables are currently set.")
+            return "\n".join(context_parts)
+
+        # Group variables by their top-level scope for readability
+        grouped_vars = {}
+        for path, info in variables.items():
+            top_level = path.split('.')[0]
+            if top_level not in grouped_vars:
+                grouped_vars[top_level] = []
+            grouped_vars[top_level].append((path, info))
+
+        for scope, var_list in sorted(grouped_vars.items()):
+            if scope in ["shared"]:
+                continue
+            context_parts.append(f"\n#### Scope: `{scope}`")
+            for path, info in sorted(var_list):
+                context_parts.append(f"- **`{path}`**: ({info['type']}) `{info['preview']}`")
+
+        # Add any final complex examples or notes
+        context_parts.extend([
+            "",
+            "**Note on Task Results:**",
+            "All task results are stored in the `results` scope. To access the data from a task, append `.data`.",
+            "Example: `{{ results.'task-id-123'.data }}`"
+        ])
+
+        return "\n".join(context_parts)
+
+
+class UnifiedContextManager:
+    """
+    Zentrale Orchestrierung aller Context-Quellen für einheitlichen und effizienten Datenzugriff.
+    Vereinigt ChatSession, VariableManager, World Model und Task Results.
+    """
+
+    def __init__(self, agent):
+        self.agent = agent
+        self.session_managers: Dict[str, Any] = {}  # ChatSession objects
+        self.variable_manager: VariableManager = None
+        self.compression_threshold = 15  # Messages before compression
+        self._context_cache: Dict[str, Tuple[float, Any]] = {}  # (timestamp, data)
+        self.cache_ttl = 300  # 5 minutes
+        self._memory_instance = None
+
+    async def initialize_session(self, session_id: str, max_history: int = 200):
+        """Initialisiere oder lade existierende ChatSession als primäre Context-Quelle"""
+        if session_id not in self.session_managers:
+            try:
+                # Get memory instance
+                if not self._memory_instance:
+                    from toolboxv2 import get_app
+                    self._memory_instance = get_app().get_mod("isaa").get_memory()
+
+                # Import ChatSession
+                from toolboxv2.mods.isaa.extras.session import ChatSession
+
+                # Create ChatSession as PRIMARY memory source
+                session = ChatSession(
+                    self._memory_instance,
+                    max_length=max_history,
+                    space_name=f"ChatSession/{self.agent.amd.name}.{session_id}.unified"
+                )
+                self.session_managers[session_id] = session
+
+                # Integration mit VariableManager wenn verfügbar
+                if self.variable_manager:
+                    self.variable_manager.register_scope(f'session_{session_id}', {
+                        'chat_session_active': True,
+                        'history_length': len(session.history),
+                        'last_interaction': None,
+                        'session_id': session_id
+                    })
+
+                rprint(f"Unified session context initialized for {session_id}")
+                return session
+
+            except Exception as e:
+                eprint(f"Failed to create ChatSession for {session_id}: {e}")
+                # Fallback: Create minimal session manager
+                self.session_managers[session_id] = {
+                    'history': [],
+                    'session_id': session_id,
+                    'fallback_mode': True
+                }
+                return self.session_managers[session_id]
+
+        return self.session_managers[session_id]
+
+    async def add_interaction(self, session_id: str, role: str, content: str, metadata: Dict = None) -> None:
+        """Einheitlicher Weg um Interaktionen in ChatSession zu speichern"""
+        session = await self.initialize_session(session_id)
+
+        message = {
+            'role': role,
+            'content': content,
+            'timestamp': datetime.now().isoformat(),
+            'session_id': session_id,
+            'metadata': metadata or {}
+        }
+
+        # PRIMARY: Store in ChatSession
+        if hasattr(session, 'add_message'):
+            await session.add_message(message, direct=False)
+        elif isinstance(session, dict) and 'history' in session:
+            # Fallback mode
+            session['history'].append(message)
+            # Keep max length
+            max_len = 200
+            if len(session['history']) > max_len:
+                session['history'] = session['history'][-max_len:]
+
+        # SECONDARY: Update VariableManager
+        if self.variable_manager:
+            self.variable_manager.set(f'session_{session_id}.last_interaction', message)
+            if hasattr(session, 'history'):
+                self.variable_manager.set(f'session_{session_id}.history_length', len(session.history))
+            elif isinstance(session, dict):
+                self.variable_manager.set(f'session_{session_id}.history_length', len(session.get('history', [])))
+
+        # Clear context cache for this session
+        self._invalidate_cache(session_id)
+
+    async def get_contextual_history(self, session_id: str, query: str = "", max_entries: int = 10) -> List[Dict]:
+        """Intelligente Auswahl relevanter Geschichte aus ChatSession"""
+        session = self.session_managers.get(session_id)
+        if not session:
+            return []
+
+        try:
+            # ChatSession mode
+            if hasattr(session, 'get_past_x'):
+                recent_history = session.get_past_x(max_entries * 2, last_u=True)
+
+                # Erweiterte semantische Suche wenn Query vorhanden
+                if query and hasattr(session, 'get_reference'):
+                    try:
+                        relevant_refs = await session.get_reference(query, limit=5)
+                        # Kombiniere mit recent history
+                        combined = self._merge_and_dedupe_history(recent_history, relevant_refs)
+                        return combined[:max_entries]
+                    except:
+                        pass
+
+                return recent_history[:max_entries]
+
+            # Fallback mode
+            elif isinstance(session, dict) and 'history' in session:
+                history = session['history']
+                # Return last max_entries, starting with last user message
+                result = []
+                for msg in reversed(history[-max_entries * 2:]):
+                    result.append(msg)
+                    if msg.get('role') == 'user' and len(result) >= max_entries:
+                        break
+                return list(reversed(result))[:max_entries]
+
+        except Exception as e:
+            eprint(f"Error getting contextual history: {e}")
+
+        return []
+
+    async def build_unified_context(self, session_id: str, query: str = None, context_type: str = "full") -> Dict[
+        str, Any]:
+        """ZENTRALE Methode für vollständigen Context-Aufbau aus allen Quellen"""
+
+        # Cache check
+        cache_key = f"{session_id}_{hash(query or '')}_{context_type}"
+        cached = self._get_cached_context(cache_key)
+        if cached:
+            return cached
+
+        context = {
+            'timestamp': datetime.now().isoformat(),
+            'session_id': session_id,
+            'query': query,
+            'context_type': context_type
+        }
+
+        try:
+            # 1. CHAT HISTORY (Primary - from ChatSession)
+            context['chat_history'] = await self.get_contextual_history(
+                session_id, query or "", max_entries=15
+            )
+
+            # 2. VARIABLE SYSTEM STATE
+            if self.variable_manager:
+                context['variables'] = {
+                    'available_scopes': list(self.variable_manager.scopes.keys()),
+                    'total_variables': len(self.variable_manager.get_available_variables()),
+                    'recent_results': self._get_recent_results(5)
+                }
+            else:
+                context['variables'] = {'status': 'variable_manager_not_available'}
+
+            # 3. WORLD MODEL FACTS
+            if self.variable_manager:
+                world_model = self.variable_manager.get('world', {})
+                if world_model and query:
+                    context['relevant_facts'] = self._extract_relevant_facts(world_model, query)
+                else:
+                    context['relevant_facts'] = list(world_model.items())[:5]  # Top 5 facts
+
+            # 4. EXECUTION STATE
+            context['execution_state'] = {
+                'active_tasks': self._get_active_tasks(),
+                'recent_completions': self._get_recent_completions(3),
+                'system_status': self.agent.shared.get('system_status', 'idle')
+            }
+
+            # 5. SESSION STATISTICS
+            context['session_stats'] = {
+                'total_sessions': len(self.session_managers),
+                'current_session_length': len(context['chat_history']),
+                'cache_enabled': bool(self._context_cache)
+            }
+
+        except Exception as e:
+            eprint(f"Error building unified context: {e}")
+            context['error'] = str(e)
+            context['fallback_mode'] = True
+
+        # Cache result
+        self._cache_context(cache_key, context)
+        return context
+
+    def get_formatted_context_for_llm(self, unified_context: Dict[str, Any]) -> str:
+        """Formatiere unified context für LLM consumption"""
+        try:
+            parts = []
+
+            # Recent Chat History
+            chat_history = unified_context.get('chat_history', [])
+            if chat_history:
+                parts.append("## Recent Conversation")
+                for msg in chat_history[-5:]:  # Last 5 messages
+                    timestamp = msg.get('timestamp', '')[:19]  # Remove microseconds
+                    role = msg.get('role', 'unknown')
+                    content = msg.get('content', '')[:500] + ("..." if len(msg.get('content', '')) > 500 else "")
+                    parts.append(f"[{timestamp}] {role}: {content}")
+
+            # System Status
+            execution_state = unified_context.get('execution_state', {})
+            if execution_state:
+                parts.append("\n## Current System State")
+                parts.append(f"Status: {execution_state.get('system_status', 'unknown')}")
+
+                active_tasks = execution_state.get('active_tasks', [])
+                if active_tasks:
+                    parts.append(f"Active Tasks: {len(active_tasks)}")
+
+                recent_completions = execution_state.get('recent_completions', [])
+                if recent_completions:
+                    parts.append(f"Recent Completions: {len(recent_completions)}")
+
+            # Available Data
+            variables = unified_context.get('variables', {})
+            if variables and variables.get('recent_results'):
+                parts.append(f"\n## Available Results")
+                recent_results = variables['recent_results']
+                for result in recent_results[:3]:  # Top 3 results
+                    parts.append(f"- {result.get('task_id', 'unknown')}: {str(result.get('preview', ''))[:100]}...")
+
+            # World Model Facts
+            relevant_facts = unified_context.get('relevant_facts', [])
+            if relevant_facts:
+                parts.append(f"\n## Known Facts")
+                for key, value in relevant_facts[:5]:  # Top 5 facts
+                    fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
+                    parts.append(f"- {key}: {fact_preview}")
+
+            parts.append(f"\n---\nContext generated at: {unified_context.get('timestamp', 'unknown')}")
+
+            return "\n".join(parts)
+
+        except Exception as e:
+            eprint(f"Error formatting context for LLM: {e}")
+            return f"Context formatting error: {str(e)}"
+
+    def _merge_and_dedupe_history(self, recent_history: List[Dict], relevant_refs: List) -> List[Dict]:
+        """Merge und dedupliziere History-Einträge"""
+        try:
+            merged = recent_history.copy()
+
+            # Add relevant references if they're not already in recent history
+            for ref in relevant_refs:
+                # Convert ref to message format if needed
+                if isinstance(ref, dict) and 'content' in ref:
+                    # Check if not already in recent_history
+                    is_duplicate = any(
+                        msg.get('content', '') == ref.get('content', '') and
+                        msg.get('timestamp', '') == ref.get('timestamp', '')
+                        for msg in merged
+                    )
+                    if not is_duplicate:
+                        merged.append(ref)
+
+            # Sort by timestamp
+            merged.sort(key=lambda x: x.get('timestamp', ''))
+
+            return merged
+        except:
+            return recent_history
+
+    def _get_recent_results(self, limit: int = 5) -> List[Dict]:
+        """Hole recent results aus dem shared state"""
+        try:
+            results_store = self.agent.shared.get("results", {})
+            recent_results = []
+
+            for task_id, result_data in list(results_store.items())[-limit:]:
+                if result_data and result_data.get("data"):
+                    preview = str(result_data["data"])[:150] + "..."
+                    recent_results.append({
+                        "task_id": task_id,
+                        "preview": preview,
+                        "success": result_data.get("metadata", {}).get("success", False),
+                        "timestamp": result_data.get("metadata", {}).get("completed_at")
+                    })
+
+            return recent_results
+        except:
+            return []
+
+    def _extract_relevant_facts(self, world_model: Dict, query: str) -> List[Tuple[str, Any]]:
+        """Extrahiere relevante Facts basierend auf Query"""
+        try:
+            query_words = set(query.lower().split())
+            relevant_facts = []
+
+            for key, value in world_model.items():
+                # Simple relevance scoring
+                key_words = set(key.lower().split())
+                value_words = set(str(value).lower().split())
+
+                # Check for word overlap
+                key_overlap = len(query_words.intersection(key_words))
+                value_overlap = len(query_words.intersection(value_words))
+
+                if key_overlap > 0 or value_overlap > 0:
+                    relevance_score = key_overlap * 2 + value_overlap  # Key matches weighted higher
+                    relevant_facts.append((relevance_score, key, value))
+
+            # Sort by relevance and return top facts
+            relevant_facts.sort(key=lambda x: x[0], reverse=True)
+            return [(key, value) for _, key, value in relevant_facts[:5]]
+        except:
+            return list(world_model.items())[:5]
+
+    def _get_active_tasks(self) -> List[Dict]:
+        """Hole aktive Tasks"""
+        try:
+            tasks = self.agent.shared.get("tasks", {})
+            return [
+                {"id": task_id, "description": task.description, "status": task.status}
+                for task_id, task in tasks.items()
+                if task.status == "running"
+            ]
+        except:
+            return []
+
+    def _get_recent_completions(self, limit: int = 3) -> List[Dict]:
+        """Hole recent completions"""
+        try:
+            tasks = self.agent.shared.get("tasks", {})
+            completed = [
+                {"id": task_id, "description": task.description, "completed_at": task.completed_at}
+                for task_id, task in tasks.items()
+                if task.status == "completed" and hasattr(task, 'completed_at') and task.completed_at
+            ]
+            # Sort by completion time
+            completed.sort(key=lambda x: x.get('completed_at', ''), reverse=True)
+            return completed[:limit]
+        except:
+            return []
+
+    def _get_cached_context(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """Hole Context aus Cache wenn noch gültig"""
+        if cache_key in self._context_cache:
+            timestamp, data = self._context_cache[cache_key]
+            if time.time() - timestamp < self.cache_ttl:
+                return data
+            else:
+                del self._context_cache[cache_key]
+        return None
+
+    def _cache_context(self, cache_key: str, context: Dict[str, Any]):
+        """Speichere Context in Cache"""
+        self._context_cache[cache_key] = (time.time(), context.copy())
+
+        # Cleanup old cache entries
+        if len(self._context_cache) > 50:  # Keep max 50 entries
+            oldest_key = min(self._context_cache.keys(),
+                             key=lambda k: self._context_cache[k][0])
+            del self._context_cache[oldest_key]
+
+    def _invalidate_cache(self, session_id: str = None):
+        """Invalidate cache for specific session or all"""
+        if session_id:
+            # Remove all cache entries for this session
+            keys_to_remove = [k for k in self._context_cache.keys() if session_id in k]
+            for key in keys_to_remove:
+                del self._context_cache[key]
+        else:
+            self._context_cache.clear()
+
+    def get_session_statistics(self) -> Dict[str, Any]:
+        """Hole Statistiken über alle Sessions"""
+        stats = {
+            "total_sessions": len(self.session_managers),
+            "active_sessions": [],
+            "cache_entries": len(self._context_cache),
+            "cache_hit_rate": 0.0  # Could be tracked if needed
+        }
+
+        for session_id, session in self.session_managers.items():
+            session_info = {
+                "session_id": session_id,
+                "fallback_mode": isinstance(session, dict) and session.get('fallback_mode', False)
+            }
+
+            if hasattr(session, 'history'):
+                session_info["message_count"] = len(session.history)
+            elif isinstance(session, dict) and 'history' in session:
+                session_info["message_count"] = len(session['history'])
+
+            stats["active_sessions"].append(session_info)
+
+        return stats
+
+    async def cleanup_old_sessions(self, max_age_hours: int = 168) -> int:
+        """Cleanup alte Sessions (default: 1 Woche)"""
+        try:
+            cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+            removed_count = 0
+
+            sessions_to_remove = []
+            for session_id, session in self.session_managers.items():
+                should_remove = False
+
+                # Check last activity
+                if hasattr(session, 'history') and session.history:
+                    last_msg = session.history[-1]
+                    last_timestamp = last_msg.get('timestamp')
+                    if last_timestamp:
+                        try:
+                            last_time = datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
+                            if last_time < cutoff_time:
+                                should_remove = True
+                        except:
+                            pass
+                elif isinstance(session, dict) and session.get('history'):
+                    last_msg = session['history'][-1]
+                    last_timestamp = last_msg.get('timestamp')
+                    if last_timestamp:
+                        try:
+                            last_time = datetime.fromisoformat(last_timestamp.replace('Z', '+00:00'))
+                            if last_time < cutoff_time:
+                                should_remove = True
+                        except:
+                            pass
+
+                if should_remove:
+                    sessions_to_remove.append(session_id)
+
+            # Remove old sessions
+            for session_id in sessions_to_remove:
+                session = self.session_managers[session_id]
+                if hasattr(session, 'on_exit'):
+                    session.on_exit()  # Save ChatSession data
+                del self.session_managers[session_id]
+                removed_count += 1
+
+                # Remove from variable manager
+                if self.variable_manager:
+                    scope_name = f'session_{session_id}'
+                    if scope_name in self.variable_manager.scopes:
+                        del self.variable_manager.scopes[scope_name]
+
+            # Clear related cache entries
+            self._invalidate_cache()
+
+            return removed_count
+        except Exception as e:
+            eprint(f"Error cleaning up old sessions: {e}")
+            return 0
+
 # ===== MAIN AGENT CLASS =====
 class FlowAgent:
-    """Production-ready agent system built on PocketFlow"""
+    """Production-ready agent system built on PocketFlow """
     def __init__(
         self,
         amd: AgentModelData,
@@ -5802,9 +7984,12 @@ class FlowAgent:
             "available_tools": [],
             "progress_tracker": self.progress_tracker
         }
+        self.context_manager = UnifiedContextManager(self)
         self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
-        # Register default scopes
-        self._setup_variable_scopes()
+        self.context_manager.variable_manager = self.variable_manager# Register default scopes
+
+        self.shared["context_manager"] = self.context_manager
+        self.shared["variable_manager"] = self.variable_manager
         # Flows
         self.task_flow = TaskManagementFlow(max_parallel_tasks=self.max_parallel_tasks)
         self.response_flow = ResponseGenerationFlow()
@@ -5831,6 +8016,7 @@ class FlowAgent:
         self._tool_capabilities = {}
         self._tool_analysis_cache = {}
 
+        self.active_session = None
         # Tool analysis file path
         self.tool_analysis_file = self._get_tool_analysis_path()
 
@@ -5838,7 +8024,9 @@ class FlowAgent:
         if self.amd.budget_manager:
             self.amd.budget_manager.load_data()
 
-        logger.info(f"FlowAgent initialized: {amd.name}")
+        self._setup_variable_scopes()
+
+        rprint(f"FlowAgent initialized: {amd.name}")
 
     @property
     def progress_callback(self):
@@ -5849,7 +8037,7 @@ class FlowAgent:
         self.progress_tracker.progress_callback = value
 
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", **kwargs) -> str:
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, **kwargs) -> str:
         if "model" not in kwargs:
             kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
 
@@ -5871,13 +8059,20 @@ class FlowAgent:
                 }
             ))
 
+        if self.active_session and with_context:
+            # Add context to fist messages as system message
+            context_ = await self.get_context(self.active_session)
+            kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
         try:
 
-            response = await litellm.acompletion(**kwargs
-            )
+            response = await litellm.acompletion(**kwargs)
 
             llm_duration = time.perf_counter() - llm_start
             result = response.choices[0].message.content
+
+            if AGENT_VERBOSE:
+                kwargs["messages"] += [{"role": "assistant", "content": result}]
+                print_prompt(kwargs)
 
             # Extract token usage and cost
             usage = response.usage
@@ -5911,6 +8106,8 @@ class FlowAgent:
             return result
         except Exception as e:
             llm_duration = time.perf_counter() - llm_start
+            import traceback
+            print(traceback.format_exc())
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
@@ -5936,11 +8133,13 @@ class FlowAgent:
         session_id: str = "default",
         user_id: str = None,
         stream_callback: Optional[Callable] = None,
+        remember: bool = True,
         **kwargs
     ) -> str:
-        """Main entry point for agent execution"""
+        """Main entry point für Agent-Ausführung mit UnifiedContextManager"""
 
         execution_start = self.progress_tracker.start_timer("total_execution")
+        self.active_session = session_id
 
         await self.progress_tracker.emit_event(ProgressEvent(
             event_type="execution_start",
@@ -5952,6 +8151,18 @@ class FlowAgent:
         ))
 
         try:
+            #Initialize or get session über UnifiedContextManager
+            await self.initialize_session_context(session_id, max_history=200)
+
+            #Store user message immediately in ChatSession wenn remember=True
+            if remember:
+                await self.context_manager.add_interaction(
+                    session_id,
+                    'user',
+                    query,
+                    metadata={"user_id": user_id}
+                )
+
             # Set user context variables
             timestamp = datetime.now()
             self.variable_manager.register_scope('user', {
@@ -5962,43 +8173,31 @@ class FlowAgent:
             })
 
             # Update system variables
-            self.variable_manager.set('system_context.timestamp', {'isoformat':timestamp.isoformat()})
-            self.variable_manager.set('system_context.timestamp.year', timestamp.year)
-            self.variable_manager.set('system_context.timestamp.month', timestamp.month)
-            self.variable_manager.set('system_context.timestamp.week', timestamp.strftime('%W'))
-            self.variable_manager.set('system_context.timestamp.day', timestamp.day)
-            self.variable_manager.set('system_context.timestamp.hour', timestamp.hour)
-            self.variable_manager.set('system_context.timestamp.minute', timestamp.minute)
-            self.variable_manager.set('system_context.timestamp.second', timestamp.second)
-            self.variable_manager.set('system_context.timestamp.date', timestamp.strftime('%Y-%m-%d'))
-            self.variable_manager.set('system_context.timestamp.weekday', timestamp.strftime('%A'))
-            self.variable_manager.set('system_context.timestamp.kalenderwoche', timestamp.strftime('%W'))
+            self.variable_manager.set('system_context.timestamp', {'isoformat': timestamp.isoformat()})
             self.variable_manager.set('system_context.current_session', session_id)
             self.variable_manager.set('system_context.current_user', user_id)
             self.variable_manager.set('system_context.last_query', query)
 
             # Initialize with tool awareness
-            await self._initialize_context_awareness()
+            await self.initialize_context_awareness()
 
-            # Prepare execution context
+            # VEREINFACHT: Prepare execution context - weniger Daten duplizieren
             self.shared.update({
                 "current_query": query,
                 "session_id": session_id,
                 "user_id": user_id,
-                "stream_callback": stream_callback
+                "stream_callback": stream_callback,
+                "remember": remember,
+                # CENTRAL: Context Manager ist die primäre Context-Quelle
+                "context_manager": self.context_manager,
+                "variable_manager": self.variable_manager
             })
+
             # Set LLM models in shared context
             self.shared['fast_llm_model'] = self.amd.fast_llm_model
             self.shared['complex_llm_model'] = self.amd.complex_llm_model
             self.shared['persona_config'] = self.amd.persona
             self.shared['use_fast_response'] = self.amd.use_fast_response
-            self.shared['variable_manager'] = self.variable_manager
-            # Add to conversation history
-            self.shared["conversation_history"].append({
-                "role": "user",
-                "content": query,
-                "timestamp": datetime.now().isoformat()
-            })
 
             # Set system status
             self.shared["system_status"] = "running"
@@ -6006,12 +8205,15 @@ class FlowAgent:
 
             # Execute main orchestration flow
             result = await self._orchestrate_execution()
-            # Add response to history
-            self.shared["conversation_history"].append({
-                "role": "assistant",
-                "content": result,
-                "timestamp": datetime.now().isoformat()
-            })
+
+            #Store assistant response in ChatSession wenn remember=True
+            if remember:
+                await self.context_manager.add_interaction(
+                    session_id,
+                    'assistant',
+                    result,
+                    metadata={"user_id": user_id, "execution_duration": time.time() - execution_start}
+                )
 
             total_duration = self.progress_tracker.end_timer("total_execution")
 
@@ -6024,9 +8226,11 @@ class FlowAgent:
                 session_id=session_id,
                 metadata={
                     "result_length": len(result),
-                    "summary": self.progress_tracker.get_summary()
+                    "summary": self.progress_tracker.get_summary(),
+                    "remembered": remember
                 }
             ))
+
             # Checkpoint if needed
             if self.enable_pause_resume:
                 await self._maybe_checkpoint()
@@ -6034,16 +8238,23 @@ class FlowAgent:
             return result
 
         except Exception as e:
-            logger.error(f"Agent execution failed: {e}", exc_info=True)
+            eprint(f"Agent execution failed: {e}", exc_info=True)
             error_response = f"I encountered an error: {str(e)}"
             import traceback
             print(traceback.format_exc())
 
-            self.shared["conversation_history"].append({
-                "role": "assistant",
-                "content": error_response,
-                "timestamp": datetime.now().isoformat()
-            })
+            # Store error in ChatSession wenn remember=True
+            if remember:
+                await self.context_manager.add_interaction(
+                    session_id,
+                    'assistant',
+                    error_response,
+                    metadata={
+                        "user_id": user_id,
+                        "error": True,
+                        "error_type": type(e).__name__
+                    }
+                )
 
             total_duration = self.progress_tracker.end_timer("total_execution")
 
@@ -6062,6 +8273,7 @@ class FlowAgent:
         finally:
             self.shared["system_status"] = "idle"
             self.is_running = False
+            self.active_session = None
 
     def set_response_format(
         self,
@@ -6106,7 +8318,7 @@ class FlowAgent:
         self.shared["persona_config"] = self.amd.persona
         self.shared["format_config"] = format_config
 
-        logger.info(f"Response format set: {response_format}, length: {text_length}")
+        rprint(f"Response format set: {response_format}, length: {text_length}")
 
     def _update_persona_with_format(self, response_format: str, text_length: str):
         """Aktualisiere Persona-Traits basierend auf Format"""
@@ -6253,7 +8465,7 @@ class FlowAgent:
         self.variable_manager.register_scope('system', {
             'timestamp': timestamp.isoformat(),
             'version': '2.0',
-            'capabilities': []
+            'capabilities': list(self._tool_capabilities.keys())
         })
 
         # ADDED: Initialize empty results and tasks scopes
@@ -6276,70 +8488,53 @@ class FlowAgent:
         return self.variable_manager.format_text(text, context)
 
     async def initialize_session_context(self, session_id: str = "default", max_history: int = 200) -> bool:
-        """Initialize session-aware context management for infinite scaling"""
+        """Vereinfachte Session-Initialisierung über UnifiedContextManager"""
         try:
-            from toolboxv2 import get_app
-            from toolboxv2.mods.isaa.extras.session import ChatSession
+            # Delegation an UnifiedContextManager
+            session = await self.context_manager.initialize_session(session_id, max_history)
 
-            # Initialize memory system
-            memory_instance = get_app().get_mod("isaa").get_memory()
+            # Ensure Variable Manager integration
+            if not self.context_manager.variable_manager:
+                self.context_manager.variable_manager = self.variable_manager
 
-            # Create multiple session managers for different aspects
-            session_managers = {
-                "main_conversation": ChatSession(
-                    memory_instance,
-                    space_name=f"ChatSession/{self.amd.name}.{session_id}.conversation",
-                    max_length=max_history
-                ),
-                "task_history": ChatSession(
-                    memory_instance,
-                    space_name=f"ChatSession/{self.amd.name}.{session_id}.tasks",
-                    max_length=max_history // 2
-                ),
-                "insights": ChatSession(
-                    memory_instance,
-                    space_name=f"ChatSession/{self.amd.name}.{session_id}.insights",
-                    max_length=100
-                )
-            }
-
-            # Store in shared state
-            self.shared["session_managers"] = session_managers
+            # Update shared state (minimal - primary data now in context_manager)
+            self.shared["active_session_id"] = session_id
             self.shared["session_initialized"] = True
 
-            logger.info(f"Session context initialized for {session_id}")
+            # Legacy support: Keep session_managers reference in shared for backward compatibility
+            self.shared["session_managers"] = self.context_manager.session_managers
+
+            rprint(f"Session context initialized for {session_id} via UnifiedContextManager")
             return True
 
         except Exception as e:
-            logger.error(f"Session context initialization failed: {e}")
+            eprint(f"Session context initialization failed: {e}")
+            import traceback
+            print(traceback.format_exc())
             return False
 
-    async def _initialize_context_awareness(self):
+    async def initialize_context_awareness(self):
         """Enhanced context awareness with session management"""
 
         # Initialize session if not already done
-        session_id = self.shared.get("session_id", "default")
+        session_id = self.shared.get("session_id", self.active_session)
         if not self.shared.get("session_initialized"):
             await self.initialize_session_context(session_id)
 
-        # Replace context node in flows with advanced version
-        advanced_context_manager = ContextManagerNode(
-            max_tokens=self.amd.max_input_tokens,
-            compression_threshold=0.76
-        )
-
-        # Update task flow to use advanced context manager
-        if hasattr(self.task_flow, 'strategy_node'):
-            # Insert context manager before strategy
-            self.task_flow.context_manager = advanced_context_manager
-            advanced_context_manager >> self.task_flow.strategy_node
-            self.task_flow.start = advanced_context_manager
-
         # Ensure tool capabilities are loaded
         # add tqdm prigress bar
+
         from tqdm import tqdm
 
-        for tool_name in tqdm(self.shared["available_tools"], desc="Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
+
+        if hasattr(self.task_flow, 'llm_reasoner'):
+            if "read_from_variables" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_read_from_variables'):
+                await self.add_tool(lambda scope, key, purpose: self.task_flow.llm_reasoner._execute_read_from_variables({"scope": scope, "key": key, "purpose": purpose}), "read_from_variables", "Read from variables")
+            if "write_to_variables" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_write_to_variables'):
+                await self.add_tool(lambda scope, key, value, description: self.task_flow.llm_reasoner._execute_write_to_variables({"scope": scope, "key": key, "value": value, "description": description}), "write_to_variables", "Write to variables")
+
+
+        for tool_name in tqdm(self.shared["available_tools"], desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
                 description = tool_info.get("description", "No description")
@@ -6359,7 +8554,40 @@ class FlowAgent:
             "session_managers": len(self.shared.get("session_managers", {})),
         }
 
-        logger.info(f"Advanced context awareness initialized with session management")
+
+        rprint(f"Advanced context awareness initialized with session management")
+
+    async def get_context(self, session_id: str = None, format_for_llm: bool = True) -> Union[str, Dict[str, Any]]:
+        """
+        ÜBERARBEITET: Get context über UnifiedContextManager statt verteilte Quellen
+        """
+        try:
+            session_id = session_id or self.shared.get("session_id", self.active_session)
+            query = self.shared.get("current_query", "")
+
+            #Hole unified context über Context Manager
+            unified_context = await self.context_manager.build_unified_context(session_id, query, "full")
+
+
+            if format_for_llm:
+                return self.context_manager.get_formatted_context_for_llm(unified_context)
+            else:
+                return unified_context
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            eprint(f"Failed to generate context via UnifiedContextManager: {e}")
+
+            # FALLBACK: Fallback zu alter Methode falls UnifiedContextManager fehlschlägt
+            if format_for_llm:
+                return f"Error generating context: {str(e)}"
+            else:
+                return {
+                    "error": str(e),
+                    "generated_at": datetime.now().isoformat(),
+                    "fallback_mode": True
+                }
 
     def get_context_statistics(self) -> Dict[str, Any]:
         """Get comprehensive context management statistics"""
@@ -6419,61 +8647,99 @@ class FlowAgent:
             integration_level=integration_level
         )
 
-        logger.info(f"Persona set: {name} ({style}, {tone}) - Method: {apply_method}, Level: {integration_level}")
+        rprint(f"Persona set: {name} ({style}, {tone}) - Method: {apply_method}, Level: {integration_level}")
 
     def configure_persona_integration(self, apply_method: str = "system_prompt", integration_level: str = "light"):
         """Configure how persona is applied"""
         if self.amd.persona:
             self.amd.persona.apply_method = apply_method
             self.amd.persona.integration_level = integration_level
-            logger.info(f"Persona integration updated: {apply_method}, {integration_level}")
+            rprint(f"Persona integration updated: {apply_method}, {integration_level}")
         else:
-            logger.warning("No persona configured to update")
+            wprint("No persona configured to update")
 
     def get_available_variables(self) -> Dict[str, str]:
         """Get available variables for dynamic formatting"""
         return self.variable_manager.get_available_variables()
 
     async def _orchestrate_execution(self) -> str:
-        """Vollständig adaptive Orchestrierung mit separaten Phasen"""
+        """
+        Enhanced orchestration with LLMReasonerNode as strategic core.
+        The reasoner now handles both task management and response generation internally.
+        """
 
         self.shared["agent_instance"] = self
+        self.shared["session_id"] = self.active_session
+        # === UNIFIED REASONING AND EXECUTION CYCLE ===
+        rprint("Starting strategic reasoning and execution cycle")
 
-        # === PHASE 1: TASK MANAGEMENT CYCLE ===
-        logger.info("Starting adaptive task management cycle")
+        # The LLMReasonerNode now handles the complete cycle:
+        # 1. Strategic analysis of the query
+        # 2. Decision making about approach
+        # 3. Orchestration of sub-systems (LLMToolNode, TaskPlanner/Executor)
+        # 4. Response synthesis and formatting
 
-        # Führe Task-Management-Flow aus (adaptiv mit Reflexion)
+        # Execute the unified flow
         task_management_result = await self.task_flow.run_async(self.shared)
 
+        # Check for various completion states
         if self.shared.get("plan_halted"):
             error_response = f"Task execution was halted: {self.shared.get('halt_reason', 'Unknown reason')}"
             self.shared["current_response"] = error_response
             return error_response
 
-        # === PHASE 2: RESPONSE GENERATION ===
-        logger.info("Starting response generation flow")
-
-        # Führe Response-Generation-Flow aus
+        final_response = self.shared.get("current_response", "Task completed successfully.")
+        # Execute ResponseGenerationFlow for persona application and formatting
         response_result = await self.response_flow.run_async(self.shared)
 
-        # === PHASE 3: FINAL RESULT ===
+        # The reasoner provides the final response
         final_response = self.shared.get("current_response", "Task completed successfully.")
 
-        # Logge Statistiken
+        # Add reasoning artifacts to response if available
+        reasoning_artifacts = self.shared.get("reasoning_artifacts", {})
+        if reasoning_artifacts and reasoning_artifacts.get("reasoning_loops", 0) > 1:
+            # For debugging/transparency, could add reasoning info to metadata
+            pass
+
+        # Log enhanced statistics
         self._log_execution_stats()
 
         return final_response
 
     def _log_execution_stats(self):
-        """Logge Ausführungsstatistiken"""
+        """Enhanced execution statistics with reasoning metrics"""
         tasks = self.shared.get("tasks", {})
         adaptations = self.shared.get("plan_adaptations", 0)
+        reasoning_artifacts = self.shared.get("reasoning_artifacts", {})
 
         completed_tasks = sum(1 for t in tasks.values() if t.status == "completed")
         failed_tasks = sum(1 for t in tasks.values() if t.status == "failed")
 
-        logger.info(
-            f"Execution complete - Tasks: {completed_tasks} completed, {failed_tasks} failed, {adaptations} adaptations")
+        # Enhanced logging with reasoning metrics
+        reasoning_loops = reasoning_artifacts.get("reasoning_loops", 0)
+
+        stats_message = f"Execution complete - Tasks: {completed_tasks} completed, {failed_tasks} failed"
+
+        if adaptations > 0:
+            stats_message += f", {adaptations} adaptations"
+
+        if reasoning_loops > 0:
+            stats_message += f", {reasoning_loops} reasoning loops"
+
+            # Add reasoning efficiency metric
+            if completed_tasks > 0:
+                efficiency = completed_tasks / max(reasoning_loops, 1)
+                stats_message += f" (efficiency: {efficiency:.1f} tasks/loop)"
+
+        rprint(stats_message)
+
+        # Log reasoning context if significant
+        if reasoning_loops > 3:
+            internal_task_stack = reasoning_artifacts.get("internal_task_stack", [])
+            completed_reasoning_tasks = len([t for t in internal_task_stack if t.get("status") == "completed"])
+
+            if completed_reasoning_tasks > 0:
+                rprint(f"Strategic reasoning: {completed_reasoning_tasks} high-level tasks completed")
 
     def _build_capabilities_summary(self) -> str:
         """Build summary of agent capabilities"""
@@ -6493,7 +8759,7 @@ class FlowAgent:
     async def get_task_execution_summary(self) -> Dict[str, Any]:
         """Erhalte detaillierte Zusammenfassung der Task-Ausführung"""
         tasks = self.shared.get("tasks", {})
-        results_store = self.shared.get("results_store", {})
+        results_store = self.shared.get("results", {})
 
         summary = {
             "total_tasks": len(tasks),
@@ -6574,6 +8840,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             return response
 
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
             return f"Could not generate reasoning explanation: {e}"
 
     def _format_tasks_for_explanation(self, tasks: List[Dict]) -> str:
@@ -6597,7 +8865,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         checkpoint = await self._create_checkpoint()
         await self._save_checkpoint(checkpoint)
 
-        logger.info("Agent execution paused")
+        rprint("Agent execution paused")
         return True
 
     async def resume(self) -> bool:
@@ -6608,87 +8876,761 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         self.is_paused = False
         self.shared["system_status"] = "running"
 
-        logger.info("Agent execution resumed")
+        rprint("Agent execution resumed")
         return True
 
+    # ===== CHECKPOINT MANAGEMENT =====
+
     async def _create_checkpoint(self) -> AgentCheckpoint:
-        """Create a checkpoint of current state"""
-        self.amd.budget_manager.save_data()
-        amd = self.amd.model_dump()
-        amd['budget_manager'] = None  # Exclude budget manager from checkpoint
-        return AgentCheckpoint(
-            timestamp=datetime.now(),
-            agent_state={
-                "is_running": self.is_running,
-                "is_paused": self.is_paused,
-                "amd": json.dumps(amd, ensure_ascii=False, default=str, indent=2)
-            },
-            task_state={
-                task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
-            },
-            world_model=self.shared["world_model"].copy(),
-            active_flows=["task_flow", "response_flow"],  # Track active flows
-            metadata={
-                "session_id": self.shared.get("session_id", "default"),
-                "last_query": self.shared.get("current_query", "")
-            }
-        )
+        """Vereinfachte Checkpoint-Erstellung - fokussiert auf wesentliche Daten"""
+        try:
+            # Budget Manager Daten vor Checkpoint speichern
+            if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
+                self.amd.budget_manager.save_data()
+
+            # Bereite AMD-Daten vor (ohne budget_manager für Serialisierung)
+            amd_data = self.amd.model_dump()
+            amd_data['budget_manager'] = None
+
+            # Sammle wesentliche Session-Daten (vereinfacht)
+            session_data = {}
+            if self.context_manager and self.context_manager.session_managers:
+                for session_id, session in self.context_manager.session_managers.items():
+                    try:
+                        if hasattr(session, 'history') and session.history:
+                            # Nur die letzten 20 Nachrichten pro Session für Checkpoint
+                            recent_history = session.history[-20:]
+                            session_data[session_id] = {
+                                "history": recent_history,
+                                "session_type": "chatsession",
+                                "message_count": len(session.history)
+                            }
+                        elif isinstance(session, dict) and session.get('history'):
+                            session_data[session_id] = {
+                                "history": session['history'][-20:],
+                                "session_type": "fallback",
+                                "message_count": len(session['history'])
+                            }
+                    except Exception as e:
+                        rprint(f"Skipping session {session_id} in checkpoint: {e}")
+
+            # Sammle serialisierbare Variable-Scopes
+            variable_scopes = {}
+            if self.variable_manager:
+                NON_SERIALIZABLE_KEYS = {
+                    "tool_registry", "variable_manager", "context_manager", "agent_instance",
+                    "llm_tool_node_instance", "task_planner_instance", "task_executor_instance",
+                    "progress_tracker", "session_managers", "stream_callback"
+                }
+
+                for scope_name, scope_data in self.variable_manager.scopes.items():
+                    if isinstance(scope_data, dict):
+                        # Filtere nicht-serialisierbare Objekte heraus
+                        clean_scope = {
+                            k: v for k, v in scope_data.items()
+                            if k not in NON_SERIALIZABLE_KEYS
+                        }
+                        variable_scopes[scope_name] = clean_scope
+                    else:
+                        try:
+                            # Teste Serialisierbarkeit
+                            pickle.dumps(scope_data)
+                            variable_scopes[scope_name] = scope_data
+                        except:
+                            # Überspringe nicht-serialisierbare Scopes
+                            pass
+
+            # Erstelle konsolidierten Checkpoint
+            checkpoint = AgentCheckpoint(
+                timestamp=datetime.now(),
+                agent_state={
+                    "is_running": self.is_running,
+                    "is_paused": self.is_paused,
+                    "amd_data": amd_data,
+                    "active_session": self.active_session,
+                    "system_status": self.shared.get("system_status", "idle")
+                },
+                task_state={
+                    task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
+                },
+                world_model=self.shared.get("world_model", {}),
+                active_flows=["task_flow", "response_flow"],
+                metadata={
+                    "session_id": self.shared.get("session_id", "default"),
+                    "last_query": self.shared.get("current_query", ""),
+                    "checkpoint_version": "3.0_simplified",
+                    "agent_name": self.amd.name
+                },
+                # Konsolidierte Zusatzdaten
+                session_data=session_data,
+                variable_scopes=variable_scopes,
+                results_store=self.shared.get("results", {}),
+                conversation_history=self.shared.get("conversation_history", [])[-50:],  # Letzte 50 Nachrichten
+                tool_capabilities=self._tool_capabilities.copy()
+            )
+
+            rprint(f"Vereinfachter Checkpoint erstellt mit {len(session_data)} Sessions")
+            return checkpoint
+
+        except Exception as e:
+            eprint(f"Checkpoint-Erstellung fehlgeschlagen: {e}")
+            import traceback
+            print(traceback.format_exc())
+            raise
 
     async def _save_checkpoint(self, checkpoint: AgentCheckpoint, filepath: str = None):
-        """Save checkpoint to file"""
-        from toolboxv2 import get_app
-        folder = str(get_app().data_dir) + '/Agents/checkpoint/' + self.amd.name
-        if not os.path.exists(folder):
-            os.makedirs(folder, exist_ok=True)
-        if not filepath:
-            timestamp = checkpoint.timestamp.strftime("%Y%m%d_%H%M%S")
-            filepath = f"agent_checkpoint_{timestamp}.pkl"
-        filepath = folder + '/' + filepath
+        """Vereinfachtes Checkpoint-Speichern - alles in eine Datei"""
         try:
+            from toolboxv2 import get_app
+            folder = str(get_app().data_dir) + '/Agents/checkpoint/' + self.amd.name
+            if not os.path.exists(folder):
+                os.makedirs(folder, exist_ok=True)
+
+            if not filepath:
+                timestamp = checkpoint.timestamp.strftime("%Y%m%d_%H%M%S")
+                filepath = f"agent_checkpoint_{timestamp}.pkl"
+            filepath = os.path.join(folder, filepath)
+
+            # Sessions vor dem Speichern synchronisieren
+            if self.context_manager and self.context_manager.session_managers:
+                for session_id, session in self.context_manager.session_managers.items():
+                    try:
+                        if hasattr(session, 'save'):
+                            await session.save()
+                        elif hasattr(session, '_save_to_memory'):
+                            session._save_to_memory()
+                    except Exception as e:
+                        rprint(f"Session sync error für {session_id}: {e}")
+
+            # Speichere Checkpoint direkt
             with open(filepath, 'wb') as f:
                 pickle.dump(checkpoint, f)
 
             self.last_checkpoint = checkpoint.timestamp
-            logger.info(f"Checkpoint saved: {filepath}")
 
-        except Exception as e:
-            logger.error(f"Failed to save checkpoint: {e}")
+            # Erstelle einfache Zusammenfassung
+            summary_parts = []
+            if hasattr(checkpoint, 'session_data') and checkpoint.session_data:
+                summary_parts.append(f"{len(checkpoint.session_data)} sessions")
+            if checkpoint.task_state:
+                completed_tasks = len([t for t in checkpoint.task_state.values() if t.get("status") == "completed"])
+                summary_parts.append(f"{completed_tasks} completed tasks")
+            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
+                summary_parts.append(f"{len(checkpoint.variable_scopes)} variable scopes")
 
-    async def load_checkpoint(self, filepath: str) -> bool:
-        """Load checkpoint from file"""
-        try:
-            with open(filepath, 'rb') as f:
-                checkpoint: AgentCheckpoint = pickle.load(f)
-
-            # Restore state
-            self.shared["world_model"] = checkpoint.world_model
-            self.shared["tasks"] = {
-                task_id: Task(**task_data)
-                for task_id, task_data in checkpoint.task_state.items()
-            }
-
-            # Restore agent state
-            agent_state = checkpoint.agent_state
-            self.is_running = agent_state.get("is_running", False)
-            self.is_paused = agent_state.get("is_paused", False)
-
-            self.last_checkpoint = checkpoint.timestamp
-            logger.info(f"Checkpoint loaded: {filepath}")
-
+            summary = "; ".join(summary_parts) if summary_parts else "Basic checkpoint"
+            rprint(f"Checkpoint gespeichert: {filepath} ({summary})")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to load checkpoint: {e}")
+            eprint(f"Checkpoint-Speicherung fehlgeschlagen: {e}")
+            print(checkpoint)
             return False
 
+    async def load_latest_checkpoint(self, auto_restore_history: bool = True, max_age_hours: int = 24) -> Dict[
+        str, Any]:
+        """Vereinfachtes Checkpoint-Laden mit automatischer History-Wiederherstellung"""
+        try:
+            from toolboxv2 import get_app
+            folder = str(get_app().data_dir) + '/Agents/checkpoint/' + self.amd.name
+
+            if not os.path.exists(folder):
+                return {"success": False, "error": "Kein Checkpoint-Verzeichnis gefunden"}
+
+            # Finde neuesten Checkpoint
+            checkpoint_files = []
+            for file in os.listdir(folder):
+                if file.endswith('.pkl') and file.startswith('agent_checkpoint_'):
+                    filepath = os.path.join(folder, file)
+                    try:
+                        timestamp_str = file.replace('agent_checkpoint_', '').replace('.pkl', '')
+                        if timestamp_str == 'final_checkpoint':
+                            file_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                        else:
+                            file_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+
+                        age_hours = (datetime.now() - file_time).total_seconds() / 3600
+                        if age_hours <= max_age_hours:
+                            checkpoint_files.append((filepath, file_time, age_hours))
+                    except Exception:
+                        continue
+
+            if not checkpoint_files:
+                return {"success": False, "error": f"Keine gültigen Checkpoints in {max_age_hours} Stunden gefunden"}
+
+            # Lade neuesten Checkpoint
+            checkpoint_files.sort(key=lambda x: x[1], reverse=True)
+            latest_checkpoint_path, latest_timestamp, age_hours = checkpoint_files[0]
+
+            rprint(f"Lade Checkpoint: {latest_checkpoint_path} (Alter: {age_hours:.1f}h)")
+
+            with open(latest_checkpoint_path, 'rb') as f:
+                checkpoint: AgentCheckpoint = pickle.load(f)
+
+            # Stelle Agent-Status wieder her
+            restore_stats = await self._restore_from_checkpoint_simplified(checkpoint, auto_restore_history)
+
+            # Re-initialisiere Kontext-Awareness
+            await self.initialize_context_awareness()
+
+            return {
+                "success": True,
+                "checkpoint_file": latest_checkpoint_path,
+                "checkpoint_age_hours": age_hours,
+                "checkpoint_timestamp": latest_timestamp.isoformat(),
+                "available_checkpoints": len(checkpoint_files),
+                "restore_stats": restore_stats
+            }
+
+        except Exception as e:
+            eprint(f"Checkpoint-Laden fehlgeschlagen: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    async def _restore_from_checkpoint_simplified(self, checkpoint: AgentCheckpoint, auto_restore_history: bool) -> \
+    Dict[
+        str, Any]:
+        """Vereinfachte Checkpoint-Wiederherstellung"""
+        restore_stats = {
+            "agent_state_restored": False,
+            "world_model_restored": False,
+            "tasks_restored": 0,
+            "sessions_restored": 0,
+            "variables_restored": 0,
+            "conversation_restored": 0,
+            "errors": []
+        }
+
+        try:
+            # 1. Agent-Status wiederherstellen
+            if checkpoint.agent_state:
+                self.is_running = checkpoint.agent_state.get("is_running", False)
+                self.is_paused = checkpoint.agent_state.get("is_paused", False)
+                self.active_session = checkpoint.agent_state.get("active_session")
+
+                # AMD-Daten selektiv wiederherstellen
+                amd_data = checkpoint.agent_state.get("amd_data", {})
+                if amd_data:
+                    # Nur sichere Felder wiederherstellen
+                    safe_fields = ["name", "use_fast_response", "max_input_tokens"]
+                    for field in safe_fields:
+                        if field in amd_data and hasattr(self.amd, field):
+                            setattr(self.amd, field, amd_data[field])
+
+                    # Persona wiederherstellen falls vorhanden
+                    if "persona" in amd_data and amd_data["persona"]:
+                        try:
+                            persona_data = amd_data["persona"]
+                            if isinstance(persona_data, dict):
+                                self.amd.persona = PersonaConfig(**persona_data)
+                        except Exception as e:
+                            restore_stats["errors"].append(f"Persona restore failed: {e}")
+
+                restore_stats["agent_state_restored"] = True
+
+            # 2. World Model wiederherstellen
+            if checkpoint.world_model:
+                self.shared["world_model"] = checkpoint.world_model.copy()
+                self.world_model = checkpoint.world_model.copy()
+                restore_stats["world_model_restored"] = True
+
+            # 3. Variable System wiederherstellen
+            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
+                # Variable Manager neu initialisieren
+                self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+
+                # Basis-Scopes einrichten
+                self._setup_variable_scopes()
+
+                # Gespeicherte Scopes wiederherstellen
+                for scope_name, scope_data in checkpoint.variable_scopes.items():
+                    try:
+                        self.variable_manager.register_scope(scope_name, scope_data)
+                        restore_stats["variables_restored"] += 1
+                    except Exception as e:
+                        restore_stats["errors"].append(f"Variable scope {scope_name}: {e}")
+
+                # Runtime-Objekte wieder einsetzen
+                self.variable_manager.set("shared", "variable_manager", self.variable_manager)
+                self.variable_manager.set("shared", "context_manager", self.context_manager)
+                self.variable_manager.set("shared", "agent_instance", self)
+
+                self.shared["variable_manager"] = self.variable_manager
+
+            # 4. Tasks wiederherstellen
+            if checkpoint.task_state:
+                restored_tasks = {}
+                for task_id, task_data in checkpoint.task_state.items():
+                    try:
+                        task_type = task_data.get("type", "generic")
+                        if task_type == "LLMTask":
+                            restored_tasks[task_id] = LLMTask(**task_data)
+                        elif task_type == "ToolTask":
+                            restored_tasks[task_id] = ToolTask(**task_data)
+                        elif task_type == "DecisionTask":
+                            restored_tasks[task_id] = DecisionTask(**task_data)
+                        elif task_type == "CompoundTask":
+                            restored_tasks[task_id] = CompoundTask(**task_data)
+                        else:
+                            restored_tasks[task_id] = Task(**task_data)
+
+                        restore_stats["tasks_restored"] += 1
+                    except Exception as e:
+                        restore_stats["errors"].append(f"Task {task_id}: {e}")
+
+                self.shared["tasks"] = restored_tasks
+
+            # 5. Results Store wiederherstellen
+            if hasattr(checkpoint, 'results_store') and checkpoint.results_store:
+                self.shared["results"] = checkpoint.results_store
+                if self.variable_manager:
+                    self.variable_manager.set_results_store(checkpoint.results_store)
+
+            # 6. Sessions und Conversation wiederherstellen (falls gewünscht)
+            if auto_restore_history:
+                await self._restore_sessions_and_conversation_simplified(checkpoint, restore_stats)
+
+            # 7. Tool Capabilities wiederherstellen
+            if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
+                self._tool_capabilities = checkpoint.tool_capabilities.copy()
+
+            # Status setzen
+            self.shared["system_status"] = "restored"
+            restore_stats["restoration_timestamp"] = datetime.now().isoformat()
+
+            rprint(
+                f"Checkpoint wiederhergestellt: {restore_stats['tasks_restored']} Tasks, {restore_stats['sessions_restored']} Sessions, {len(restore_stats['errors'])} Fehler")
+            return restore_stats
+
+        except Exception as e:
+            eprint(f"Checkpoint-Wiederherstellung fehlgeschlagen: {e}")
+            import traceback
+            print(traceback.format_exc())
+            restore_stats["errors"].append(f"Critical restore error: {e}")
+            return restore_stats
+
+    async def _restore_sessions_and_conversation_simplified(self, checkpoint: AgentCheckpoint, restore_stats: Dict):
+        """Vereinfachte Session- und Conversation-Wiederherstellung"""
+        try:
+            # Context Manager sicherstellen
+            if not self.context_manager:
+                self.context_manager = UnifiedContextManager(self)
+                self.context_manager.variable_manager = self.variable_manager
+
+            # Sessions wiederherstellen
+            if hasattr(checkpoint, 'session_data') and checkpoint.session_data:
+                for session_id, session_info in checkpoint.session_data.items():
+                    try:
+                        # Session über Context Manager initialisieren
+                        max_length = session_info.get("message_count", 200)
+                        restored_session = await self.context_manager.initialize_session(session_id, max_length)
+
+                        # History wiederherstellen
+                        history = session_info.get("history", [])
+                        if history and hasattr(restored_session, 'history'):
+                            # Direkt in Session-History einfügen
+                            restored_session.history.extend(history)
+
+                        restore_stats["sessions_restored"] += 1
+                    except Exception as e:
+                        restore_stats["errors"].append(f"Session {session_id}: {e}")
+
+            # Conversation History wiederherstellen
+            if hasattr(checkpoint, 'conversation_history') and checkpoint.conversation_history:
+                self.shared["conversation_history"] = checkpoint.conversation_history
+                restore_stats["conversation_restored"] = len(checkpoint.conversation_history)
+
+            # Update shared context
+            self.shared["context_manager"] = self.context_manager
+            if self.context_manager.session_managers:
+                self.shared["session_managers"] = self.context_manager.session_managers
+                self.shared["session_initialized"] = True
+
+        except Exception as e:
+            restore_stats["errors"].append(f"Session/conversation restore failed: {e}")
+
     async def _maybe_checkpoint(self):
-        """Create checkpoint if interval has passed"""
+        """Vereinfachtes automatisches Checkpointing"""
+        if not self.enable_pause_resume:
+            return
+
         now = datetime.now()
         if (not self.last_checkpoint or
             (now - self.last_checkpoint).seconds >= self.checkpoint_interval):
 
-            checkpoint = await self._create_checkpoint()
-            await self._save_checkpoint(checkpoint)
+            try:
+                checkpoint = await self._create_checkpoint()
+                await self._save_checkpoint(checkpoint)
+            except Exception as e:
+                eprint(f"Automatic checkpoint failed: {e}")
+
+
+    async def save_context_to_session(self, session_id: str = None, context_type: str = "full") -> bool:
+        """Save current context to ChatSession for persistent storage"""
+        try:
+            session_id = session_id or self.shared.get("session_id", "default")
+
+            if not self.context_manager:
+                eprint("Context manager not available")
+                return False
+
+            # Build comprehensive context
+            unified_context = await self.context_manager.build_unified_context(session_id, None, context_type)
+
+            # Create context message for session storage
+            context_message = {
+                "role": "system",
+                "content": f"[CONTEXT_SNAPSHOT_{context_type.upper()}] " + json.dumps(unified_context, default=str),
+                "timestamp": datetime.now().isoformat(),
+                "context_type": context_type,
+                "metadata": {
+                    "is_context_snapshot": True,
+                    "context_version": "2.0",
+                    "agent_name": self.amd.name,
+                    "session_stats": unified_context.get("session_stats", {}),
+                    "variables_count": len(unified_context.get("variables", {}).get("recent_results", [])),
+                    "execution_state": unified_context.get("execution_state", {}).get("system_status", "unknown")
+                }
+            }
+
+            # Store in session
+            await self.context_manager.add_interaction(
+                session_id,
+                "system",
+                context_message["content"],
+                metadata=context_message["metadata"]
+            )
+
+            rprint(f"Context snapshot saved to session {session_id} (type: {context_type})")
+            return True
+
+        except Exception as e:
+            eprint(f"Failed to save context to session: {e}")
+            return False
+
+    async def load_context_from_session(self, session_id: str, context_type: str = "full") -> Dict[str, Any]:
+        """Load context from ChatSession storage"""
+        try:
+            if not self.context_manager:
+                return {"error": "Context manager not available"}
+
+            session = self.context_manager.session_managers.get(session_id)
+            if not session:
+                return {"error": f"Session {session_id} not found"}
+
+            # Search for context snapshots in session history
+            context_snapshots = []
+
+            if hasattr(session, 'history'):
+                for message in reversed(session.history):  # Search from newest
+                    if (message.get("role") == "system" and
+                        message.get("metadata", {}).get("is_context_snapshot") and
+                        message.get("metadata", {}).get("context_type") == context_type):
+
+                        try:
+                            # Extract context data
+                            content = message.get("content", "")
+                            if content.startswith(f"[CONTEXT_SNAPSHOT_{context_type.upper()}]"):
+                                json_data = content.replace(f"[CONTEXT_SNAPSHOT_{context_type.upper()}] ", "")
+                                context_data = json.loads(json_data)
+                                context_snapshots.append({
+                                    "context": context_data,
+                                    "timestamp": message.get("timestamp"),
+                                    "metadata": message.get("metadata", {})
+                                })
+                        except Exception as e:
+                            wprint(f"Failed to parse context snapshot: {e}")
+
+            if context_snapshots:
+                # Return most recent context snapshot
+                latest_context = context_snapshots[0]
+                rprint(f"Loaded context snapshot from session {session_id} (timestamp: {latest_context['timestamp']})")
+                return latest_context["context"]
+            else:
+                return {"error": f"No context snapshots of type '{context_type}' found in session {session_id}"}
+
+        except Exception as e:
+            eprint(f"Failed to load context from session: {e}")
+            return {"error": str(e)}
+
+    async def cleanup_session_context(self, session_id: str = None, keep_count: int = 100,
+                                      remove_old_snapshots: bool = True) -> Dict[str, Any]:
+        """Cleanup session context by removing old snapshots and entries"""
+        try:
+            session_id = session_id or self.shared.get("session_id", "default")
+
+            if not self.context_manager:
+                return {"error": "Context manager not available"}
+
+            session = self.context_manager.session_managers.get(session_id)
+            if not session or not hasattr(session, 'history'):
+                return {"error": f"Session {session_id} not found or has no history"}
+
+            cleanup_stats = {
+                "original_message_count": len(session.history),
+                "context_snapshots_removed": 0,
+                "context_entries_removed": 0,
+                "regular_messages_kept": 0,
+                "cleanup_performed": False
+            }
+
+            if len(session.history) <= keep_count:
+                return {**cleanup_stats, "message": "No cleanup needed"}
+
+            # Separate different types of messages
+            regular_messages = []
+            context_snapshots = []
+            context_entries = []
+
+            for message in session.history:
+                metadata = message.get("metadata", {})
+
+                if metadata.get("is_context_snapshot"):
+                    context_snapshots.append(message)
+                elif metadata.get("is_context_entry"):
+                    context_entries.append(message)
+                else:
+                    regular_messages.append(message)
+
+            # Keep most recent regular messages
+            messages_to_keep = regular_messages[-keep_count:]
+            cleanup_stats["regular_messages_kept"] = len(messages_to_keep)
+
+            # Keep most recent context snapshots (if not removing)
+            if not remove_old_snapshots:
+                recent_snapshots = context_snapshots[-5:]  # Keep last 5 snapshots
+                messages_to_keep.extend(recent_snapshots)
+            else:
+                cleanup_stats["context_snapshots_removed"] = len(context_snapshots)
+
+            # Keep persistent context entries
+            persistent_entries = [
+                entry for entry in context_entries
+                if entry.get("persistent", True)
+            ]
+            messages_to_keep.extend(persistent_entries)
+            cleanup_stats["context_entries_removed"] = len(context_entries) - len(persistent_entries)
+
+            # Sort by timestamp and update session
+            messages_to_keep.sort(key=lambda x: x.get("timestamp", ""))
+            session.history = messages_to_keep
+
+            cleanup_stats.update({
+                "final_message_count": len(session.history),
+                "cleanup_performed": True,
+                "messages_removed": cleanup_stats["original_message_count"] - len(session.history)
+            })
+
+            rprint(f"Session cleanup completed: {cleanup_stats['messages_removed']} messages removed")
+            return cleanup_stats
+
+        except Exception as e:
+            eprint(f"Failed to cleanup session context: {e}")
+            return {"error": str(e)}
+
+    def get_session_storage_stats(self) -> Dict[str, Any]:
+        """Get comprehensive session storage statistics"""
+        try:
+            stats = {
+                "context_manager_active": bool(self.context_manager),
+                "total_sessions": 0,
+                "session_details": {},
+                "storage_summary": {
+                    "total_messages": 0,
+                    "context_snapshots": 0,
+                    "context_entries": 0,
+                    "regular_messages": 0
+                }
+            }
+
+            if not self.context_manager:
+                return stats
+
+            stats["total_sessions"] = len(self.context_manager.session_managers)
+
+            for session_id, session in self.context_manager.session_managers.items():
+                session_stats = {
+                    "session_type": "chatsession" if hasattr(session, 'history') else "fallback",
+                    "message_count": 0,
+                    "context_snapshots": 0,
+                    "context_entries": 0,
+                    "regular_messages": 0,
+                    "storage_size_estimate": 0
+                }
+
+                if hasattr(session, 'history'):
+                    session_stats["message_count"] = len(session.history)
+
+                    for message in session.history:
+                        content_size = len(str(message))
+                        session_stats["storage_size_estimate"] += content_size
+
+                        metadata = message.get("metadata", {})
+                        if metadata.get("is_context_snapshot"):
+                            session_stats["context_snapshots"] += 1
+                        elif metadata.get("is_context_entry"):
+                            session_stats["context_entries"] += 1
+                        else:
+                            session_stats["regular_messages"] += 1
+
+                elif isinstance(session, dict) and 'history' in session:
+                    session_stats["message_count"] = len(session['history'])
+                    session_stats["regular_messages"] = len(session['history'])
+                    session_stats["storage_size_estimate"] = sum(len(str(msg)) for msg in session['history'])
+
+                stats["session_details"][session_id] = session_stats
+
+                # Update totals
+                stats["storage_summary"]["total_messages"] += session_stats["message_count"]
+                stats["storage_summary"]["context_snapshots"] += session_stats["context_snapshots"]
+                stats["storage_summary"]["context_entries"] += session_stats["context_entries"]
+                stats["storage_summary"]["regular_messages"] += session_stats["regular_messages"]
+
+            # Estimate total storage size
+            stats["storage_summary"]["estimated_total_size_kb"] = sum(
+                details["storage_size_estimate"] for details in stats["session_details"].values()
+            ) / 1024
+
+            return stats
+
+        except Exception as e:
+            eprint(f"Failed to get session storage stats: {e}")
+            return {"error": str(e)}
+
+    def list_available_checkpoints(self, max_age_hours: int = 168) -> List[Dict[str, Any]]:  # Default 1 week
+        """List all available checkpoints with metadata"""
+        try:
+            from toolboxv2 import get_app
+            folder = str(get_app().data_dir) + '/Agents/checkpoint/' + self.amd.name
+
+            if not os.path.exists(folder):
+                return []
+
+            checkpoints = []
+            for file in os.listdir(folder):
+                if file.endswith('.pkl') and file.startswith('agent_checkpoint_'):
+                    filepath = os.path.join(folder, file)
+                    try:
+                        # Get file info
+                        file_stat = os.stat(filepath)
+                        file_size = file_stat.st_size
+                        modified_time = datetime.fromtimestamp(file_stat.st_mtime)
+
+                        # Extract timestamp from filename
+                        timestamp_str = file.replace('agent_checkpoint_', '').replace('.pkl', '')
+                        if timestamp_str == 'final_checkpoint':
+                            checkpoint_time = modified_time
+                            checkpoint_type = "final"
+                        else:
+                            checkpoint_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                            checkpoint_type = "regular"
+
+                        # Check age
+                        age_hours = (datetime.now() - checkpoint_time).total_seconds() / 3600
+                        if age_hours <= max_age_hours:
+
+                            # Try to load checkpoint metadata without full loading
+                            metadata = {}
+                            try:
+                                with open(filepath, 'rb') as f:
+                                    checkpoint = pickle.load(f)
+                                metadata = {
+                                    "tasks_count": len(checkpoint.task_state) if checkpoint.task_state else 0,
+                                    "world_model_entries": len(checkpoint.world_model) if checkpoint.world_model else 0,
+                                    "session_id": checkpoint.metadata.get("session_id", "unknown") if hasattr(
+                                        checkpoint, 'metadata') and checkpoint.metadata else "unknown",
+                                    "last_query": checkpoint.metadata.get("last_query", "unknown")[:100] if hasattr(
+                                        checkpoint, 'metadata') and checkpoint.metadata else "unknown"
+                                }
+                            except:
+                                metadata = {"load_error": True}
+
+                            checkpoints.append({
+                                "filepath": filepath,
+                                "filename": file,
+                                "checkpoint_type": checkpoint_type,
+                                "timestamp": checkpoint_time.isoformat(),
+                                "age_hours": round(age_hours, 1),
+                                "file_size_kb": round(file_size / 1024, 1),
+                                "metadata": metadata
+                            })
+
+                    except Exception as e:
+                        import traceback
+                        print(traceback.format_exc())
+                        wprint(f"Could not analyze checkpoint file {file}: {e}")
+                        continue
+
+            # Sort by timestamp (newest first)
+            checkpoints.sort(key=lambda x: x["timestamp"], reverse=True)
+
+            return checkpoints
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            eprint(f"Failed to list checkpoints: {e}")
+            return []
+
+    async def delete_old_checkpoints(self, keep_count: int = 5, max_age_hours: int = 168) -> Dict[str, Any]:
+        """Delete old checkpoints, keeping the most recent ones"""
+        try:
+            checkpoints = self.list_available_checkpoints(
+                max_age_hours=max_age_hours * 2)  # Look further back for deletion
+
+            deleted_count = 0
+            deleted_size_kb = 0
+            errors = []
+
+            if len(checkpoints) > keep_count:
+                # Keep the newest, delete the rest (except final checkpoint)
+                to_delete = checkpoints[keep_count:]
+
+                for checkpoint in to_delete:
+                    if checkpoint["checkpoint_type"] != "final":  # Never delete final checkpoint
+                        try:
+                            os.remove(checkpoint["filepath"])
+                            deleted_count += 1
+                            deleted_size_kb += checkpoint["file_size_kb"]
+                            rprint(f"Deleted old checkpoint: {checkpoint['filename']}")
+                        except Exception as e:
+                            import traceback
+                            print(traceback.format_exc())
+                            errors.append(f"Failed to delete {checkpoint['filename']}: {e}")
+
+            # Also delete checkpoints older than max_age_hours
+            old_checkpoints = [cp for cp in checkpoints if
+                               cp["age_hours"] > max_age_hours and cp["checkpoint_type"] != "final"]
+            for checkpoint in old_checkpoints:
+                if checkpoint not in checkpoints[keep_count:]:  # Don't double-delete
+                    try:
+                        os.remove(checkpoint["filepath"])
+                        deleted_count += 1
+                        deleted_size_kb += checkpoint["file_size_kb"]
+                        rprint(f"Deleted aged checkpoint: {checkpoint['filename']}")
+                    except Exception as e:
+                        import traceback
+                        print(traceback.format_exc())
+                        errors.append(f"Failed to delete {checkpoint['filename']}: {e}")
+
+            return {
+                "success": True,
+                "deleted_count": deleted_count,
+                "freed_space_kb": round(deleted_size_kb, 1),
+                "remaining_checkpoints": len(checkpoints) - deleted_count,
+                "errors": errors
+            }
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            eprint(f"Failed to delete old checkpoints: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "deleted_count": 0
+            }
 
     # ===== TOOL AND NODE MANAGEMENT =====
     def _get_tool_analysis_path(self) -> str:
@@ -6697,6 +9639,46 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         folder = str(get_app().data_dir) + '/Agents/capabilities/' + self.amd.name
         os.makedirs(folder, exist_ok=True)
         return folder + '/tool_capabilities.json'
+
+    def _get_context_path(self, session_id=None) -> str:
+        """Get path for tool analysis cache"""
+        from toolboxv2 import get_app
+        folder = str(get_app().data_dir) + '/Agents/context/' + self.amd.name
+        os.makedirs(folder, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_suffix = f"_session_{session_id}" if session_id else ""
+        filepath = f"agent_context_{self.amd.name}_{timestamp}{session_suffix}.json"
+        return folder + f'/{filepath}'
+
+    def add_first_class_tool(self, tool_func: Callable, name: str, description: str):
+        """
+        Add a first-class meta-tool that can be used by the LLMReasonerNode.
+        These are different from regular tools - they control agent sub-systems.
+
+        Args:
+            tool_func: The function to register as a meta-tool
+            name: Name of the meta-tool
+            description: Description of when and how to use it
+        """
+
+        # Validate the tool function
+        if not callable(tool_func):
+            raise ValueError("Tool function must be callable")
+
+        # Register in the reasoner's meta-tool registry (if reasoner exists)
+        if hasattr(self.task_flow, 'llm_reasoner'):
+            if not hasattr(self.task_flow.llm_reasoner, 'meta_tools_registry'):
+                self.task_flow.llm_reasoner.meta_tools_registry = {}
+
+            self.task_flow.llm_reasoner.meta_tools_registry[name] = {
+                "function": tool_func,
+                "description": description,
+                "added_at": datetime.now().isoformat()
+            }
+
+            rprint(f"First-class meta-tool added: {name}")
+        else:
+            wprint("LLMReasonerNode not available for first-class tool registration")
 
     async def add_tool(self, tool_func: Callable, name: str = None, description: str = None, is_new=False):
         """Enhanced tool addition with intelligent analysis"""
@@ -6726,7 +9708,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         if is_new:
             await self._analyze_tool_capabilities(tool_name, tool_description)
 
-        logger.info(f"Tool added with analysis: {tool_name}")
+        rprint(f"Tool added with analysis: {tool_name}")
 
     async def _analyze_tool_capabilities(self, tool_name: str, description: str):
         """Analyze tool capabilities with LLM for smart usage"""
@@ -6739,9 +9721,9 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 # Validate cached data against the Pydantic model
                 ToolAnalysis.model_validate(existing_analysis[tool_name])
                 self._tool_capabilities[tool_name] = existing_analysis[tool_name]
-                logger.info(f"Loaded and validated cached analysis for {tool_name}")
+                rprint(f"Loaded and validated cached analysis for {tool_name}")
             except ValidationError as e:
-                logger.warning(f"Cached data for {tool_name} is invalid and will be regenerated: {e}")
+                wprint(f"Cached data for {tool_name} is invalid and will be regenerated: {e}")
                 del self._tool_capabilities[tool_name]
 
         if not LITELLM_AVAILABLE:
@@ -6776,6 +9758,10 @@ Example for a "get_user_name" tool:
 - Complex: User context in multi-step tasks, addressing user directly
 - Contextual: Any response that could be personalized
 
+Rule! no additional comments or text in the format !
+schema:
+ {yaml.dump(ToolAnalysis.model_json_schema())}
+
 Respond in YAML format:
 Example:
 ```yaml
@@ -6807,6 +9793,7 @@ tool_complexity: low/medium/high
                 response = await self.a_run_llm_completion(
                     model=self.amd.complex_llm_model,
                     messages=[{"role": "user", "content": prompt}],
+                    with_context=False,
                     temperature=0.3,
                     max_tokens=1000,
                     task_id=f"tool_analysis_{tool_name}"
@@ -6829,11 +9816,13 @@ tool_complexity: low/medium/high
                 await self._save_tool_analysis()
 
                 validated_analysis = ToolAnalysis.model_validate(analysis)
-                logger.info(f"Generated intelligent analysis for {tool_name}")
+                rprint(f"Generated intelligent analysis for {tool_name}")
                 break
 
             except Exception as e:
-                logger.error(f"Tool analysis failed for {tool_name}: {e}")
+                import traceback
+                print(traceback.format_exc())
+                eprint(f"Tool analysis failed for {tool_name}: {e}")
                 # Fallback
                 self._tool_capabilities[tool_name] = {
                     "primary_function": description,
@@ -6849,8 +9838,26 @@ tool_complexity: low/medium/high
                 with open(self.tool_analysis_file, 'r') as f:
                     return json.load(f)
         except Exception as e:
-            logger.warning(f"Could not load tool analysis: {e}")
+            wprint(f"Could not load tool analysis: {e}")
         return {}
+
+
+    async def save_context_to_file(self, session_id: str = None) -> bool:
+        """Save current context to file"""
+        try:
+            context = await self.get_context(session_id=session_id, format_for_llm=False)
+
+            filepath = self._get_context_path(session_id)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(context, f, indent=2, ensure_ascii=False, default=str)
+
+            rprint(f"Context saved to: {filepath}")
+            return True
+
+        except Exception as e:
+            eprint(f"Failed to save context: {e}")
+            return False
 
     async def _save_tool_analysis(self):
         """Save tool analysis to cache"""
@@ -6858,12 +9865,12 @@ tool_complexity: low/medium/high
             with open(self.tool_analysis_file, 'w') as f:
                 json.dump(self._tool_capabilities, f, indent=2)
         except Exception as e:
-            logger.error(f"Could not save tool analysis: {e}")
+            eprint(f"Could not save tool analysis: {e}")
 
     def add_custom_flow(self, flow: AsyncFlow, name: str):
         """Add a custom flow for dynamic execution"""
         self.add_tool(flow.run_async, name=name, description=f"Custom flow: {flow.__class__.__name__}")
-        logger.info(f"Custom node added: {name}")
+        rprint(f"Custom node added: {name}")
 
     def get_tool_by_name(self, tool_name: str) -> Callable | None:
         """Get tool function by name"""
@@ -6874,7 +9881,7 @@ tool_complexity: low/medium/high
         Asynchronously finds a function by its string name, executes it with
         the given arguments, and returns the result.
         """
-        logger.info(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
+        rprint(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
         target_function = self.get_tool_by_name(function_name)
 
         if not target_function:
@@ -6888,37 +9895,210 @@ tool_complexity: low/medium/high
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
 
-            logger.info(f"Function {function_name} completed successfully with result: {result}")
+            rprint(f"Function {function_name} completed successfully with result: {result}")
             return result
 
         except Exception as e:
-            logger.error(f"Function {function_name} execution failed: {e}")
+            eprint(f"Function {function_name} execution failed: {e}")
             raise
-    async def execute_custom_node(self, node_name: str, **kwargs) -> Any:
-        """Execute a custom node dynamically"""
-        if not hasattr(self, '_node_registry') or node_name not in self._node_registry:
-            raise ValueError(f"Node '{node_name}' not found")
 
-        node = self._node_registry[node_name]
+    # ===== FORMATTING =====
 
-        # Create temporary shared state with kwargs
-        temp_shared = self.shared.copy()
-        temp_shared.update(kwargs)
+    async def a_format_class(self,
+                             pydantic_model: type[BaseModel],
+                             prompt: str,
+                             message_context: list[dict] | None = None,
+                             max_retries: int = 2) -> dict[str, Any]:
+        """
+        State-of-the-art LLM-based structured data formatting using Pydantic models.
 
-        # Execute the node
-        result = await node.run_async(temp_shared)
+        Args:
+            pydantic_model: The Pydantic model class to structure the response
+            prompt: The main prompt for the LLM
+            message_context: Optional conversation context messages
+            max_retries: Maximum number of retry attempts
 
-        # Merge back any changes
-        self.shared.update(temp_shared)
+        Returns:
+            dict: Validated structured data matching the Pydantic model
 
-        return result
+        Raises:
+            ValidationError: If the LLM response cannot be validated against the model
+            RuntimeError: If all retry attempts fail
+        """
 
+        if not LITELLM_AVAILABLE:
+            raise RuntimeError("LiteLLM is required for structured formatting but not available")
+
+        # Generate schema documentation
+        schema = pydantic_model.model_json_schema()
+        model_name = pydantic_model.__name__
+
+        # Create enhanced prompt with schema
+        enhanced_prompt = f"""
+    {prompt}
+
+    CRITICAL FORMATTING REQUIREMENTS:
+    1. Respond ONLY in valid YAML format
+    2. Follow the exact schema structure provided
+    3. Use appropriate data types (strings, lists, numbers, booleans)
+    4. Include ALL required fields
+    5. No additional comments, explanations, or text outside the YAML
+
+    SCHEMA FOR {model_name}:
+    {yaml.dump(schema, default_flow_style=False, indent=2)}
+
+    EXAMPLE OUTPUT FORMAT:
+    ```yaml
+    # Your response here following the schema exactly
+    field_name: "value"
+    list_field:
+      - "item1"
+      - "item2"
+    boolean_field: true
+    number_field: 42
+Respond in YAML format only:
+"""
+        # Prepare messages
+        messages = []
+        if message_context:
+            messages.extend(message_context)
+        messages.append({"role": "user", "content": enhanced_prompt})
+
+        # Retry logic with progressive adjustments
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Adjust parameters based on attempt
+                temperature = 0.1 + (attempt * 0.1)  # Increase temperature slightly on retries
+                max_tokens = min(2000 + (attempt * 500), 4000)  # Increase token limit on retries
+
+                rprint(f"[{model_name}] Attempt {attempt + 1}/{max_retries + 1} (temp: {temperature})")
+
+                # Generate LLM response
+                response = await self.a_run_llm_completion(
+                    model=self.amd.complex_llm_model,
+                    messages=messages,
+                    with_context=False,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    task_id=f"format_{model_name.lower()}_{attempt}"
+                )
+
+                if not response or not response.strip():
+                    raise ValueError("Empty response from LLM")
+
+                # Extract YAML content with multiple fallback strategies
+                yaml_content = self._extract_yaml_content(response)
+
+                if not yaml_content:
+                    raise ValueError("No valid YAML content found in response")
+
+                # Parse YAML
+                try:
+                    parsed_data = yaml.safe_load(yaml_content)
+                except yaml.YAMLError as e:
+                    raise ValueError(f"Invalid YAML syntax: {e}")
+
+                if not isinstance(parsed_data, dict):
+                    raise ValueError(f"Expected dict, got {type(parsed_data)}")
+
+                # Validate against Pydantic model
+                try:
+                    validated_instance = pydantic_model.model_validate(parsed_data)
+                    validated_data = validated_instance.model_dump()
+
+                    rprint(f"✅ Successfully formatted {model_name} on attempt {attempt + 1}")
+                    return validated_data
+
+                except ValidationError as e:
+                    detailed_errors = []
+                    for error in e.errors():
+                        field_path = " -> ".join(str(x) for x in error['loc'])
+                        detailed_errors.append(f"Field '{field_path}': {error['msg']}")
+
+                    error_msg = f"Validation failed:\n" + "\n".join(detailed_errors)
+                    raise ValueError(error_msg)
+
+            except Exception as e:
+                last_error = e
+                wprint(f"[{model_name}] Attempt {attempt + 1} failed: {str(e)}")
+
+                if attempt < max_retries:
+                    # Add error feedback for next attempt
+                    error_feedback = f"\n\nPREVIOUS ATTEMPT FAILED: {str(e)}\nPlease correct the issues and provide valid YAML matching the schema exactly."
+                    messages[-1]["content"] = enhanced_prompt + error_feedback
+
+                    # Brief delay before retry
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                else:
+                    eprint(f"[{model_name}] All {max_retries + 1} attempts failed")
+
+        # All attempts failed
+        raise RuntimeError(f"Failed to format {model_name} after {max_retries + 1} attempts. Last error: {last_error}")
+
+    def _extract_yaml_content(self, response: str) -> str:
+        """Extract YAML content from LLM response with multiple strategies"""
+        # Strategy 1: Extract from code blocks
+        if "```yaml" in response:
+            try:
+                yaml_content = response.split("```yaml")[1].split("```")[0].strip()
+                if yaml_content:
+                    return yaml_content
+            except IndexError:
+                pass
+
+        # Strategy 2: Extract from generic code blocks
+        if "```" in response:
+            try:
+                parts = response.split("```")
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:  # Odd indices are inside code blocks
+                        # Skip if it starts with a language identifier
+                        lines = part.strip().split('\n')
+                        if lines and not lines[0].strip().isalpha():
+                            return part.strip()
+                        elif len(lines) > 1:
+                            # Try without first line
+                            return '\n'.join(lines[1:]).strip()
+            except:
+                pass
+
+        # Strategy 3: Look for YAML-like patterns
+        lines = response.split('\n')
+        yaml_lines = []
+        in_yaml = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Detect start of YAML-like content
+            if ':' in stripped and not stripped.startswith('#'):
+                in_yaml = True
+                yaml_lines.append(line)
+            elif in_yaml:
+                if stripped == '' or stripped.startswith(' ') or stripped.startswith('-'):
+                    yaml_lines.append(line)
+                elif ':' in stripped:
+                    yaml_lines.append(line)
+                else:
+                    # Potential end of YAML
+                    break
+
+        if yaml_lines:
+            return '\n'.join(yaml_lines).strip()
+
+        # Strategy 4: Return entire response if it looks like YAML
+        if ':' in response and not response.strip().startswith('<'):
+            return response.strip()
+
+        return ""
     # ===== SERVER SETUP =====
 
     def setup_a2a_server(self, host: str = "0.0.0.0", port: int = 5000, **kwargs):
         """Setup A2A server for bidirectional communication"""
         if not A2A_AVAILABLE:
-            logger.warning("A2A not available, cannot setup server")
+            wprint("A2A not available, cannot setup server")
             return
 
         try:
@@ -6942,15 +10122,15 @@ tool_complexity: low/medium/high
                 response = await self.a_run(query, session_id=session_id)
                 return {"response": response}
 
-            logger.info(f"A2A server setup on {host}:{port}")
+            rprint(f"A2A server setup on {host}:{port}")
 
         except Exception as e:
-            logger.error(f"Failed to setup A2A server: {e}")
+            eprint(f"Failed to setup A2A server: {e}")
 
     def setup_mcp_server(self, host: str = "0.0.0.0", port: int = 8000, name: str = None, **kwargs):
         """Setup MCP server"""
         if not MCP_AVAILABLE:
-            logger.warning("MCP not available, cannot setup server")
+            wprint("MCP not available, cannot setup server")
             return
 
         try:
@@ -6963,10 +10143,10 @@ tool_complexity: low/medium/high
                 """Execute agent with given query"""
                 return await self.a_run(query, session_id=session_id)
 
-            logger.info(f"MCP server setup: {server_name}")
+            rprint(f"MCP server setup: {server_name}")
 
         except Exception as e:
-            logger.error(f"Failed to setup MCP server: {e}")
+            eprint(f"Failed to setup MCP server: {e}")
 
     # ===== LIFECYCLE MANAGEMENT =====
 
@@ -6981,8 +10161,158 @@ tool_complexity: low/medium/high
             tasks.append(asyncio.create_task(self.mcp_server.run()))
 
         if tasks:
-            logger.info(f"Starting {len(tasks)} servers...")
+            rprint(f"Starting {len(tasks)} servers...")
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    def clear_context(self, session_id: str = None) -> bool:
+        """Clear context über UnifiedContextManager mit Session-spezifischer Unterstützung"""
+        try:
+            #Clear über Context Manager
+            if session_id:
+                # Clear specific session
+                if session_id in self.context_manager.session_managers:
+                    session = self.context_manager.session_managers[session_id]
+                    if hasattr(session, 'history'):
+                        session.history = []
+                    elif isinstance(session, dict) and 'history' in session:
+                        session['history'] = []
+
+                    # Remove from session managers
+                    del self.context_manager.session_managers[session_id]
+
+                    # Clear variable manager scope for this session
+                    if self.variable_manager:
+                        scope_name = f'session_{session_id}'
+                        if scope_name in self.variable_manager.scopes:
+                            del self.variable_manager.scopes[scope_name]
+
+                    rprint(f"Context cleared for session: {session_id}")
+            else:
+                # Clear all sessions
+                for session_id, session in self.context_manager.session_managers.items():
+                    if hasattr(session, 'history'):
+                        session.history = []
+                    elif isinstance(session, dict) and 'history' in session:
+                        session['history'] = []
+
+                self.context_manager.session_managers = {}
+                rprint("Context cleared for all sessions")
+
+            # Clear context cache
+            self.context_manager._invalidate_cache(session_id)
+
+            # Clear current execution context in shared
+            context_keys_to_clear = [
+                "current_query", "current_response", "current_plan", "tasks",
+                "results", "task_plans", "session_data", "formatted_context",
+                "synthesized_response", "quality_assessment", "plan_adaptations",
+                "executor_performance", "llm_tool_conversation", "aggregated_context"
+            ]
+
+            for key in context_keys_to_clear:
+                if key in self.shared:
+                    if isinstance(self.shared[key], dict):
+                        self.shared[key] = {}
+                    elif isinstance(self.shared[key], list):
+                        self.shared[key] = []
+                    else:
+                        self.shared[key] = None
+
+            # Clear variable manager scopes (except core system variables)
+            if hasattr(self, 'variable_manager'):
+                # Clear user, results, tasks scopes
+                self.variable_manager.register_scope('user', {})
+                self.variable_manager.register_scope('results', {})
+                self.variable_manager.register_scope('tasks', {})
+                # Reset cache
+                self.variable_manager._cache.clear()
+
+            # Reset execution state
+            self.is_running = False
+            self.is_paused = False
+            self.shared["system_status"] = "idle"
+
+            # Clear progress tracking
+            if hasattr(self, 'progress_tracker'):
+                self.progress_tracker.reset_session_metrics()
+
+            return True
+
+        except Exception as e:
+            eprint(f"Failed to clear context: {e}")
+            return False
+
+    async def clean_memory(self, deep_clean: bool = False) -> bool:
+        """Clean memory and context of the agent"""
+        try:
+            # Clear current context first
+            self.clear_context()
+
+            # Clean world model
+            self.shared["world_model"] = {}
+            self.world_model = {}
+
+            # Clean performance metrics
+            self.shared["performance_metrics"] = {}
+
+            # Deep clean session storage
+            session_managers = self.shared.get("session_managers", {})
+            if session_managers:
+                for manager_name, manager in session_managers.items():
+                    if hasattr(manager, 'clear_all_history'):
+                        await manager.clear_all_history()
+                    elif hasattr(manager, 'clear_history'):
+                        manager.clear_history()
+
+            # Clear session managers entirely
+            self.shared["session_managers"] = {}
+            self.shared["session_initialized"] = False
+
+            # Clean variable manager completely
+            if hasattr(self, 'variable_manager'):
+                # Reinitialize with clean state
+                self.variable_manager = VariableManager({}, self.shared)
+                self._setup_variable_scopes()
+
+            # Clean tool analysis cache if deep clean
+            if deep_clean:
+                self._tool_capabilities = {}
+                self._tool_analysis_cache = {}
+
+                # Remove tool analysis file
+                if hasattr(self, 'tool_analysis_file') and os.path.exists(self.tool_analysis_file):
+                    try:
+                        os.remove(self.tool_analysis_file)
+                        rprint("Removed tool analysis cache file")
+                    except:
+                        pass
+
+            # Clean checkpoint data
+            self.checkpoint_data = {}
+            self.last_checkpoint = None
+
+            # Clean execution history
+            if hasattr(self.task_flow, 'executor_node'):
+                self.task_flow.executor_node.execution_history = []
+                self.task_flow.executor_node.results_store = {}
+
+            # Clean context manager sessions
+            if hasattr(self.task_flow, 'context_manager'):
+                self.task_flow.context_manager.session_managers = {}
+
+            # Clean LLM call statistics
+            self.shared.pop("llm_call_stats", None)
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+
+            rprint(f"Memory cleaned (deep_clean: {deep_clean})")
+            return True
+
+        except Exception as e:
+            eprint(f"Failed to clean memory: {e}")
+            return False
 
     async def close(self):
         """Clean shutdown"""
@@ -7004,7 +10334,7 @@ tool_complexity: low/medium/high
         if self.mcp_server:
             await self.mcp_server.close()
 
-        logger.info("Agent shutdown complete")
+        rprint("Agent shutdown complete")
 
     @property
     def total_cost(self) -> float:
@@ -7038,7 +10368,7 @@ tool_complexity: low/medium/high
             },
             "conversation": {
                 "turns": len(self.shared.get("conversation_history", [])),
-                "session_id": self.shared.get("session_id", "default"),
+                "session_id": self.shared.get("session_id", self.active_session),
                 "current_user": self.shared.get("user_id"),
                 "last_query": self.shared.get("current_query", "")[:100] + "..." if len(
                     self.shared.get("current_query", "")) > 100 else self.shared.get("current_query", "")
@@ -7169,7 +10499,7 @@ tool_complexity: low/medium/high
 
         # Pretty print using EnhancedVerboseOutput
         try:
-            from toolboxv2.mods.isaa.CodingAgent.live import EnhancedVerboseOutput
+            from toolboxv2.mods.isaa.extras.verbose_output import EnhancedVerboseOutput
             verbose_output = EnhancedVerboseOutput(verbose=True)
 
             # Header
@@ -7382,10 +10712,123 @@ def _annotation_to_str(annotation: Any) -> str:
 
     return repr(annotation)
 
+
+def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> List[Tuple[str, str]]:
+    """Extract META_TOOL_CALL with proper bracket balance handling"""
+    import re
+
+    matches = []
+    pattern = r'META_TOOL_CALL:\s*(\w+)\(' if prefix == "META_TOOL_CALL:" else r'TOOL_CALL:\s*(\w+)\('
+
+    for match in re.finditer(pattern, text):
+        tool_name = match.group(1)
+        start_pos = match.end() - 1  # Position of opening parenthesis
+
+        # Find matching closing parenthesis with bracket balancing
+        paren_count = 0
+        pos = start_pos
+        in_string = False
+        string_char = None
+        escape_next = False
+
+        while pos < len(text):
+            char = text[pos]
+
+            if escape_next:
+                escape_next = False
+            elif char == '\\':
+                escape_next = True
+            elif not in_string:
+                if char in ['"', "'"]:
+                    in_string = True
+                    string_char = char
+                elif char == '(':
+                    paren_count += 1
+                elif char == ')':
+                    paren_count -= 1
+                    if paren_count == 0:
+                        # Found matching closing parenthesis
+                        args_str = text[start_pos + 1:pos]
+                        matches.append((tool_name, args_str))
+                        break
+            else:  # in_string is True
+                if char == string_char:
+                    in_string = False
+                    string_char = None
+
+            pos += 1
+
+    return matches
+
+
+def _parse_tool_args(args_str: str) -> Dict[str, Any]:
+    """Parse tool arguments from string format with enhanced error handling"""
+    import ast
+
+    # Handle simple key=value format
+    if '=' in args_str and not args_str.strip().startswith('{'):
+        args = {}
+        # Split by commas but handle nested structures
+        parts = []
+        current_part = ""
+        bracket_count = 0
+        in_quotes = False
+        quote_char = None
+
+        for char in args_str:
+            if char in ['"', "'"] and not in_quotes:
+                in_quotes = True
+                quote_char = char
+            elif char == quote_char and in_quotes:
+                in_quotes = False
+                quote_char = None
+            elif char in ['[', '{'] and not in_quotes:
+                bracket_count += 1
+            elif char in [']', '}'] and not in_quotes:
+                bracket_count -= 1
+            elif char == ',' and bracket_count == 0 and not in_quotes:
+                parts.append(current_part.strip())
+                current_part = ""
+                continue
+
+            current_part += char
+
+        if current_part.strip():
+            parts.append(current_part.strip())
+
+        for part in parts:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                key = key.strip().strip('"').strip("'")
+                value = value.strip()
+
+                # Try to evaluate the value
+                try:
+                    if value.startswith('[') or value.startswith('{'):
+                        args[key] = ast.literal_eval(value)
+                    elif value.lower() in ['true', 'false']:
+                        args[key] = value.lower() == 'true'
+                    elif value.replace('.', '').replace('-', '').isdigit():
+                        args[key] = float(value) if '.' in value else int(value)
+                    else:
+                        # Remove quotes if present
+                        args[key] = value.strip('"').strip("'")
+                except:
+                    args[key] = value.strip('"').strip("'")
+
+        return args
+
+    # Handle JSON-like format
+    try:
+        return ast.literal_eval(f"{{{args_str}}}")
+    except:
+        return {"raw_args": args_str}
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
 
 if __name__ == "__main__2":
+
+
     # Simple test
     async def _agent():
         amd = AgentModelData(
@@ -7401,6 +10844,26 @@ if __name__ == "__main__2":
             )
         )
         agent = FlowAgent(amd, verbose=True)
+
+        # Load latest checkpoint with full history restoration
+        result = await agent.load_latest_checkpoint(auto_restore_history=True, max_age_hours=24)
+
+        if result["success"]:
+            print(f"Loaded checkpoint from {result['checkpoint_timestamp']}")
+            print(f"Restored {result['restore_stats']['conversation_history_entries']} conversation entries")
+            print(f"Restored {result['restore_stats']['tasks_restored']} tasks")
+            print(f"Restored {result['restore_stats']['world_model_entries']} world model entries")
+        else:
+            print(f"Failed to load checkpoint: {result['error']}")
+
+        # List available checkpoints
+        checkpoints = agent.list_available_checkpoints(max_age_hours=168)  # 1 week
+        for cp in checkpoints:
+            print(f"Checkpoint: {cp['filename']} (age: {cp['age_hours']}h, size: {cp['file_size_kb']}kb)")
+
+        # Clean up old checkpoints
+        cleanup_result = await agent.delete_old_checkpoints(keep_count=5, max_age_hours=168)
+        print(f"Deleted {cleanup_result['deleted_count']} old checkpoints, freed {cleanup_result['freed_space_kb']}kb")
 
         def get_user_name():
             return "Markin"
@@ -7429,5 +10892,3 @@ if __name__ == "__main__2":
         await agent.close()
 
     asyncio.run(_agent())
-
-

@@ -605,10 +605,10 @@ class TextSplitter:
         return chunks
 
 class KnowledgeBase:
-    def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
+    def __init__(self, embedding_dim: int = 256, similarity_threshold: float = 0.61, batch_size: int = 64,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "FastVectorStoreO",
+                 vis_class:str | None = "FaissVectorStore",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,

@@ -23,7 +23,7 @@ def stram_print(text):
 
 
 def print_prompt(msg_data):
-    messages = msg_data.get('massages', []) if isinstance(msg_data, dict) else msg_data
+    messages = msg_data.get('massages', msg_data.get('messages', [])) if isinstance(msg_data, dict) else msg_data
     if len(messages) == 0:
         print(Style.YELLOW("NO PROMPT to print"))
         return

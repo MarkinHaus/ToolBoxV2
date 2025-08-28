@@ -1,3 +1,6 @@
+import platform
+import shutil
+
 import asyncio
 import json
 import yaml
@@ -50,6 +53,29 @@ from toolboxv2 import get_logger
 
 logger = get_logger()
 
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
+
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
+
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
+
+    return "/bin/sh", "-c"
 
 # ===== PRODUCTION CONFIGURATION MODELS =====
 
@@ -320,7 +346,8 @@ class FlowAgentBuilder:
             process_env.update(env)
 
             # Build full command
-            full_command = [command] + args
+            shell_exe, cmd_flag = detect_shell()
+            full_command = [shell_exe, cmd_flag, command] + args
 
             # Create the subprocess
             process = await asyncio.create_subprocess_exec(
