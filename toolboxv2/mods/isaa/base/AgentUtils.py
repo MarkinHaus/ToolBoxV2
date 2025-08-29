@@ -92,11 +92,13 @@ class Scripts:
         self.scripts = {}
         self.filename = filename
 
-    def create_script(self, name:str, description:str, content:str, script_type="py"):
+    def create_script(self, name:str, description:str, content:str, script_type:str="py"):
         self.scripts[name] = {"description": description, "content": content, "type": script_type}
+        return "Script created!"
 
     def remove_script(self, name):
         del self.scripts[name]
+        return "Script removed!"
 
     def run_script(self, name):
         if name not in self.scripts:
@@ -235,7 +237,7 @@ class IsaaQuestionBinaryTree:
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = os.getenv("DEFAULTMODELSUMMERY"),
+                 default_model: str = os.getenv("BLITZMODEL"),
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_similarity_threshold: float = 0.61,
                  default_batch_size: int = 64,

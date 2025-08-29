@@ -89,7 +89,7 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
         str_file_changes = "\n\n".join(file_changes_for_prompt)
 
         # Summarize if the text is too long or if summarization is forced
-        if summarize or len(str_file_changes) > 3700:
+        if summarize or len(str_file_changes) > 370000:
             str_file_changes = await isaa.mas_text_summaries(str_file_changes, ref="file changes with context")
 
         # Create detailed prompt for ISAA with context about changes
@@ -103,7 +103,7 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
         with Spinner("Generating commit message..."):
             commit_message = await isaa.mini_task_completion(
                 mini_task=str_file_changes,
-                user_task="Generate a git commit message based on the following file content changes.",
+                user_task="Generate a git commit message based on the following file content changes. with key details!",
                 agent_name="GitCommitMessageGenerator"
             )
 

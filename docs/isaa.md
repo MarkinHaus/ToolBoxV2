@@ -60,7 +60,7 @@ async def initialize_isaa():
 
 ### 3.1. Configuration (`isaa.config`)
 The `isaa.config` dictionary holds various settings:
-*   `DEFAULTMODEL*`: Default LLM model identifiers for different agent types (e.g., `DEFAULTMODEL0`, `DEFAULTMODELCODE`). These can be overridden by environment variables.
+*   `*MODEL`: Default LLM model identifiers for different agent types (e.g., `FASTMODEL`, `COMPLEXMODEL`). These can be overridden by environment variables.
 *   `agents-name-list`: A list of registered agent names.
 *   `controller_file`: Path to the JSON file for `ControllerManager` (LLM modes).
 *   Other internal states and paths.

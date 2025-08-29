@@ -101,15 +101,14 @@ class Tools(MainTool, FileHandler):
         self.Name = "isaa"
         self.color = "VIOLET2"
         self.config = {'controller-init': False,
-                       'agents-name-list': [],
-                       "DEFAULTMODEL0": os.getenv("DEFAULTMODEL0", "ollama/llama3.1"),
-                       "DEFAULT_AUDIO_MODEL": os.getenv("DEFAULT_AUDIO_MODEL", "groq/whisper-large-v3-turbo"),
-                       "DEFAULTMODEL1": os.getenv("DEFAULTMODEL1", "ollama/llama3.1"),
-                       "DEFAULTMODELST": os.getenv("DEFAULTMODELST", "ollama/llama3.1"),
-                       "DEFAULTMODEL2": os.getenv("DEFAULTMODEL2", "ollama/llama3.1"),
-                       "DEFAULTMODELCODE": os.getenv("DEFAULTMODELCODE", "ollama/llama3.1"),
-                       "DEFAULTMODELSUMMERY": os.getenv("DEFAULTMODELSUMMERY", "ollama/llama3.1"),
-                       "DEFAULTMODEL_LF_TOOLS": os.getenv("DEFAULTMODEL_LF_TOOLS", "ollama/llama3.1"),
+                       'agents-name-list': [], # TODO Remain ComplexModel FastModel BlitzModel, AudioModel, (ImageModel[i/o], VideoModel[i/o]), SummaryModel
+                       "FASTMODEL": os.getenv("FASTMODEL", "ollama/llama3.1"),
+                       "AUDIOMODEL": os.getenv("AUDIOMODEL", "groq/whisper-large-v3-turbo"),
+                       "BLITZMODEL": os.getenv("BLITZMODEL", "ollama/llama3.1"),
+                       "COMPLEXMODEL": os.getenv("COMPLEXMODEL", "ollama/llama3.1"),
+                       "SUMMARYMODEL": os.getenv("SUMMARYMODEL", "ollama/llama3.1"),
+                       "IMAGEMODEL": os.getenv("IMAGEMODEL", "ollama/llama3.1"),
+                       "DEFAULTMODELEMBEDDING": os.getenv("DEFAULTMODELEMBEDDING", "gemini/text-embedding-004"),
                        }
         self.per_data = {}
         self.agent_data: dict[str, dict] = {}  # Will store AgentConfig dicts
@@ -376,8 +375,8 @@ class Tools(MainTool, FileHandler):
         # Create builder with agent-specific configuration
         config = AgentConfig(
             name=name,
-            fast_llm_model=self.config.get(f'DEFAULTMODEL{name.upper()}', self.config['DEFAULTMODEL0']),
-            complex_llm_model=self.config.get(f'DEFAULTMODEL{name.upper()}', self.config['DEFAULTMODEL1']),
+            fast_llm_model=self.config.get(f'{name.upper()}MODEL', self.config['FASTMODEL']),
+            complex_llm_model=self.config.get(f'{name.upper()}MODEL', self.config['COMPLEXMODEL']),
             system_message="You are a production-ready autonomous agent.",
             temperature=0.7,
             max_tokens_output=2048,
@@ -487,7 +486,7 @@ class Tools(MainTool, FileHandler):
         # Scripting tools
         builder.add_tool(self.scripts.run_script, "runScript", "Run a saved script")
         builder.add_tool(self.scripts.get_scripts_list, "listScripts", "List all available scripts")
-        builder.add_tool(self.scripts.create_script, "createScript", "Create a new script args name, description, content, type py or sh")
+        builder.add_tool(self.scripts.create_script, "createScript", "Create a new script args name, description, content, script_type py or sh")
         builder.add_tool(self.scripts.remove_script, "deleteScript", "Delete a script")
 
         # Add agent orchestration tool for specific agent types
@@ -924,7 +923,7 @@ class Tools(MainTool, FileHandler):
     # and specific summarization strategies. For now, keeping their structure,
     # but calls to self.format_class or self.mini_task_completion will become async.
 
-    async def mas_text_summaries(self, text, min_length=3600, ref=None):
+    async def mas_text_summaries(self, text, min_length=36000, ref=None):
         len_text = len(text)
         if len_text < min_length: return text
         key = self.one_way_hash(text, 'summaries', 'isaa')

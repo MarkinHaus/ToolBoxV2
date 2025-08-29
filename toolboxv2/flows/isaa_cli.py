@@ -571,7 +571,7 @@ class WorkspaceIsaasCli:
             ]
 
             response = await litellm.acompletion(
-                model=os.getenv("DEFAULTMODELEMVISUAL", "anthropic/claude-3-5-sonnet-20241022"),
+                model=os.getenv("IMAGEMODEL", "anthropic/claude-3-5-sonnet-20241022"),
                 messages=messages,
                 max_tokens=2048,
             )

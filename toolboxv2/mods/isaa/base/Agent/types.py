@@ -311,14 +311,6 @@ class DecisionTask(Task):
     decision_model: str = "fast"  # Welches LLM für Entscheidung
 
 
-@dataclass
-class CompoundTask(Task):
-    """Task der Sub-Tasks gruppiert"""
-    sub_task_ids: List[str] = field(default_factory=list)
-    execution_strategy: str = "sequential"  # "sequential" | "parallel"
-    success_criteria: str = ""  # Wann ist der Compound-Task erfolgreich?
-
-
 # Erweiterte Task-Erstellung
 def create_task(task_type: str, **kwargs) -> Task:
     """Factory für Task-Erstellung mit korrektem Typ"""
@@ -326,12 +318,10 @@ def create_task(task_type: str, **kwargs) -> Task:
         "llm_call": LLMTask,
         "tool_call": ToolTask,
         "decision": DecisionTask,
-        "compound": CompoundTask,
         "generic": Task,
         "LLMTask": LLMTask,
         "ToolTask": ToolTask,
         "DecisionTask": DecisionTask,
-        "CompoundTask": CompoundTask,
         "Task": Task,
     }
 

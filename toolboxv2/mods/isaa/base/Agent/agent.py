@@ -431,7 +431,10 @@ class TaskPlannerNode(AsyncNode):
 
             # Tasks in shared state für Executor verfügbar machen
             task_dict = {task.id: task for task in exec_res.tasks}
-            shared["tasks"].update(task_dict)
+            if "tasks" not in shared:
+                shared["tasks"] = task_dict
+            else:
+                shared["tasks"].update(task_dict)
 
             # Plan-Metadaten setzen
             shared["plan_created_at"] = datetime.now().isoformat()
@@ -542,7 +545,7 @@ focus on correct quotation and correct yaml format!
                 name=plan_data.get("plan_name", "Generated Plan"),
                 description=plan_data.get("description", f"Plan for: {prep_res['query']}"),
                 tasks=[
-                    [LLMTask, ToolTask, DecisionTask, CompoundTask, Task][["LLMTask", "ToolTask", "DecisionTask", "CompoundTask", "Task"].index(t.get("type"))](**t)
+                    [LLMTask, ToolTask, DecisionTask, Task][["LLMTask", "ToolTask", "DecisionTask", "Task"].index(t.get("type"))](**t)
                     for t in plan_data.get("tasks", [])
                 ],
                 execution_strategy=plan_data.get("execution_strategy", "sequential")
@@ -610,7 +613,7 @@ description: string
 execution_strategy: "sequential" | "parallel" | "mixed"
 tasks:
   - id: string
-    type: "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
+    type: "LLMTask" | "ToolTask" | "DecisionTask"
     description: string
     priority: int
     dependencies: [list of task ids]
@@ -678,7 +681,6 @@ TASK TYPES (Dataclass-Aligned)
 LLMTask: Step that uses a language model
 ToolTask: Step that calls an available tool
 DecisionTask: Step that decides routing between tasks
-CompoundTask: Step grouping sub-tasks
 
 YAML SCHEMA
 yamlCopyplan_name: string
@@ -686,7 +688,7 @@ description: string
 execution_strategy: "sequential" | "parallel" | "mixed"
 tasks:
   - id: string
-    type: "LLMTask" | "ToolTask" | "DecisionTask" | "CompoundTask"
+    type: "LLMTask" | "ToolTask" | "DecisionTask"
     description: string
     priority: int
     dependencies: [list of task ids]
@@ -758,7 +760,7 @@ Generate the adaptive execution plan:
         context_parts.append("### Intelligent Tool Analysis:")
 
         for tool_name, cap in capabilities.items():
-            context_parts.append(f"\n**{tool_name}:**")
+            context_parts.append(f"\n{tool_name}:")
             context_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
             context_parts.append(f"- Arguments: {yaml.dump(cap.get('args_schema', 'takes no arguments!'), default_flow_style=False)}")
 
@@ -2318,7 +2320,7 @@ class LLMToolNode(AsyncNode):
 
     def __init__(self, model: str = None, max_tool_calls: int = 5, **kwargs):
         super().__init__(**kwargs)
-        self.model = model or os.getenv("DEFAULTMODELST", "openrouter/qwen/qwen3-code")
+        self.model = model or os.getenv("COMPLEXMODEL", "openrouter/qwen/qwen3-code")
         self.max_tool_calls = max_tool_calls
         self.call_log = []
 
@@ -2424,7 +2426,7 @@ class LLMToolNode(AsyncNode):
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
                 conversation_history.append({"role": "user",
-                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue or provide your final response."})
+                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue with the next action do nor repeat or provide your final response."})
 
                 # Update variable manager with tool results
                 self._update_variables_with_results(tool_results, prep_res["variable_manager"])
@@ -2515,7 +2517,7 @@ class LLMToolNode(AsyncNode):
         analysis_parts = ["\n\n## Intelligent Tool Analysis"]
 
         for tool_name, cap in capabilities.items():
-            analysis_parts.append(f"\n**{tool_name}{cap.get('args_schema', '()')}:**")
+            analysis_parts.append(f"\n{tool_name}{cap.get('args_schema', '()')}:")
             analysis_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
 
             # Calculate relevance score
@@ -3994,7 +3996,7 @@ class LLMReasonerNode(AsyncNode):
         self.agent_instance = shared.get("agent_instance")
 
         # Enhanced variable manager integration
-        self.variable_manager = shared.get("variable_manager")
+        self.variable_manager = shared.get("variable_manager", self.agent_instance.variable_manager)
         context_manager = shared.get("context_manager")
 
         if self.variable_manager:
@@ -4129,12 +4131,12 @@ class LLMReasonerNode(AsyncNode):
                     self.current_reasoning_count += 1
                     if self.current_outline_step > len(self.outline.get("steps", [])):
                         progress_made["final_result"] = llm_response
+                        rprint("Final result reached forced by outline step count")
                     if self.current_outline_step < len(self.outline.get("steps", [])) and self.outline.get("steps", [])[self.current_outline_step].get("is_final", False):
                         progress_made["final_result"] = llm_response
+                        rprint("Final result reached forced by outline step count final step")
                 else:
-                    self.current_reasoning_count = 0
-
-
+                    self.current_reasoning_count -= 1
 
                 # Check for final result
                 if progress_made.get("final_result"):
@@ -4529,7 +4531,7 @@ Create the outline now:"""
         if formatted_context:
             recent_interaction = formatted_context.get("recent_interaction", "")
             if recent_interaction:
-                context_parts.append(f"Recent interaction: {recent_interaction[:100]}...")
+                context_parts.append(f"Recent interaction: {recent_interaction[:100000]}...")
 
         # Performance history
         if hasattr(self, 'historical_successful_patterns'):
@@ -4611,7 +4613,7 @@ Create the outline now:"""
                 # Extract key insights
                 insights = []
                 for entry in type_entries[-3:]:  # Last 3 reasoning entries
-                    content = entry.get("content", "")[:100] + "..."
+                    content = entry.get("content", "")[:1000] + "..."
                     insights.append(content)
                 if insights:
                     reasoning_summary += f"\nKey recent reasoning: {'; '.join(insights)}"
@@ -4621,7 +4623,7 @@ Create the outline now:"""
                 results_summary = f"Executed {len(type_entries)} meta-tool operations"
                 # Extract significant results
                 significant_results = [
-                    entry.get("content", "")[:80]
+                    entry.get("content", "")[:800]
                     for entry in type_entries
                     if len(entry.get("content", "")) > 50
                 ]
@@ -4660,7 +4662,7 @@ Create the outline now:"""
 
         task_summaries = []
         for i, task in enumerate(pending_tasks[:3], 1):
-            desc = task.get("description", "No description")[:50] + "..." if len(
+            desc = task.get("description", "No description")[:150] + "..." if len(
                 task.get("description", "")) > 50 else task.get("description", "")
             step_ref = task.get("outline_step_ref", "")
             step_info = f" ({step_ref})" if step_ref else ""
@@ -4728,7 +4730,7 @@ Create the outline now:"""
 
 {loop_warning}
 
-## CURRENT SITUATION:
+## <CURRENT SITUATION>:
 **Original Query:** {prep_res['original_query']}
 
 **Unified Context Summary:**
@@ -4758,6 +4760,8 @@ Create the outline now:"""
 ** UNIFIED CONTEXT RESULTS ACCESS:**
 {recent_results_context}
 
+</CURRENT SITUATION>
+
 ## MANDATORY TASK STACK ENFORCEMENT:
 **CRITICAL RULE**: You MUST work exclusively through your internal task stack.
 
@@ -4771,8 +4775,8 @@ Create the outline now:"""
 3. **MANDATORY TASK COMPLETION**: After completing any work, you MUST mark the task as complete
    - Use: META_TOOL_CALL: manage_internal_task_stack(action="complete", task_description="[exact task description]", outline_step_ref="step_X")
 
-4. **CHECK UNIFIED CONTEXT FIRST**: Before any major action, check if results already exist
-   - Use: META_TOOL_CALL: read_from_variables(scope="delegation", key="latest", purpose="Check latest results")
+4. **CHECK UNIFIED CONTEXT FIRST**: Before any major action, focus your attention to the variable system to see if results already exist
+   - Avalabel results are automatically stored in the variable system
    - The unified context above shows available conversation history and execution state
 
 **CURRENT TASK ANALYSIS:**
@@ -4793,7 +4797,7 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 
 **META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
 - Purpose: Delegate specific, self-contained tasks requiring external tools
-- Use for: Web searches, file operations, API calls, single-step tool usage
+- Use for: Web searches, file operations, API calls, single-, two-, or three-step tool usage
 - Example: META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for latest news about AI developments", tools_list=["search_web"])
 
 **META_TOOL_CALL: create_and_execute_plan(goals: list[str])**
@@ -4802,9 +4806,8 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Example: META_TOOL_CALL: create_and_execute_plan(goals=["Research company A financial data", "Research company B financial data", "Compare {{results.task_1.data}} and {{results.task_2.data}} and create report"])
 
 **META_TOOL_CALL: read_from_variables(scope: str, key: str, purpose: str)**
-- **USE FIRST** - Check existing results before new actions
 - Unified context data is available in various scopes
-- Example: META_TOOL_CALL: read_from_variables(scope="delegation", key="latest", purpose="Get latest delegation results")
+- Example: META_TOOL_CALL: read_from_variables(scope="user", key="name", purpose="Gather user information for later reference")
 
 **META_TOOL_CALL: write_to_variables(scope: str, key: str, value: any, description: str)**
 - Store important findings immediately
@@ -4814,7 +4817,7 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Mark outline steps complete when all related tasks done
 
 **META_TOOL_CALL: direct_response(final_answer: str, outline_completion: bool, steps_completed: list[str])**
-- ONLY when ALL outline steps complete
+- ONLY when ALL outline steps complete or no META_TOOL_CALL needed
 - final_answer must contain the full final answer for the user with all necessary context and informations ( format in persona style )
 - Purpose: End reasoning and provide final answer to user
 - Use when: Query is complete or can be answered directly
@@ -4874,9 +4877,22 @@ Based on your current task, unified context, and available variables, what is yo
 5. 🎯 All outline done? → Provide direct_response
 
 Latest unified context: (note delegation results could be wrong or misleading)
+<immediate_context>
 {immediate_context}
+</immediate_context>
 
-**Remember**: Your job is to work systematically through your outline using your task stack, while leveraging the unified context system to avoid duplicate work and maintain context."""
+must validate <immediate_context> output!
+- validate the <immediate_context> output! before proceeding with the outline!
+- output compleat fail -> direct_response
+- informations missing or output recovery needed -> repeat step with a different strategy
+- not enough structure -> use create_and_execute_plan meta-tool call
+- output is valid -> continue with the outline!
+- if dynamic Planing is needed, you must use the appropriate meta-tool call
+
+**Remember**:
+- work step by step max call 3 meta-tool calls in one run.
+- only use direct_response if the outline is complete and context from <immediate_context> is enough to answer the query!
+- Your job is to work systematically through your outline using your task stack, while leveraging the unified context system to avoid duplicate work and maintain context."""
 
         return prompt
 
@@ -5013,7 +5029,7 @@ RECOMMENDED ACTION:"""
             analysis += "\n2. Process the information and provide direct_response"
         else:
             analysis += "\n1. Break down the task into specific actions"
-            analysis += "\n2. Check variables for existing relevant data"
+            analysis += "\n2. Verify last Task Delegation results"
 
         return analysis
 
@@ -5077,7 +5093,7 @@ RECOMMENDED ACTION:"""
             summary_parts.append("🔍 RECENT RESULTS:")
             for result in meta_tool_results[-3:]:  # Last 3 results
                 meta_tool = result.get("meta_tool", "unknown")
-                content = result.get("content", "")[:300]  # Show more content
+                content = result.get("content", "")[:3000] + "..."
                 loop = result.get("loop", "?")
                 summary_parts.append(f"  [{meta_tool}] Loop {loop}: {content}")
 
@@ -5089,7 +5105,7 @@ RECOMMENDED ACTION:"""
         if errors:
             summary_parts.append(f"\n⚠️ ERRORS: {len(errors)} errors encountered")
             for error in errors[-2:]:  # Last 2 errors
-                content = error.get("content", "")[:150]
+                content = error.get("content", "")[:1500]
                 summary_parts.append(f"  Error: {content}")
 
         return "\n".join(summary_parts)
@@ -5401,7 +5417,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
                     "llm_response_length": len(llm_response),
                     "reasoning_loop": self.current_loop_count,
                     "analysis_result": "no_meta_tools_detected",
-                    "llm_response_preview": llm_response[:200] + "..." if len(llm_response) > 200 else llm_response,
+                    "llm_response_preview": llm_response[:2000] + "..." if len(llm_response) > 2000 else llm_response,
                     "execution_phase": "analysis_complete",
                     "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
                     "context_size": len(self.reasoning_context),
@@ -6999,7 +7015,7 @@ Results Summary:
         reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
 
         for entry in reasoning_entries[-3:]:  # Last 3 reasoning steps
-            content = entry.get("content", "")[:100] + "..."
+            content = entry.get("content", "")[:50000] + "..."
             loop_num = entry.get("loop", "?")
             summary_parts.append(f"Loop {loop_num}: {content}")
 
@@ -8059,6 +8075,23 @@ class FlowAgent:
                 }
             ))
 
+        # auto api key addition supports (google, openrouter, openai, anthropic, azure, aws, huggingface, replicate, togetherai, groq)
+        if "api_key" not in kwargs:
+            # litellm model-prefix apikey mapp
+            prefix = kwargs['model'].split("/")[0]
+            model_prefix_map = {
+                "openrouter": os.getenv("OPENROUTER_API_KEY"),
+                "openai": os.getenv("OPENAI_API_KEY"),
+                "anthropic": os.getenv("ANTHROPIC_API_KEY"),
+                "google": os.getenv("GOOGLE_API_KEY"),
+                "azure": os.getenv("AZURE_API_KEY"),
+                "huggingface": os.getenv("HUGGINGFACE_API_KEY"),
+                "replicate": os.getenv("REPLICATE_API_KEY"),
+                "togetherai": os.getenv("TOGETHERAI_API_KEY"),
+                "groq": os.getenv("GROQ_API_KEY"),
+            }
+            kwargs["api_key"] = model_prefix_map.get(prefix)
+
         if self.active_session and with_context:
             # Add context to fist messages as system message
             context_ = await self.get_context(self.active_session)
@@ -8538,9 +8571,9 @@ class FlowAgent:
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
                 description = tool_info.get("description", "No description")
-                await self._analyze_tool_capabilities(tool_name, description)
+                await self._analyze_tool_capabilities(tool_name, description, tool_info.get("args_schema", "()"))
 
-            if tool_name in self._tool_capabilities and self._tool_capabilities[tool_name].get("args_schema") is None:
+            if tool_name in self._tool_capabilities:
                 function = self._tool_registry[tool_name]["function"]
                 self._tool_capabilities[tool_name]["args_schema"] = get_args_schema(function)
 
@@ -9170,8 +9203,6 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                             restored_tasks[task_id] = ToolTask(**task_data)
                         elif task_type == "DecisionTask":
                             restored_tasks[task_id] = DecisionTask(**task_data)
-                        elif task_type == "CompoundTask":
-                            restored_tasks[task_id] = CompoundTask(**task_data)
                         else:
                             restored_tasks[task_id] = Task(**task_data)
 
@@ -9697,7 +9728,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
         # Store in registry
         self._tool_registry[tool_name] = {
             "function": effective_func,
-            "description": tool_description
+            "description": tool_description,
+            "args_schema": get_args_schema(tool_func)
         }
 
         # Add to available tools list
@@ -9710,7 +9742,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
         rprint(f"Tool added with analysis: {tool_name}")
 
-    async def _analyze_tool_capabilities(self, tool_name: str, description: str):
+    async def _analyze_tool_capabilities(self, tool_name: str, description: str, tool_args:str):
         """Analyze tool capabilities with LLM for smart usage"""
 
         # Try to load existing analysis
@@ -9741,7 +9773,9 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 Analyze this tool and identify ALL possible use cases, triggers, and connections:
 
 Tool Name: {tool_name}
+args: {tool_args}
 Description: {description}
+
 
 Provide a comprehensive analysis covering:
 
@@ -9787,11 +9821,11 @@ confidence_triggers:
 tool_complexity: low/medium/high
 ```
 """
-
+        model = os.getenv("BASEMODEL", self.amd.fast_llm_model)
         for i in range(3):
             try:
                 response = await self.a_run_llm_completion(
-                    model=self.amd.complex_llm_model,
+                    model=model,
                     messages=[{"role": "user", "content": prompt}],
                     with_context=False,
                     temperature=0.3,
@@ -9822,6 +9856,7 @@ tool_complexity: low/medium/high
             except Exception as e:
                 import traceback
                 print(traceback.format_exc())
+                model = self.amd.complex_llm_model if i > 1 else self.amd.fast_llm_model
                 eprint(f"Tool analysis failed for {tool_name}: {e}")
                 # Fallback
                 self._tool_capabilities[tool_name] = {
@@ -9894,6 +9929,9 @@ tool_complexity: low/medium/high
                 # If the function is not async, run it in a thread pool
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, lambda: target_function(*args, **kwargs))
+
+            if asyncio.iscoroutine(result):
+                result = await result
 
             rprint(f"Function {function_name} completed successfully with result: {result}")
             return result

@@ -3004,6 +3004,9 @@ print(f"Successfully imported {package_name}")
             (self.write_file, "write_file",
              "Write content to file in virtual filesystem. Args: filepath (str), content (str) -> str"),
 
+            (self.write_file, "create_file",
+             "Write content to file in virtual filesystem. Args: filepath (str), content (str) -> str"),
+
             (self.replace_in_file, "replace_in_file",
              "Replace exact content in file. Args: filepath (str), old_content (str), new_content (str), precise (bool) = True -> str"),
 
