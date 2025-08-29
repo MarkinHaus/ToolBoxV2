@@ -1,10 +1,12 @@
 import json
+import locale
 import os
 import pickle
 import platform
 import re
 import socket
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from json import JSONDecodeError
@@ -13,7 +15,7 @@ import requests
 import tiktoken
 from pebble import concurrent
 
-from toolboxv2 import Singleton, Style, get_logger
+from toolboxv2 import Singleton, Style, get_logger, remove_styles
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
 
 
@@ -87,53 +89,309 @@ def get_location():
     return location_data, ip_address
 
 
+import subprocess
+import os
+import pickle
+import platform
+import tempfile
+import shutil
+from pathlib import Path
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
+
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
+
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
+
+    return "/bin/sh", "-c"
+
+
+def safe_decode(data: bytes) -> str:
+    encodings = [sys.stdout.encoding, locale.getpreferredencoding(), 'utf-8', 'latin-1', 'iso-8859-1']
+    for enc in encodings:
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode('utf-8', errors='replace')
+
+
+import asyncio
+import os
+import pickle
+import platform
+import tempfile
+import shutil
+from pathlib import Path
+import functools
+
+
 class Scripts:
     def __init__(self, filename):
         self.scripts = {}
         self.filename = filename
+        self.temp_dir = Path(tempfile.gettempdir()) / "agent_scripts"
+        self.temp_dir.mkdir(exist_ok=True)
 
-    def create_script(self, name:str, description:str, content:str, script_type:str="py"):
-        self.scripts[name] = {"description": description, "content": content, "type": script_type}
-        return "Script created!"
+    def create_script(self, name: str, description: str, content: str, script_type: str = "py", dependencies: str = ""):
+        """Create a script with optional dependencies"""
+        if not name.replace('_', '').replace('-', '').isalnum():
+            return "Error: Script name must be alphanumeric (with _ or - allowed)"
 
-    def remove_script(self, name):
-        del self.scripts[name]
-        return "Script removed!"
+        self.scripts[name] = {
+            "description": description,
+            "content": content,
+            "type": script_type.lower(),
+            "dependencies": dependencies.strip()
+        }
+        return f"✅ Script '{name}' created! Your capabilities have been extended."
 
-    def run_script(self, name):
+    def remove_script(self, name: str):
+        """Remove a script"""
+        if name in self.scripts:
+            del self.scripts[name]
+            return f"✅ Script '{name}' removed!"
+        return f"❌ Script '{name}' not found!"
+
+    def run_script(self, name: str, args: str = ""):
+        """Run a script with optional arguments - async-safe wrapper"""
+        try:
+            # Get the current event loop
+            loop = asyncio.get_event_loop()
+            # Run the async version
+            return loop.run_until_complete(self._run_script_async(name, args))
+        except RuntimeError:
+            # If no event loop, run synchronously (fallback)
+            return self._run_script_sync(name, args)
+
+    async def _run_script_async(self, name: str, args: str = ""):
+        """Async version of run_script"""
         if name not in self.scripts:
-            return "Script not found!"
+            return f"❌ Script '{name}' not found! Use listScripts to see available scripts."
+
         script = self.scripts[name]
-        with open(f"{name}.{script['type']}", "w") as f:
-            f.write(script["content"])
-        if script["type"] == "py":
-            result = subprocess.run(["python", f"{name}.py"], capture_output=True, text=True, encoding='cp850')
-        elif script["type"] == "sh":
-            result = subprocess.run(["bash", f"{name}.sh"], capture_output=True, text=True, encoding='cp850')
+        script_type = script["type"]
+
+        # Create temporary script file
+        temp_script = self.temp_dir / f"{name}_{os.getpid()}.{script_type}"
+
+        try:
+            with open(temp_script, "w", encoding="utf-8") as f:
+                f.write(script["content"])
+
+            # Parse arguments safely
+            script_args = args.split() if args.strip() else []
+
+            if script_type == "py":
+                return await self._run_python_script_async(temp_script, script_args, script.get("dependencies", ""))
+            elif script_type in ["sh", "bash"]:
+                return await self._run_shell_script_async(temp_script, script_args)
+            else:
+                return f"❌ Unsupported script type: {script_type}. Use 'py' or 'sh'"
+
+        except Exception as e:
+            return f"❌ Error running script: {str(e)}"
+        finally:
+            if temp_script.exists():
+                temp_script.unlink()
+
+    def _run_script_sync(self, name: str, args: str = ""):
+        """Synchronous fallback version"""
+        if name not in self.scripts:
+            return f"❌ Script '{name}' not found! Use listScripts to see available scripts."
+
+        script = self.scripts[name]
+        script_type = script["type"]
+
+        # Create temporary script file
+        temp_script = self.temp_dir / f"{name}_{os.getpid()}.{script_type}"
+
+        try:
+            with open(temp_script, "w", encoding="utf-8") as f:
+                f.write(script["content"])
+
+            # Parse arguments safely
+            script_args = args.split() if args.strip() else []
+
+            if script_type == "py":
+                return self._run_python_script_sync(temp_script, script_args, script.get("dependencies", ""))
+            elif script_type in ["sh", "bash"]:
+                return self._run_shell_script_sync(temp_script, script_args)
+            else:
+                return f"❌ Unsupported script type: {script_type}. Use 'py' or 'sh'"
+
+        except Exception as e:
+            return f"❌ Error running script: {str(e)}"
+        finally:
+            if temp_script.exists():
+                temp_script.unlink()
+
+    async def _run_python_script_async(self, script_path: Path, args: list, dependencies: str):
+        """Run Python script async with uv dependency management"""
+        cmd = []
+
+        if dependencies.strip():
+            if shutil.which("uv"):
+                dep_list = [dep.strip() for dep in dependencies.replace('\n', ' ').split() if dep.strip()]
+                cmd = ["uv", "run"]
+                for dep in dep_list:
+                    cmd.extend(["--with", dep])
+                cmd.extend([sys.executable, str(script_path)] + args)
+            else:
+                return "❌ uv not found. Install uv for dependency management: `pip install uv`"
         else:
-            os.remove(f"{name}.{script['type']}")
-            return "Not valid type valid ar python and bash"
-        os.remove(f"{name}.{script['type']}")
-        return result.stdout
+            cmd = [sys.executable, str(script_path)] + args
+
+        return await self._execute_command_async(cmd)
+
+    async def _run_shell_script_async(self, script_path: Path, args: list):
+        """Run shell script async cross-platform"""
+        if platform.system() == "Windows":
+            cmd = ["cmd", "/c", str(script_path)] + args
+        else:
+            cmd = ["sh", str(script_path)] + args
+
+        return await self._execute_command_async(cmd)
+
+    def _run_python_script_sync(self, script_path: Path, args: list, dependencies: str):
+        """Run Python script sync with uv dependency management"""
+        import subprocess
+
+        cmd = []
+
+        if dependencies.strip():
+            if shutil.which("uv"):
+                dep_list = [dep.strip() for dep in dependencies.replace('\n', ' ').split() if dep.strip()]
+                cmd = ["uv", "run"]
+                for dep in dep_list:
+                    cmd.extend(["--with", dep])
+                cmd.extend([sys.executable, str(script_path)] + args)
+            else:
+                return "❌ uv not found. Install uv for dependency management: `pip install uv`"
+        else:
+            cmd = [sys.executable, str(script_path)] + args
+
+        return self._execute_command_sync(cmd)
+
+    def _run_shell_script_sync(self, script_path: Path, args: list):
+        """Run shell script sync cross-platform"""
+        if platform.system() == "Windows":
+            cmd = ["cmd", "/c", str(script_path)] + args
+        else:
+            cmd = ["sh", str(script_path)] + args
+
+        return self._execute_command_sync(cmd)
+
+    async def _execute_command_async(self, cmd: list, timeout: int = 60):
+        """Execute command async safely with timeout"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.temp_dir),
+                text=False,
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                return f"⏱️ Script timed out after {timeout} seconds"
+            output = remove_styles(safe_decode(stdout))
+            if stderr:
+                error_msg = remove_styles(safe_decode(stderr))
+                output += f"\n🔴 STDERR: {error_msg}"
+
+            if process.returncode != 0:
+                output += f"\n⚠️  Exit code: {process.returncode}"
+
+            return output.strip() if output.strip() else "✅ Script completed (no output)"
+
+        except Exception as e:
+            return f"❌ Execution error: {str(e)}"
+
+    def _execute_command_sync(self, cmd: list, timeout: int = 60):
+        """Execute command sync safely with timeout"""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=False,
+                timeout=timeout,
+                cwd=str(self.temp_dir)
+            )
+
+            output = remove_styles(safe_decode(result.stdout))
+            if result.stderr:
+                output += f"\n🔴 STDERR: {remove_styles(safe_decode(result.stderr))}"
+
+            if result.returncode != 0:
+                output += f"\n⚠️  Exit code: {result.returncode}"
+
+            return output.strip() if output.strip() else "✅ Script completed (no output)"
+
+        except subprocess.TimeoutExpired:
+            return f"⏱️ Script timed out after {timeout} seconds"
+        except Exception as e:
+            return f"❌ Execution error: {str(e)}"
 
     def get_scripts_list(self):
-        return {name: script["description"] for name, script in self.scripts.items()}
+        """Get formatted list of all scripts"""
+        if not self.scripts:
+            return "📝 No scripts available. Create scripts to extend your capabilities!"
+
+        result = ["🔧 Available Enhanced Capabilities:"]
+        for name, script in self.scripts.items():
+            deps = f" [deps: {script['dependencies']}]" if script.get('dependencies') else ""
+            result.append(f"  • {name} ({script['type']}){deps}: {script['description']}")
+
+        return "\n".join(result)
 
     def save_scripts(self):
-        if not os.path.exists(f"{self.filename}.pkl"):
-            os.makedirs(self.filename, exist_ok=True)
-        with open(f"{self.filename}.pkl", "wb") as f:
-            pickle.dump(self.scripts, f)
+        """Save scripts to persistent storage"""
+        try:
+            os.makedirs(os.path.dirname(self.filename) if os.path.dirname(self.filename) else ".", exist_ok=True)
+            with open(f"{self.filename}.pkl", "wb") as f:
+                pickle.dump(self.scripts, f)
+            return "💾 Scripts saved successfully!"
+        except Exception as e:
+            return f"❌ Save error: {str(e)}"
 
     def load_scripts(self):
-        if os.path.exists(self.filename + '.pkl'):
-            with open(self.filename + '.pkl', "rb") as f:
-                data = f.read()
-            if data:
-                self.scripts = pickle.loads(data)
-        else:
-            os.makedirs(self.filename, exist_ok=True)
-            open(self.filename + '.pkl', "a").close()
+        """Load scripts from persistent storage"""
+        try:
+            if os.path.exists(f"{self.filename}.pkl"):
+                with open(f"{self.filename}.pkl", "rb") as f:
+                    data = f.read()
+                if data:
+                    self.scripts = pickle.loads(data)
+            else:
+                os.makedirs(os.path.dirname(self.filename) if os.path.dirname(self.filename) else ".", exist_ok=True)
+                open(f"{self.filename}.pkl", "a").close()
+        except Exception as e:
+            print(f"Load error: {str(e)}")
 
 
 class IsaaQuestionNode:

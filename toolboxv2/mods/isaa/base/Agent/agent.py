@@ -84,6 +84,7 @@ AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 rprint = print if AGENT_VERBOSE else lambda *a, **k: None
 wprint = print if AGENT_VERBOSE else lambda *a, **k: None
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
+iprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
 TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
@@ -2386,7 +2387,7 @@ class LLMToolNode(AsyncNode):
         while tool_call_count < self.max_tool_calls:
             runs += 1
             # Get LLM response
-            messages = [{"role": "system", "content": system_message}] + conversation_history
+            messages = [{"role": "system", "content": system_message + ( "\nfist look at the context and reason over you intal step." if runs == 1 else "")}] + conversation_history
 
             model_to_use = self._select_optimal_model(prep_res["task_description"], prep_res)
 
@@ -2850,6 +2851,7 @@ class LLMToolNode(AsyncNode):
 
         if recent_interaction:
             prompt_parts.append(f"\n## Recent Interaction Context\n{recent_interaction}")
+            prompt_parts.append("\n**Important**: NO META_TOOL_CALLs needed in this section! and not avalabel\n use tools from Intelligent Tool Analysis only!")
         if session_summary:
             prompt_parts.append(f"\n## Session Summary\n{session_summary}")
         if task_context:
@@ -4799,11 +4801,13 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Purpose: Delegate specific, self-contained tasks requiring external tools
 - Use for: Web searches, file operations, API calls, single-, two-, or three-step tool usage
 - Example: META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for latest news about AI developments", tools_list=["search_web"])
+- Rule: always validate delegate_to_llm_tool_node result. will be available in <immediate_context> after execution!
 
 **META_TOOL_CALL: create_and_execute_plan(goals: list[str])**
 - Purpose: Handle complex, multi-step projects with dependencies
 - Use for: Tasks requiring coordination, parallel execution, or complex workflows
 - Example: META_TOOL_CALL: create_and_execute_plan(goals=["Research company A financial data", "Research company B financial data", "Compare {{results.task_1.data}} and {{results.task_2.data}} and create report"])
+- Rule: always validate create_and_execute_plan result. will be available in <immediate_context> after execution!
 
 **META_TOOL_CALL: read_from_variables(scope: str, key: str, purpose: str)**
 - Unified context data is available in various scopes
@@ -4822,6 +4826,8 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Purpose: End reasoning and provide final answer to user
 - Use when: Query is complete or can be answered directly
 - Example: META_TOOL_CALL: direct_response(final_answer="Based on my analysis, here are the key findings...")
+
+note: in this interaction only META_TOOL_CALL ar avalabel. for other tools use META_TOOL_CALL: delegate_to_llm_tool_node with the appropriate tool names!
 
 ## REASONING STRATEGY:
 1. **Start with internal_reasoning** to understand the query and plan approach
@@ -6930,18 +6936,14 @@ Result: {final_response}"""
 
             # Execute TaskPlanner
             planner_node = TaskPlannerNode()
-            plan = await planner_node.run_async(planning_shared)
+            plan_info = await planner_node.run_async(planning_shared)
 
-            if not isinstance(plan, TaskPlan):
-                return {"context_addition": f"Plan creation failed: {plan}"}
+            if plan_info == "planning_failed":
+                return {"context_addition": f"Plan creation failed: {planning_shared.get('planning_error', 'Unknown error')}"}
 
+            plan = planning_shared.get("current_plan")
             # Execute the plan using TaskExecutor
             executor_shared = planning_shared.copy()
-            executor_shared.update({
-                "current_plan": plan,
-                "tasks": {task.id: task for task in plan.tasks}
-            })
-
             executor_node = TaskExecutorNode()
 
             # Execute plan to completion
@@ -7191,6 +7193,12 @@ class VariableManager:
                 current.append(value)
         elif isinstance(current, dict):
             current[last_part] = value
+        elif scope_name == 'tasks' and hasattr(current, 'task_identification_attr'):# from tasks like Tooltask ... model dump and acces
+            dict_data = asdict(current)
+            dict_data[last_part] = value
+            current = dict_data
+            # update self.scopes['tasks'] with the updated task
+            self.scopes['tasks'][parts[1]][last_part] = current
         else:
             raise TypeError(f"Final container is not a list or dictionary for path '{path}' its a {type(current)}")
 
@@ -8106,6 +8114,8 @@ class FlowAgent:
             if AGENT_VERBOSE:
                 kwargs["messages"] += [{"role": "assistant", "content": result}]
                 print_prompt(kwargs)
+            else:
+                print_prompt([{"role": "assistant", "content": result}])
 
             # Extract token usage and cost
             usage = response.usage
@@ -10372,6 +10382,9 @@ Respond in YAML format only:
         if self.mcp_server:
             await self.mcp_server.close()
 
+        if hasattr(self, '_mcp_session_manager'):
+            await self._mcp_session_manager.cleanup_all()
+
         rprint("Agent shutdown complete")
 
     @property
@@ -10854,13 +10867,67 @@ def _parse_tool_args(args_str: str) -> Dict[str, Any]:
                 except:
                     args[key] = value.strip('"').strip("'")
 
-        return args
+        return auto_unescape(args)
 
     # Handle JSON-like format
     try:
-        return ast.literal_eval(f"{{{args_str}}}")
+        return auto_unescape(ast.literal_eval(f"{{{args_str}}}"))
     except:
-        return {"raw_args": args_str}
+        return auto_unescape({"raw_args": args_str})
+
+
+import re
+from typing import Any, Union, Dict, List
+
+
+def unescape_string(text: str) -> str:
+    """Universal string unescaping for any programming language."""
+    if not isinstance(text, str) or len(text) < 2:
+        return text
+
+    # Remove outer quotes if wrapped
+    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+        text = text[1:-1]
+
+    # Universal escape sequences
+    escapes = {
+        '\\n': '\n', '\\t': '\t', '\\r': '\r',
+        '\\"': '"', "\\'": "'", '\\\\': '\\'
+    }
+
+    for escaped, unescaped in escapes.items():
+        text = text.replace(escaped, unescaped)
+
+    return text
+
+
+def needs_unescaping(text: str) -> bool:
+    """Detect if string likely needs unescaping."""
+    return bool(re.search(r'\\[ntr"\'\\]', text)) or len(text) > 50
+
+
+def process_nested(data: Any, max_depth: int = 20) -> Any:
+    """Recursively process nested structures, unescaping strings that need it."""
+    if max_depth <= 0:
+        return data
+
+    if isinstance(data, dict):
+        return {k: process_nested(v, max_depth - 1) for k, v in data.items()}
+
+    elif isinstance(data, (list, tuple)):
+        processed = [process_nested(item, max_depth - 1) for item in data]
+        return type(data)(processed)
+
+    elif isinstance(data, str) and needs_unescaping(data):
+        return unescape_string(data)
+
+    return data
+
+
+def auto_unescape(args: Any) -> Any:
+    """Automatically unescape all strings in nested data structure."""
+    return process_nested(args)
+
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
 

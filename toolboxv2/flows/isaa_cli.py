@@ -29,8 +29,7 @@ from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
 from toolboxv2.mods.isaa.extras.verbose_output import EnhancedVerboseOutput
-from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent, TaskPlan
-from toolboxv2.mods.isaa.base.Agent.builder import AgentConfig, logger
+from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent
 from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode, NodeStatus
 from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
 from toolboxv2.utils.extras.Style import Style, remove_styles
@@ -1669,7 +1668,7 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
             await self.isaa_tools.get_agent("self")
 
         except Exception as e:
-            logger.error(f"Failed to initialize agent builder: {e}")
+            print(f"Failed to initialize agent builder: {e}")
             raise
 
     async def setup_workspace_agent(self):

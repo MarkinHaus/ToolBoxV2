@@ -17,6 +17,8 @@ from dataclasses import asdict
 from datetime import datetime
 import uuid
 
+from toolboxv2 import Spinner
+from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
 # Import agent components
 from .agent import (
     FlowAgent,
@@ -25,7 +27,10 @@ from .agent import (
     FormatConfig,
     ResponseFormat,
     TextLength,
-    VariableManager,
+    rprint,
+    wprint,
+    eprint,
+    iprint,
     LITELLM_AVAILABLE,
     A2A_AVAILABLE,
     MCP_AVAILABLE,
@@ -44,14 +49,10 @@ if OTEL_AVAILABLE:
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 if MCP_AVAILABLE:
-    from mcp.server.fastmcp import FastMCP
+    from mcp import ClientSession
 
 if A2A_AVAILABLE:
     from python_a2a import A2AServer, AgentCard
-
-from toolboxv2 import get_logger
-
-logger = get_logger()
 
 def detect_shell() -> tuple[str, str]:
     """
@@ -193,16 +194,17 @@ class FlowAgentBuilder:
         # Runtime components
         self._custom_tools: Dict[str, tuple[Callable, str]] = {}
         self._mcp_tools: Dict[str, Dict] = {}
+        self._mcp_session_manager = MCPSessionManager()
+
         self._budget_manager: Optional[BudgetManager] = None
         self._tracer_provider: Optional[TracerProvider] = None
-        self._mcp_server: Optional[FastMCP] = None
         self._a2a_server: Optional[Any] = None
 
         # Set logging level
         if self.config.verbose_logging:
             logging.getLogger().setLevel(logging.DEBUG)
 
-        logger.info(f"FlowAgent Builder initialized: {self.config.name}")
+        iprint(f"FlowAgent Builder initialized: {self.config.name}")
 
     # ===== CONFIGURATION MANAGEMENT =====
 
@@ -222,7 +224,7 @@ class FlowAgentBuilder:
             return AgentConfig(**data)
 
         except Exception as e:
-            logger.error(f"Failed to load config from {config_path}: {e}")
+            eprint(f"Failed to load config from {config_path}: {e}")
             raise
 
     def save_config(self, config_path: str, format: str = 'yaml'):
@@ -239,10 +241,10 @@ class FlowAgentBuilder:
                 else:
                     json.dump(data, f, indent=2)
 
-            logger.info(f"Configuration saved to {config_path}")
+            iprint(f"Configuration saved to {config_path}")
 
         except Exception as e:
-            logger.error(f"Failed to save config to {config_path}: {e}")
+            eprint(f"Failed to save config to {config_path}: {e}")
             raise
 
     @classmethod
@@ -278,9 +280,9 @@ class FlowAgentBuilder:
         """Enable budget management"""
         if LITELLM_AVAILABLE:
             self._budget_manager = BudgetManager("agent")
-            logger.info(f"Budget manager enabled: ${max_cost}")
+            iprint(f"Budget manager enabled: ${max_cost}")
         else:
-            logger.warning("LiteLLM not available, budget manager disabled")
+            wprint("LiteLLM not available, budget manager disabled")
         return self
 
     def verbose(self, enable: bool = True) -> 'FlowAgentBuilder':
@@ -296,7 +298,7 @@ class FlowAgentBuilder:
                           server_name: str = None) -> 'FlowAgentBuilder':
         """Enable MCP server"""
         if not MCP_AVAILABLE:
-            logger.warning("MCP not available, cannot enable server")
+            wprint("MCP not available, cannot enable server")
             return self
 
         self.config.mcp.enabled = True
@@ -304,147 +306,406 @@ class FlowAgentBuilder:
         self.config.mcp.port = port
         self.config.mcp.server_name = server_name or f"{self.config.name}_MCP"
 
-        logger.info(f"MCP server enabled: {host}:{port}")
+        iprint(f"MCP server enabled: {host}:{port}")
         return self
 
-    def _load_mcp_server_tools(self, server_name: str, server_config: Dict[str, Any]):
-        """Load tools from MCP server configuration with actual command execution"""
-        command = server_config.get('command')
-        args = server_config.get('args', [])
-        env = server_config.get('env', {})
-
-        if not command:
-            logger.warning(f"No command specified for MCP server {server_name}")
-            return
-
-        # Create a tool that can execute the MCP server command
-        async def mcp_server_tool(query: str = "", **kwargs) -> str:
-            """Tool backed by actual MCP server execution"""
-            try:
-                return await self._execute_mcp_server(command, args, env, query, **kwargs)
-            except Exception as e:
-                logger.error(f"MCP server tool {server_name} failed: {e}")
-                return f"Error executing {server_name}: {str(e)}"
-
-        self._mcp_tools[server_name] = {
-            'function': mcp_server_tool,
-            'command': command,
-            'args': args,
-            'env': env,
-            'description': f"MCP server tool: {server_name}",
-            'server_type': 'command_execution'
-        }
-
-        logger.info(f"Registered MCP server tool: {server_name} ({command})")
-
-    async def _execute_mcp_server(self, command: str, args: List[str], env: Dict[str, str],
-                                  query: str, **kwargs) -> str:
-        """Execute MCP server command and handle communication"""
+    async def _load_mcp_server_capabilities(self, server_name: str, server_config: Dict[str, Any]):
+        """Load all capabilities from MCP server with persistent session"""
         try:
-            # Prepare environment
-            process_env = os.environ.copy()
-            process_env.update(env)
+            # Get or create persistent session
+            session = await self._mcp_session_manager.get_session(server_name, server_config)
+            if not session:
+                eprint(f"Failed to create session for MCP server: {server_name}")
+                return
 
-            # Build full command
-            shell_exe, cmd_flag = detect_shell()
-            full_command = [shell_exe, cmd_flag, command] + args
+            # Extract all capabilities
+            capabilities = await self._mcp_session_manager.extract_capabilities(session, server_name)
 
-            # Create the subprocess
-            process = await asyncio.create_subprocess_exec(
-                *full_command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=process_env,
-                cwd=os.getcwd()
-            )
-
-            # For MCP, we need to send JSON-RPC messages
-            # This is a simplified implementation - in production you'd want full MCP protocol
-            mcp_request = {
-                "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),
-                "method": "tools/call",
-                "params": {
-                    "name": "process_query",
-                    "arguments": {"query": query, **kwargs}
+            # Create tool wrappers
+            for tool_name, tool_info in capabilities['tools'].items():
+                wrapper_name = f"{server_name}_{tool_name}"
+                tool_wrapper = self._create_tool_wrapper(server_name, tool_name, tool_info, session)
+                self._mcp_tools[wrapper_name] = {
+                    'function': tool_wrapper,
+                    'description': tool_info['description'],
+                    'type': 'tool',
+                    'server': server_name,
+                    'original_name': tool_name,
+                    'input_schema': tool_info.get('input_schema'),
+                    'output_schema': tool_info.get('output_schema')
                 }
-            }
 
-            request_json = json.dumps(mcp_request) + "\n"
+            # Create resource wrappers
+            for resource_uri, resource_info in capabilities['resources'].items():
+                wrapper_name = f"{server_name}_resource_{resource_info['name'].replace('/', '_')}"
+                resource_wrapper = self._create_resource_wrapper(server_name, resource_uri, resource_info, session)
 
-            # Send request and get response
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=request_json.encode()),
-                timeout=30.0  # 30 second timeout
-            )
+                self._mcp_tools[wrapper_name] = {
+                    'function': resource_wrapper,
+                    'description': f"Read resource: {resource_info['description']}",
+                    'type': 'resource',
+                    'server': server_name,
+                    'original_uri': resource_uri
+                }
 
-            # Parse response
-            if process.returncode == 0:
-                response_text = stdout.decode().strip()
-                if response_text:
-                    try:
-                        # Try to parse as JSON-RPC response
-                        response_data = json.loads(response_text)
-                        if "result" in response_data:
-                            return str(response_data["result"])
-                        elif "error" in response_data:
-                            return f"MCP Error: {response_data['error']}"
-                        else:
-                            return response_text
-                    except json.JSONDecodeError:
-                        # Return raw output if not valid JSON
-                        return response_text
-                else:
-                    return "MCP server returned empty response"
+            # Create resource template wrappers
+            for template_uri, template_info in capabilities['resource_templates'].items():
+                wrapper_name = f"{server_name}_template_{template_info['name'].replace('/', '_')}"
+                template_wrapper = self._create_resource_template_wrapper(server_name, template_uri, template_info,
+                                                                          session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': template_wrapper,
+                    'description': f"Access resource template: {template_info['description']}",
+                    'type': 'resource_template',
+                    'server': server_name,
+                    'original_template': template_uri
+                }
+
+            # Create prompt wrappers
+            for prompt_name, prompt_info in capabilities['prompts'].items():
+                wrapper_name = f"{server_name}_prompt_{prompt_name}"
+                prompt_wrapper = self._create_prompt_wrapper(server_name, prompt_name, prompt_info, session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': prompt_wrapper,
+                    'description': f"Execute prompt: {prompt_info['description']}",
+                    'type': 'prompt',
+                    'server': server_name,
+                    'original_name': prompt_name,
+                    'arguments': prompt_info.get('arguments', [])
+                }
+
+            total_capabilities = (len(capabilities['tools']) +
+                                  len(capabilities['resources']) +
+                                  len(capabilities['resource_templates']) +
+                                  len(capabilities['prompts']))
+
+            iprint(f"Created {total_capabilities} capability wrappers for server: {server_name}")
+
+        except Exception as e:
+            eprint(f"Failed to load capabilities from MCP server {server_name}: {e}")
+
+    def _create_tool_wrapper(self, server_name: str, tool_name: str, tool_info: Dict, session: ClientSession):
+        """Create wrapper function for MCP tool with dynamic signature based on schema"""
+        import inspect
+        from typing import get_type_hints
+
+        # Extract parameter information from input schema
+        input_schema = tool_info.get('input_schema', {})
+        output_schema = tool_info.get('output_schema', {})
+
+        # Build parameter list
+        parameters = []
+        required_params = set(input_schema.get('required', []))
+        properties = input_schema.get('properties', {})
+
+        # Create parameters with proper types
+        for param_name, param_info in properties.items():
+            param_type = param_info.get('type', 'string')
+            python_type = {
+                'string': str,
+                'integer': int,
+                'number': float,
+                'boolean': bool,
+                'array': list,
+                'object': dict
+            }.get(param_type, str)
+
+            # Determine if parameter is required
+            if param_name in required_params:
+                param = inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=python_type)
             else:
-                error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                return f"MCP server failed (code {process.returncode}): {error_msg}"
+                # Optional parameters get default None
+                param = inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                          annotation=python_type, default=None)
+            parameters.append(param)
 
-        except asyncio.TimeoutError:
-            logger.error(f"MCP server timeout for command: {command}")
-            return "MCP server request timed out"
-        except Exception as e:
-            logger.error(f"MCP server execution error: {e}")
-            return f"MCP server execution failed: {str(e)}"
+        # Determine return type from output schema
+        return_type = str  # Default
+        if output_schema and 'properties' in output_schema:
+            output_props = output_schema['properties']
+            if len(output_props) == 1:
+                # Single property, return its type directly
+                prop_info = list(output_props.values())[0]
+                prop_type = prop_info.get('type', 'string')
+                return_type = {
+                    'string': str,
+                    'integer': int,
+                    'number': float,
+                    'boolean': bool,
+                    'array': list,
+                    'object': dict
+                }.get(prop_type, str)
+            else:
+                # Multiple properties, return dict
+                return_type = dict
 
-    async def _execute_mcp_stdio_server(self, command: str, args: List[str], env: Dict[str, str]) -> Optional[Any]:
-        """Execute MCP server using stdio transport (more robust MCP communication)"""
-        if not MCP_AVAILABLE:
-            logger.warning("MCP not available for stdio server execution")
-            return None
+        # Create the actual function
+        async def tool_wrapper(*args, **kwargs):
+            try:
+                # Map arguments to schema parameters
+                arguments = {}
+                param_names = list(properties.keys())
 
-        try:
-            # This would use the actual MCP client to communicate with the server
-            # For now, this is a placeholder for full MCP protocol implementation
-            from mcp.client.stdio import stdio_client
-            from mcp import ClientSession, StdioServerParameters
+                # Map positional args
+                for i, arg in enumerate(args):
+                    if i < len(param_names):
+                        arguments[param_names[i]] = arg
 
-            # Prepare environment
-            process_env = os.environ.copy()
-            process_env.update(env)
+                # Add keyword arguments, filtering out None for optional params
+                for key, value in kwargs.items():
+                    if value is not None or key in required_params:
+                        arguments[key] = value
 
-            # Create server parameters
-            server_params = StdioServerParameters(
-                command=command,
-                args=args,
-                env=process_env
-            )
+                # Validate required parameters
+                missing_required = required_params - set(arguments.keys())
+                if missing_required:
+                    raise ValueError(f"Missing required parameters: {missing_required}")
 
-            # This would establish proper MCP communication
-            # Implementation would depend on full MCP client integration
-            logger.info(f"Would establish MCP stdio connection to: {command} {' '.join(args)}")
+                # Call the actual MCP tool
+                result = await session.call_tool(tool_name, arguments)
 
-            return None  # Placeholder - full implementation would return MCP client session
+                # Handle structured vs unstructured results
+                if hasattr(result, 'structuredContent') and result.structuredContent:
+                    structured_data = result.structuredContent
 
-        except Exception as e:
-            logger.error(f"Failed to establish MCP stdio connection: {e}")
-            return None
+                    # If output schema expects single property, extract it
+                    if output_schema and 'properties' in output_schema:
+                        output_props = output_schema['properties']
+                        if len(output_props) == 1:
+                            prop_name = list(output_props.keys())[0]
+                            if isinstance(structured_data, dict) and prop_name in structured_data:
+                                return structured_data[prop_name]
+
+                    return structured_data
+
+                # Fallback to content extraction
+                if result.content:
+                    content = result.content[0]
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'data'):
+                        return content.data
+                    else:
+                        return str(content)
+
+                return "No content returned"
+
+            except Exception as e:
+                eprint(f"MCP tool {server_name}.{tool_name} failed: {e}")
+                raise RuntimeError(f"Error executing {tool_name}: {str(e)}")
+
+        # Set dynamic signature
+        signature = inspect.Signature(parameters, return_annotation=return_type)
+        tool_wrapper.__signature__ = signature
+        tool_wrapper.__name__ = f"{server_name}_{tool_name}"
+        tool_wrapper.__doc__ = tool_info.get('description', f"MCP tool: {tool_name}")
+        tool_wrapper.__annotations__ = {'return': return_type}
+
+        # Add parameter annotations
+        for param in parameters:
+            tool_wrapper.__annotations__[param.name] = param.annotation
+
+        return tool_wrapper
+
+    def _create_resource_wrapper(self, server_name: str, resource_uri: str, resource_info: Dict,
+                                 session: ClientSession):
+        """Create wrapper function for MCP resource with proper signature"""
+        import inspect
+
+        # Resources typically don't take parameters, return string content
+        async def resource_wrapper() -> str:
+            """Read MCP resource content"""
+            try:
+                from pydantic import AnyUrl
+                result = await session.read_resource(AnyUrl(resource_uri))
+
+                if result.contents:
+                    content = result.contents[0]
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'data'):
+                        # Handle binary data
+                        if isinstance(content.data, bytes):
+                            return content.data.decode('utf-8', errors='ignore')
+                        return str(content.data)
+                    else:
+                        return str(content)
+
+                return ""
+
+            except Exception as e:
+                eprint(f"MCP resource {resource_uri} failed: {e}")
+                raise RuntimeError(f"Error reading resource: {str(e)}")
+
+        # Set signature and metadata
+        signature = inspect.Signature([], return_annotation=str)
+        resource_wrapper.__signature__ = signature
+        resource_wrapper.__name__ = f"{server_name}_resource_{resource_info['name'].replace('/', '_').replace(':', '_')}"
+        resource_wrapper.__doc__ = f"Read MCP resource: {resource_info.get('description', resource_uri)}"
+        resource_wrapper.__annotations__ = {'return': str}
+
+        return resource_wrapper
+
+    def _create_resource_template_wrapper(self, server_name: str, template_uri: str, template_info: Dict,
+                                          session: ClientSession):
+        """Create wrapper function for MCP resource template with dynamic parameters"""
+        import inspect
+        import re
+
+        # Extract template variables from URI (e.g., {owner}, {repo})
+        template_vars = re.findall(r'\{(\w+)\}', template_uri)
+
+        # Create parameters for each template variable
+        parameters = []
+        for var_name in template_vars:
+            param = inspect.Parameter(var_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=str)
+            parameters.append(param)
+
+        async def template_wrapper(*args, **kwargs) -> str:
+            """Access MCP resource template with parameters"""
+            try:
+                from pydantic import AnyUrl
+
+                # Map arguments to template variables
+                template_args = {}
+                for i, arg in enumerate(args):
+                    if i < len(template_vars):
+                        template_args[template_vars[i]] = arg
+
+                template_args.update(kwargs)
+
+                # Validate all required template variables are provided
+                missing_vars = set(template_vars) - set(template_args.keys())
+                if missing_vars:
+                    raise ValueError(f"Missing required template variables: {missing_vars}")
+
+                # Replace template variables in URI
+                actual_uri = template_uri
+                for var_name, value in template_args.items():
+                    actual_uri = actual_uri.replace(f"{{{var_name}}}", str(value))
+
+                result = await session.read_resource(AnyUrl(actual_uri))
+
+                if result.contents:
+                    content = result.contents[0]
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'data'):
+                        if isinstance(content.data, bytes):
+                            return content.data.decode('utf-8', errors='ignore')
+                        return str(content.data)
+                    else:
+                        return str(content)
+
+                return ""
+
+            except Exception as e:
+                eprint(f"MCP resource template {template_uri} failed: {e}")
+                raise RuntimeError(f"Error accessing resource template: {str(e)}")
+
+        # Set dynamic signature
+        signature = inspect.Signature(parameters, return_annotation=str)
+        template_wrapper.__signature__ = signature
+        template_wrapper.__name__ = f"{server_name}_template_{template_info['name'].replace('/', '_').replace(':', '_')}"
+        template_wrapper.__doc__ = f"Access MCP resource template: {template_info.get('description', template_uri)}\nTemplate variables: {', '.join(template_vars)}"
+        template_wrapper.__annotations__ = {'return': str}
+
+        # Add parameter annotations
+        for param in parameters:
+            template_wrapper.__annotations__[param.name] = str
+
+        return template_wrapper
+
+    def _create_prompt_wrapper(self, server_name: str, prompt_name: str, prompt_info: Dict, session: ClientSession):
+        """Create wrapper function for MCP prompt with dynamic parameters"""
+        import inspect
+
+        # Extract parameter information from prompt arguments
+        prompt_args = prompt_info.get('arguments', [])
+
+        # Create parameters
+        parameters = []
+        for arg_info in prompt_args:
+            arg_name = arg_info['name']
+            is_required = arg_info.get('required', False)
+
+            if is_required:
+                param = inspect.Parameter(arg_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=str)
+            else:
+                param = inspect.Parameter(arg_name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                          annotation=str, default=None)
+            parameters.append(param)
+
+        async def prompt_wrapper(*args, **kwargs) -> str:
+            """Execute MCP prompt with parameters"""
+            try:
+                # Map arguments
+                prompt_arguments = {}
+                arg_names = [arg['name'] for arg in prompt_args]
+
+                # Map positional args
+                for i, arg in enumerate(args):
+                    if i < len(arg_names):
+                        prompt_arguments[arg_names[i]] = arg
+
+                # Add keyword arguments, filtering None for optional params
+                required_args = {arg['name'] for arg in prompt_args if arg.get('required', False)}
+                for key, value in kwargs.items():
+                    if value is not None or key in required_args:
+                        prompt_arguments[key] = value
+
+                # Validate required parameters
+                missing_required = required_args - set(prompt_arguments.keys())
+                if missing_required:
+                    raise ValueError(f"Missing required prompt arguments: {missing_required}")
+
+                result = await session.get_prompt(prompt_name, prompt_arguments)
+
+                # Extract and combine messages
+                messages = []
+                for message in result.messages:
+                    if hasattr(message.content, 'text'):
+                        messages.append(message.content.text)
+                    else:
+                        messages.append(str(message.content))
+
+                return "\n".join(messages) if messages else ""
+
+            except Exception as e:
+                eprint(f"MCP prompt {prompt_name} failed: {e}")
+                raise RuntimeError(f"Error executing prompt: {str(e)}")
+
+        # Set dynamic signature
+        signature = inspect.Signature(parameters, return_annotation=str)
+        prompt_wrapper.__signature__ = signature
+        prompt_wrapper.__name__ = f"{server_name}_prompt_{prompt_name}"
+
+        # Build docstring with parameter info
+        param_docs = []
+        for arg_info in prompt_args:
+            required_str = "required" if arg_info.get('required', False) else "optional"
+            param_docs.append(
+                f"    {arg_info['name']} ({required_str}): {arg_info.get('description', 'No description')}")
+
+        docstring = f"Execute MCP prompt: {prompt_info.get('description', prompt_name)}"
+        if param_docs:
+            docstring += f"\n\nParameters:\n" + "\n".join(param_docs)
+
+        prompt_wrapper.__doc__ = docstring
+        prompt_wrapper.__annotations__ = {'return': str}
+
+        # Add parameter annotations
+        for param in parameters:
+            prompt_wrapper.__annotations__[param.name] = str
+
+        return prompt_wrapper
 
     def load_mcp_tools_from_config(self, config_path: str) -> 'FlowAgentBuilder':
-        """Enhanced MCP config loading with better error handling and validation"""
+        """Enhanced MCP config loading with automatic session management and full capability extraction"""
         if not MCP_AVAILABLE:
-            logger.warning("MCP not available, skipping tool loading")
+            wprint("MCP not available, skipping tool loading")
             return self
 
         config_path = Path(config_path)
@@ -458,46 +719,181 @@ class FlowAgentBuilder:
                 else:
                     mcp_config = json.load(f)
 
-            # Parse MCP tools from official config format
-            tools_loaded = 0
-
-            # Handle standard MCP server configuration
-            if 'mcpServers' in mcp_config:
-                for server_name, server_config in mcp_config['mcpServers'].items():
-                    # Validate server config
-                    if not self._validate_mcp_server_config(server_name, server_config):
-                        continue
-
-                    self._load_mcp_server_tools(server_name, server_config)
-                    tools_loaded += 1
-
-                    logger.info(
-                        f"Loaded MCP server: {server_name} - Command: {server_config.get('command')} {' '.join(server_config.get('args', []))}")
-
-            # Handle direct tools configuration
-            elif 'tools' in mcp_config:
-                for tool_config in mcp_config['tools']:
-                    self._load_direct_mcp_tool(tool_config)
-                    tools_loaded += 1
-
-            # Store config path for later use
+            # Store config for async processing
+            self._mcp_config_data = mcp_config
             self.config.mcp.config_path = str(config_path)
-            self.config.mcp.tools_from_config = mcp_config.get('tools', [])
 
-            logger.info(f"Successfully loaded {tools_loaded} MCP configurations from {config_path}")
+            # Mark for processing during build
+            self._mcp_needs_loading = True
+
+            iprint(f"MCP config loaded from {config_path}, will process during build")
 
         except Exception as e:
-            logger.error(f"Failed to load MCP config from {config_path}: {e}")
+            eprint(f"Failed to load MCP config from {config_path}: {e}")
             raise
 
         return self
+
+    async def _process_mcp_config(self):
+        """Process MCP configuration with proper task management"""
+        if not hasattr(self, '_mcp_config_data') or not self._mcp_config_data:
+            return
+
+        mcp_config = self._mcp_config_data
+
+        # Handle standard MCP server configuration with sequential processing to avoid task issues
+        if 'mcpServers' in mcp_config:
+            servers_to_load = []
+
+            # Validate all servers first
+            for server_name, server_config in mcp_config['mcpServers'].items():
+                if self._validate_mcp_server_config(server_name, server_config):
+                    servers_to_load.append((server_name, server_config))
+                else:
+                    wprint(f"Skipping invalid MCP server config: {server_name}")
+
+            if servers_to_load:
+                iprint(f"Processing {len(servers_to_load)} MCP servers sequentially...")
+
+                # Process servers sequentially to avoid task boundary issues
+                successful_loads = 0
+                for server_name, server_config in servers_to_load:
+                    try:
+                        result = await asyncio.wait_for(
+                            self._load_single_mcp_server(server_name, server_config),
+                            timeout=15.0  # Per-server timeout
+                        )
+
+                        if result:
+                            successful_loads += 1
+                            iprint(f"✓ Successfully loaded MCP server: {server_name}")
+                        else:
+                            wprint(f"⚠ MCP server {server_name} loaded with issues")
+
+                    except asyncio.TimeoutError:
+                        eprint(f"✗ MCP server {server_name} timed out after 15 seconds")
+                    except Exception as e:
+                        eprint(f"✗ Failed to load MCP server {server_name}: {e}")
+
+                iprint(
+                    f"MCP processing complete: {successful_loads}/{len(servers_to_load)} servers loaded successfully")
+
+        # Handle direct tools configuration (legacy)
+        elif 'tools' in mcp_config:
+            for tool_config in mcp_config['tools']:
+                try:
+                    self._load_direct_mcp_tool(tool_config)
+                except Exception as e:
+                    eprint(f"Failed to load direct MCP tool: {e}")
+
+    async def _load_single_mcp_server(self, server_name: str, server_config: Dict[str, Any]) -> bool:
+        """Load a single MCP server with timeout and error handling"""
+        try:
+            iprint(f"🔄 Processing MCP server: {server_name}")
+
+            # Get session with timeout
+            session = await self._mcp_session_manager.get_session_with_timeout(server_name, server_config)
+            if not session:
+                eprint(f"✗ Failed to create session for MCP server: {server_name}")
+                return False
+
+            # Extract capabilities with timeout
+            capabilities = await self._mcp_session_manager.extract_capabilities_with_timeout(session, server_name)
+            if not any(capabilities.values()):
+                wprint(f"⚠ No capabilities found for MCP server: {server_name}")
+                return False
+
+            # Create wrappers for all capabilities
+            await self._create_capability_wrappers(server_name, capabilities, session)
+
+            total_caps = sum(len(caps) for caps in capabilities.values())
+            iprint(f"✓ Created {total_caps} capability wrappers for: {server_name}")
+
+            return True
+
+        except Exception as e:
+            eprint(f"✗ Error loading MCP server {server_name}: {e}")
+            return False
+
+    async def _create_capability_wrappers(self, server_name: str, capabilities: Dict, session: ClientSession):
+        """Create wrappers for all capabilities with error handling"""
+
+        # Create tool wrappers
+        for tool_name, tool_info in capabilities['tools'].items():
+            try:
+                wrapper_name = f"{server_name}_{tool_name}"
+                tool_wrapper = self._create_tool_wrapper(server_name, tool_name, tool_info, session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': tool_wrapper,
+                    'description': tool_info['description'],
+                    'type': 'tool',
+                    'server': server_name,
+                    'original_name': tool_name,
+                    'input_schema': tool_info.get('input_schema'),
+                    'output_schema': tool_info.get('output_schema')
+                }
+            except Exception as e:
+                eprint(f"Failed to create tool wrapper {tool_name}: {e}")
+
+        # Create resource wrappers
+        for resource_uri, resource_info in capabilities['resources'].items():
+            try:
+                safe_name = resource_info['name'].replace('/', '_').replace(':', '_')
+                wrapper_name = f"{server_name}_resource_{safe_name}"
+                resource_wrapper = self._create_resource_wrapper(server_name, resource_uri, resource_info, session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': resource_wrapper,
+                    'description': f"Read resource: {resource_info['description']}",
+                    'type': 'resource',
+                    'server': server_name,
+                    'original_uri': resource_uri
+                }
+            except Exception as e:
+                eprint(f"Failed to create resource wrapper {resource_uri}: {e}")
+
+        # Create resource template wrappers
+        for template_uri, template_info in capabilities['resource_templates'].items():
+            try:
+                safe_name = template_info['name'].replace('/', '_').replace(':', '_')
+                wrapper_name = f"{server_name}_template_{safe_name}"
+                template_wrapper = self._create_resource_template_wrapper(server_name, template_uri, template_info,
+                                                                          session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': template_wrapper,
+                    'description': f"Access resource template: {template_info['description']}",
+                    'type': 'resource_template',
+                    'server': server_name,
+                    'original_template': template_uri
+                }
+            except Exception as e:
+                eprint(f"Failed to create template wrapper {template_uri}: {e}")
+
+        # Create prompt wrappers
+        for prompt_name, prompt_info in capabilities['prompts'].items():
+            try:
+                wrapper_name = f"{server_name}_prompt_{prompt_name}"
+                prompt_wrapper = self._create_prompt_wrapper(server_name, prompt_name, prompt_info, session)
+
+                self._mcp_tools[wrapper_name] = {
+                    'function': prompt_wrapper,
+                    'description': f"Execute prompt: {prompt_info['description']}",
+                    'type': 'prompt',
+                    'server': server_name,
+                    'original_name': prompt_name,
+                    'arguments': prompt_info.get('arguments', [])
+                }
+            except Exception as e:
+                eprint(f"Failed to create prompt wrapper {prompt_name}: {e}")
 
     @staticmethod
     def _validate_mcp_server_config(server_name: str, server_config: Dict[str, Any]) -> bool:
         """Validate MCP server configuration"""
         command = server_config.get('command')
         if not command:
-            logger.error(f"MCP server {server_name} missing 'command' field")
+            eprint(f"MCP server {server_name} missing 'command' field")
             return False
 
         # Check if command exists and is executable
@@ -505,23 +901,26 @@ class FlowAgentBuilder:
             # These are common commands, assume they exist
             return True
 
+        if server_config.get('transport') in ['http', 'streamable-http'] and server_config.get('url'):
+            return True
+
         # For other commands, check if they exist
         import shutil
         if not shutil.which(command):
-            logger.warning(f"MCP server {server_name}: command '{command}' not found in PATH")
+            wprint(f"MCP server {server_name}: command '{command}' not found in PATH")
             # Don't fail completely, just warn - the command might be available at runtime
 
         args = server_config.get('args', [])
         if not isinstance(args, list):
-            logger.error(f"MCP server {server_name}: 'args' must be a list")
+            eprint(f"MCP server {server_name}: 'args' must be a list")
             return False
 
         env = server_config.get('env', {})
         if not isinstance(env, dict):
-            logger.error(f"MCP server {server_name}: 'env' must be a dictionary")
+            eprint(f"MCP server {server_name}: 'env' must be a dictionary")
             return False
 
-        logger.debug(f"Validated MCP server config: {server_name}")
+        iprint(f"Validated MCP server config: {server_name}")
         return True
 
     def _load_direct_mcp_tool(self, tool_config: Dict[str, Any]):
@@ -531,7 +930,7 @@ class FlowAgentBuilder:
         function_code = tool_config.get('function_code')
 
         if not name or not function_code:
-            logger.warning(f"Incomplete tool config: {tool_config}")
+            wprint(f"Incomplete tool config: {tool_config}")
             return
 
         # Create function from code
@@ -552,10 +951,10 @@ class FlowAgentBuilder:
                     'description': description,
                     'source': 'code'
                 }
-                logger.debug(f"Loaded MCP tool from code: {name}")
+                iprint(f"Loaded MCP tool from code: {name}")
 
         except Exception as e:
-            logger.error(f"Failed to load MCP tool {name}: {e}")
+            eprint(f"Failed to load MCP tool {name}: {e}")
 
     def add_mcp_tool_from_code(self, name: str, code: str, description: str = "") -> 'FlowAgentBuilder':
         """Add MCP tool from code string"""
@@ -573,7 +972,7 @@ class FlowAgentBuilder:
                           agent_name: str = None, agent_description: str = None) -> 'FlowAgentBuilder':
         """Enable A2A server for agent-to-agent communication"""
         if not A2A_AVAILABLE:
-            logger.warning("A2A not available, cannot enable server")
+            wprint("A2A not available, cannot enable server")
             return self
 
         self.config.a2a.enabled = True
@@ -582,7 +981,7 @@ class FlowAgentBuilder:
         self.config.a2a.agent_name = agent_name or self.config.name
         self.config.a2a.agent_description = agent_description or self.config.description
 
-        logger.info(f"A2A server enabled: {host}:{port}")
+        iprint(f"A2A server enabled: {host}:{port}")
         return self
 
     # ===== TELEMETRY INTEGRATION =====
@@ -591,7 +990,7 @@ class FlowAgentBuilder:
                          console_export: bool = True) -> 'FlowAgentBuilder':
         """Enable OpenTelemetry tracing"""
         if not OTEL_AVAILABLE:
-            logger.warning("OpenTelemetry not available, cannot enable telemetry")
+            wprint("OpenTelemetry not available, cannot enable telemetry")
             return self
 
         self.config.telemetry.enabled = True
@@ -615,9 +1014,9 @@ class FlowAgentBuilder:
                 otlp_processor = BatchSpanProcessor(otlp_exporter)
                 self._tracer_provider.add_span_processor(otlp_processor)
             except Exception as e:
-                logger.warning(f"Failed to setup OTLP exporter: {e}")
+                wprint(f"Failed to setup OTLP exporter: {e}")
 
-        logger.info(f"Telemetry enabled for service: {service_name}")
+        iprint(f"Telemetry enabled for service: {service_name}")
         return self
 
     # ===== CHECKPOINT CONFIGURATION =====
@@ -633,7 +1032,7 @@ class FlowAgentBuilder:
         if enabled:
             # Ensure checkpoint directory exists
             Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-            logger.info(f"Checkpointing enabled: {checkpoint_dir} (every {interval_seconds}s)")
+            iprint(f"Checkpointing enabled: {checkpoint_dir} (every {interval_seconds}s)")
 
         return self
 
@@ -644,7 +1043,7 @@ class FlowAgentBuilder:
         tool_name = name or func.__name__
         self._custom_tools[tool_name] = (func, description or func.__doc__)
 
-        logger.info(f"Tool added: {tool_name}")
+        iprint(f"Tool added: {tool_name}")
         return self
 
     def add_tools_from_module(self, module, prefix: str = "", exclude: List[str] = None) -> 'FlowAgentBuilder':
@@ -658,7 +1057,7 @@ class FlowAgentBuilder:
             tool_name = f"{prefix}{name}" if prefix else name
             self.add_tool(obj, name=tool_name)
 
-        logger.info(f"Added tools from module {module.__name__}")
+        iprint(f"Added tools from module {module.__name__}")
         return self
 
     # ===== PERSONA MANAGEMENT =====
@@ -695,16 +1094,16 @@ class FlowAgentBuilder:
             persona_data["format_config"] = format_config
 
         self.config.persona_profiles[profile_name] = persona_data
-        logger.info(f"Persona profile added: {profile_name}")
+        iprint(f"Persona profile added: {profile_name}")
         return self
 
     def set_active_persona(self, profile_name: str) -> 'FlowAgentBuilder':
         """Set active persona profile"""
         if profile_name in self.config.persona_profiles:
             self.config.active_persona = profile_name
-            logger.info(f"Active persona set: {profile_name}")
+            iprint(f"Active persona set: {profile_name}")
         else:
-            logger.warning(f"Persona profile not found: {profile_name}")
+            wprint(f"Persona profile not found: {profile_name}")
         return self
 
     def with_developer_persona(self, name: str = "Senior Developer") -> 'FlowAgentBuilder':
@@ -836,144 +1235,153 @@ class FlowAgentBuilder:
     async def build(self) -> FlowAgent:
         """Build the production-ready FlowAgent"""
 
-        logger.info(f"Building production FlowAgent: {self.config.name}")
+        with Spinner(message=f"Building Agent {self.config.name}", symbols='c'):
+            iprint(f"Building production FlowAgent: {self.config.name}")
 
-        # Validate configuration
-        validation_issues = self.validate_config()
-        if validation_issues["errors"]:
-            error_msg = f"Configuration validation failed: {', '.join(validation_issues['errors'])}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            # Validate configuration
+            validation_issues = self.validate_config()
+            if validation_issues["errors"]:
+                error_msg = f"Configuration validation failed: {', '.join(validation_issues['errors'])}"
+                eprint(error_msg)
+                raise ValueError(error_msg)
 
-        # Log warnings
-        for warning in validation_issues["warnings"]:
-            logger.warning(f"Configuration warning: {warning}")
+            # Log warnings
+            for warning in validation_issues["warnings"]:
+                wprint(f"Configuration warning: {warning}")
 
-        try:
-            # 1. Setup API configuration
-            api_key = None
-            if self.config.api_key_env_var:
-                api_key = os.getenv(self.config.api_key_env_var)
-                if not api_key:
-                    logger.warning(f"API key env var {self.config.api_key_env_var} not set")
-
-            # 2. Create persona if configured
-            active_persona = None
-            if self.config.active_persona and self.config.active_persona in self.config.persona_profiles:
-                persona_data = self.config.persona_profiles[self.config.active_persona]
-
-                # Create FormatConfig if present
-                format_config = None
-                if "format_config" in persona_data:
-                    fc_data = persona_data.pop("format_config")
-                    format_config = FormatConfig(
-                        response_format=ResponseFormat(fc_data.get("response_format", "frei-text")),
-                        text_length=TextLength(fc_data.get("text_length", "chat-conversation")),
-                        custom_instructions=fc_data.get("custom_instructions", ""),
-                        strict_format_adherence=fc_data.get("strict_format_adherence", True),
-                        quality_threshold=fc_data.get("quality_threshold", 0.7)
-                    )
-
-                active_persona = PersonaConfig(**persona_data)
-                active_persona.format_config = format_config
-
-                logger.info(f"Using persona: {active_persona.name}")
-
-            # 3. Create AgentModelData
-            amd = AgentModelData(
-                name=self.config.name,
-                fast_llm_model=self.config.fast_llm_model,
-                complex_llm_model=self.config.complex_llm_model,
-                system_message=self.config.system_message,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens_output,
-                max_input_tokens=self.config.max_tokens_input,
-                api_key=api_key,
-                budget_manager=self._budget_manager,
-                persona=active_persona,
-                use_fast_response=self.config.use_fast_response
-            )
-
-            # 4. Create FlowAgent
-            agent = FlowAgent(
-                amd=amd,
-                world_model=self.config.initial_world_model.copy(),
-                verbose=self.config.verbose_logging,
-                enable_pause_resume=self.config.checkpoint.enabled,
-                checkpoint_interval=self.config.checkpoint.interval_seconds,
-                max_parallel_tasks=self.config.max_parallel_tasks
-            )
-
-            # 5. Add custom variables
-            for key, value in self.config.custom_variables.items():
-                agent.set_variable(key, value)
-
-            # 6. Add custom tools
-            tools_added = 0
-            for tool_name, (tool_func, tool_description) in self._custom_tools.items():
-                try:
-                    await agent.add_tool(tool_func, tool_name, tool_description)
-                    tools_added += 1
-                except Exception as e:
-                    logger.error(f"Failed to add tool {tool_name}: {e}")
-
-            # 7. Add MCP tools
-            for tool_name, tool_info in self._mcp_tools.items():
-                try:
-                    await agent.add_tool(
-                        tool_info['function'],
-                        tool_name,
-                        tool_info['description']
-                    )
-                    tools_added += 1
-                except Exception as e:
-                    logger.error(f"Failed to add MCP tool {tool_name}: {e}")
-
-            # 8. Setup MCP server
-            if self.config.mcp.enabled and MCP_AVAILABLE:
-                try:
-                    agent.setup_mcp_server(
-                        host=self.config.mcp.host,
-                        port=self.config.mcp.port,
-                        name=self.config.mcp.server_name
-                    )
-                    logger.info("MCP server configured")
-                except Exception as e:
-                    logger.error(f"Failed to setup MCP server: {e}")
-
-            # 9. Setup A2A server
-            if self.config.a2a.enabled and A2A_AVAILABLE:
-                try:
-                    agent.setup_a2a_server(
-                        host=self.config.a2a.host,
-                        port=self.config.a2a.port
-                    )
-                    logger.info("A2A server configured")
-                except Exception as e:
-                    logger.error(f"Failed to setup A2A server: {e}")
-
-            # 10. Initialize enhanced session context
             try:
-                await agent.initialize_session_context(max_history=200)
-                logger.info("Enhanced session context initialized")
+                # 1. Setup API configuration
+                api_key = None
+                if self.config.api_key_env_var:
+                    api_key = os.getenv(self.config.api_key_env_var)
+                    if not api_key:
+                        wprint(f"API key env var {self.config.api_key_env_var} not set")
+
+                # 2. Create persona if configured
+                active_persona = None
+                if self.config.active_persona and self.config.active_persona in self.config.persona_profiles:
+                    persona_data = self.config.persona_profiles[self.config.active_persona]
+
+                    # Create FormatConfig if present
+                    format_config = None
+                    if "format_config" in persona_data:
+                        fc_data = persona_data.pop("format_config")
+                        format_config = FormatConfig(
+                            response_format=ResponseFormat(fc_data.get("response_format", "frei-text")),
+                            text_length=TextLength(fc_data.get("text_length", "chat-conversation")),
+                            custom_instructions=fc_data.get("custom_instructions", ""),
+                            strict_format_adherence=fc_data.get("strict_format_adherence", True),
+                            quality_threshold=fc_data.get("quality_threshold", 0.7)
+                        )
+
+                    active_persona = PersonaConfig(**persona_data)
+                    active_persona.format_config = format_config
+
+                    iprint(f"Using persona: {active_persona.name}")
+
+                # 3. Create AgentModelData
+                amd = AgentModelData(
+                    name=self.config.name,
+                    fast_llm_model=self.config.fast_llm_model,
+                    complex_llm_model=self.config.complex_llm_model,
+                    system_message=self.config.system_message,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens_output,
+                    max_input_tokens=self.config.max_tokens_input,
+                    api_key=api_key,
+                    budget_manager=self._budget_manager,
+                    persona=active_persona,
+                    use_fast_response=self.config.use_fast_response
+                )
+
+                # 4. Create FlowAgent
+                agent = FlowAgent(
+                    amd=amd,
+                    world_model=self.config.initial_world_model.copy(),
+                    verbose=self.config.verbose_logging,
+                    enable_pause_resume=self.config.checkpoint.enabled,
+                    checkpoint_interval=self.config.checkpoint.interval_seconds,
+                    max_parallel_tasks=self.config.max_parallel_tasks
+                )
+
+                # 5. Add custom variables
+                for key, value in self.config.custom_variables.items():
+                    agent.set_variable(key, value)
+
+                # 6. Add custom tools
+                tools_added = 0
+                for tool_name, (tool_func, tool_description) in self._custom_tools.items():
+                    try:
+                        await agent.add_tool(tool_func, tool_name, tool_description)
+                        tools_added += 1
+                    except Exception as e:
+                        eprint(f"Failed to add tool {tool_name}: {e}")
+
+                with Spinner(message="Loading MCP", symbols='w'):
+                    # 6a. Process MCP configuration if needed
+                    if hasattr(self, '_mcp_needs_loading') and self._mcp_needs_loading:
+                        await self._process_mcp_config()
+
+                # 7. Add MCP tools
+                for tool_name, tool_info in self._mcp_tools.items():
+                    try:
+                        await agent.add_tool(
+                            tool_info['function'],
+                            tool_name,
+                            tool_info['description']
+                        )
+                        tools_added += 1
+                    except Exception as e:
+                        eprint(f"Failed to add MCP tool {tool_name}: {e}")
+
+                agent._mcp_session_manager = self._mcp_session_manager
+
+                # 8. Setup MCP server
+                if self.config.mcp.enabled and MCP_AVAILABLE:
+                    try:
+                        agent.setup_mcp_server(
+                            host=self.config.mcp.host,
+                            port=self.config.mcp.port,
+                            name=self.config.mcp.server_name
+                        )
+                        iprint("MCP server configured")
+                    except Exception as e:
+                        eprint(f"Failed to setup MCP server: {e}")
+
+                # 9. Setup A2A server
+                if self.config.a2a.enabled and A2A_AVAILABLE:
+                    try:
+                        agent.setup_a2a_server(
+                            host=self.config.a2a.host,
+                            port=self.config.a2a.port
+                        )
+                        iprint("A2A server configured")
+                    except Exception as e:
+                        eprint(f"Failed to setup A2A server: {e}")
+
+                # 10. Initialize enhanced session context
+                try:
+                    await agent.initialize_session_context(max_history=200)
+                    iprint("Enhanced session context initialized")
+                except Exception as e:
+                    wprint(f"Session context initialization failed: {e}")
+
+
+                # Final summary
+                iprint(f"ok FlowAgent built successfully!")
+                iprint(f"   Agent: {agent.amd.name}")
+                iprint(f"   Tools: {tools_added}")
+                iprint(f"   MCP: {'ok' if self.config.mcp.enabled else 'F'}")
+                iprint(f"   A2A: {'ok' if self.config.a2a.enabled else 'F'}")
+                iprint(f"   Telemetry: {'ok' if self.config.telemetry.enabled else 'F'}")
+                iprint(f"   Checkpoints: {'ok' if self.config.checkpoint.enabled else 'F'}")
+                iprint(f"   Persona: {active_persona.name if active_persona else 'Default'}")
+
+                return agent
+
             except Exception as e:
-                logger.warning(f"Session context initialization failed: {e}")
-
-            # Final summary
-            logger.info(f"ok FlowAgent built successfully!")
-            logger.info(f"   Agent: {agent.amd.name}")
-            logger.info(f"   Tools: {tools_added}")
-            logger.info(f"   MCP: {'ok' if self.config.mcp.enabled else 'F'}")
-            logger.info(f"   A2A: {'ok' if self.config.a2a.enabled else 'F'}")
-            logger.info(f"   Telemetry: {'ok' if self.config.telemetry.enabled else 'F'}")
-            logger.info(f"   Checkpoints: {'ok' if self.config.checkpoint.enabled else 'F'}")
-            logger.info(f"   Persona: {active_persona.name if active_persona else 'Default'}")
-
-            return agent
-
-        except Exception as e:
-            logger.error(f"Failed to build FlowAgent: {e}")
-            raise
+                eprint(f"Failed to build FlowAgent: {e}")
+                raise
 
     # ===== FACTORY METHODS =====
 
@@ -1055,10 +1463,10 @@ class FlowAgentBuilder:
 async def example_production_usage():
     """Production usage example with full features"""
 
-    logger.info("=== Production FlowAgent Builder Example ===")
+    iprint("=== Production FlowAgent Builder Example ===")
 
     # Example 1: Developer agent with full MCP integration
-    logger.info("Creating developer agent with MCP integration...")
+    iprint("Creating developer agent with MCP integration...")
 
     # Add a custom tool
     def get_system_info():
@@ -1084,10 +1492,10 @@ async def example_production_usage():
     dev_response = await developer_agent.a_run(
         "Hello! I'm working on {{ project_name }}. Can you tell me about the system and create a simple Python function?"
     )
-    logger.info(f"Developer agent response: {dev_response[:200]}...")
+    iprint(f"Developer agent response: {dev_response[:200]}...")
 
     # Example 2: Load from configuration file
-    logger.info("\nTesting configuration save/load...")
+    iprint("\nTesting configuration save/load...")
 
     # Save current config
     config_path = "/tmp/production_agent_config.yaml"
@@ -1099,10 +1507,10 @@ async def example_production_usage():
     config_agent = await loaded_builder.build()
 
     config_response = await config_agent.a_run("Analyze this data: [1, 2, 3, 4, 5]")
-    logger.info(f"Config-loaded agent response: {config_response[:150]}...")
+    iprint(f"Config-loaded agent response: {config_response[:150]}...")
 
     # Example 3: Agent with MCP tools from config
-    logger.info("\nTesting MCP tools integration...")
+    iprint("\nTesting MCP tools integration...")
 
     # Create a sample MCP config
     mcp_config = {
@@ -1135,31 +1543,31 @@ async def weather_checker(location: str) -> str:
                        .build())
 
     mcp_response = await mcp_agent.a_run("What's the weather like in Berlin?")
-    logger.info(f"MCP agent response: {mcp_response[:150]}...")
+    iprint(f"MCP agent response: {mcp_response[:150]}...")
 
     # Show agent status
-    logger.info("\n=== Agent Status ===")
+    iprint("\n=== Agent Status ===")
     status = developer_agent.status(pretty_print=False)
-    logger.info(f"Developer agent tools: {len(status['capabilities']['tool_names'])}")
-    logger.info(f"MCP agent tools: {len(mcp_agent.shared.get('available_tools', []))}")
+    iprint(f"Developer agent tools: {len(status['capabilities']['tool_names'])}")
+    iprint(f"MCP agent tools: {len(mcp_agent.shared.get('available_tools', []))}")
 
     # Cleanup
     await developer_agent.close()
     await config_agent.close()
     await mcp_agent.close()
 
-    logger.info("Production example completed successfully!")
+    iprint("Production example completed successfully!")
 
 
 async def example_quick_start():
     """Quick start examples for common scenarios"""
 
-    logger.info("=== Quick Start Examples ===")
+    iprint("=== Quick Start Examples ===")
 
     # 1. Simple developer agent
     dev_agent = await FlowAgentBuilder.create_developer_agent("QuickDev").build()
     response1 = await dev_agent.a_run("Create a Python function to validate email addresses")
-    logger.info(f"Quick dev response: {response1[:100]}...")
+    iprint(f"Quick dev response: {response1[:100]}...")
     await dev_agent.close()
 
     # 2. Analyst with custom data
@@ -1168,16 +1576,16 @@ async def example_quick_start():
                            .with_custom_variables({"dataset": "sales_data_2024"})
                            .build())
     response2 = await analyst_agent.a_run("Analyze the trends in {{ dataset }}")
-    logger.info(f"Quick analyst response: {response2[:100]}...")
+    iprint(f"Quick analyst response: {response2[:100]}...")
     await analyst_agent.close()
 
     # 3. Creative assistant
     creative_agent = await FlowAgentBuilder.create_creative_agent("QuickCreative").build()
     response3 = await creative_agent.a_run("Write a creative story about AI agents collaborating")
-    logger.info(f"Quick creative response: {response3[:100]}...")
+    iprint(f"Quick creative response: {response3[:100]}...")
     await creative_agent.close()
 
-    logger.info("Quick start examples completed!")
+    iprint("Quick start examples completed!")
 
 
 if __name__ == "__main__":

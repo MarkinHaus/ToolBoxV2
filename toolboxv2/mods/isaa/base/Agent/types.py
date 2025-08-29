@@ -253,6 +253,8 @@ class Task:
     max_retries: int = 3
     critical: bool = False
 
+    task_identification_attr: bool = True
+
 
     def __post_init__(self):
         """Ensure all mutable defaults are properly initialized"""

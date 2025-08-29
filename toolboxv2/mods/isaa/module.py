@@ -51,7 +51,7 @@ from .base.Agent.builder import (
 from .base.AgentUtils import (
     AISemanticMemory,
     Scripts,
-    ControllerManager
+    ControllerManager, detect_shell, safe_decode
 )
 from .extras.modes import (
     ISAA0CODE,  # Assuming this is a constant string
@@ -288,8 +288,7 @@ class Tools(MainTool, FileHandler):
         self.load_keys_from_env()
 
         # Background loading
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, self.scripts.load_scripts)
+        self.scripts.load_scripts()
 
         with Spinner(message="Building Controller", symbols='c'):
             self.controller.init(self.config['controller_file'])
@@ -327,6 +326,7 @@ class Tools(MainTool, FileHandler):
                 # The AgentConfig is already in self.agent_data, which should be saved.
                 pass  # Agent instances are not directly saved, their configs are.
 
+        self.scripts.save_scripts()
         threading.Thread(target=self.save_to_mem_sync, daemon=True).start()  # Sync wrapper for save_to_mem
 
         # Save controller if initialized
@@ -343,7 +343,6 @@ class Tools(MainTool, FileHandler):
 
         # Save other persistent data
         self.save_file_handler()
-        self.scripts.save_scripts()
 
     def save_to_mem_sync(self):
         # This used to call agent.save_memory(). FlowAgent does not have this.
@@ -484,10 +483,46 @@ class Tools(MainTool, FileHandler):
         builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
         # Scripting tools
-        builder.add_tool(self.scripts.run_script, "runScript", "Run a saved script")
-        builder.add_tool(self.scripts.get_scripts_list, "listScripts", "List all available scripts")
-        builder.add_tool(self.scripts.create_script, "createScript", "Create a new script args name, description, content, script_type py or sh")
-        builder.add_tool(self.scripts.remove_script, "deleteScript", "Delete a script")
+        # Enhanced tool descriptions for agent understanding
+        builder.add_tool(
+            self.scripts.run_script,
+            "runScript",
+            """POWER TOOL: Execute saved scripts to perform complex operations beyond basic functions.
+
+            USE WHEN: You need file processing, data analysis, web scraping, API calls, system operations, mathematical computations, or any task requiring libraries/complex logic. or built-in tools not avalabel
+
+            DON'T USE: For simple text operations, basic math, or tasks you can do with built-in tools. or built-in tools avalabel
+
+            Args: name (required), args (optional - space-separated arguments for the script)
+            Example: runScript('web_scraper', 'https://example.com json')"""
+        )
+
+        builder.add_tool(
+            self.scripts.get_scripts_list,
+            "listScripts",
+            """View your extended capabilities. Shows all available scripts that enhance your abilities beyond built-in functions. Use this to discover what powerful operations you can perform."""
+        )
+
+        builder.add_tool(
+            self.scripts.create_script,
+            "createScript",
+            """CAPABILITY ENHANCER: Create scripts to permanently extend your abilities.
+
+            Python scripts can use external libraries via 'uv' dependency management.
+            Shell scripts work cross-platform for system operations.
+
+            WHEN TO CREATE: When you need to repeat complex operations, use external libraries, or perform system-level tasks.
+
+            Args: name, description, content, script_type ('py' or 'sh'), dependencies (optional - for Python: 'requests pandas numpy' format)
+
+            Example: createScript('data_analyzer', 'Analyze CSV data', '...code...', 'py', 'pandas matplotlib')"""
+        )
+
+        builder.add_tool(
+            self.scripts.remove_script,
+            "deleteScript",
+            """Remove a script capability. Use when a script is no longer needed or needs to be replaced. Args: name"""
+        )
 
         # Add agent orchestration tool for specific agent types
         if name == "self" or any(keyword in name.lower() for keyword in ["task", "chain", "supervisor"]):
@@ -726,13 +761,13 @@ class Tools(MainTool, FileHandler):
             builder_to_use.with_name(agent_name)
 
         self.print(
-            f"Building FlowAgent: {agent_name} with models {builder_to_use.config.fast_llm_model}/{builder_to_use.config.complex_llm_model}")
+            f"Building FlowAgent: {agent_name} with models {builder_to_use.config.fast_llm_model} - {builder_to_use.config.complex_llm_model}")
 
         # Build the agent
         agent_instance: FlowAgent = await builder_to_use.build()
 
         if agent_instance.amd.name == "self":
-            self.app.run_bg_task(agent_instance.initialize_context_awareness)
+            self.app.run_bg_task_advanced(agent_instance.initialize_context_awareness)
 
         if interface := self.get_tools_interface(agent_name):
             interface.variable_manager = agent_instance.variable_manager
@@ -958,40 +993,6 @@ class Tools(MainTool, FileHandler):
             return mem_kb
         return cm
 
-
-def detect_shell() -> tuple[str, str]:
-    """
-    Detects the best available shell and the argument to execute a command.
-    Returns:
-        A tuple of (shell_executable, command_argument).
-        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
-    """
-    if platform.system() == "Windows":
-        if shell_path := shutil.which("pwsh"):
-            return shell_path, "-Command"
-        if shell_path := shutil.which("powershell"):
-            return shell_path, "-Command"
-        return "cmd.exe", "/c"
-
-    shell_env = os.environ.get("SHELL")
-    if shell_env and shutil.which(shell_env):
-        return shell_env, "-c"
-
-    for shell in ["bash", "zsh", "sh"]:
-        if shell_path := shutil.which(shell):
-            return shell_path, "-c"
-
-    return "/bin/sh", "-c"
-
-
-def safe_decode(data: bytes) -> str:
-    encodings = [sys.stdout.encoding, locale.getpreferredencoding(), 'utf-8', 'latin-1', 'iso-8859-1']
-    for enc in encodings:
-        try:
-            return data.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return data.decode('utf-8', errors='replace')
 
 
 def shell_tool_function(command: str) -> str:

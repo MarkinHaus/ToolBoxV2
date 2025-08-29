@@ -2671,6 +2671,14 @@ class ProgressiveTreePrinter:
         execution_phase = metadata.get("execution_phase", "")
         delegation_complexity = metadata.get("delegation_complexity", "unknown")
         outline_step = metadata.get("outline_step", 0)
+        raw = metadata.get("raw_args_string", "")
+        if raw:
+            task_desc = raw.split('task_description="', 1)[1].split('", tools_list=', 1)[0]
+            tools = raw.split('tools_list=', 1)[1]
+            task_preview = f"{tools} "
+            task_preview += task_desc[:1000 if self.mode == VerbosityMode.VERBOSE or self.mode == VerbosityMode.DEBUG else 80] + '...'
+        else:
+            task_preview = ""
         outline_step_completion = metadata.get("outline_step_completion", False)
 
         # Enhanced timestamp formatting
@@ -2680,7 +2688,7 @@ class ProgressiveTreePrinter:
             # Starting delegation - show task description in all modes
             if self.mode == VerbosityMode.VERBOSE or self.mode == VerbosityMode.DEBUG:
                 # Detailed view for verbose/debug
-                task_preview = delegated_task[:80] + "..." if len(delegated_task) > 80 else delegated_task
+                # Final minimalist output
                 delegation_text = f"🎯 [{time_str}] Delegating: {task_preview}"
 
                 # Add outline step context
@@ -2706,8 +2714,6 @@ class ProgressiveTreePrinter:
 
             elif self.mode == VerbosityMode.STANDARD:
                 # Standard mode - show task description in panel
-                task_preview = delegated_task[:100] + "..." if len(delegated_task) > 100 else delegated_task
-
                 panel_content = f"📄 Task: {task_preview}"
 
                 # Add outline context
@@ -2729,6 +2735,13 @@ class ProgressiveTreePrinter:
                     box=box.ROUNDED
                 )
                 self.console.print(delegation_panel)
+
+            else:
+                # Minimalist output for other modes
+                delegation_text = f"🎯 [{time_str}] Delegating task"
+                if outline_step > 0:
+                    delegation_text += f" (Step {outline_step})"
+                self.console.print(delegation_text + task_preview[:50]+'...', style="green")
 
         elif event.success and execution_phase != "meta_tool_start":
             # Delegation completed with enhanced info
