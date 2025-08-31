@@ -1273,6 +1273,9 @@ class AppType:
     enable_profiling: bool = False
     sto = None
 
+    websocket_handlers: dict[str, dict[str, Callable]] = {}
+    _rust_ws_bridge: Any = None
+
     def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
         self.args_sto = args
         self.prefix = prefix
@@ -1548,7 +1551,8 @@ class AppType:
                           row=False,
                           request_as_kwarg=False,
                           memory_cache_max_size=100,
-                          memory_cache_ttl=300):
+                          memory_cache_ttl=300,
+                          websocket_handler: str | None = None,):
         """proxi attr"""
 
         # data = {
@@ -1595,6 +1599,7 @@ class AppType:
            pre_compute=None,
            post_compute=None,
            api_methods=None,
+           websocket_handler: str | None = None,
            ):
         """
     A decorator for registering and configuring functions within a module.

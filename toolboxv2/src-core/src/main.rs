@@ -1,4 +1,4 @@
-use actix_web::{web, App, HttpRequest, HttpServer, HttpResponse, middleware, FromRequest};
+use actix_web::{web, App, HttpRequest, HttpServer, Error, HttpResponse, middleware, FromRequest};
 use actix_web::cookie::{Key};
 use actix_web::http::Method;
 use actix_web::dev::Service;
@@ -48,6 +48,11 @@ use futures_util::{StreamExt, TryStreamExt};
 use listenfd::ListenFd;
 use std::path::Path;
 use std::net::TcpListener;
+
+use actix_web_actors::ws;
+use dashmap::DashMap;
+use actix::prelude::*;
+use tokio::sync::broadcast;
 
 #[cfg(unix)]
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -155,6 +160,294 @@ impl Drop for InstanceGuard {
             debug!("Instance {} released via Drop.", self.instance_id);
         }
     }
+}
+
+
+
+/// Globale Senke für den Broadcast-Kanal.
+/// Jede Nachricht, die hier gesendet wird, erreicht jeden aktiven WebSocket-Actor.
+/// Dies ermöglicht die Kommunikation zwischen Python-Instanzen und 1-zu-N-Szenarien.
+lazy_static! {
+    static ref GLOBAL_WS_BROADCASTER: broadcast::Sender<WsMessage> = broadcast::channel(1024).0;
+}
+
+/// Speichert die Adressen der aktiven WebSocket-Actors, um gezielte 1-zu-1-Nachrichten zu ermöglichen.
+/// Schlüssel: conn_id (String), Wert: Addr<WebSocketActor>
+lazy_static! {
+    static ref ACTIVE_CONNECTIONS: Arc<DashMap<String, Addr<WebSocketActor>>> = Arc::new(DashMap::new());
+}
+
+/// Nachrichtentyp für den internen Broadcast-Bus.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+struct WsMessage {
+    /// Eindeutige ID der ursprünglichen Verbindung, die die Nachricht gesendet hat (kann leer sein).
+    pub source_conn_id: String,
+    /// JSON-serialisierter String der Nachricht.
+    pub content: String,
+    /// Optional: Gibt an, an welche spezifische Verbindung diese Nachricht gerichtet ist.
+    pub target_conn_id: Option<String>,
+    /// Optional: Gibt an, an welchen Kanal/welche Gruppe diese Nachricht gerichtet ist.
+    pub target_channel_id: Option<String>,
+}
+
+
+// --- NEU: Der WebSocket Actor ---
+
+struct WebSocketActor {
+    conn_id: String,
+    client: ToolboxClient,
+    session: SessionData, // Annahme: SessionData wird aus der Session extrahiert
+    channel_id: Option<String>, // Der "Raum" oder die Gruppe, der diese Verbindung angehört
+    hb: Instant,
+}
+
+impl WebSocketActor {
+    fn new(client: ToolboxClient, session: Session, module: &str, function: &str) -> Self {
+        let conn_id = Uuid::new_v4().to_string();
+        let session_data = session.get("live_data").unwrap_or(None).unwrap_or_default(); // Vereinfachte Extraktion
+        Self {
+            conn_id,
+            client,
+            session: session_data,
+            // Kanal-ID wird aus der URL abgeleitet, z.B. /ws/Chat/room123 -> "Chat/room123"
+            channel_id: Some(format!("{}/{}", module, function)),
+            hb: Instant::now(),
+        }
+    }
+
+    fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(Duration::from_secs(5), |act, ctx| {
+            if Instant::now().duration_since(act.hb) > Duration::from_secs(10) {
+                warn!("WebSocket Client heartbeat failed, disconnecting!");
+                ctx.stop();
+                return;
+            }
+            ctx.ping(b"");
+        });
+    }
+}
+
+impl Actor for WebSocketActor {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        info!("WebSocket Actor started: conn_id={}", self.conn_id);
+        self.heartbeat(ctx);
+
+        // Registriere den Actor global
+        ACTIVE_CONNECTIONS.insert(self.conn_id.clone(), ctx.address());
+
+        // Abonniere den globalen Broadcast-Kanal
+        let mut rx = GLOBAL_WS_BROADCASTER.subscribe();
+        let addr = ctx.address();
+
+        // Erstelle einen Future, der auf Nachrichten vom Broadcast-Kanal lauscht
+        let broadcast_listener = async move {
+            while let Ok(msg) = rx.recv().await {
+                addr.do_send(msg);
+            }
+        };
+        // Führe den Future im Kontext des Actors aus
+        ctx.spawn(broadcast_listener.into_actor(self));
+
+        // Rufe den Python on_connect Handler auf
+        let client = self.client.clone();
+        let conn_id = self.conn_id.clone();
+        let channel_id = self.channel_id.clone().unwrap_or_default();
+        let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+
+        tokio::spawn(async move {
+            let mut kwargs = HashMap::new();
+            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+            kwargs.insert("session".to_string(), session_data_json);
+
+            if let Err(e) = client.run_function(
+                &channel_id, // Der Kanalname dient zur Identifizierung des Handlers
+                "on_connect",
+                "ws_internal",
+                vec![],
+                kwargs,
+            ).await {
+                error!("Python on_connect handler failed: {:?}", e);
+            }
+        });
+    }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> Running {
+        info!("WebSocket Actor stopping: conn_id={}", self.conn_id);
+        ACTIVE_CONNECTIONS.remove(&self.conn_id);
+
+        // Rufe den Python on_disconnect Handler auf
+        let client = self.client.clone();
+        let conn_id = self.conn_id.clone();
+        let channel_id = self.channel_id.clone().unwrap_or_default();
+
+        tokio::spawn(async move {
+            let mut kwargs = HashMap::new();
+            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+            if let Err(e) = client.run_function(
+                &channel_id,
+                "on_disconnect",
+                "ws_internal",
+                vec![],
+                kwargs,
+            ).await {
+                error!("Python on_disconnect handler failed: {:?}", e);
+            }
+        });
+
+        Running::Stop
+    }
+}
+
+/// Handler für Nachrichten vom Broadcast-Kanal
+impl Handler<WsMessage> for WebSocketActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: WsMessage, ctx: &mut Self::Context) {
+        // Filtere Nachrichten:
+        // 1. 1-to-1: Wenn target_conn_id gesetzt ist, sende nur, wenn es meine ID ist.
+        if let Some(target_id) = &msg.target_conn_id {
+            if *target_id == self.conn_id {
+                ctx.text(msg.content);
+            }
+            return;
+        }
+
+        // 2. 1-to-n (Channel): Wenn target_channel_id gesetzt ist, sende nur, wenn ich in diesem Kanal bin.
+        if let Some(target_channel) = &msg.target_channel_id {
+            if self.channel_id.as_deref() == Some(target_channel) {
+                // Sende nicht an den ursprünglichen Absender zurück
+                if msg.source_conn_id != self.conn_id {
+                    ctx.text(msg.content);
+                }
+            }
+            return;
+        }
+
+        // 3. Global Broadcast: Wenn weder target_conn_id noch target_channel_id gesetzt ist.
+        // Sende nicht an den ursprünglichen Absender zurück
+        if msg.source_conn_id != self.conn_id {
+            ctx.text(msg.content);
+        }
+    }
+}
+
+
+/// Handler für eingehende WebSocket-Nachrichten vom Client
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
+            Ok(ws::Message::Text(text)) => {
+                // Leite die Nachricht an den Python on_message Handler weiter
+                let client = self.client.clone();
+                let conn_id = self.conn_id.clone();
+                let channel_id = self.channel_id.clone().unwrap_or_default();
+                let text_content = text.to_string();
+                let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+
+                tokio::spawn(async move {
+                    let mut kwargs = HashMap::new();
+                    kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+                    kwargs.insert("session".to_string(), session_data_json);
+
+                    // Versuche, die Nachricht als JSON zu parsen
+                    let payload = match serde_json::from_str::<Value>(&text_content) {
+                        Ok(json_val) => json_val,
+                        Err(_) => Value::String(text_content), // Sende als String, wenn kein JSON
+                    };
+                    kwargs.insert("payload".to_string(), payload);
+
+                    if let Err(e) = client.run_function(
+                        &channel_id,
+                        "on_message",
+                        "ws_internal",
+                        vec![],
+                        kwargs,
+                    ).await {
+                        error!("Python on_message handler failed: {:?}", e);
+                    }
+                });
+            }
+            Ok(ws::Message::Binary(_bin)) => warn!("Binary WebSocket messages are not supported."),
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            _ => ctx.stop(),
+        }
+    }
+}
+
+
+// --- NEU: WebSocket-Endpoint-Handler ---
+async fn websocket_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    path: web::Path<(String, String)>,
+    session: Session,
+    // Annahme: Open Modules und ToolboxClient sind als App-Daten verfügbar
+    open_modules: web::Data<Arc<Vec<String>>>,
+) -> Result<HttpResponse, Error> {
+    let (module_name, function_name) = path.into_inner();
+
+    // Berechtigungsprüfung
+    let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
+    if is_protected {
+        let valid = session.get::<bool>("valid").unwrap_or(None).unwrap_or(false);
+        if !valid {
+            return Ok(HttpResponse::Unauthorized().finish());
+        }
+    }
+
+    let client = get_toolbox_client().map_err(|e| {
+        error!("Could not get ToolboxClient for WebSocket: {:?}", e);
+        actix_web::error::ErrorInternalServerError("Backend service unavailable")
+    })?;
+
+    ws::start(
+        WebSocketActor::new(client, session, &module_name, &function_name),
+        &req,
+        stream,
+    )
+}
+
+// --- NEU: Python-callable Funktionen für WebSocket-Kommunikation ---
+#[pyfunction]
+fn ws_send_py(conn_id: String, payload: String) -> PyResult<()> {
+    if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
+        conn.value().do_send(WsMessage {
+            source_conn_id: "python_direct".to_string(),
+            content: payload,
+            target_conn_id: Some(conn_id),
+            target_channel_id: None,
+        });
+    } else {
+        warn!("ws_send_py: Connection ID '{}' not found.", conn_id);
+    }
+    Ok(())
+}
+
+#[pyfunction]
+fn ws_broadcast_py(channel_id: String, payload: String, source_conn_id: String) -> PyResult<()> {
+    let msg = WsMessage {
+        source_conn_id,
+        content: payload,
+        target_conn_id: None,
+        target_channel_id: Some(channel_id),
+    };
+    if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+        error!("ws_broadcast_py: Failed to send broadcast message: {}", e);
+    }
+    Ok(())
 }
 
 
@@ -1106,6 +1399,40 @@ def process_async_gen(gen):
         }
 
         result
+    }
+
+    pub async fn send_ws_message(&self, conn_id: String, payload: Value) -> Result<(), ToolboxError> {
+        let payload_str = serde_json::to_string(&payload)?;
+        task::spawn_blocking(move || {
+            Python::with_gil(|py| {
+                // Hier würden wir eine in Rust definierte PyFunction aufrufen
+                // Für dieses Beispiel simulieren wir den direkten Aufruf.
+                if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
+                    conn.value().do_send(WsMessage {
+                        source_conn_id: "python_direct".to_string(),
+                        content: payload_str,
+                        target_conn_id: Some(conn_id),
+                        target_channel_id: None,
+                    });
+                }
+            });
+        }).await.map_err(|e| ToolboxError::Unknown(e.to_string()))
+    }
+
+    /// Ruft eine Rust-Funktion auf, um eine Nachricht an einen WebSocket-Kanal zu senden.
+    pub async fn broadcast_ws_message(&self, channel_id: String, payload: Value, source_conn_id: String) -> Result<(), ToolboxError> {
+        let payload_str = serde_json::to_string(&payload)?;
+        let msg = WsMessage {
+            source_conn_id,
+            content: payload_str,
+            target_conn_id: None,
+            target_channel_id: Some(channel_id),
+        };
+        if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+            error!("broadcast_ws_message: Failed to send broadcast message: {}", e);
+            return Err(ToolboxError::Unknown(format!("Broadcast failed: {}", e)));
+        }
+        Ok(())
     }
 }
 
@@ -2387,6 +2714,11 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/sse")
                     .route("/{module_name}/{function_name}", web::get().to(sse_handler))
+            )
+            .service(
+                web::scope("/ws")
+                    .app_data(web::Data::new(open_modules.clone()))
+                    .route("/{module_name}/{function_name}", web::get().to(websocket_handler))
             )
             .service(web::resource("/validateSession")
                 .route(web::post().to(validate_session_handler))

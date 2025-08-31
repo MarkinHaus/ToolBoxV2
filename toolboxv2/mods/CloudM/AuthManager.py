@@ -151,7 +151,7 @@ def delete_user(app: App, username: str):
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
 def list_users(app: App):
     """Lists all registered users."""
-    keys_result = app.run_any(TBEF.DB.GET, query="USER::*::*", get_results=True)
+    keys_result = app.run_any(TBEF.DB.GET, query="all-k", get_results=True)
     if keys_result.is_error():
         return keys_result
 
@@ -163,6 +163,8 @@ def list_users(app: App):
     for key in user_keys:
         if isinstance(key, bytes):
             key = key.decode()
+        if not key.startswith("USER::"):
+            continue
         # Extract username from the key USER::username::uid
         parts = key.split('::')
         if len(parts) > 1 and parts[1] not in [u['username'] for u in users]:

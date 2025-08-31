@@ -1,4 +1,6 @@
 """Main module."""
+import json
+
 import asyncio
 import inspect
 import logging
@@ -1201,6 +1203,24 @@ class App(AppType, metaclass=Singleton):
         if not self.mod_online(modular_name, installed=True):
             self.get_mod(modular_name)
 
+        if tb_run_with_specification == 'ws_internal':
+            handler_id, event_name = mod_function_name
+            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
+                handler_func = self.websocket_handlers[handler_id][event_name]
+                try:
+                    # Führe den asynchronen Handler aus
+                    if inspect.iscoroutinefunction(handler_func):
+                        await handler_func(self, **kwargs)
+                    else:
+                        handler_func(self, **kwargs)  # Für synchrone Handler
+                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                except Exception as e:
+                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
+                    return Result.default_internal_error(info=str(e))
+            else:
+                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
+                return Result.ok(info=f"No WS handler for '{event_name}'.")
+
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
         self.logger.info(f"Received fuction : {mod_function_name}, with execode: {error_code}")
@@ -1272,6 +1292,24 @@ class App(AppType, metaclass=Singleton):
 
         if not self.mod_online(modular_name, installed=True):
             self.get_mod(modular_name)
+
+        if tb_run_with_specification == 'ws_internal':
+            handler_id, event_name = mod_function_name
+            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
+                handler_func = self.websocket_handlers[handler_id][event_name]
+                try:
+                    # Führe den asynchronen Handler aus
+                    if inspect.iscoroutinefunction(handler_func):
+                        return self.loop.run_until_complete(handler_func(self, **kwargs))
+                    else:
+                        handler_func(self, **kwargs)  # Für synchrone Handler
+                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                except Exception as e:
+                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
+                    return Result.default_internal_error(info=str(e))
+            else:
+                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
+                return Result.ok(info=f"No WS handler for '{event_name}'.")
 
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
@@ -1816,7 +1854,9 @@ class App(AppType, metaclass=Singleton):
                           request_as_kwarg: bool=False,
                           row: bool=False,
                           memory_cache_max_size:int=100,
-                          memory_cache_ttl:int=300):
+                          memory_cache_ttl:int=300,
+                          websocket_handler: str | None = None,
+                          ):
 
         if isinstance(type_, Enum):
             type_ = type_.value
@@ -1980,7 +2020,33 @@ class App(AppType, metaclass=Singleton):
                 "request_as_kwarg": request_as_kwarg,
 
             }
-            self._register_function(module_name, func_name, data)
+
+            if websocket_handler:
+                # Die dekorierte Funktion sollte ein Dict mit den Handlern zurückgeben
+                try:
+                    handler_config = func(self)  # Rufe die Funktion auf, um die Konfiguration zu erhalten
+                    if not isinstance(handler_config, dict):
+                        raise TypeError(
+                            f"WebSocket handler function '{func.__name__}' must return a dictionary of handlers.")
+
+                    # Handler-Identifikator, z.B. "ChatModule/room_chat"
+                    handler_id = f"{module_name}/{websocket_handler}"
+                    self.websocket_handlers[handler_id] = {}
+
+                    for event_name, handler_func in handler_config.items():
+                        if event_name in ["on_connect", "on_message", "on_disconnect"] and callable(handler_func):
+                            self.websocket_handlers[handler_id][event_name] = handler_func
+                        else:
+                            self.logger.warning(f"Invalid WebSocket handler event '{event_name}' in '{handler_id}'.")
+
+                    self.logger.info(f"Registered WebSocket handlers for '{handler_id}'.")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to register WebSocket handlers for '{func.__name__}': {e}",
+                                      exc_info=True)
+            else:
+                self._register_function(module_name, func_name, data)
+
             if exit_f:
                 if "on_exit" not in self.functions[module_name]:
                     self.functions[module_name]["on_exit"] = []
@@ -2019,6 +2085,7 @@ class App(AppType, metaclass=Singleton):
            pre_compute=None,
            post_compute=None,
            api_methods=None,
+           websocket_handler: str | None = None,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -2049,6 +2116,7 @@ class App(AppType, metaclass=Singleton):
         pre_compute (callable, optional): A function to be called before the main function.
         post_compute (callable, optional): A function to be called after the main function.
         api_methods (list[str], optional): default ["AUTO"] (GET if not params, POST if params) , GET, POST, PUT or DELETE.
+        websocket_handler (str, optional): The name of the websocket handler to use.
 
     Returns:
         function: The decorated function with additional processing and registration capabilities.
@@ -2078,7 +2146,9 @@ class App(AppType, metaclass=Singleton):
                                       row=row,
                                       api_methods=api_methods,
                                       memory_cache_max_size=memory_cache_max_size,
-                                      memory_cache_ttl=memory_cache_ttl)
+                                      memory_cache_ttl=memory_cache_ttl,
+                                      websocket_handler=websocket_handler,
+                                      )
 
     def save_autocompletion_dict(self):
         autocompletion_dict = {}
@@ -2133,4 +2203,26 @@ class App(AppType, metaclass=Singleton):
             file.write(data)
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
+
+
+    # WS logic
+
+    def _set_rust_ws_bridge(self, bridge_object):
+        self._rust_ws_bridge = bridge_object
+
+    # NEU: WebSocket-Sendemethoden
+    async def ws_send(self, conn_id: str, payload: dict):
+        """Sendet eine Nachricht an eine einzelne WebSocket-Verbindung."""
+        if not self._rust_ws_bridge:
+            raise RuntimeError("WebSocket bridge to Rust is not initialized.")
+        # Diese Methode ruft eine von Rust bereitgestellte Funktion auf
+        # Wir nehmen an, die Bridge hat eine Methode `send_message`
+        await self._rust_ws_bridge.send_message(conn_id, json.dumps(payload))
+
+    async def ws_broadcast(self, channel_id: str, payload: dict, source_conn_id: str = ""):
+        """Sendet eine Nachricht an alle Clients in einem Kanal/Raum."""
+        if not self._rust_ws_bridge:
+            raise RuntimeError("WebSocket bridge to Rust is not initialized.")
+        # Ruft die Broadcast-Funktion der Rust-Bridge auf
+        await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
 
