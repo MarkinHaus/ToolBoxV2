@@ -572,27 +572,39 @@ def human_readable_time(seconds: float) -> str:
     weeks, days = divmod(days, 7)
     return f"{weeks}w {days}d"
 
+
 class ProgressiveTreePrinter:
-    """Production-ready progressive tree printer with enhanced features"""
+    """Production-ready progressive tree printer with live terminal updates and intelligent display management"""
 
     def __init__(self, mode: VerbosityMode = VerbosityMode.STANDARD, use_rich: bool = True,
                  auto_refresh: bool = True, max_history: int = 1000,
-                 realtime_minimal: bool = None):
+                 realtime_minimal: bool = None, auto_manage_display: bool = True,
+                 ):
+        self.prompt_app = None
         self.mode = mode
-        self.agent_name = "self"
+        self.agent_name = "FlowAgent"
         self.use_rich = use_rich and RICH_AVAILABLE
         self.auto_refresh = auto_refresh
         self.max_history = max_history
+        self.auto_manage_display = auto_manage_display
+        self._layout_integration_attempted = False
 
         self.tree_builder = ExecutionTreeBuilder()
         self.print_history: List[Dict[str, Any]] = []
 
-        # Optimized realtime option
-        self.realtime_minimal = realtime_minimal if realtime_minimal is not None else False
+        # Live display configuration
+        self.realtime_minimal = realtime_minimal if realtime_minimal is not None else (mode == VerbosityMode.REALTIME)
         self._last_summary = ""
         self._needs_full_tree = False
         self._spinner_chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
         self._spinner_index = 0
+        self._last_display_lines = 20
+
+        # Auto-management state
+        self._display_active = False
+        self._last_activity_time = time.time()
+        self._activity_timeout = 30.0  # Stop live display after 30s inactivity
+        self._min_display_interval = 0.5  # Minimum time between updates
 
         # External accumulation storage
         self._accumulated_runs: List[Dict[str, Any]] = []
@@ -620,6 +632,3032 @@ class ProgressiveTreePrinter:
         # Error handling
         self._error_threshold = 5
         self._fallback_mode = False
+
+    # In ProgressiveTreePrinter class - neue Methode hinzufügen
+
+    # In ProgressiveTreePrinter class - NEUE METHODEN HINZUFÜGEN
+
+    def _detect_and_integrate_prompt_toolkit(self) -> Optional[Dict[str, Any]]:
+        """
+        Safe prompt_toolkit detection and integration with proper error handling.
+        ERSETZT: Die bestehende _detect_and_integrate_prompt_toolkit Methode
+        """
+        try:
+            from prompt_toolkit.application import get_app
+            from prompt_toolkit.widgets import TextArea
+            from prompt_toolkit.layout.containers import Window, HSplit, VSplit
+            from prompt_toolkit.layout.controls import FormattedTextControl
+            from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.layout.dimension import D
+
+            app = self.prompt_app or get_app()
+            if not app or not app.is_running:
+                return None
+
+            # Create status control (single line) - this is safer than TextArea
+            if not hasattr(self, '_agent_status_control'):
+                self._agent_status_control = FormattedTextControl(
+                    text=HTML("🤖 <cyan>Agent Ready</cyan>")
+                )
+
+                # Wrap in proper Window container with fixed height
+                self._agent_status_window = Window(
+                    content=self._agent_status_control,
+                    height=D.exact(1),  # Exact 1 line height
+                    dont_extend_height=True,
+                    wrap_lines=False
+                )
+
+            # For multi-line output, use a simpler approach
+            if not hasattr(self, '_agent_output_control'):
+                self._agent_output_lines = ["🤖 Agent Status: Ready"]  # Store lines as list
+                self._agent_output_control = FormattedTextControl(
+                    text=lambda: self._get_formatted_output_text()
+                )
+
+                self._agent_output_window = Window(
+                    content=self._agent_output_control,
+                    height=D.max(6),  # Maximum 6 lines
+                    wrap_lines=True
+                )
+
+            return {
+                'app': app,
+                'status_control': self._agent_status_control,
+                'status_window': self._agent_status_window,
+                'output_control': self._agent_output_control,
+                'output_window': self._agent_output_window,
+                'integration_type': 'control',  # Using controls instead of widgets
+                'layout_integration': False  # Will be set to True if successful
+            }
+
+        except ImportError:
+            return None
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Prompt toolkit integration failed: {e}")
+            return None
+
+    def _get_formatted_output_text(self) -> str:
+        """
+        Returns formatted text for the output control.
+        NEUE METHODE
+        """
+        try:
+            if not hasattr(self, '_agent_output_lines'):
+                return "🤖 Agent Ready"
+
+            # Join lines and return as formatted text
+            return '\n'.join(self._agent_output_lines[-6:])  # Last 6 lines only
+
+        except Exception:
+            return "🤖 Agent Status"
+
+    def _integrate_with_application_layout(self, integration_info: Dict[str, Any]) -> bool:
+        """
+        Safe layout integration with multiple fallback strategies.
+        ERSETZT: Die bestehende _integrate_with_application_layout Methode
+        """
+        try:
+            app = integration_info['app']
+            status_window = integration_info['status_window']
+            output_window = integration_info['output_window']
+
+            # Strategy 1: Try to modify existing layout
+            if hasattr(app, 'layout') and app.layout:
+                try:
+                    current_layout = app.layout
+
+                    if hasattr(current_layout, 'container'):
+                        root_container = current_layout.container
+
+                        # Check if it's HSplit and we can safely add
+                        if (hasattr(root_container, 'children') and
+                            hasattr(root_container, '__class__') and
+                            'HSplit' in str(root_container.__class__)):
+
+                            # Add status window if not already present
+                            if status_window not in root_container.children:
+                                root_container.children.append(status_window)
+
+                            # For verbose modes, add output window too
+                            if (self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG] and
+                                output_window not in root_container.children):
+                                root_container.children.append(output_window)
+
+                            integration_info['layout_integration'] = True
+                            return True
+
+                except Exception as e:
+                    if self.mode == VerbosityMode.DEBUG:
+                        print(f"⚠️ Layout integration attempt 1 failed: {e}")
+
+            # Strategy 2: Use invalidation-based updates (safer fallback)
+            integration_info['layout_integration'] = False
+            return True  # We can still use the controls, just not integrated in layout
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ All layout integration attempts failed: {e}")
+            return False
+
+    def _update_prompt_toolkit_widget(self, integration_info: Dict[str, Any], content: str,
+                                      is_status_line: bool = False):
+        """
+        Safe widget updates with proper error handling.
+        ERSETZT: Die bestehende _update_prompt_toolkit_widget Methode
+        """
+        try:
+            app = integration_info['app']
+
+            if is_status_line:
+                # Update status line control
+                status_control = integration_info['status_control']
+                from prompt_toolkit.formatted_text import HTML
+
+                # Clean content for HTML safety
+                safe_content = content.replace('<', '&lt;').replace('>', '&gt;')
+                # Re-add our HTML tags
+                safe_content = safe_content.replace('&lt;cyan&gt;', '<cyan>').replace('&lt;/cyan&gt;', '</cyan>')
+                safe_content = safe_content.replace('&lt;blue&gt;', '<blue>').replace('&lt;/blue&gt;', '</blue>')
+                safe_content = safe_content.replace('&lt;green&gt;', '<green>').replace('&lt;/green&gt;', '</green>')
+                safe_content = safe_content.replace('&lt;yellow&gt;', '<yellow>').replace('&lt;/yellow&gt;',
+                                                                                          '</yellow>')
+                safe_content = safe_content.replace('&lt;red&gt;', '<red>').replace('&lt;/red&gt;', '</red>')
+
+                status_control.text = HTML(safe_content)
+
+            else:
+                # Update output lines
+                if not hasattr(self, '_agent_output_lines'):
+                    self._agent_output_lines = []
+
+                # Add new content line
+                timestamp = time.strftime("%H:%M:%S")
+                formatted_line = f"[{timestamp}] {content}"
+
+                self._agent_output_lines.append(formatted_line)
+
+                # Keep only recent lines
+                max_lines = 20 if self.mode == VerbosityMode.MINIMAL else 50
+                if len(self._agent_output_lines) > max_lines:
+                    self._agent_output_lines = self._agent_output_lines[-max_lines:]
+
+            # Trigger UI refresh - safe approach
+            try:
+                if hasattr(app, 'invalidate'):
+                    app.invalidate()
+            except Exception:
+                # If invalidate fails, try alternative refresh
+                pass
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Widget update failed, falling back: {e}")
+            # Fallback: Just print to console
+            if is_status_line:
+                print(f"🤖 {content}")
+            else:
+                print(f"📊 {content}")
+
+    # ============================================================================
+    # AUTO-MANAGEMENT METHODS (NEW)
+    # ============================================================================
+
+    def _should_start_live_display(self) -> bool:
+        """Intelligently determines when to start live display"""
+        if not self.auto_manage_display:
+            return True
+
+        # Start conditions
+        return (
+            self.tree_builder.total_events > 2 and  # Have some activity
+            len(self.tree_builder.active_nodes) > 0 and  # Has active nodes
+            time.time() - self.tree_builder.start_time < 300  # Within 5 minutes
+        )
+
+    def _should_stop_live_display(self) -> bool:
+        """Intelligently determines when to stop live display"""
+        if not self.auto_manage_display:
+            return False
+
+        # Stop conditions
+        return (
+            len(self.tree_builder.active_nodes) == 0 and  # No active nodes
+            time.time() - self._last_activity_time > self._activity_timeout  # Inactivity timeout
+        ) or (
+            self.tree_builder.total_events > 100 and  # Lots of events
+            self._consecutive_errors > 3  # Multiple errors
+        )
+
+    def _manage_display_lifecycle(self):
+        """Manages automatic start/stop of live display"""
+        try:
+            # Check if we should start live display
+            if not self._display_active and self._should_start_live_display():
+                self._start_live_display()
+
+            # Check if we should stop live display
+            elif self._display_active and self._should_stop_live_display():
+                self._stop_live_display()
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Display lifecycle management error: {e}")
+
+    def _start_live_display(self):
+        """Start live display mode"""
+        self._display_active = True
+        self._needs_full_tree = True
+        if self.use_rich and self.mode != VerbosityMode.MINIMAL:
+            self.console.print("🚀 [cyan]Live display started[/cyan]", style="dim")
+
+    def _stop_live_display(self):
+        """Stop live display and show final summary"""
+        self._display_active = False
+        if self.use_rich and self.mode != VerbosityMode.MINIMAL:
+            self.console.print("⏹️ [yellow]Live display stopped - showing final state[/yellow]", style="dim")
+        self._print_fallback()  # One final display
+
+    def _add_live_error_section(self, tree: Tree):
+        """
+        Add live error section with enhanced error information and recovery suggestions.
+        Shows recent errors with context, timing, and potential solutions.
+        """
+        try:
+            if not self.tree_builder.error_log:
+                return
+
+            # Get recent errors (last 10, or last 30 seconds)
+            current_time = time.time()
+            recent_errors = []
+
+            for error in self.tree_builder.error_log:
+                error_age = current_time - error.get("timestamp", 0)
+
+                # Include errors from last 30 seconds, or last 10 errors max
+                if error_age < 30 or len(recent_errors) < 10:
+                    recent_errors.append({
+                        **error,
+                        "age": error_age
+                    })
+
+            # Sort by timestamp (most recent first)
+            recent_errors.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+            recent_errors = recent_errors[:8]  # Show max 8 errors
+
+            if not recent_errors:
+                return
+
+            error_count = len(recent_errors)
+            critical_errors = [e for e in recent_errors if
+                               'critical' in e.get('error', '').lower() or 'fatal' in e.get('error', '').lower()]
+
+            # Section title with severity indication
+            if critical_errors:
+                error_title = f"🚨 Critical Errors ({len(critical_errors)}/{error_count})"
+                error_style = "red bold"
+            elif error_count > 5:
+                error_title = f"⚠️ Recent Errors ({error_count})"
+                error_style = "red"
+            else:
+                error_title = f"❌ Error Log ({error_count})"
+                error_style = "red dim"
+
+            error_branch = tree.add(error_title, style=error_style)
+
+            # Add errors based on verbosity mode
+            for error in recent_errors[:5]:  # Show up to 5 errors
+                timestamp = datetime.fromtimestamp(error["timestamp"]).strftime("%H:%M:%S")
+                node_name = error.get("node", "Unknown")
+                error_message = error.get("error", "Unknown error")
+                age = error.get("age", 0)
+
+                # Age indicator
+                if age < 10:
+                    age_indicator = "🔥"  # Very recent
+                elif age < 30:
+                    age_indicator = "⚠️"  # Recent
+                else:
+                    age_indicator = "📝"  # Older
+
+                # Truncate long error messages
+                if len(error_message) > 80:
+                    error_message = error_message[:77] + "..."
+
+                error_text = f"{age_indicator} [{timestamp}] {node_name}: {error_message}"
+
+                error_item = error_branch.add(error_text, style="red")
+
+                # Add context if available
+                if error.get("task_id"):
+                    error_item.add(f"📋 Task: {error['task_id']}", style="red dim")
+                elif error.get("tool_name"):
+                    error_item.add(f"🔧 Tool: {error['tool_name']}", style="red dim")
+
+        except Exception as e:
+            # Fallback error display
+            try:
+                fallback_branch = tree.add("⚠️ Error Log (display error)", style="red dim")
+                fallback_branch.add(f"Error displaying errors: {str(e)[:50]}...", style="red dim")
+            except:
+                pass  # If even fallback fails, silently continue
+
+    def _get_task_executor_progress(self) -> Dict[str, Any]:
+        """
+        Extract comprehensive task execution progress from TaskExecutorNode events.
+        Tracks parallel execution, dependencies, and completion status.
+        """
+        try:
+            task_progress = {
+                'total_tasks': 0,
+                'completed_tasks': 0,
+                'failed_tasks': 0,
+                'running_tasks': [],
+                'waiting_tasks': [],
+                'parallel_executing': [],
+                'execution_groups': [],
+                'current_strategy': 'unknown',
+                'execution_duration': 0,
+                'task_details': {},
+                'dependency_chains': [],
+                'performance_metrics': {}
+            }
+
+            # Look for TaskExecutorNode events
+            task_events = []
+            for node in self.tree_builder.nodes.values():
+                if 'TaskExecutor' in node.name:
+                    task_events.extend(node.llm_calls)
+                    task_events.extend(node.sub_events)
+
+            if not task_events:
+                return task_progress
+
+            # Sort by timestamp
+            task_events.sort(key=lambda x: x.timestamp)
+
+            # Extract task information from events
+            for event in task_events:
+                if not hasattr(event, 'metadata') or not event.metadata:
+                    continue
+
+                metadata = event.metadata
+
+                # Track individual task progress
+                if event.event_type in ['task_start', 'task_complete', 'task_error']:
+                    task_data = metadata.get('task', {})
+                    if task_data:
+                        task_id = task_data.get('id', 'unknown')
+                        task_progress['task_details'][task_id] = {
+                            'id': task_id,
+                            'description': task_data.get('description', ''),
+                            'status': task_data.get('status', 'unknown'),
+                            'type': task_data.get('type', 'unknown'),
+                            'priority': task_data.get('priority', 1),
+                            'dependencies': task_data.get('dependencies', []),
+                            'started_at': task_data.get('started_at'),
+                            'completed_at': task_data.get('completed_at'),
+                            'error': task_data.get('error'),
+                            'last_event': event.event_type,
+                            'timestamp': event.timestamp
+                        }
+
+                # Track execution plan and strategy
+                if 'execution_plan' in metadata:
+                    plan = metadata['execution_plan']
+                    task_progress['current_strategy'] = plan.get('strategy', 'unknown')
+                    task_progress['execution_groups'] = plan.get('execution_groups', [])
+
+                # Track performance metrics
+                if event.event_type == 'task_complete' and 'execution_duration' in metadata:
+                    task_progress['execution_duration'] += metadata['execution_duration']
+
+            # Aggregate task status
+            for task_id, task_info in task_progress['task_details'].items():
+                status = task_info['status']
+
+                if status == 'completed':
+                    task_progress['completed_tasks'] += 1
+                elif status == 'failed':
+                    task_progress['failed_tasks'] += 1
+                elif status == 'running':
+                    task_progress['running_tasks'].append({
+                        'id': task_id,
+                        'description': task_info['description'][:50] + "..." if len(task_info['description']) > 50 else
+                        task_info['description'],
+                        'type': task_info['type'],
+                        'running_time': time.time() - task_info.get('timestamp', time.time())
+                    })
+                elif status == 'pending':
+                    # Check if waiting for dependencies
+                    deps = task_info.get('dependencies', [])
+                    unmet_deps = []
+                    for dep in deps:
+                        dep_task = task_progress['task_details'].get(dep)
+                        if not dep_task or dep_task['status'] not in ['completed']:
+                            unmet_deps.append(dep)
+
+                    task_progress['waiting_tasks'].append({
+                        'id': task_id,
+                        'description': task_info['description'][:50] + "..." if len(task_info['description']) > 50 else
+                        task_info['description'],
+                        'waiting_for': unmet_deps,
+                        'priority': task_info.get('priority', 1)
+                    })
+
+            # Total tasks
+            task_progress['total_tasks'] = len(task_progress['task_details'])
+
+            # Identify parallel execution
+            current_time = time.time()
+            recent_running = [
+                task for task in task_progress['running_tasks']
+                if task['running_time'] < 30  # Running in last 30 seconds
+            ]
+
+            if len(recent_running) > 1:
+                task_progress['parallel_executing'] = recent_running
+
+            # Calculate performance metrics
+            if task_progress['total_tasks'] > 0:
+                completion_rate = task_progress['completed_tasks'] / task_progress['total_tasks']
+                failure_rate = task_progress['failed_tasks'] / task_progress['total_tasks']
+
+                task_progress['performance_metrics'] = {
+                    'completion_rate': completion_rate,
+                    'failure_rate': failure_rate,
+                    'avg_execution_time': task_progress['execution_duration'] / max(task_progress['completed_tasks'], 1)
+                }
+
+            return task_progress
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Task executor progress error: {e}")
+            return {
+                'total_tasks': 0, 'completed_tasks': 0, 'failed_tasks': 0,
+                'running_tasks': [], 'waiting_tasks': [], 'parallel_executing': [],
+                'execution_groups': [], 'current_strategy': 'unknown',
+                'execution_duration': 0, 'task_details': {}, 'dependency_chains': [],
+                'performance_metrics': {}
+            }
+
+    def _create_task_executor_display(self, summary: Dict[str, Any]) -> Optional[Panel]:
+        """
+        Create comprehensive task executor display showing parallel execution,
+        dependencies, and real-time progress.
+        """
+        try:
+            task_progress = self._get_task_executor_progress()
+
+            if task_progress['total_tasks'] == 0:
+                return None
+
+            content_lines = []
+
+            # Header with overall progress
+            total = task_progress['total_tasks']
+            completed = task_progress['completed_tasks']
+            failed = task_progress['failed_tasks']
+            running = len(task_progress['running_tasks'])
+            waiting = len(task_progress['waiting_tasks'])
+
+            # Progress bar
+            if total > 0:
+                progress_ratio = completed / total
+                bar_width = 20
+                filled_width = int(bar_width * progress_ratio)
+                progress_bar = "█" * filled_width + "░" * (bar_width - filled_width)
+
+                progress_line = f"📊 Tasks: [{progress_bar}] {completed}/{total} completed"
+                if failed > 0:
+                    progress_line += f", {failed} failed"
+                content_lines.append(progress_line)
+
+            # Current execution status
+            status_parts = []
+            if running > 0:
+                status_parts.append(f"🔄 {running} running")
+            if waiting > 0:
+                status_parts.append(f"⏸️ {waiting} waiting")
+            if len(task_progress['parallel_executing']) > 1:
+                status_parts.append(f"⚡ {len(task_progress['parallel_executing'])} parallel")
+
+            if status_parts:
+                content_lines.append(" | ".join(status_parts))
+
+            content_lines.append("")  # Separator
+
+            # Current running tasks (detailed)
+            if task_progress['running_tasks']:
+                content_lines.append("🔄 Currently Executing:")
+                for task in task_progress['running_tasks'][:4]:  # Show up to 4
+                    running_time = task['running_time']
+                    time_str = f"{running_time:.0f}s" if running_time < 60 else f"{running_time / 60:.1f}m"
+                    task_line = f"  • {task['id']}: {task['description']} ({task['type']}, {time_str})"
+                    content_lines.append(task_line)
+
+                if len(task_progress['running_tasks']) > 4:
+                    content_lines.append(f"  ... +{len(task_progress['running_tasks']) - 4} more")
+
+            # Parallel execution info
+            if len(task_progress['parallel_executing']) > 1:
+                content_lines.append("")
+                content_lines.append(f"⚡ Parallel Execution ({len(task_progress['parallel_executing'])} tasks):")
+                for task in task_progress['parallel_executing'][:3]:
+                    content_lines.append(f"  ⚡ {task['id']}: {task['type']}")
+
+            # Waiting tasks (verbose mode)
+            if task_progress['waiting_tasks'] and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                content_lines.append("")
+                content_lines.append("⏸️ Waiting for Dependencies:")
+                for task in sorted(task_progress['waiting_tasks'], key=lambda x: x['priority'])[:3]:
+                    deps_str = ", ".join(task['waiting_for']) if task['waiting_for'] else "unknown"
+                    content_lines.append(f"  • {task['id']}: waiting for [{deps_str}]")
+
+            # Execution strategy
+            if task_progress['current_strategy'] != 'unknown':
+                content_lines.append("")
+                strategy_display = task_progress['current_strategy'].replace('_', ' ').title()
+                content_lines.append(f"📋 Strategy: {strategy_display}")
+
+                # Execution groups info
+                if task_progress['execution_groups'] and self.mode == VerbosityMode.DEBUG:
+                    groups_info = []
+                    for group in task_progress['execution_groups']:
+                        group_size = len(group.get('tasks', []))
+                        group_mode = group.get('execution_mode', 'sequential')
+                        groups_info.append(f"Group {group.get('group_id', '?')}: {group_size} tasks ({group_mode})")
+
+                    if groups_info:
+                        content_lines.append(f"  Groups: {' | '.join(groups_info)}")
+
+            # Performance metrics (debug mode)
+            if task_progress['performance_metrics'] and self.mode == VerbosityMode.DEBUG:
+                metrics = task_progress['performance_metrics']
+                content_lines.append("")
+                content_lines.append("📈 Performance:")
+                content_lines.append(f"  Completion Rate: {metrics['completion_rate']:.1%}")
+                if metrics['failure_rate'] > 0:
+                    content_lines.append(f"  Failure Rate: {metrics['failure_rate']:.1%}")
+                content_lines.append(f"  Avg Task Time: {metrics['avg_execution_time']:.1f}s")
+
+            # Create title with status
+            if running > 0:
+                title = f"🔄 Task Executor - {running} Active"
+            elif waiting > 0:
+                title = f"⏸️ Task Executor - {waiting} Waiting"
+            else:
+                title = f"✅ Task Executor - {completed}/{total} Complete"
+
+            return Panel(
+                "\n".join(content_lines),
+                title=title,
+                style="yellow",
+                box=box.ROUNDED,
+                width=90
+            )
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                return Panel(f"Task executor display error: {e}", title="⚠️ Task Executor Error", style="red")
+            return None
+
+    # ============================================================================
+    # ENHANCED PROGRESS CALLBACK (UPDATED)
+    # ============================================================================
+
+    async def progress_callback(self, event: ProgressEvent):
+        """Enhanced progress callback with intelligent live display management"""
+        is_task_update = False
+        try:
+            # Update activity time
+            self._last_activity_time = time.time()
+
+            # Add event to tree builder
+            self.tree_builder.add_event(event)
+
+            # Store in history with size limit
+            self.print_history.append({
+                "timestamp": event.timestamp,
+                "event_type": event.event_type,
+                "node_name": event.node_name,
+                "event_id": event.event_id
+            })
+
+            # Maintain history size limit
+            if len(self.print_history) > self.max_history:
+                self.print_history = self.print_history[-self.max_history:]
+
+            # Handle specific event types
+            if event.event_type.startswith('task_'):
+                self.print_task_update_from_event(event)
+                is_task_update = True
+
+            if event.node_name == "LLMReasonerNode":
+                self.print_reasoner_update_from_event(event)
+
+            # Force full tree updates for important events
+            if (event.event_type in ["error", "execution_complete", "plan_created"] or
+                event.success is False or
+                (event.metadata and event.metadata.get("error"))):
+                self._needs_full_tree = True
+
+            # Update agent name
+            self.agent_name = event.agent_name if event.agent_name else event.metadata.get("agent_name",
+                                                                                           self.agent_name)
+
+            # Print strategy and plan updates (non-live components)
+            if not is_task_update and event.node_name != "LLMReasonerNode":
+                self.print_strategy_from_event(event)
+                self.print_plan_from_event(event)
+
+            # **INTELLIGENT DISPLAY MANAGEMENT**
+            self._manage_display_lifecycle()
+
+            # **LIVE DISPLAY UPDATE**
+            if self._should_print_update():
+                self._create_live_display()
+
+            # Debug info
+            if self.mode == VerbosityMode.DEBUG:
+                self._print_debug_event(event)
+
+        except Exception as e:
+            self._consecutive_errors += 1
+            print(f"⚠️ Progress callback error #{self._consecutive_errors}: {e}")
+            if self._consecutive_errors > self._error_threshold:
+                print("🚨 Progress printing disabled due to excessive errors")
+                self.progress_callback = self._noop_callback
+
+    def _should_print_update(self) -> bool:
+        """Enhanced decision logic for when to print updates with live display awareness"""
+        current_time = time.time()
+
+        # Always update for important events
+        if self._needs_full_tree:
+            return True
+
+        # In live display mode, update more frequently
+        min_interval = 0.5 if self._display_active else 1.5
+
+        # Rate limiting
+        if current_time - self._last_update_time < min_interval:
+            return False
+
+        try:
+            # Create state hash for change detection
+            summary = self.tree_builder.get_execution_summary()
+            current_state = {
+                "total_nodes": summary["session_info"]["total_nodes"],
+                "completed_nodes": summary["session_info"]["completed_nodes"],
+                "active_nodes": summary["session_info"]["active_nodes"],
+                "failed_nodes": summary["session_info"]["failed_nodes"],
+                "current_node": summary["execution_flow"]["current_node"],
+                "total_events": summary["performance_metrics"]["total_events"],
+                "error_count": summary["performance_metrics"]["error_count"]
+            }
+
+            current_hash = hash(str(sorted(current_state.items())))
+
+            # Mode-specific update logic
+            if self.mode == VerbosityMode.MINIMAL:
+                should_update = (current_hash != self._last_print_hash and
+                                 (current_state["completed_nodes"] !=
+                                  getattr(self, '_last_completed_count', 0) or
+                                  current_state["failed_nodes"] !=
+                                  getattr(self, '_last_failed_count', 0)))
+
+                self._last_completed_count = current_state["completed_nodes"]
+                self._last_failed_count = current_state["failed_nodes"]
+
+            elif self.mode in [VerbosityMode.STANDARD, VerbosityMode.VERBOSE]:
+                should_update = current_hash != self._last_print_hash
+
+            else:  # DEBUG mode or REALTIME
+                should_update = True
+
+            if should_update:
+                self._last_print_hash = current_hash
+                return True
+
+            return False
+
+        except Exception as e:
+            self._consecutive_errors += 1
+            if self._consecutive_errors > self._error_threshold:
+                self._fallback_mode = True
+                print(f"⚠️ Printer error threshold exceeded, switching to fallback mode: {e}")
+            return False
+
+    # ============================================================================
+    # UTILITY METHODS (UPDATED)
+    # ============================================================================
+
+    def print_final_summary(self):
+        """Print comprehensive final summary with live display cleanup"""
+        try:
+            # Stop live display
+            if self._display_active:
+                self._stop_live_display()
+
+            # Clear any remaining one-line display
+            if self._last_summary:
+                print()  # Move to next line
+
+            if self._fallback_mode:
+                self._print_final_summary_fallback()
+                return
+
+            if not self.use_rich:
+                self._print_final_summary_fallback()
+                return
+
+            summary = self.tree_builder.get_execution_summary()
+
+            # Final completion message
+            self.console.print()
+            self.console.print("🎉 [bold green]EXECUTION COMPLETED[/bold green] 🎉")
+
+            # Final execution tree
+            final_tree = self._render_dynamic_tree(summary)
+            self.console.print(final_tree)
+
+            # Comprehensive summary table
+            self._print_final_summary_table(summary)
+
+            # Performance analysis
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                self._print_performance_analysis(summary)
+
+        except Exception as e:
+            print(f"⚠️ Error printing final summary: {e}")
+            self._print_final_summary_fallback()
+
+    def flush(self, run_name: str = None) -> Dict[str, Any]:
+        """Enhanced flush with live display management"""
+        try:
+            # Stop live display before flushing
+            if self._display_active:
+                self._stop_live_display()
+
+            # Clear any remaining display
+            if self._last_summary:
+                print()  # Move to next line
+
+            # Generate run info
+            current_time = time.time()
+            if run_name is None:
+                run_name = f"run_{self._current_run_id + 1}"
+
+            # [Continue with existing flush logic...]
+            summary = self.tree_builder.get_execution_summary()
+
+            # Create comprehensive run data
+            run_data = {
+                "run_id": self._current_run_id + 1,
+                "run_name": run_name,
+                "flush_timestamp": current_time,
+                "execution_summary": summary,
+                "detailed_nodes": {},
+                "execution_history": self.print_history.copy(),
+                "error_log": self.tree_builder.error_log.copy(),
+                "routing_history": self.tree_builder.routing_history.copy(),
+                "print_counter": self._print_counter,
+                "display_was_active": self._display_active
+            }
+
+            # Add detailed node information
+            for node_name, node in self.tree_builder.nodes.items():
+                run_data["detailed_nodes"][node_name] = {
+                    "status": node.status.value,
+                    "duration": node.duration,
+                    "start_time": node.start_time,
+                    "end_time": node.end_time,
+                    "total_cost": node.total_cost,
+                    "total_tokens": node.total_tokens,
+                    "llm_calls": len(node.llm_calls),
+                    "tool_calls": len(node.tool_calls),
+                    "error": node.error,
+                    "retry_count": node.retry_count,
+                    "performance_metrics": node.get_performance_summary()
+                }
+
+            # Store in accumulated runs
+            self._accumulated_runs.append(run_data)
+
+            # Reset internal state for fresh execution
+            self._reset_for_fresh_execution()
+
+            if self.use_rich:
+                self.console.print(f"✅ Run '{run_name}' flushed and stored", style="green bold")
+                self.console.print(f"📊 Total accumulated runs: {len(self._accumulated_runs)}", style="blue")
+            else:
+                print(f"✅ Run '{run_name}' flushed and stored")
+                print(f"📊 Total accumulated runs: {len(self._accumulated_runs)}")
+
+            return run_data
+
+        except Exception as e:
+            error_msg = f"❌ Error during flush: {e}"
+            if self.use_rich:
+                self.console.print(error_msg, style="red bold")
+            else:
+                print(error_msg)
+
+            # Still try to reset for fresh execution
+            self._reset_for_fresh_execution()
+            return {"error": str(e), "timestamp": current_time}
+
+    def _reset_for_fresh_execution(self):
+        """Reset internal state for a completely fresh execution"""
+        try:
+            # Increment run counter
+            self._current_run_id += 1
+
+            # Reset display state
+            self._display_active = False
+            self._last_activity_time = time.time()
+            self._needs_full_tree = False
+            self._last_summary = ""
+            self._last_display_lines = 20
+
+            # Reset tree builder with completely fresh state
+            self.tree_builder = ExecutionTreeBuilder()
+
+            # Reset print history
+            self.print_history = []
+
+            # Reset timing and state tracking
+            self._last_print_hash = None
+            self._print_counter = 0
+            self._last_update_time = 0
+            self._spinner_index = 0
+
+            # Reset error handling but don't reset fallback mode completely
+            self._consecutive_errors = 0
+
+            # Reset Rich progress if exists
+            if hasattr(self, 'progress') and self.progress:
+                self.progress_task = None
+
+            # Clear any cached state
+            if hasattr(self, '_last_completed_count'):
+                delattr(self, '_last_completed_count')
+            if hasattr(self, '_last_failed_count'):
+                delattr(self, '_last_failed_count')
+
+        except Exception as e:
+            print(f"⚠️ Error during reset: {e}")
+
+
+    # ============================================================================
+    # CORE LIVE DISPLAY METHODS
+    # ============================================================================
+
+    def _create_live_display(self) -> None:
+        """
+        Enhanced live display with combined agent outline and task executor progress.
+        """
+        try:
+            if self._fallback_mode or not self.use_rich:
+                self._print_fallback()
+                return
+
+            # Try prompt_toolkit integration first
+            integration_info = self._detect_and_integrate_prompt_toolkit()
+            summary = self.tree_builder.get_execution_summary()
+
+            # Get combined progress information
+            outline_info = self._get_current_outline_info()
+            task_progress = self._get_task_executor_progress()
+
+            if integration_info:
+                self._handle_prompt_toolkit_display(integration_info, summary)
+            else:
+                # Enhanced terminal display with combined progress
+                should_show_outline = self.mode != VerbosityMode.MINIMAL
+                should_show_tasks = self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]
+
+                self._handle_terminal_display(
+                    summary,
+                    show_outline=should_show_outline,
+                    show_tasks=should_show_tasks
+                )
+
+            self._print_counter += 1
+            self._needs_full_tree = False
+            self._last_update_time = time.time()
+            self._consecutive_errors = 0
+
+        except Exception as e:
+            self._consecutive_errors += 1
+            if self._consecutive_errors <= self._error_threshold:
+                print(f"⚠️ Live display error #{self._consecutive_errors}: {e}")
+            self._print_fallback()
+
+    def _handle_terminal_display(self, summary: Dict[str, Any], show_outline: bool = True, show_tasks: bool = False):
+        """
+        Handles the rendering of the live display in the terminal.
+        This unified method is configurable to optionally show outline and task progress panels.
+
+        Args:
+            summary (Dict[str, Any]): The execution summary from the tree builder.
+            show_outline (bool): If True, displays the execution outline panel.
+            show_tasks (bool): If True, displays the task executor progress panel.
+        """
+        try:
+            # Rate limiting to prevent flickering
+            current_time = time.time()
+            if current_time - self._last_update_time < self._min_display_interval:
+                return
+
+            # Clear terminal for a clean live update (except for the very first print)
+            if self._print_counter > 1 and self._display_active:
+                if self.mode == VerbosityMode.REALTIME:
+                    self.console.clear()
+
+            # --- Create all display components ---
+            header = self._create_enhanced_header(summary)
+            tree = self._render_dynamic_tree(summary)
+            predictions = self._create_predictions_panel(summary)
+            status_bar = self._create_live_status_bar(summary)
+
+            # --- Render the complete display to the console ---
+            self.console.print()
+            self.console.print(header)
+
+            # Conditionally create and display the outline panel
+            if show_outline:
+                outline_panel = self._create_outline_display(summary)
+                if outline_panel:
+                    self.console.print(outline_panel)
+
+            # Conditionally create and display the task executor panel
+            if show_tasks:
+                task_panel = self._create_task_executor_display(summary)
+                if task_panel:
+                    self.console.print(task_panel)
+
+            # Always display the main execution tree
+            self.console.print(tree)
+
+            # Display predictions in more verbose modes
+            if predictions and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                self.console.print(predictions)
+
+            # Always show the status bar when the live display is active
+            if self._display_active:
+                self.console.print(status_bar)
+
+        except Exception as e:
+            print(f"⚠️ Enhanced terminal display error: {e}")
+            self._print_fallback()
+
+    def _handle_prompt_toolkit_display(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+        """
+        Safe prompt_toolkit display handling with comprehensive error recovery.
+        ERSETZT: Die bestehende _handle_prompt_toolkit_display Methode
+        """
+        try:
+            # Try to integrate with application layout (only once)
+            if not hasattr(self, '_layout_integration_attempted'):
+                self._layout_integration_attempted = True
+                integration_success = self._integrate_with_application_layout(integration_info)
+                if not integration_success:
+                    if self.mode == VerbosityMode.DEBUG:
+                        print("⚠️ Layout integration failed, using fallback display")
+
+            # Determine display approach based on integration success
+            layout_integrated = integration_info.get('layout_integration', False)
+
+            if self.realtime_minimal and self.mode == VerbosityMode.REALTIME and not self._needs_full_tree:
+                # Single line status update
+                self._update_prompt_toolkit_status_line(integration_info, summary)
+            else:
+                # Full display update
+                if layout_integrated:
+                    # Use integrated widgets
+                    self._update_prompt_toolkit_full_display(integration_info, summary)
+                else:
+                    # Use console fallback with prompt_toolkit awareness
+                    self._update_prompt_toolkit_console_fallback(integration_info, summary)
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Prompt toolkit display error, using terminal fallback: {e}")
+            # Complete fallback to terminal display
+            self._handle_terminal_display(summary, show_outline=True, show_tasks=False)
+
+    def _update_prompt_toolkit_status_line(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+        """
+        Safe status line update with error recovery.
+        NEUE METHODE
+        """
+        try:
+            # Create status content
+            session_info = summary["session_info"]
+            timing = summary["timing"]
+
+            # Simple status without complex formatting
+            self._spinner_index = (self._spinner_index + 1) % len(self._spinner_chars)
+            spinner = self._spinner_chars[self._spinner_index]
+
+            current_node = summary["execution_flow"]["current_node"]
+            operation = "running"
+
+            if current_node and current_node in self.tree_builder.nodes:
+                node = self.tree_builder.nodes[current_node]
+                operation = self._get_node_current_operation(node) or "processing"
+
+            elapsed = timing["elapsed"]
+            time_str = f"{elapsed:.0f}s" if elapsed < 60 else f"{elapsed // 60:.0f}m"
+            progress = f"{session_info['completed_nodes']}/{session_info['total_nodes']}"
+
+            # Build safe HTML status
+            status_html = f"🤖 <cyan>{spinner} @{self.agent_name}</cyan> | <blue>{operation}</blue> | <green>{progress}</green> | <yellow>{time_str}</yellow>"
+
+            # Error indicator
+            if summary["performance_metrics"]["error_count"] > 0:
+                status_html += f" | <red>⚠️{summary['performance_metrics']['error_count']}</red>"
+
+            # Safe update
+            self._update_prompt_toolkit_widget(integration_info, status_html, is_status_line=True)
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Status line update error: {e}")
+            # Ultimate fallback
+            print(f"🤖 Agent running... {summary['timing']['elapsed']:.0f}s")
+
+    def _update_prompt_toolkit_console_fallback(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+        """
+        Console fallback for prompt_toolkit environment (no ANSI codes).
+        NEUE METHODE
+        """
+        try:
+            # Use rich console but without clearing
+            session_info = summary["session_info"]
+            timing = summary["timing"]
+            perf = summary["performance_metrics"]
+
+            # Simple status update for prompt_toolkit
+            timestamp = time.strftime("%H:%M:%S")
+
+            # Current operation
+            current_node = summary["execution_flow"]["current_node"]
+            if current_node and current_node in self.tree_builder.nodes:
+                node = self.tree_builder.nodes[current_node]
+                operation = self._get_node_current_operation(node)
+                if operation:
+                    self.console.print(
+                        f"🔄 [{timestamp}] {operation} | {session_info['completed_nodes']}/{session_info['total_nodes']} | {timing['elapsed']:.0f}s",
+                        style="blue dim")
+
+            # Show errors if any
+            if perf["error_count"] > 0:
+                self.console.print(f"⚠️ [{timestamp}] {perf['error_count']} errors detected", style="red dim")
+
+            # Show completion
+            if session_info["completed_nodes"] == session_info["total_nodes"] and session_info["total_nodes"] > 0:
+                self.console.print(f"✅ [{timestamp}] Execution completed!", style="green bold")
+
+        except Exception as e:
+            # Ultimate fallback
+            print(f"🤖 [{time.strftime('%H:%M:%S')}] Agent status update")
+
+    def _update_prompt_toolkit_full_display(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+        """
+        Updates the full display area in prompt_toolkit.
+        NEUE METHODE
+        """
+        try:
+            # Create rich content but render to string for prompt_toolkit
+            import io
+            from contextlib import redirect_stdout
+
+            # Capture rich output as string
+            string_io = io.StringIO()
+            temp_console = Console(file=string_io, width=80, legacy_windows=False)
+
+            # Create components with temporary console
+            header = self._create_enhanced_header(summary)
+            temp_console.print(header)
+
+            # Only add outline if significant changes or debug mode
+            if self._needs_full_tree or self.mode == VerbosityMode.DEBUG:
+                outline_panel = self._create_outline_display(summary)
+                if outline_panel:
+                    temp_console.print(outline_panel)
+
+            # Current operations summary
+            current_ops = self._get_current_operations_summary(summary)
+            if current_ops:
+                temp_console.print(f"🔄 {current_ops}", style="blue")
+
+            # Quick stats
+            session_info = summary["session_info"]
+            perf = summary["performance_metrics"]
+
+            stats_parts = []
+            if perf["total_cost"] > 0:
+                stats_parts.append(f"💰 {self._format_cost(perf['total_cost'])}")
+            if perf["total_tokens"] > 0:
+                stats_parts.append(f"🎯 {perf['total_tokens']:,} tokens")
+            if perf["error_count"] > 0:
+                stats_parts.append(f"⚠️ {perf['error_count']} errors")
+
+            if stats_parts:
+                temp_console.print(" | ".join(stats_parts), style="dim")
+
+            # Get rendered content
+            display_content = string_io.getvalue()
+
+            # Add timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamped_content = f"[{timestamp}] Agent Update #{self._print_counter}\n{display_content}"
+
+            # Update widget with captured content
+            self._update_prompt_toolkit_widget(integration_info, timestamped_content, is_status_line=False)
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Full display update error: {e}")
+            # Fallback to status line only
+            self._update_prompt_toolkit_status_line(integration_info, summary)
+
+    def _update_one_line_display_terminal(self) -> None:
+        """
+        Enhanced one-line display using detailed activity detection.
+        """
+        try:
+            # Get detailed activity information
+            activity_info = self._get_detailed_current_activity()
+            tool_usage = self._get_tool_usage_summary()
+            outline_info = self._get_current_outline_info()
+
+            # Create spinner based on activity confidence
+            confidence = activity_info.get('confidence', 0.0)
+            if confidence > 0.8:
+                spinner_chars = ["🎯", "🔥", "⚡", "🚀"]  # High confidence
+            elif confidence > 0.5:
+                spinner_chars = ["🔄", "⚙️", "🔧", "📊"]  # Medium confidence
+            else:
+                spinner_chars = ["❓", "🔍", "📋", "⏸️"]  # Low confidence
+
+            self._spinner_index = (self._spinner_index + 1) % len(spinner_chars)
+            spinner = spinner_chars[self._spinner_index]
+
+            # Build status line
+            status_parts = []
+            status_parts.append(f"{spinner} @{self.agent_name}")
+
+            # Current activity
+            primary_activity = activity_info.get('primary_activity', 'Unknown')
+            if primary_activity != 'Unknown':
+                activity_brief = primary_activity
+                if len(activity_brief) > 20:
+                    activity_brief = activity_brief[:17] + "..."
+                status_parts.append(activity_brief)
+
+            # Progress from real outline
+            if outline_info.get('outline_created'):
+                current_step = outline_info['current_step']
+                total_steps = outline_info['total_steps']
+                completed_steps = len(outline_info.get('completed_steps', []))
+                status_parts.append(f"step:{current_step}/{total_steps}")
+                if completed_steps > 0:
+                    completion_pct = (completed_steps / total_steps) * 100
+                    status_parts.append(f"{completion_pct:.0f}%")
+            else:
+                # Fallback to system progress
+                summary = self.tree_builder.get_execution_summary()
+                session_info = summary["session_info"]
+                progress = f"{session_info['completed_nodes']}/{session_info['total_nodes']}"
+                status_parts.append(progress)
+
+            # Tool activity
+            if tool_usage['tools_active']:
+                active_count = len(tool_usage['tools_active'])
+                status_parts.append(f"tools:{active_count}")
+            elif tool_usage['current_tool_operation']:
+                tool_op = tool_usage['current_tool_operation']
+                if len(tool_op) > 15:
+                    tool_op = tool_op[:12] + "..."
+                status_parts.append(tool_op)
+
+            # Timing
+            summary = self.tree_builder.get_execution_summary()
+            elapsed = summary["timing"]["elapsed"]
+            if elapsed < 60:
+                time_str = f"{elapsed:.0f}s"
+            elif elapsed < 3600:
+                time_str = f"{elapsed // 60:.0f}m{elapsed % 60:.0f}s"
+            else:
+                time_str = f"{elapsed // 3600:.0f}h{(elapsed % 3600) // 60:.0f}m"
+            status_parts.append(time_str)
+
+            # Error indicator
+            error_count = summary["performance_metrics"]["error_count"]
+            if error_count > 0:
+                status_parts.append(f"⚠️{error_count}")
+
+            # Cost indicator (if significant)
+            if summary["performance_metrics"]["total_cost"] > 0.01:
+                cost_str = self._format_cost(summary["performance_metrics"]["total_cost"])
+                status_parts.append(f"💰{cost_str}")
+
+            # Build final status line
+            status_line = " | ".join(status_parts)
+
+            # Ensure line doesn't exceed terminal width
+            max_width = 120
+            if len(status_line) > max_width:
+                # Truncate activity description if too long
+                if len(status_parts) > 3 and len(status_parts[2]) > 15:
+                    status_parts[2] = status_parts[2][:12] + "..."
+                    status_line = " | ".join(status_parts)
+
+                # Final truncation if still too long
+                if len(status_line) > max_width:
+                    status_line = status_line[:max_width - 3] + "..."
+
+            # Terminal output with confidence-based coloring (if supported)
+            print(f"\r{status_line:<{max_width}}", end="", flush=True)
+            self._last_summary = status_line
+
+        except Exception as e:
+            # Error handling with safe terminal output
+            error_msg = f"⚠️ Status update error: {str(e)[:50]}"
+            print(f"\r{error_msg:<100}", end="", flush=True)
+            self._last_summary = error_msg
+
+    def _create_outline_display(self, summary: Dict[str, Any]) -> Optional[Panel]:
+        """
+        Enhanced outline display showing real agent progress through steps.
+        Provides comprehensive view of execution state and progress.
+        """
+        try:
+            outline_info = self._get_current_outline_info()
+            if not outline_info or not outline_info.get('steps'):
+                return None
+
+            outline_steps = outline_info.get('steps', [])
+            current_step = outline_info.get('current_step', 1)
+            completed_steps = outline_info.get('completed_steps', [])
+            current_step_progress = outline_info.get('current_step_progress', '')
+            task_stack_items = outline_info.get('task_stack_items', 0)
+            reasoning_loops = outline_info.get('reasoning_loops', 0)
+            completion_percentage = outline_info.get('completion_percentage', 0)
+
+            # Build enhanced outline content
+            outline_content = []
+
+            # Progress header with completion percentage
+            if outline_info.get('total_steps', 0) > 0:
+                progress_bar_width = 20
+                filled_width = int(progress_bar_width * (completion_percentage / 100))
+                progress_bar = "█" * filled_width + "░" * (progress_bar_width - filled_width)
+                outline_content.append(f"📊 Progress: [{progress_bar}] {completion_percentage:.1f}%")
+                outline_content.append("")
+
+            # Current operation summary
+            current_operation = self._get_current_step_operation()
+            if current_operation:
+                outline_content.append(f"🔄 Current: {current_operation}")
+                if task_stack_items > 0:
+                    outline_content.append(f"📋 Task Queue: {task_stack_items} items pending")
+                if reasoning_loops > 0:
+                    outline_content.append(f"🧠 Reasoning Depth: {reasoning_loops} loops")
+                outline_content.append("")
+
+            # Step-by-step progress
+            for i, step in enumerate(outline_steps, 1):
+                # Enhanced status indicators
+                if i in completed_steps:
+                    status_icon = "✅"
+                    status_style = "[green]"
+                    step_status = "COMPLETED"
+                elif i == current_step:
+                    # Animated indicator for current step
+                    animation_chars = ["🔄", "⚡", "🎯", "🔧"]
+                    anim_char = animation_chars[int(time.time() * 2) % len(animation_chars)]
+                    status_icon = anim_char
+                    status_style = "[blue bold]"
+                    step_status = "ACTIVE"
+                elif i < current_step:
+                    status_icon = "✅"
+                    status_style = "[green dim]"
+                    step_status = "COMPLETED"
+                else:
+                    status_icon = "⏸️"
+                    status_style = "[yellow dim]"
+                    step_status = "PENDING"
+
+                # Step description with method info
+                step_desc = step.get('description', f'Step {i}')
+                method = step.get('method', 'unknown')
+                expected_outcome = step.get('expected_outcome', '')
+
+                # Truncate long descriptions
+                if len(step_desc) > 70:
+                    step_desc = step_desc[:67] + "..."
+
+                step_line = f"{status_icon} Step {i}: {step_desc}"
+
+                # Add method info for verbose modes
+                if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                    method_display = method.replace('_', ' ').title()
+                    step_line += f"\n    📋 Method: {method_display}"
+
+                    if expected_outcome:
+                        outcome_brief = expected_outcome[:60] + "..." if len(
+                            expected_outcome) > 60 else expected_outcome
+                        step_line += f"\n    🎯 Expected: {outcome_brief}"
+
+                # Add current activity for active step
+                if i == current_step:
+                    if current_step_progress:
+                        progress_brief = current_step_progress[:80] + "..." if len(
+                            current_step_progress) > 80 else current_step_progress
+                        step_line += f"\n    ▶️ Progress: {progress_brief}"
+                    elif step.get('current_action'):
+                        step_line += f"\n    ▶️ {step['current_action']}"
+
+                    # Add timing estimate if available
+                    if outline_info.get('estimated_completion'):
+                        remaining_time = outline_info['estimated_completion']
+                        if remaining_time > 0:
+                            time_str = f"{remaining_time:.0f}s" if remaining_time < 60 else f"{remaining_time / 60:.1f}m"
+                            step_line += f"\n    ⏱️ Est. completion: {time_str}"
+
+                outline_content.append(step_line)
+
+            # Summary footer
+            completed_count = len(completed_steps)
+            total_steps = len(outline_steps)
+
+            if completed_count == total_steps and total_steps > 0:
+                summary_line = "🎉 All outline steps completed!"
+            elif completed_count > 0:
+                remaining = total_steps - completed_count
+                summary_line = f"📈 {completed_count}/{total_steps} steps completed, {remaining} remaining"
+            else:
+                summary_line = f"🚀 Starting execution: {total_steps} steps planned"
+
+            outline_content.append("")
+            outline_content.append(summary_line)
+
+            # Create title with progress indication
+            title = f"📋 Execution Outline - {completed_count}/{total_steps} Complete"
+            if current_step <= total_steps:
+                title += f" (Step {current_step})"
+
+            return Panel(
+                "\n".join(outline_content),
+                title=title,
+                style="cyan",
+                box=box.ROUNDED,
+                width=100
+            )
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                return Panel(f"Outline display error: {e}", title="⚠️ Outline Error", style="red")
+            return None
+
+    def _get_current_outline_info(self) -> Dict[str, Any]:
+        """
+        Extract real outline information from create_initial_outline task and meta-tool metadata.
+        Tracks actual agent progress through dynamically created outline steps.
+        """
+        try:
+            outline_info = {
+                'steps': [],
+                'current_step': 1,
+                'completed_steps': [],
+                'total_steps': 0,
+                'step_descriptions': {},
+                'current_step_progress': "",
+                'outline_raw_data': None,
+                'outline_created': False,
+                'actual_step_completions': []
+            }
+
+            # Look for the actual outline creation from create_initial_outline task
+            outline_creation_event = None
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('task_id') == 'create_initial_outline'):
+                        outline_creation_event = event
+                        break
+                if outline_creation_event:
+                    break
+
+            # Extract real outline from LLM response
+            if outline_creation_event and outline_creation_event.metadata.get('outline'):
+                outline_data = outline_creation_event.metadata['outline']
+                outline_info['outline_created'] = True
+                outline_info['outline_raw_data'] = outline_data
+
+                # Parse the actual outline structure
+                if isinstance(outline_data, dict) and 'steps' in outline_data:
+                    steps_data = outline_data['steps']
+                    for i, step_data in enumerate(steps_data, 1):
+                        parsed_step = {
+                            'id': i,
+                            'description': step_data.get('description', f'Step {i}'),
+                            'method': step_data.get('method', 'unknown'),
+                            'expected_outcome': step_data.get('expected_outcome', ''),
+                            'success_criteria': step_data.get('success_criteria', ''),
+                            'status': 'pending',
+                            'actual_actions': [],
+                            'completion_evidence': ''
+                        }
+                        outline_info['steps'].append(parsed_step)
+                        outline_info['step_descriptions'][i] = parsed_step['description']
+
+                    outline_info['total_steps'] = len(outline_info['steps'])
+
+            # Track real step progression from meta-tool events
+            meta_tool_events = []
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls + node.sub_events:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name')):
+                        meta_tool_events.append(event)
+
+            # Sort by timestamp for chronological analysis
+            meta_tool_events.sort(key=lambda x: x.timestamp)
+
+            # Track actual step completions and current position
+            for event in meta_tool_events:
+                metadata = event.metadata
+
+                # 1. Track current step position from meta-tool metadata
+                if 'outline_step' in metadata:
+                    step_num = metadata['outline_step']
+                    if isinstance(step_num, int) and step_num > 0:
+                        outline_info['current_step'] = max(outline_info['current_step'], step_num)
+
+                        # Record actual actions for this step
+                        if outline_info['steps'] and step_num <= len(outline_info['steps']):
+                            step_idx = step_num - 1
+                            action_description = f"{metadata['meta_tool_name']} at {time.strftime('%H:%M:%S', time.localtime(event.timestamp))}"
+                            if action_description not in outline_info['steps'][step_idx]['actual_actions']:
+                                outline_info['steps'][step_idx]['actual_actions'].append(action_description)
+
+                # 2. Track step completions from advance_outline_step
+                if (metadata.get('meta_tool_name') == 'advance_outline_step' and
+                    event.success and metadata.get('step_completed')):
+
+                    completed_step = metadata.get('outline_step', 0)
+                    completion_evidence = metadata.get('completion_evidence', '')
+
+                    if completed_step > 0:
+                        # Mark step as completed
+                        if completed_step not in outline_info['completed_steps']:
+                            outline_info['completed_steps'].append(completed_step)
+
+                        # Record completion details
+                        completion_record = {
+                            'step_id': completed_step,
+                            'timestamp': event.timestamp,
+                            'evidence': completion_evidence,
+                            'method_used': metadata.get('meta_tool_name')
+                        }
+                        outline_info['actual_step_completions'].append(completion_record)
+
+                        # Update step status and evidence
+                        if outline_info['steps'] and completed_step <= len(outline_info['steps']):
+                            step_idx = completed_step - 1
+                            outline_info['steps'][step_idx]['status'] = 'completed'
+                            outline_info['steps'][step_idx]['completion_evidence'] = completion_evidence
+
+                        # Advance current step
+                        outline_info['current_step'] = completed_step + 1
+
+                # 3. Track step progress details
+                if metadata.get('outline_step_progress'):
+                    outline_info['current_step_progress'] = metadata['outline_step_progress']
+
+                # 4. Track step completion expectations
+                if metadata.get('outline_step_completion') and metadata.get('outline_step'):
+                    step_num = metadata['outline_step']
+                    if outline_info['steps'] and step_num <= len(outline_info['steps']):
+                        step_idx = step_num - 1
+                        outline_info['steps'][step_idx]['status'] = 'executing'
+                        outline_info['steps'][step_idx]['expected_completion'] = True
+
+            # Update current step status
+            if outline_info['steps'] and outline_info['current_step'] <= len(outline_info['steps']):
+                current_step_idx = outline_info['current_step'] - 1
+                if outline_info['steps'][current_step_idx]['status'] == 'pending':
+                    outline_info['steps'][current_step_idx]['status'] = 'active'
+
+            # Calculate real completion percentage
+            if outline_info['total_steps'] > 0:
+                completed_count = len(outline_info['completed_steps'])
+                outline_info['completion_percentage'] = (completed_count / outline_info['total_steps']) * 100
+
+                # Calculate realistic time estimates based on actual step completion times
+                if len(outline_info['actual_step_completions']) > 1:
+                    completion_times = [c['timestamp'] for c in outline_info['actual_step_completions']]
+                    completion_times.sort()
+
+                    total_time_spent = completion_times[-1] - completion_times[0]
+                    avg_time_per_step = total_time_spent / len(completion_times)
+
+                    remaining_steps = outline_info['total_steps'] - completed_count
+                    outline_info['estimated_completion'] = remaining_steps * avg_time_per_step
+
+            return outline_info
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Real outline tracking error: {e}")
+            return {
+                'steps': [], 'current_step': 1, 'completed_steps': [], 'total_steps': 0,
+                'step_descriptions': {}, 'current_step_progress': "", 'outline_raw_data': None,
+                'outline_created': False, 'actual_step_completions': []
+            }
+
+    def _get_detailed_current_activity(self) -> Dict[str, Any]:
+        """
+        Detailed detection of current system activity with precise location and action.
+        Shows exactly what the agent is doing and where it is in the process.
+        """
+        try:
+            activity_info = {
+                'primary_activity': 'Unknown',
+                'detailed_description': 'System status unclear',
+                'location_context': 'Unknown phase',
+                'progress_indicators': [],
+                'time_in_current_activity': 0,
+                'expected_next_action': 'Uncertain',
+                'confidence': 0.0
+            }
+
+            current_time = time.time()
+
+            # Get most recent events (last 60 seconds)
+            recent_events = []
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls + node.sub_events + node.tool_calls:
+                    if event.timestamp > current_time - 60:
+                        recent_events.append({
+                            'event': event,
+                            'node': node.name,
+                            'age': current_time - event.timestamp
+                        })
+
+            if not recent_events:
+                activity_info['primary_activity'] = 'Idle'
+                activity_info['detailed_description'] = 'No recent system activity detected'
+                return activity_info
+
+            # Sort by recency
+            recent_events.sort(key=lambda x: x['age'])
+            most_recent = recent_events[0]
+
+            event = most_recent['event']
+            node_name = most_recent['node']
+            time_since = most_recent['age']
+
+            activity_info['time_in_current_activity'] = time_since
+
+            # Analyze the most recent event for detailed activity
+            if hasattr(event, 'metadata') and event.metadata:
+                metadata = event.metadata
+
+                # Meta-tool activity analysis
+                if metadata.get('meta_tool_name'):
+                    meta_tool = metadata['meta_tool_name']
+                    execution_phase = metadata.get('execution_phase', 'unknown')
+                    outline_step = metadata.get('outline_step', 0)
+
+                    if meta_tool == 'internal_reasoning':
+                        thought_num = metadata.get('thought_number', 1)
+                        current_focus = metadata.get('current_focus', '')
+                        confidence_level = metadata.get('confidence_level', 0)
+
+                        activity_info['primary_activity'] = 'Deep Reasoning'
+                        activity_info[
+                            'detailed_description'] = f"Processing thought {thought_num}: {current_focus[:100]}..."
+                        activity_info[
+                            'location_context'] = f"Reasoning loop, step {outline_step}" if outline_step > 0 else "Reasoning loop"
+                        activity_info['confidence'] = confidence_level
+
+                        if metadata.get('next_thought_needed'):
+                            activity_info['expected_next_action'] = 'Continue reasoning with next thought'
+                        else:
+                            activity_info['expected_next_action'] = 'Move to action phase'
+
+                    elif meta_tool == 'delegate_to_llm_tool_node':
+                        task_desc = metadata.get('delegated_task_description', '')
+                        tools_count = metadata.get('tools_count', 0)
+
+                        if execution_phase == 'meta_tool_start':
+                            activity_info['primary_activity'] = 'Initiating Tool Delegation'
+                            activity_info['detailed_description'] = f"Delegating: {task_desc[:80]}..."
+                            activity_info['expected_next_action'] = f'Execute task using {tools_count} available tools'
+                        else:
+                            activity_info['primary_activity'] = 'Processing Tool Results'
+                            activity_info['detailed_description'] = f"Analyzing results from tool delegation"
+                            activity_info['expected_next_action'] = 'Integrate results and continue'
+
+                        activity_info[
+                            'location_context'] = f"Tool delegation phase, step {outline_step}" if outline_step > 0 else "Tool delegation phase"
+
+                    elif meta_tool == 'create_and_execute_plan':
+                        goals_count = metadata.get('goals_count', 0)
+
+                        if execution_phase == 'meta_tool_start':
+                            activity_info['primary_activity'] = 'Creating Execution Plan'
+                            activity_info['detailed_description'] = f"Developing plan with {goals_count} goals"
+                            activity_info['expected_next_action'] = 'Execute the created plan'
+                        else:
+                            activity_info['primary_activity'] = 'Executing Plan'
+                            activity_info['detailed_description'] = f"Running plan with {goals_count} goals"
+                            activity_info['expected_next_action'] = 'Complete plan execution and review results'
+
+                        activity_info[
+                            'location_context'] = f"Planning phase, step {outline_step}" if outline_step > 0 else "Planning phase"
+
+                    elif meta_tool == 'manage_internal_task_stack':
+                        stack_action = metadata.get('stack_action', 'unknown')
+                        stack_size = metadata.get('stack_size_after', metadata.get('stack_size_before', 0))
+
+                        activity_info['primary_activity'] = 'Managing Task Queue'
+                        activity_info[
+                            'detailed_description'] = f"Task stack {stack_action}, {stack_size} items in queue"
+                        activity_info['location_context'] = "Task management"
+                        activity_info['expected_next_action'] = 'Process next priority task'
+
+                    elif meta_tool == 'advance_outline_step':
+                        step_completed = metadata.get('step_completed', False)
+
+                        if step_completed:
+                            activity_info['primary_activity'] = 'Advancing Outline Step'
+                            activity_info[
+                                'detailed_description'] = f"Moving from step {outline_step} to step {outline_step + 1}"
+                            activity_info['expected_next_action'] = f'Begin step {outline_step + 1} activities'
+                        else:
+                            activity_info['primary_activity'] = 'Preparing Step Advancement'
+                            activity_info['detailed_description'] = f"Validating completion of step {outline_step}"
+                            activity_info['expected_next_action'] = 'Advance to next outline step'
+
+                        activity_info['location_context'] = f"Step transition, current step {outline_step}"
+
+                    elif meta_tool == 'direct_response':
+                        final_answer_length = metadata.get('final_answer_length', 0)
+
+                        activity_info['primary_activity'] = 'Generating Final Response'
+                        activity_info[
+                            'detailed_description'] = f"Creating final answer ({final_answer_length} characters)"
+                        activity_info['location_context'] = "Response generation phase"
+                        activity_info['expected_next_action'] = 'Complete execution and return response'
+
+                # LLM call analysis
+                elif event.event_type == 'llm_call':
+                    task_id = metadata.get('task_id', 'unknown')
+
+                    if task_id == 'create_initial_outline':
+                        activity_info['primary_activity'] = 'Creating Initial Outline'
+                        activity_info['detailed_description'] = 'Analyzing query and creating execution outline'
+                        activity_info['location_context'] = 'Initialization phase'
+                        activity_info['expected_next_action'] = 'Begin executing outline steps'
+                    else:
+                        activity_info['primary_activity'] = 'LLM Processing'
+                        activity_info['detailed_description'] = f'Processing LLM task: {task_id}'
+                        activity_info['location_context'] = f'LLM call in {node_name}'
+                        activity_info['expected_next_action'] = 'Process LLM response'
+
+            # Tool call analysis
+            elif hasattr(event, 'tool_name') and event.tool_name:
+                tool_name = event.tool_name
+
+                if event.tool_success is None:  # Still running
+                    activity_info['primary_activity'] = f'Using {tool_name} Tool'
+                    activity_info['detailed_description'] = f'Executing {tool_name} operation'
+                    activity_info['location_context'] = f'Tool execution in {node_name}'
+                    activity_info['expected_next_action'] = 'Process tool results'
+                elif event.tool_success:
+                    activity_info['primary_activity'] = 'Processing Tool Results'
+                    activity_info['detailed_description'] = f'Analyzing results from {tool_name}'
+                    activity_info['location_context'] = f'Post-tool processing in {node_name}'
+                    activity_info['expected_next_action'] = 'Continue with next operation'
+
+            # Add progress indicators
+            outline_info = self._get_current_outline_info()
+            if outline_info.get('outline_created'):
+                current_step = outline_info['current_step']
+                total_steps = outline_info['total_steps']
+                completed_steps = len(outline_info.get('completed_steps', []))
+
+                activity_info['progress_indicators'].append(f"Outline: Step {current_step}/{total_steps}")
+                activity_info['progress_indicators'].append(f"Completed: {completed_steps}/{total_steps}")
+
+                if outline_info.get('completion_percentage'):
+                    activity_info['progress_indicators'].append(
+                        f"Progress: {outline_info['completion_percentage']:.0f}%")
+
+            # Set confidence based on data quality
+            if time_since < 10:  # Very recent
+                activity_info['confidence'] = 0.9
+            elif time_since < 30:  # Recent
+                activity_info['confidence'] = 0.7
+            else:  # Older data
+                activity_info['confidence'] = 0.4
+
+            return activity_info
+
+        except Exception as e:
+            return {
+                'primary_activity': 'System Error',
+                'detailed_description': f'Error detecting activity: {str(e)}',
+                'location_context': 'Error state',
+                'progress_indicators': [],
+                'time_in_current_activity': 0,
+                'expected_next_action': 'Recover from error',
+                'confidence': 0.0
+            }
+
+    def _infer_outline_from_nodes(self) -> Dict[str, Any]:
+        """
+        Fallback method to infer outline from node progression if no explicit outline found.
+        ADD this method if missing:
+        """
+        try:
+            nodes = list(self.tree_builder.nodes.keys())
+            steps = []
+            for i, node_name in enumerate(nodes, 1):
+                node = self.tree_builder.nodes[node_name]
+                steps.append({
+                    'id': i,
+                    'description': f"{node_name}: {node.status.value}",
+                    'status': node.status.value,
+                    'priority': 1
+                })
+
+            # Determine current step based on active nodes
+            current_step = 1
+            for i, node_name in enumerate(nodes, 1):
+                if node_name in self.tree_builder.active_nodes:
+                    current_step = i
+                    break
+
+            completed_steps = []
+            for i, node_name in enumerate(nodes, 1):
+                node = self.tree_builder.nodes[node_name]
+                if node.status == NodeStatus.COMPLETED:
+                    completed_steps.append(i)
+
+            return {
+                'steps': steps,
+                'current_step': current_step,
+                'completed_steps': completed_steps,
+                'total_steps': len(steps)
+            }
+
+        except Exception as e:
+            return {'steps': [], 'current_step': 1, 'completed_steps': [], 'total_steps': 0}
+
+    def _get_current_step_operation(self) -> Optional[str]:
+        """
+        Enhanced current step operation detection from recent meta-tool activity.
+        Provides detailed, real-time insight into what the agent is actually doing.
+        """
+        try:
+            # Get recent meta-tool events (last 30 seconds)
+            cutoff_time = time.time() - 30
+            recent_meta_tools = []
+
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls + node.sub_events:
+                    if (event.timestamp > cutoff_time and
+                        hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name')):
+                        recent_meta_tools.append(event)
+
+            if not recent_meta_tools:
+                return None
+
+            # Sort by timestamp to get most recent
+            recent_meta_tools.sort(key=lambda x: x.timestamp, reverse=True)
+            latest_event = recent_meta_tools[0]
+            metadata = latest_event.metadata
+
+            meta_tool_name = metadata.get('meta_tool_name')
+            execution_phase = metadata.get('execution_phase', '')
+            reasoning_loop = metadata.get('reasoning_loop', 0)
+
+            # Detailed operation descriptions based on meta-tool and phase
+            if meta_tool_name == 'internal_reasoning':
+                thought_num = metadata.get('thought_number', 1)
+                total_thoughts = metadata.get('total_thoughts', 1)
+                current_focus = metadata.get('current_focus', '')
+
+                if current_focus:
+                    focus_brief = current_focus[:50] + "..." if len(current_focus) > 50 else current_focus
+                    return f"Reasoning (thought {thought_num}/{total_thoughts}): {focus_brief}"
+                else:
+                    return f"Deep reasoning (thought {thought_num}/{total_thoughts})"
+
+            elif meta_tool_name == 'manage_internal_task_stack':
+                stack_action = metadata.get('stack_action', 'unknown')
+                task_description = metadata.get('task_description', '')
+                stack_size = metadata.get('stack_size_after', metadata.get('stack_size_before', 0))
+
+                if stack_action == 'add' and task_description:
+                    task_brief = task_description[:40] + "..." if len(task_description) > 40 else task_description
+                    return f"Adding task: {task_brief} (stack: {stack_size})"
+                elif stack_action == 'remove' or stack_action == 'complete':
+                    return f"Completing task from stack (remaining: {stack_size})"
+                elif stack_action == 'get_current':
+                    return f"Reviewing task priorities ({stack_size} items)"
+                else:
+                    return f"Managing task stack ({stack_action}, {stack_size} items)"
+
+            elif meta_tool_name == 'delegate_to_llm_tool_node':
+                if execution_phase == 'meta_tool_start':
+                    task_desc = metadata.get('delegated_task_description', '')
+                    tools_count = metadata.get('tools_count', 0)
+
+                    if task_desc:
+                        task_brief = task_desc[:60] + "..." if len(task_desc) > 60 else task_desc
+                        return f"Delegating: {task_brief} ({tools_count} tools available)"
+                    else:
+                        return f"Delegating task to tool system ({tools_count} tools)"
+                else:
+                    return "Processing delegated task results"
+
+            elif meta_tool_name == 'create_and_execute_plan':
+                goals_count = metadata.get('goals_count', 0)
+                estimated_complexity = metadata.get('estimated_complexity', '')
+
+                if execution_phase == 'meta_tool_start':
+                    complexity_info = f" ({estimated_complexity})" if estimated_complexity != 'unknown' else ""
+                    return f"Creating execution plan with {goals_count} goals{complexity_info}"
+                else:
+                    return f"Executing plan ({goals_count} goals)"
+
+            elif meta_tool_name == 'advance_outline_step':
+                step_completed = metadata.get('step_completed', False)
+                completion_evidence = metadata.get('completion_evidence', '')
+                next_step_focus = metadata.get('next_step_focus', '')
+
+                if step_completed and next_step_focus:
+                    focus_brief = next_step_focus[:50] + "..." if len(next_step_focus) > 50 else next_step_focus
+                    return f"Step completed, focusing on: {focus_brief}"
+                elif step_completed:
+                    return "Advancing to next outline step"
+                else:
+                    return "Preparing to advance outline step"
+
+            elif meta_tool_name == 'write_to_variables':
+                var_scope = metadata.get('variable_scope', '')
+                var_key = metadata.get('variable_key', '')
+                var_desc = metadata.get('variable_description', '')
+
+                if var_desc:
+                    desc_brief = var_desc[:40] + "..." if len(var_desc) > 40 else var_desc
+                    return f"Storing result: {desc_brief} ({var_scope}.{var_key})"
+                else:
+                    return f"Storing data in {var_scope}.{var_key}"
+
+            elif meta_tool_name == 'read_from_variables':
+                var_scope = metadata.get('variable_scope', '')
+                var_key = metadata.get('variable_key', '')
+                read_purpose = metadata.get('read_purpose', '')
+
+                if read_purpose:
+                    purpose_brief = read_purpose[:40] + "..." if len(read_purpose) > 40 else read_purpose
+                    return f"Retrieving data for: {purpose_brief} ({var_scope}.{var_key})"
+                else:
+                    return f"Reading {var_scope}.{var_key}"
+
+            elif meta_tool_name == 'direct_response':
+                final_answer_length = metadata.get('final_answer_length', 0)
+                steps_completed = metadata.get('steps_completed', [])
+
+                if len(steps_completed) > 0:
+                    return f"Generating final response ({len(steps_completed)} steps completed, {final_answer_length} chars)"
+                else:
+                    return f"Generating final response ({final_answer_length} characters)"
+
+            else:
+                # Generic meta-tool operation
+                tool_display = meta_tool_name.replace('_', ' ').title()
+                if reasoning_loop > 0:
+                    return f"{tool_display} (reasoning loop {reasoning_loop})"
+                else:
+                    return tool_display
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Error detecting current step operation: {e}")
+            return None
+
+    def _render_dynamic_tree(self, summary: Dict[str, Any]) -> Tree:
+        """
+        Enhanced dynamic tree with combined agent outline and task executor progress.
+        Shows both high-level agent progression and detailed task execution.
+        """
+        try:
+            # Create root with combined status
+            health = summary["health_indicators"]
+            timing = summary["timing"]
+
+            # Get both progress systems
+            outline_info = self._get_current_outline_info()
+            task_progress = self._get_task_executor_progress()
+
+            # Dynamic root title with combined progress
+            health_emoji = "🟢" if health["overall_health"] > 0.8 else "🟡" if health["overall_health"] > 0.5 else "🔴"
+
+            elapsed_str = f"{timing['elapsed']:.1f}s" if timing[
+                                                             'elapsed'] < 60 else f"{timing['elapsed'] // 60:.0f}m{timing['elapsed'] % 60:.0f}s"
+
+            # Combined title showing both systems
+            root_title = f"{health_emoji} @{self.agent_name} Execution ({elapsed_str})"
+
+            # Add progress indicators
+            progress_indicators = []
+            if outline_info.get('outline_created') and outline_info.get('total_steps', 0) > 0:
+                outline_progress = f"Outline: {len(outline_info.get('completed_steps', []))}/{outline_info['total_steps']}"
+                progress_indicators.append(outline_progress)
+
+            if task_progress['total_tasks'] > 0:
+                task_indicator = f"Tasks: {task_progress['completed_tasks']}/{task_progress['total_tasks']}"
+                if len(task_progress['running_tasks']) > 0:
+                    task_indicator += f" ({len(task_progress['running_tasks'])} active)"
+                progress_indicators.append(task_indicator)
+
+            if progress_indicators:
+                root_title += f" | {' | '.join(progress_indicators)}"
+
+            tree = Tree(root_title, style="bold cyan")
+
+            # Add combined overview
+            self._add_combined_overview(tree, summary, outline_info, task_progress)
+
+            # Agent outline progress (high-level)
+            if outline_info.get('outline_created'):
+                outline_branch = tree.add("🎯 Agent Outline Progress", style="bold blue")
+                self._add_outline_progress_to_tree(outline_branch, outline_info)
+
+            # Task executor progress (detailed)
+            if task_progress['total_tasks'] > 0:
+                task_branch = tree.add("⚙️ Task Execution Details", style="bold green")
+                self._add_task_progress_to_tree(task_branch, task_progress)
+
+            # Main execution flow (system level)
+            if summary["execution_flow"]["flow"]:
+                flow_branch = tree.add("🔄 System Execution Flow", style="bold purple")
+                self._add_system_flow_to_tree(flow_branch, summary)
+
+            # Error section if there are recent errors
+            if self.tree_builder.error_log and self.mode != VerbosityMode.MINIMAL:
+                self._add_live_error_section(tree)
+
+            return tree
+
+        except Exception as e:
+            # Fallback tree
+            error_tree = Tree("❌ Tree rendering error", style="red")
+            error_tree.add(f"Error: {str(e)}", style="red dim")
+            return error_tree
+
+    def _add_combined_overview(self, tree: Tree, summary: Dict[str, Any], outline_info: Dict[str, Any],
+                               task_progress: Dict[str, Any]):
+        """Add combined overview showing both agent and task progress"""
+        try:
+            session_info = summary["session_info"]
+            timing = summary["timing"]
+
+            overview_lines = []
+
+            # Agent-level progress
+            if outline_info.get('outline_created'):
+                current_step = outline_info['current_step']
+                total_steps = outline_info['total_steps']
+                completed_steps = len(outline_info.get('completed_steps', []))
+
+                agent_progress = f"🎯 Agent: Step {current_step}/{total_steps} ({completed_steps} completed)"
+                if outline_info.get('completion_percentage'):
+                    agent_progress += f" - {outline_info['completion_percentage']:.0f}%"
+                overview_lines.append(agent_progress)
+
+            # Task-level progress
+            if task_progress['total_tasks'] > 0:
+                task_status_parts = []
+                task_status_parts.append(f"{task_progress['completed_tasks']}/{task_progress['total_tasks']} completed")
+
+                if len(task_progress['running_tasks']) > 0:
+                    task_status_parts.append(f"{len(task_progress['running_tasks'])} running")
+                if len(task_progress['parallel_executing']) > 1:
+                    task_status_parts.append(f"{len(task_progress['parallel_executing'])} parallel")
+                if len(task_progress['waiting_tasks']) > 0:
+                    task_status_parts.append(f"{len(task_progress['waiting_tasks'])} waiting")
+
+                task_progress_line = f"⚙️ Tasks: {' | '.join(task_status_parts)}"
+                overview_lines.append(task_progress_line)
+
+            # System health
+            health_parts = []
+            if session_info["active_nodes"] > 0:
+                health_parts.append(f"{session_info['active_nodes']} active nodes")
+            if session_info["failed_nodes"] > 0:
+                health_parts.append(f"{session_info['failed_nodes']} failed")
+
+            if health_parts:
+                overview_lines.append(f"🔧 System: {' | '.join(health_parts)}")
+
+            # Timing and ETA
+            timing_parts = [f"Runtime: {human_readable_time(timing['elapsed'])}"]
+
+            if outline_info.get('estimated_completion'):
+                eta = outline_info['estimated_completion']
+                if eta > 0:
+                    eta_str = f"{human_readable_time(eta)}"
+                    timing_parts.append(f"ETA: {eta_str}")
+
+            overview_lines.append(f"⏱️ {' | '.join(timing_parts)}")
+
+            if overview_lines:
+                overview_branch = tree.add("📊 Live Progress Overview", style="bold yellow")
+                for line in overview_lines:
+                    overview_branch.add(line, style="yellow dim")
+
+        except Exception as e:
+            tree.add(f"⚠️ Overview error: {e}", style="red dim")
+
+    def _add_outline_progress_to_tree(self, outline_branch: Tree, outline_info: Dict[str, Any]):
+        """Add agent outline progress to tree branch"""
+        try:
+            steps = outline_info.get('steps', [])
+            current_step = outline_info['current_step']
+            completed_steps = outline_info.get('completed_steps', [])
+
+            for step in steps:
+                step_id = step['id']
+                step_desc = step['description']
+
+                # Status and progress
+                if step_id in completed_steps:
+                    status_icon = "✅"
+                    status_style = "green"
+                elif step_id == current_step:
+                    # Show current activity
+                    current_activity = self._get_detailed_current_activity()
+                    if current_activity['primary_activity'] != 'Unknown':
+                        status_icon = "🔄"
+                        status_style = "blue bold"
+                        step_desc += f" → {current_activity['primary_activity']}"
+                    else:
+                        status_icon = "🎯"
+                        status_style = "blue bold"
+                else:
+                    status_icon = "⏸️"
+                    status_style = "yellow dim"
+
+                step_text = f"{status_icon} {step_desc}"
+                step_branch = outline_branch.add(step_text, style=status_style)
+
+                # Add step details in verbose mode
+                if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                    method = step.get('method', 'unknown')
+                    step_branch.add(f"📋 Method: {method.replace('_', ' ').title()}", style=f"{status_style} dim")
+
+                    if step.get('expected_outcome'):
+                        outcome = step['expected_outcome'][:60] + "..." if len(step['expected_outcome']) > 60 else step[
+                            'expected_outcome']
+                        step_branch.add(f"🎯 Expected: {outcome}", style=f"{status_style} dim")
+
+        except Exception as e:
+            outline_branch.add(f"⚠️ Outline display error: {e}", style="red dim")
+
+    def _add_task_progress_to_tree(self, task_branch: Tree, task_progress: Dict[str, Any]):
+        """Add detailed task execution progress to tree branch"""
+        try:
+            # Running tasks
+            if task_progress['running_tasks']:
+                running_branch = task_branch.add(f"🔄 Running ({len(task_progress['running_tasks'])})", style="blue")
+                for task in task_progress['running_tasks'][:5]:  # Show up to 5
+                    running_time = task['running_time']
+                    time_str = f"{running_time:.0f}s" if running_time < 60 else f"{running_time / 60:.1f}m"
+                    task_text = f"{task['id']}: {task['description']} ({time_str})"
+                    running_branch.add(task_text, style="blue dim")
+
+            # Parallel execution
+            if len(task_progress['parallel_executing']) > 1:
+                parallel_branch = task_branch.add(f"⚡ Parallel ({len(task_progress['parallel_executing'])})",
+                                                  style="green")
+                for task in task_progress['parallel_executing']:
+                    parallel_branch.add(f"{task['id']}: {task['type']}", style="green dim")
+
+            # Waiting tasks
+            if task_progress['waiting_tasks']:
+                waiting_branch = task_branch.add(f"⏸️ Waiting ({len(task_progress['waiting_tasks'])})", style="yellow")
+                for task in sorted(task_progress['waiting_tasks'], key=lambda x: x['priority'])[:3]:
+                    deps_str = ", ".join(task['waiting_for']) if task['waiting_for'] else "dependencies"
+                    task_text = f"{task['id']}: waiting for {deps_str}"
+                    waiting_branch.add(task_text, style="yellow dim")
+
+            # Completed summary
+            if task_progress['completed_tasks'] > 0:
+                completed_text = f"✅ Completed: {task_progress['completed_tasks']}/{task_progress['total_tasks']}"
+                if task_progress['failed_tasks'] > 0:
+                    completed_text += f" ({task_progress['failed_tasks']} failed)"
+                task_branch.add(completed_text, style="green")
+
+        except Exception as e:
+            task_branch.add(f"⚠️ Task progress error: {e}", style="red dim")
+
+    def _add_system_flow_to_tree(self, flow_branch: Tree, summary: Dict[str, Any]):
+        """Add system-level execution flow (nodes)"""
+        try:
+            execution_flow = summary["execution_flow"]["flow"]
+            active_nodes = set(summary["execution_flow"]["active_nodes"])
+
+            for i, node_name in enumerate(execution_flow[-5:], 1):  # Show last 5 nodes
+                if node_name not in self.tree_builder.nodes:
+                    continue
+
+                node = self.tree_builder.nodes[node_name]
+                status_icon = node.get_status_icon()
+                status_style = node.get_status_color()
+
+                node_text = f"{status_icon} {node_name}"
+                duration_str = node.get_duration_str()
+                if duration_str != "...":
+                    node_text += f" ({duration_str})"
+
+                flow_branch.add(node_text, style=status_style)
+
+        except Exception as e:
+            flow_branch.add(f"⚠️ System flow error: {e}", style="red dim")
+
+    def _add_dynamic_overview(self, tree: Tree, summary: Dict[str, Any]) -> None:
+        """
+        Adds dynamic overview section with live metrics and progress indicators.
+        """
+        try:
+            session_info = summary["session_info"]
+            perf = summary["performance_metrics"]
+            health = summary["health_indicators"]
+
+            # Create live progress indicator
+            completed = session_info["completed_nodes"]
+            total = session_info["total_nodes"]
+            active = session_info["active_nodes"]
+            failed = session_info["failed_nodes"]
+
+            # Progress bar visualization
+            if total > 0:
+                progress_ratio = completed / total
+                bar_width = 20
+                filled_width = int(bar_width * progress_ratio)
+                progress_bar = "█" * filled_width + "▒" * (bar_width - filled_width)
+                progress_text = f"📊 Progress: [{progress_bar}] {completed}/{total}"
+            else:
+                progress_text = f"📊 Progress: {completed}/{total}"
+
+            # Add active indicators
+            if active > 0:
+                progress_text += f" | {active} active"
+            if failed > 0:
+                progress_text += f" | {failed} failed"
+
+            overview_branch = tree.add(progress_text, style="bold yellow")
+
+            # Health and performance indicators (verbose modes only)
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                health_text = f"♥️ Health: {health['overall_health']:.1%}"
+                if perf["total_cost"] > 0:
+                    health_text += f" | 💰 Cost: {self._format_cost(perf['total_cost'])}"
+                if perf["total_tokens"] > 0:
+                    health_text += f" | 🎯 Tokens: {perf['total_tokens']:,}"
+
+                overview_branch.add(health_text, style="green dim")
+
+        except Exception as e:
+            tree.add(f"⚠️ Overview error: {e}", style="red dim")
+
+
+    def _get_node_current_operation(self, node: ExecutionNode) -> Optional[str]:
+        """
+        Determines the current operation being performed by a node for live display.
+        """
+        try:
+            # Check most recent meta-tool activity
+            if node.llm_calls:
+                recent_llm = node.llm_calls[-1]
+                if (hasattr(recent_llm, 'metadata') and recent_llm.metadata and
+                    recent_llm.timestamp > time.time() - 10):  # Within last 10 seconds
+
+                    meta_tool = recent_llm.metadata.get('meta_tool_name')
+                    if meta_tool:
+                        # Compact operation descriptions
+                        operations = {
+                            'internal_reasoning': 'thinking',
+                            'manage_internal_task_stack': 'managing tasks',
+                            'delegate_to_llm_tool_node': 'delegating',
+                            'create_and_execute_plan': 'planning',
+                            'advance_outline_step': 'advancing step',
+                            'direct_response': 'responding',
+                            'write_to_variables': 'storing data',
+                            'read_from_variables': 'reading data'
+                        }
+                        return operations.get(meta_tool, meta_tool.replace('_', ' '))
+
+            # Check recent tool activity
+            if node.tool_calls:
+                recent_tool = node.tool_calls[-1]
+                if recent_tool.timestamp > time.time() - 10:  # Within last 10 seconds
+                    tool_name = recent_tool.tool_name
+                    if len(tool_name) > 15:
+                        return f"using {tool_name[:12]}..."
+                    return f"using {tool_name}"
+
+            # Check node status for general operation
+            if node.status == NodeStatus.RUNNING:
+                if 'Reasoner' in node.name:
+                    return 'reasoning'
+                elif 'Planner' in node.name:
+                    return 'planning'
+                elif 'Executor' in node.name:
+                    return 'executing'
+                elif 'Tool' in node.name:
+                    return 'processing'
+                else:
+                    return 'working'
+
+            return None
+
+        except Exception as e:
+            return None
+
+
+    def _create_predictions_panel(self, summary: Dict[str, Any]) -> Optional[Panel]:
+        """
+        Enhanced predictions panel using real execution metrics and detailed activity analysis.
+        """
+        try:
+            if self.mode not in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
+                return None
+
+            # Use the enhanced prediction function with real metrics
+            predictions = self._generate_execution_predictions(summary)
+            activity_info = self._get_detailed_current_activity()
+
+            if not predictions or not any([predictions.get('next_steps'), predictions.get('estimated_completion')]):
+                return None
+
+            prediction_lines = []
+
+            # Current activity context for predictions
+            if activity_info['primary_activity'] != 'Unknown':
+                prediction_lines.append(f"🔄 Current: {activity_info['primary_activity']}")
+                if activity_info.get('expected_next_action') and activity_info['expected_next_action'] != 'Uncertain':
+                    prediction_lines.append(f"➡️ Next: {activity_info['expected_next_action']}")
+                prediction_lines.append("")
+
+            # Predicted next steps using real data
+            if predictions.get('next_steps'):
+                prediction_lines.append("🔮 Predicted Next Steps:")
+                for i, step in enumerate(predictions['next_steps'][:3], 1):
+                    confidence_icon = "🎯" if step['confidence'] > 0.8 else "🔄" if step['confidence'] > 0.5 else "❓"
+                    step_text = f"  {i}. {step['action'][:60]}..."
+                    prediction_lines.append(f"{confidence_icon} {step_text}")
+
+                    # Add method and timing info
+                    method = step.get('method', 'unknown')
+                    duration = step.get('estimated_duration', 0)
+                    if duration > 0:
+                        if duration < 60:
+                            time_str = f"{duration:.0f}s"
+                        else:
+                            time_str = f"{duration / 60:.1f}m"
+                        prediction_lines.append(
+                            f"     📋 Method: {method.replace('_', ' ').title()} | ⏱️ Est: {time_str} | 🎯 {step['confidence']:.0%}")
+                    else:
+                        prediction_lines.append(
+                            f"     📋 Method: {method.replace('_', ' ').title()} | 🎯 {step['confidence']:.0%}")
+
+            # Completion prediction with real data
+            if predictions.get('estimated_completion'):
+                completion = predictions['estimated_completion']
+                prediction_lines.append("")
+
+                time_remaining = completion['time_remaining']
+                if time_remaining < 60:
+                    time_str = f"{time_remaining:.0f}s"
+                elif time_remaining < 3600:
+                    time_str = f"{time_remaining / 60:.1f}m"
+                else:
+                    time_str = f"{time_remaining / 3600:.1f}h"
+
+                prediction_lines.append(f"🎯 Completion Estimate: {time_str} remaining")
+                prediction_lines.append(f"   Confidence: {completion['confidence']:.0%}")
+
+                # Add cost prediction if available
+                if completion.get('estimated_additional_cost', 0) > 0:
+                    cost_str = self._format_cost(completion['estimated_additional_cost'])
+                    prediction_lines.append(f"   💰 Additional cost: {cost_str}")
+
+            # Potential issues using real metrics
+            if predictions.get('potential_issues') and self.mode == VerbosityMode.DEBUG:
+                high_impact_issues = [issue for issue in predictions['potential_issues'] if
+                                      issue.get('impact') == 'high']
+                if high_impact_issues:
+                    prediction_lines.append("")
+                    prediction_lines.append("⚠️ Potential Issues:")
+                    for issue in high_impact_issues[:2]:
+                        risk_icon = "🚨" if issue['probability'] > 0.7 else "⚠️"
+                        prediction_lines.append(
+                            f"  {risk_icon} {issue['description']} (Risk: {issue['probability']:.0%})")
+
+            # Overall prediction confidence
+            confidence_level = predictions.get('confidence_level', 0.0)
+            if confidence_level > 0:
+                prediction_lines.append("")
+                if confidence_level > 0.8:
+                    prediction_lines.append("🎯 High confidence predictions based on real execution data")
+                elif confidence_level > 0.5:
+                    prediction_lines.append("🔄 Moderate confidence predictions from partial execution data")
+                else:
+                    prediction_lines.append("❓ Low confidence predictions - limited execution data")
+
+            if not prediction_lines:
+                return None
+
+            return Panel(
+                "\n".join(prediction_lines),
+                title="🔮 Execution Predictions (Real Metrics)",
+                style="magenta",
+                box=box.ROUNDED,
+                width=90
+            )
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                return Panel(f"Prediction error: {e}", title="⚠️ Prediction Error", style="red")
+            return None
+
+    def _generate_execution_predictions(self, summary: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate predictions using real execution metrics and patterns.
+        Uses actual meta-tool timing, outline progress, and system performance data.
+        """
+        try:
+            predictions = {
+                'next_steps': [],
+                'estimated_completion': None,
+                'potential_issues': [],
+                'confidence_level': 0.0
+            }
+
+            # Get real outline progress
+            outline_info = self._get_current_outline_info()
+            tool_usage = self._get_tool_usage_summary()
+
+            session_info = summary["session_info"]
+            timing = summary["timing"]
+            perf = summary["performance_metrics"]
+
+            # Analyze real meta-tool performance for predictions
+            meta_tool_timings = {}
+            meta_tool_success_rates = {}
+
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls + node.sub_events:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name')):
+
+                        tool_name = event.metadata['meta_tool_name']
+                        duration = event.metadata.get('execution_duration', 0)
+
+                        if duration > 0:
+                            if tool_name not in meta_tool_timings:
+                                meta_tool_timings[tool_name] = []
+                            meta_tool_timings[tool_name].append(duration)
+
+                        # Track success rates
+                        if tool_name not in meta_tool_success_rates:
+                            meta_tool_success_rates[tool_name] = {'success': 0, 'total': 0}
+                        meta_tool_success_rates[tool_name]['total'] += 1
+                        if event.success:
+                            meta_tool_success_rates[tool_name]['success'] += 1
+
+            # Predict next steps based on real outline progress
+            if outline_info.get('outline_created') and outline_info.get('steps'):
+                current_step = outline_info['current_step']
+                total_steps = outline_info['total_steps']
+                completed_steps = outline_info.get('completed_steps', [])
+
+                # Find next pending steps
+                for step in outline_info['steps']:
+                    if step['id'] > current_step and step['id'] not in completed_steps:
+                        method = step.get('method', 'unknown')
+
+                        # Calculate confidence based on historical performance
+                        confidence = 0.7  # base confidence
+                        estimated_duration = 10.0  # default
+
+                        if method in meta_tool_success_rates:
+                            success_rate = meta_tool_success_rates[method]['success'] / max(
+                                meta_tool_success_rates[method]['total'], 1)
+                            confidence = min(0.95, success_rate * 0.9)
+
+                        if method in meta_tool_timings:
+                            avg_duration = sum(meta_tool_timings[method]) / len(meta_tool_timings[method])
+                            estimated_duration = avg_duration * 1.2  # Add buffer
+
+                        predictions['next_steps'].append({
+                            'action': step['description'],
+                            'method': method,
+                            'confidence': confidence,
+                            'estimated_duration': estimated_duration
+                        })
+
+                        if len(predictions['next_steps']) >= 3:
+                            break
+
+            # Calculate realistic completion estimate
+            if outline_info.get('total_steps', 0) > 0:
+                completed_count = len(outline_info.get('completed_steps', []))
+                remaining_steps = outline_info['total_steps'] - completed_count
+
+                if completed_count > 0 and timing['elapsed'] > 0:
+                    # Use real completion rate
+                    actual_completion_rate = completed_count / timing['elapsed']
+                    estimated_remaining_time = remaining_steps / actual_completion_rate
+
+                    # Adjust based on remaining step complexity
+                    if remaining_steps > 0:
+                        remaining_methods = []
+                        for step in outline_info['steps']:
+                            if step['id'] not in outline_info.get('completed_steps', []):
+                                remaining_methods.append(step.get('method', 'unknown'))
+
+                        # Apply complexity multiplier based on methods
+                        complexity_multiplier = 1.0
+                        for method in remaining_methods:
+                            if method == 'create_and_execute_plan':
+                                complexity_multiplier *= 1.8
+                            elif method == 'delegate_to_llm_tool_node':
+                                complexity_multiplier *= 1.4
+                            elif method == 'internal_reasoning':
+                                complexity_multiplier *= 1.2
+
+                        estimated_remaining_time *= complexity_multiplier
+
+                    # Calculate confidence based on error rate and consistency
+                    confidence = 0.8
+                    if perf['error_count'] > 0:
+                        error_rate = perf['error_count'] / perf['total_events']
+                        confidence *= (1.0 - error_rate)
+
+                    predictions['estimated_completion'] = {
+                        'time_remaining': estimated_remaining_time,
+                        'confidence': confidence,
+                        'estimated_additional_cost': self._predict_additional_cost_real(summary,
+                                                                                        estimated_remaining_time,
+                                                                                        remaining_methods)
+                    }
+
+            # Real potential issues based on actual metrics
+            error_rate = perf['error_count'] / max(perf['total_events'], 1) if perf['total_events'] > 0 else 0
+
+            if error_rate > 0.15:
+                predictions['potential_issues'].append({
+                    'description': f'High error rate detected ({error_rate:.1%}) - may cause delays',
+                    'probability': min(0.9, error_rate * 2),
+                    'impact': 'high'
+                })
+
+            # Tool-specific issues
+            for tool_name, rates in meta_tool_success_rates.items():
+                success_rate = rates['success'] / max(rates['total'], 1)
+                if success_rate < 0.7 and rates['total'] > 2:
+                    predictions['potential_issues'].append({
+                        'description': f'{tool_name} has low success rate ({success_rate:.1%})',
+                        'probability': 1.0 - success_rate,
+                        'impact': 'medium'
+                    })
+
+            # Performance degradation
+            if timing['elapsed'] > 60:  # After 1 minute
+                recent_events = [e for node in self.tree_builder.nodes.values()
+                                 for e in node.llm_calls + node.sub_events
+                                 if e.timestamp > time.time() - 30]
+
+                if len(recent_events) < 5:  # Low activity
+                    predictions['potential_issues'].append({
+                        'description': 'System activity has decreased - possible performance issue',
+                        'probability': 0.6,
+                        'impact': 'low'
+                    })
+
+            # Overall confidence
+            if predictions['next_steps']:
+                avg_confidence = sum(step['confidence'] for step in predictions['next_steps']) / len(
+                    predictions['next_steps'])
+                predictions['confidence_level'] = avg_confidence
+
+            return predictions
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Real metrics prediction error: {e}")
+            return {'next_steps': [], 'estimated_completion': None, 'potential_issues': [], 'confidence_level': 0.0}
+
+    def _predict_additional_cost_real(self, summary: Dict[str, Any], time_remaining: float,
+                                      remaining_methods: List[str]) -> float:
+        """Predict additional cost based on real method costs and remaining work"""
+        try:
+            # Calculate average cost per method from real data
+            method_costs = {}
+
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name') and event.llm_cost):
+
+                        method = event.metadata['meta_tool_name']
+                        cost = event.llm_cost
+
+                        if method not in method_costs:
+                            method_costs[method] = []
+                        method_costs[method].append(cost)
+
+            # Estimate cost for remaining methods
+            total_estimated_cost = 0.0
+            for method in remaining_methods:
+                if method in method_costs:
+                    avg_cost = sum(method_costs[method]) / len(method_costs[method])
+                    total_estimated_cost += avg_cost
+                else:
+                    # Default estimates based on method complexity
+                    default_costs = {
+                        'internal_reasoning': 0.002,
+                        'delegate_to_llm_tool_node': 0.005,
+                        'create_and_execute_plan': 0.010,
+                        'direct_response': 0.003
+                    }
+                    total_estimated_cost += default_costs.get(method, 0.002)
+
+            return total_estimated_cost
+
+        except Exception:
+            return 0.0
+
+    def _create_enhanced_header(self, summary: Dict[str, Any]) -> Panel:
+        """
+        Enhanced header using detailed activity detection and tool usage information.
+        """
+        try:
+            session_info = summary["session_info"]
+            timing = summary["timing"]
+            health = summary["health_indicators"]
+            perf = summary["performance_metrics"]
+
+            # Get detailed current activity
+            activity_info = self._get_detailed_current_activity()
+            tool_usage = self._get_tool_usage_summary()
+            outline_info = self._get_current_outline_info()
+
+            header_content = []
+
+            # Main status line with detailed activity
+            status_parts = []
+
+            if session_info["active_nodes"] > 0:
+                # Show detailed current activity
+                primary_activity = activity_info['primary_activity']
+                confidence = activity_info.get('confidence', 0.0)
+                time_in_activity = activity_info.get('time_in_current_activity', 0)
+
+                # Activity with confidence and timing
+                activity_display = primary_activity
+                if confidence > 0.8:
+                    activity_display = f"🎯 {primary_activity}"
+                elif confidence > 0.5:
+                    activity_display = f"🔄 {primary_activity}"
+                else:
+                    activity_display = f"❓ {primary_activity}"
+
+                if time_in_activity < 60:
+                    activity_display += f" ({time_in_activity:.0f}s)"
+                else:
+                    activity_display += f" ({time_in_activity / 60:.1f}m)"
+
+                status_parts.append(activity_display)
+            elif session_info["failed_nodes"] > 0:
+                status_parts.append(f"❌ ERRORS (@{self.agent_name})")
+            elif session_info["completed_nodes"] == session_info["total_nodes"] and session_info["total_nodes"] > 0:
+                status_parts.append(f"✅ COMPLETED (@{self.agent_name})")
+            else:
+                status_parts.append(f"▶️ RUNNING (@{self.agent_name})")
+
+            header_content.append(" | ".join(status_parts))
+
+            # Detailed activity description line
+            if activity_info['detailed_description'] != 'System status unclear':
+                detail_line = f"📋 {activity_info['detailed_description']}"
+                if len(detail_line) > 100:
+                    detail_line = detail_line[:97] + "..."
+                header_content.append(detail_line)
+
+            # Progress and context line
+            progress_parts = []
+
+            # Outline progress with real data
+            if outline_info.get('outline_created') and outline_info.get('total_steps', 0) > 0:
+                current_step = outline_info['current_step']
+                total_steps = outline_info['total_steps']
+                completed_steps = len(outline_info.get('completed_steps', []))
+                completion_pct = outline_info.get('completion_percentage', 0)
+
+                progress_parts.append(f"📋 Outline: {completed_steps}/{total_steps} ({completion_pct:.0f}%)")
+
+                # Current step with location context
+                location_context = activity_info.get('location_context', '')
+                if location_context and location_context != 'Unknown phase':
+                    progress_parts.append(f"📍 {location_context}")
+            else:
+                # Fallback to node progress
+                if session_info["total_nodes"] > 0:
+                    progress_ratio = session_info["completed_nodes"] / session_info["total_nodes"]
+                    progress_percent = int(progress_ratio * 100)
+                    progress_parts.append(
+                        f"📊 Nodes: {session_info['completed_nodes']}/{session_info['total_nodes']} ({progress_percent}%)")
+
+            # Tool usage information
+            if tool_usage['tools_active']:
+                active_tools = list(tool_usage['tools_active'])[:3]  # Show up to 3 active tools
+                tools_display = f"🔧 Using: {', '.join(active_tools)}"
+                if len(tool_usage['tools_active']) > 3:
+                    tools_display += f" +{len(tool_usage['tools_active']) - 3} more"
+                progress_parts.append(tools_display)
+            elif tool_usage['tools_used']:
+                used_count = len(tool_usage['tools_used'])
+                available_count = len(tool_usage['tools_available'])
+                progress_parts.append(f"🔧 Tools: {used_count} used, {available_count} available")
+
+            if progress_parts:
+                header_content.append(" | ".join(progress_parts))
+
+            # Timing and performance line
+            timing_parts = []
+
+            elapsed = timing["elapsed"]
+            if elapsed < 60:
+                timing_str = f"Runtime: {elapsed:.1f}s"
+            elif elapsed < 3600:
+                minutes = int(elapsed // 60)
+                seconds = elapsed % 60
+                timing_str = f"Runtime: {minutes}m{seconds:.0f}s"
+            else:
+                hours = int(elapsed // 3600)
+                minutes = int((elapsed % 3600) // 60)
+                timing_str = f"Runtime: {hours}h{minutes}m"
+
+            # Add ETA from real outline progress
+            if outline_info.get('estimated_completion'):
+                eta = outline_info['estimated_completion']
+                if eta > 0:
+                    if eta < 60:
+                        timing_str += f" | ETA: {eta:.0f}s"
+                    else:
+                        eta_min = int(eta // 60)
+                        timing_str += f" | ETA: {eta_min}m{eta % 60:.0f}s"
+
+            timing_parts.append(timing_str)
+
+            # Expected next action
+            if activity_info.get('expected_next_action') and activity_info['expected_next_action'] != 'Uncertain':
+                next_action = activity_info['expected_next_action']
+                if len(next_action) > 50:
+                    next_action = next_action[:47] + "..."
+                timing_parts.append(f"➡️ Next: {next_action}")
+
+            # Performance indicators
+            if perf["error_count"] > 0:
+                error_rate = perf["error_count"] / max(perf["total_events"], 1)
+                timing_parts.append(f"⚠️ Errors: {perf['error_count']} ({error_rate:.1%})")
+
+            # Resource usage
+            if perf["total_cost"] > 0:
+                timing_parts.append(f"💰 {self._format_cost(perf['total_cost'])}")
+
+            # Health indicator
+            health_emoji = "🟢" if health["overall_health"] > 0.8 else "🟡" if health["overall_health"] > 0.5 else "🔴"
+            timing_parts.append(f"{health_emoji} {health['overall_health']:.0%}")
+
+            header_content.append(" | ".join(timing_parts))
+
+            # Determine header style based on activity confidence
+            if session_info["failed_nodes"] > 0:
+                header_style = "red"
+            elif activity_info.get('confidence', 0) > 0.8:
+                header_style = "green"
+            elif session_info["active_nodes"] > 0:
+                header_style = "blue"
+            else:
+                header_style = "cyan"
+
+            return Panel(
+                "\n".join(header_content),
+                title=f"📊 Live Activity Status - Update #{self._print_counter}",
+                style=header_style,
+                box=box.ROUNDED
+            )
+
+        except Exception as e:
+            return Panel(
+                f"⚠️ Activity tracking error: {e}\nRuntime: {time.time() - self.tree_builder.start_time:.1f}s",
+                title="📊 Status",
+                style="red"
+            )
+
+    def _infer_outline_from_execution_pattern(self, outline_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Infer outline structure from execution patterns when no explicit outline is found.
+        Creates a synthetic outline based on meta-tool usage and system activity.
+        """
+        try:
+            # Look for common execution patterns
+            meta_tool_sequence = []
+            node_progression = []
+
+            # Analyze recent meta-tool activity
+            for node in self.tree_builder.nodes.values():
+                for event in node.llm_calls + node.sub_events:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name')):
+                        meta_tool_sequence.append({
+                            'tool': event.metadata['meta_tool_name'],
+                            'timestamp': event.timestamp,
+                            'success': event.success
+                        })
+
+                if node.name not in node_progression:
+                    node_progression.append(node.name)
+
+            # Sort by timestamp
+            meta_tool_sequence.sort(key=lambda x: x['timestamp'])
+
+            # Create synthetic outline based on patterns
+            synthetic_steps = []
+
+            # Pattern 1: Direct response (simple query)
+            if any(tool['tool'] == 'direct_response' for tool in meta_tool_sequence):
+                synthetic_steps.append({
+                    'id': 1,
+                    'description': 'Generate direct response to query',
+                    'method': 'direct_response',
+                    'expected_outcome': 'Complete answer provided',
+                    'success_criteria': 'User query fully addressed',
+                    'status': 'completed' if any(tool['tool'] == 'direct_response' and tool['success'] for tool in
+                                                 meta_tool_sequence) else 'active'
+                })
+
+            # Pattern 2: Reasoning + Planning + Execution
+            else:
+                step_id = 1
+
+                # Check for reasoning phase
+                if any(tool['tool'] == 'internal_reasoning' for tool in meta_tool_sequence):
+                    synthetic_steps.append({
+                        'id': step_id,
+                        'description': 'Analyze query and develop reasoning approach',
+                        'method': 'internal_reasoning',
+                        'expected_outcome': 'Clear understanding and approach',
+                        'success_criteria': 'Problem decomposed and approach defined',
+                        'status': 'completed'
+                    })
+                    step_id += 1
+
+                # Check for delegation phase
+                if any(tool['tool'] == 'delegate_to_llm_tool_node' for tool in meta_tool_sequence):
+                    synthetic_steps.append({
+                        'id': step_id,
+                        'description': 'Execute tool-based operations',
+                        'method': 'delegate_to_llm_tool_node',
+                        'expected_outcome': 'Required data gathered and processed',
+                        'success_criteria': 'All necessary information obtained',
+                        'status': 'completed' if any(
+                            tool['tool'] == 'delegate_to_llm_tool_node' and tool['success'] for tool in
+                            meta_tool_sequence) else 'active'
+                    })
+                    step_id += 1
+
+                # Check for planning phase
+                if any(tool['tool'] == 'create_and_execute_plan' for tool in meta_tool_sequence):
+                    synthetic_steps.append({
+                        'id': step_id,
+                        'description': 'Create and execute comprehensive plan',
+                        'method': 'create_and_execute_plan',
+                        'expected_outcome': 'Complex task completed systematically',
+                        'success_criteria': 'All plan objectives achieved',
+                        'status': 'completed' if any(
+                            tool['tool'] == 'create_and_execute_plan' and tool['success'] for tool in
+                            meta_tool_sequence) else 'active'
+                    })
+                    step_id += 1
+
+                # Final response step
+                synthetic_steps.append({
+                    'id': step_id,
+                    'description': 'Synthesize results and provide comprehensive response',
+                    'method': 'direct_response',
+                    'expected_outcome': 'Complete answer to user query',
+                    'success_criteria': 'User query fully addressed',
+                    'status': 'pending'
+                })
+
+            # Update outline_info with synthetic data
+            outline_info['steps'] = synthetic_steps
+            outline_info['total_steps'] = len(synthetic_steps)
+            outline_info['outline_created'] = True  # Mark as created (synthetic)
+
+            # Determine current step based on completed activities
+            completed_tools = [tool['tool'] for tool in meta_tool_sequence if tool['success']]
+
+            for step in synthetic_steps:
+                if step['method'] in completed_tools:
+                    if step['id'] not in outline_info['completed_steps']:
+                        outline_info['completed_steps'].append(step['id'])
+                    step['status'] = 'completed'
+                elif step['status'] == 'active':
+                    outline_info['current_step'] = step['id']
+                    break
+            else:
+                # If no active step found, set current to first pending
+                for step in synthetic_steps:
+                    if step['status'] == 'pending':
+                        outline_info['current_step'] = step['id']
+                        step['status'] = 'active'
+                        break
+
+            # Build step descriptions dictionary
+            outline_info['step_descriptions'] = {
+                step['id']: step['description'] for step in synthetic_steps
+            }
+
+            return outline_info
+
+        except Exception as e:
+            if self.mode == VerbosityMode.DEBUG:
+                print(f"⚠️ Error inferring outline from execution pattern: {e}")
+            return outline_info
+
+    def _create_live_status_bar(self, summary: Dict[str, Any]) -> Panel:
+        """
+        Enhanced live status bar with detailed activity information.
+        """
+        try:
+            activity_info = self._get_detailed_current_activity()
+            tool_usage = self._get_tool_usage_summary()
+            outline_info = self._get_current_outline_info()
+
+            status_items = []
+
+            # Current activity with confidence indicator
+            primary_activity = activity_info.get('primary_activity', 'Unknown')
+            confidence = activity_info.get('confidence', 0.0)
+
+            if confidence > 0.8:
+                confidence_icon = "🎯"
+            elif confidence > 0.5:
+                confidence_icon = "🔄"
+            else:
+                confidence_icon = "❓"
+
+            activity_brief = primary_activity
+            if len(activity_brief) > 25:
+                activity_brief = activity_brief[:22] + "..."
+
+            status_items.append(f"{confidence_icon} {activity_brief}")
+
+            # Progress with real outline data
+            if outline_info.get('outline_created'):
+                completed = len(outline_info.get('completed_steps', []))
+                total = outline_info.get('total_steps', 0)
+                if total > 0:
+                    # Mini progress bar
+                    bar_length = 8
+                    filled = int(bar_length * (completed / total))
+                    bar = "▰" * filled + "▱" * (bar_length - filled)
+                    status_items.append(f"{bar} {completed}/{total}")
+            else:
+                # Fallback to node progress
+                session_info = summary["session_info"]
+                if session_info["total_nodes"] > 0:
+                    progress_ratio = session_info["completed_nodes"] / session_info["total_nodes"]
+                    bar_length = 8
+                    filled = int(bar_length * progress_ratio)
+                    bar = "▰" * filled + "▱" * (bar_length - filled)
+                    status_items.append(f"{bar} {session_info['completed_nodes']}/{session_info['total_nodes']}")
+
+            # Tool status
+            if tool_usage['tools_active']:
+                tool_count = len(tool_usage['tools_active'])
+                status_items.append(f"🔧 {tool_count} active")
+            elif tool_usage['tools_used']:
+                used_count = len(tool_usage['tools_used'])
+                status_items.append(f"🔧 {used_count} used")
+
+            # Timing
+            elapsed = summary["timing"]["elapsed"]
+            time_str = f"{elapsed:.0f}s" if elapsed < 60 else f"{elapsed // 60:.0f}m{elapsed % 60:.0f}s"
+            status_items.append(f"⏱️ {time_str}")
+
+            # Expected next action (if space allows)
+            expected_next = activity_info.get('expected_next_action', '')
+            if expected_next and expected_next != 'Uncertain' and len(' | '.join(status_items)) < 80:
+                next_brief = expected_next[:20] + "..." if len(expected_next) > 20 else expected_next
+                status_items.append(f"➡️ {next_brief}")
+
+            # Error indicator
+            error_count = summary["performance_metrics"]["error_count"]
+            if error_count > 0:
+                status_items.append(f"⚠️ {error_count}")
+
+            status_text = " | ".join(status_items)
+
+            # Style based on confidence and activity
+            if error_count > 0:
+                style = "red dim"
+            elif confidence > 0.8:
+                style = "green dim"
+            elif activity_info['primary_activity'] != 'Unknown':
+                style = "blue dim"
+            else:
+                style = "yellow dim"
+
+            return Panel(
+                status_text,
+                style=style,
+                box=box.MINIMAL,
+                height=3
+            )
+
+        except Exception as e:
+            return Panel(f"Status: Active | ⚠️ {str(e)[:30]}...", style="red dim", box=box.MINIMAL, height=3)
+
+    def _get_current_operations_summary(self, summary: Dict[str, Any]) -> Optional[str]:
+        """
+        Enhanced operations summary using detailed activity detection.
+        """
+        try:
+            activity_info = self._get_detailed_current_activity()
+            tool_usage = self._get_tool_usage_summary()
+
+            operations = []
+
+            # Primary activity
+            if activity_info['primary_activity'] != 'Unknown':
+                primary = activity_info['primary_activity']
+                time_in_activity = activity_info.get('time_in_current_activity', 0)
+
+                if time_in_activity > 0:
+                    if time_in_activity < 60:
+                        time_str = f"{time_in_activity:.0f}s"
+                    else:
+                        time_str = f"{time_in_activity / 60:.1f}m"
+                    operations.append(f"{primary} ({time_str})")
+                else:
+                    operations.append(primary)
+
+            # Tool operations
+            if tool_usage['current_tool_operation']:
+                operations.append(tool_usage['current_tool_operation'])
+            elif tool_usage['tools_active']:
+                active_tools = list(tool_usage['tools_active'])[:2]
+                operations.append(f"Using {', '.join(active_tools)}")
+
+            # Location context
+            location_context = activity_info.get('location_context', '')
+            if location_context and location_context not in ['Unknown phase', 'Error state']:
+                operations.append(f"@ {location_context}")
+
+            if operations:
+                summary_text = " | ".join(operations)
+                if len(summary_text) > 120:
+                    summary_text = summary_text[:117] + "..."
+                return summary_text
+
+            return None
+
+        except Exception as e:
+            return f"Operations tracking error: {str(e)[:50]}..."
 
     def reset_global_start_time(self):
         """Reset global start time for new session"""
@@ -779,152 +3817,6 @@ class ProgressiveTreePrinter:
         except Exception as e:
             if self.mode == VerbosityMode.DEBUG:
                 print(f"⚠️ Error printing plan from event: {e}")
-
-    def _should_print_update(self) -> bool:
-        """Enhanced decision logic for when to print updates"""
-        current_time = time.time()
-
-        # Force full tree on errors or completion
-        if self._needs_full_tree:
-            self._last_update_time = current_time
-            return True
-
-        # In minimal realtime mode, only show one-line updates frequently
-        if self.realtime_minimal and self.mode == VerbosityMode.REALTIME:
-            # Update one-line summary more frequently (every 0.5s)
-            return current_time - self._last_update_time > 0.5
-
-        # Rate limiting for other modes - don't print too frequently
-        if current_time - self._last_update_time < 1.5:
-            return False
-
-        try:
-            # Create state hash for change detection
-            summary = self.tree_builder.get_execution_summary()
-            current_state = {
-                "total_nodes": summary["session_info"]["total_nodes"],
-                "completed_nodes": summary["session_info"]["completed_nodes"],
-                "active_nodes": summary["session_info"]["active_nodes"],
-                "failed_nodes": summary["session_info"]["failed_nodes"],
-                "current_node": summary["execution_flow"]["current_node"],
-                "total_events": summary["performance_metrics"]["total_events"],
-                "error_count": summary["performance_metrics"]["error_count"]
-            }
-
-            current_hash = hash(str(sorted(current_state.items())))
-
-            # Mode-specific update logic
-            if self.mode == VerbosityMode.MINIMAL:
-                should_update = (current_hash != self._last_print_hash and
-                                 (current_state["completed_nodes"] !=
-                                  getattr(self, '_last_completed_count', 0) or
-                                  current_state["failed_nodes"] !=
-                                  getattr(self, '_last_failed_count', 0)))
-
-                self._last_completed_count = current_state["completed_nodes"]
-                self._last_failed_count = current_state["failed_nodes"]
-
-            elif self.mode in [VerbosityMode.STANDARD, VerbosityMode.VERBOSE]:
-                should_update = current_hash != self._last_print_hash
-
-            else:  # DEBUG mode
-                should_update = True
-
-            if should_update:
-                self._last_print_hash = current_hash
-                self._last_update_time = current_time
-                return True
-
-            return False
-
-        except Exception as e:
-            self._consecutive_errors += 1
-            if self._consecutive_errors > self._error_threshold:
-                self._fallback_mode = True
-                print(f"⚠️  Printer error threshold exceeded, switching to fallback mode: {e}")
-            return False
-
-    def flush(self, run_name: str = None) -> Dict[str, Any]:
-        """
-        Flush current execution data and store externally for accumulation.
-        Resets internal state for fresh execution timing.
-
-        Args:
-            run_name: Optional name for this run
-
-        Returns:
-            Dict containing the flushed execution data
-        """
-        try:
-            # Generate run info
-            current_time = time.time()
-            if run_name is None:
-                run_name = f"run_{self._current_run_id + 1}"
-
-            # Collect current execution data
-            summary = self.tree_builder.get_execution_summary()
-
-            # Create comprehensive run data
-            run_data = {
-                "run_id": self._current_run_id + 1,
-                "run_name": run_name,
-                "flush_timestamp": current_time,
-                "execution_summary": summary,
-                "detailed_nodes": {},
-                "execution_history": self.print_history.copy(),
-                "error_log": self.tree_builder.error_log.copy(),
-                "routing_history": self.tree_builder.routing_history.copy(),
-                "print_counter": self._print_counter,
-                "consecutive_errors": self._consecutive_errors,
-                "fallback_mode": self._fallback_mode
-            }
-
-            # Add detailed node information
-            for node_name, node in self.tree_builder.nodes.items():
-                run_data["detailed_nodes"][node_name] = {
-                    "status": node.status.value,
-                    "duration": node.duration,
-                    "start_time": node.start_time,
-                    "end_time": node.end_time,
-                    "total_cost": node.total_cost,
-                    "total_tokens": node.total_tokens,
-                    "llm_calls": len(node.llm_calls),
-                    "tool_calls": len(node.tool_calls),
-                    "error": node.error,
-                    "retry_count": node.retry_count,
-                    "performance_metrics": node.get_performance_summary(),
-                    "strategy": node.strategy,
-                    "reasoning": node.reasoning,
-                    "routing_from": node.routing_from,
-                    "routing_to": node.routing_to
-                }
-
-            # Store in accumulated runs
-            self._accumulated_runs.append(run_data)
-
-            # Reset internal state for fresh execution
-            self._reset_for_fresh_execution()
-
-            if self.use_rich:
-                self.console.print(f"✅ Run '{run_name}' flushed and stored", style="green bold")
-                self.console.print(f"📊 Total accumulated runs: {len(self._accumulated_runs)}", style="blue")
-            else:
-                print(f"✅ Run '{run_name}' flushed and stored")
-                print(f"📊 Total accumulated runs: {len(self._accumulated_runs)}")
-
-            return run_data
-
-        except Exception as e:
-            error_msg = f"❌ Error during flush: {e}"
-            if self.use_rich:
-                self.console.print(error_msg, style="red bold")
-            else:
-                print(error_msg)
-
-            # Still try to reset for fresh execution
-            self._reset_for_fresh_execution()
-
-            return {"error": str(e), "timestamp": current_time}
 
     def pretty_print_task_plan(self, task_plan: Any):
         """Pretty print a Any with full details and structure"""
@@ -1243,45 +4135,6 @@ class ProgressiveTreePrinter:
                 print()
 
         print(f"{'=' * 80}")
-
-    def _reset_for_fresh_execution(self):
-        """Reset internal state for a completely fresh execution"""
-        try:
-            # Increment run counter
-            self._current_run_id += 1
-
-            # Reset tree builder with completely fresh state
-            self.tree_builder = ExecutionTreeBuilder()
-
-            # Reset print history
-            self.print_history = []
-
-            # Reset timing and state tracking
-            self._last_print_hash = None
-            self._print_counter = 0
-            self._last_update_time = 0
-
-            # Reset realtime state
-            self._last_summary = ""
-            self._needs_full_tree = False
-            self._spinner_index = 0
-
-            # Reset error handling but don't reset fallback mode completely
-            # (if we're in fallback mode due to Rich issues, stay there)
-            self._consecutive_errors = 0
-
-            # Reset Rich progress if exists
-            if hasattr(self, 'progress') and self.progress:
-                self.progress_task = None
-
-            # Clear any cached state
-            if hasattr(self, '_last_completed_count'):
-                delattr(self, '_last_completed_count')
-            if hasattr(self, '_last_failed_count'):
-                delattr(self, '_last_failed_count')
-
-        except Exception as e:
-            print(f"⚠️ Error during reset: {e}")
 
     def get_accumulated_summary(self) -> Dict[str, Any]:
         """Get comprehensive summary of all accumulated runs"""
@@ -1616,335 +4469,6 @@ class ProgressiveTreePrinter:
         except Exception as e:
             print(f"❌ Error printing fallback summary: {e}")
 
-    def _create_one_line_summary(self) -> str:
-        """Create a concise one-line summary of current execution state"""
-        try:
-            summary = self.tree_builder.get_execution_summary()
-            current_node = summary["execution_flow"]["current_node"]
-            active_nodes = summary["execution_flow"]["active_nodes"]
-            timing = summary["timing"]
-
-            # Get spinner
-            spinner = f"@{self.agent_name} "
-
-            # Format elapsed time
-            elapsed = timing["elapsed"]
-            if elapsed < 60:
-                time_str = f"{elapsed:.1f}s"
-            elif elapsed < 3600:
-                minutes = int(elapsed // 60)
-                seconds = elapsed % 60
-                time_str = f"{minutes}m{seconds:.1f}s"
-            else:
-                hours = int(elapsed // 3600)
-                minutes = int((elapsed % 3600) // 60)
-                time_str = f"{hours}h{minutes}m"
-
-            # Get current event info
-            if current_node and current_node in self.tree_builder.nodes:
-                node = self.tree_builder.nodes[current_node]
-
-                # Get the most relevant info
-                info_parts = []
-                if node.strategy:
-                    info_parts.append(f"strategy: {node.strategy}")
-                if node.reasoning:
-                    reasoning_short = node.reasoning[:50] + "..." if len(node.reasoning) > 50 else node.reasoning
-                    info_parts.append(f"reasoning: {reasoning_short}")
-
-                # Recent activity
-                recent_activity = "processing"
-                if node.llm_calls and node.llm_calls[-1].timestamp > time.time() - 5:
-                    recent_activity = "llm_call"
-                elif node.tool_calls and node.tool_calls[-1].timestamp > time.time() - 5:
-                    recent_activity = f"tool: {node.tool_calls[-1].tool_name}"
-
-                info_str = " | ".join(info_parts) if info_parts else recent_activity
-                if len(info_str) > 80:
-                    info_str = info_str[15:92] + "..."
-
-                return f"{spinner} {current_node} → {recent_activity} | {info_str} | {time_str}" if recent_activity != info_str else f"{spinner} {current_node}  → | {info_str} | {time_str}"
-
-            # Fallback summary
-            session_info = summary["session_info"]
-            progress_text = f"{session_info['completed_nodes']}/{session_info['total_nodes']} nodes"
-            return f"{spinner} Processing {progress_text} | {time_str}"
-
-        except Exception as e:
-            return f"⚠️ Processing... | {time.time():.1f}s"
-
-    def _print_one_line_summary(self):
-        """Print or update the one-line summary"""
-        try:
-            summary_line = self._create_one_line_summary()
-
-            if summary_line != self._last_summary:
-                # Clear the previous line and print new summary
-                if self._last_summary:
-                    print(f"\r{' ' * len(self._last_summary)}", end="", flush=True)
-                print(f"\r{summary_line}", end="", flush=True)
-                self._last_summary = summary_line
-
-        except Exception as e:
-            print(f"\r⚠️ Error updating summary: {e}", end="", flush=True)
-
-    def _create_execution_tree(self) -> Tree:
-        """Create comprehensive execution tree with enhanced features"""
-        try:
-            summary = self.tree_builder.get_execution_summary()
-            session_info = summary["session_info"]
-            timing = summary["timing"]
-            health = summary["health_indicators"]
-
-            # Root tree with health indicator
-            health_emoji = "🟢" if health["overall_health"] > 0.8 else "🟡" if health["overall_health"] > 0.5 else "🔴"
-            root_title = f"{health_emoji} Agent Execution Flow"
-
-            if timing["elapsed"] > 0:
-                root_title += f" ({timing['elapsed']:.1f}s elapsed)"
-
-            tree = Tree(root_title, style="bold cyan")
-
-            # Execution status overview
-            self._add_execution_overview(tree, summary)
-
-            # Main execution flow
-            self._add_execution_flow_branch(tree, summary)
-
-            # Error log (if any errors)
-            if self.tree_builder.error_log and self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG, VerbosityMode.STANDARD]:
-                self._add_error_log_branch(tree)
-
-            # Performance metrics
-            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
-                self._add_performance_branch(tree, summary)
-
-            # Routing history
-            if (self.tree_builder.routing_history and
-                self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG, VerbosityMode.STANDARD]):
-                self._add_routing_branch(tree)
-
-            return tree
-
-        except Exception as e:
-            # Fallback tree on error
-            error_tree = Tree("❌ Error creating execution tree", style="red")
-            error_tree.add(f"Error: {str(e)}", style="red dim")
-            return error_tree
-
-    def _add_execution_overview(self, tree: Tree, summary: Dict[str, Any]):
-        """Add execution overview section"""
-        session_info = summary["session_info"]
-        health = summary["health_indicators"]
-
-        overview_text = (f"📊 Status: {session_info['completed_nodes']}/{session_info['total_nodes']} completed "
-                         f"({health['completion_rate']:.1%})")
-
-        if session_info["active_nodes"] > 0:
-            overview_text += f" | {session_info['active_nodes']} active"
-        if session_info["failed_nodes"] > 0:
-            overview_text += f" | {session_info['failed_nodes']} failed"
-
-        overview_branch = tree.add(overview_text, style="bold yellow")
-
-        # Health indicators
-        if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
-            health_text = f"Health: {health['overall_health']:.1%} | Error Rate: {health['error_rate']:.1%}"
-            overview_branch.add(health_text, style="blue dim")
-
-    def _add_execution_flow_branch(self, tree: Tree, summary: Dict[str, Any]):
-        """Add detailed execution flow branch"""
-        flow_branch = tree.add("🔄 Execution Flow", style="bold blue")
-
-        execution_flow = summary["execution_flow"]["flow"]
-        active_nodes = set(summary["execution_flow"]["active_nodes"])
-        completion_order = summary["execution_flow"]["completion_order"]
-
-        for i, node_name in enumerate(execution_flow):
-            if node_name not in self.tree_builder.nodes:
-                continue
-
-            node = self.tree_builder.nodes[node_name]
-
-            # Status icon and styling
-            status_icon = node.get_status_icon()
-            status_style = node.get_status_color()
-
-            # Node info with enhanced details
-            node_text = f"{status_icon} [{i + 1}] {node_name}"
-
-            # Add timing info
-            duration_str = node.get_duration_str()
-            if duration_str != "...":
-                node_text += f" ({duration_str})"
-
-            # Add performance indicator
-            if node.is_completed() and node.duration:
-                efficiency = node._calculate_efficiency_score()
-                if efficiency > 0.8:
-                    node_text += ""
-                elif efficiency < 0.5:
-                    node_text += " 🐌"
-
-            node_branch = flow_branch.add(node_text, style=status_style)
-
-            # Add detailed information based on verbosity
-            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
-                self._add_node_details(node_branch, node)
-            elif self.mode == VerbosityMode.STANDARD and node.error:
-                # Show errors even in standard mode
-                node_branch.add(f"❌ {node.error}", style="red dim")
-
-    def _add_node_details(self, parent_branch: Tree, node: ExecutionNode):
-        """Add comprehensive node details"""
-
-        # Strategy and reasoning
-        if node.strategy:
-            parent_branch.add(f"🎯 Strategy: {node.strategy}", style="cyan dim")
-        if node.reasoning:
-            parent_branch.add(f"🧠 Reasoning: {node.reasoning[:100]}...", style="blue dim")
-
-        # Error details
-        if node.error and node.error_details:
-            error_branch = parent_branch.add(f"❌ Error: {node.error}", style="red")
-            if self.mode == VerbosityMode.DEBUG:
-                for key, value in node.error_details.items():
-                    error_branch.add(f"{key}: {value}", style="red dim")
-
-        # LLM calls summary
-        if node.llm_calls:
-            llm_summary = f"🧠 LLM: {len(node.llm_calls)} calls"
-            if node.total_cost > 0:
-                llm_summary += f", ${node.total_cost:.4f}"
-            if node.total_tokens > 0:
-                llm_summary += f", {node.total_tokens:,} tokens"
-
-            llm_branch = parent_branch.add(llm_summary, style="blue dim")
-
-            # Show individual calls in debug mode
-            if self.mode == VerbosityMode.DEBUG:
-                for call in node.llm_calls[-3:]:  # Last 3 calls
-                    call_info = f"{call.llm_model or 'Unknown'}"
-                    if call.llm_duration:
-                        call_info += f" ({call.llm_duration:.1f}s)"
-                    llm_branch.add(call_info, style="blue dim")
-
-        # Tool calls summary
-        if node.tool_calls:
-            tool_summary = f"🔧 Tools: {len(node.tool_calls)} calls"
-            successful_tools = sum(1 for call in node.tool_calls if call.tool_success)
-            if successful_tools < len(node.tool_calls):
-                tool_summary += f" ({successful_tools}/{len(node.tool_calls)} successful)"
-
-            tool_branch = parent_branch.add(tool_summary, style="green dim")
-
-            # Show individual tool calls
-            if self.mode == VerbosityMode.DEBUG:
-                for call in node.tool_calls[-3:]:  # Last 3 calls
-                    success_icon = "✓" if call.tool_success else "✗"
-                    call_info = f"{success_icon} {call.tool_name}"
-                    if call.tool_duration:
-                        call_info += f" ({call.tool_duration:.1f}s)"
-                    style = "green dim" if call.tool_success else "red dim"
-                    tool_branch.add(call_info, style=style)
-
-        # Performance metrics
-        if node.is_completed() and self.mode == VerbosityMode.DEBUG:
-            perf = node.get_performance_summary()
-            perf_text = f"📈 Efficiency: {perf['efficiency_score']:.1%}"
-            if perf['retry_count'] > 0:
-                perf_text += f" (Retries: {perf['retry_count']})"
-            parent_branch.add(perf_text, style="yellow dim")
-
-    def _add_error_log_branch(self, tree: Tree):
-        """Add enhanced error log branch with detailed error information"""
-        if not self.tree_builder.error_log:
-            return
-
-        error_branch = tree.add(f"❌ Error Log ({len(self.tree_builder.error_log)})", style="red bold")
-
-        # Show recent errors with enhanced details
-        recent_errors = self.tree_builder.error_log[-5:]  # Last 5 errors
-        for error in recent_errors:
-            timestamp = datetime.fromtimestamp(error["timestamp"]).strftime("%H:%M:%S")
-            node_name = error.get("node", "Unknown")
-            error_message = error.get("error", "Unknown error")
-            error_type = error.get("error_type", "Unknown")
-
-            # FIXED: Use actual error message instead of "Unknown error"
-            if error_message and error_message != "Unknown error":
-                error_text = f"[{timestamp}] {node_name}: {error_message}"
-            else:
-                error_text = f"[{timestamp}] {node_name}: {error_type} error"
-
-            # Add additional context if available
-            if error.get("task_id"):
-                error_text += f" (Task: {error['task_id']})"
-            elif error.get("tool_name"):
-                error_text += f" (Tool: {error['tool_name']})"
-
-            # Add retry info if available
-            if error.get("retry_count", 0) > 0:
-                error_text += f" (Retry #{error['retry_count']})"
-
-            # Use different colors based on error severity
-            if "critical" in error_message.lower() or "fatal" in error_message.lower():
-                style = "red bold"
-            elif error.get("source") == "task_execution":
-                style = "red"
-            else:
-                style = "red dim"
-
-            error_branch.add(error_text, style=style)
-
-    def _add_performance_branch(self, tree: Tree, summary: Dict[str, Any]):
-        """Add performance metrics branch"""
-        perf = summary["performance_metrics"]
-        health = summary["health_indicators"]
-        timing = summary["timing"]
-
-        perf_branch = tree.add("📊 Performance Metrics", style="bold green")
-
-        # Cost and token metrics
-        if perf["total_cost"] > 0:
-            cost_text = f"💰 Cost: {self._format_cost(perf['total_cost'])}"
-            perf_branch.add(cost_text, style="green dim")
-
-        if perf["total_tokens"] > 0:
-            tokens_text = f"🎯 Tokens: {perf['total_tokens']:,}"
-            if timing["elapsed"] > 0:
-                tokens_per_sec = perf["total_tokens"] / timing["elapsed"]
-                tokens_text += f" ({tokens_per_sec:.0f}/sec)"
-            perf_branch.add(tokens_text, style="green dim")
-
-        # Efficiency metrics
-        if health["average_node_efficiency"] > 0:
-            efficiency_text = f"⚡ Avg Efficiency: {health['average_node_efficiency']:.1%}"
-            perf_branch.add(efficiency_text, style="green dim")
-
-        # Event processing rate
-        if timing["elapsed"] > 0:
-            events_per_sec = perf["total_events"] / timing["elapsed"]
-            processing_text = f"📝 Events: {perf['total_events']} ({events_per_sec:.1f}/sec)"
-            perf_branch.add(processing_text, style="green dim")
-
-    def _add_routing_branch(self, tree: Tree):
-        """Add routing decisions branch"""
-        if not self.tree_builder.routing_history:
-            return
-
-        routing_branch = tree.add(f"🧭 Routing History ({len(self.tree_builder.routing_history)})",
-                                  style="bold purple")
-
-        # Show recent routing decisions
-        recent_routes = self.tree_builder.routing_history[-5:]  # Last 5
-        for i, route in enumerate(recent_routes):
-            timestamp = datetime.fromtimestamp(route["timestamp"]).strftime("%H:%M:%S")
-            route_text = f"[{timestamp}] {route['from']} → {route['to']}"
-            if route["decision"] != "unknown":
-                route_text += f" ({route['decision']})"
-            routing_branch.add(route_text, style="purple dim")
-
     def _format_cost(self, cost: float) -> str:
         """Enhanced cost formatting"""
         if cost < 0.0001:
@@ -1955,112 +4479,6 @@ class ProgressiveTreePrinter:
             return f"${cost * 1000:.1f}m"
         else:
             return f"${cost:.4f}"
-
-    def _print_tree_update(self):
-        """Print tree update with minimal realtime support"""
-        try:
-            if self._fallback_mode:
-                self._print_fallback()
-                return
-
-            if not self.use_rich:
-                self._print_fallback()
-                return
-
-            # In minimal realtime mode, only print one-line summary unless full tree is needed
-            if self.realtime_minimal and self.mode == VerbosityMode.REALTIME and not self._needs_full_tree:
-                self._print_one_line_summary()
-                return
-
-            # Full tree printing (existing logic)
-            self._print_counter += 1
-            summary = self.tree_builder.get_execution_summary()
-
-            # If we printed a one-line summary before, clear it and add newline
-            if self._last_summary and self.realtime_minimal:
-                print()  # Move to next line
-                self._last_summary = ""
-
-            # Clear screen in realtime mode only for full tree updates
-            if self.mode == VerbosityMode.REALTIME and self._print_counter > 1 and not self.realtime_minimal:
-                self.console.clear()
-
-            # Create and print header
-            header = self._create_header(summary)
-            tree = self._create_execution_tree()
-
-            # Print everything
-            self.console.print()
-            self.console.print(header)
-            self.console.print(tree)
-
-            # Update progress in realtime mode
-            if self.mode == VerbosityMode.REALTIME:
-                self._update_progress_display(summary)
-
-            # Reset full tree flag
-            self._needs_full_tree = False
-
-            # Reset error counter on successful print
-            self._consecutive_errors = 0
-
-        except Exception as e:
-            self._consecutive_errors += 1
-            if self._consecutive_errors <= self._error_threshold:
-                print(f"⚠️  Print error #{self._consecutive_errors}: {e}")
-                if self._consecutive_errors == self._error_threshold:
-                    print("🔄 Switching to fallback mode...")
-                    self._fallback_mode = True
-
-            # Always try fallback
-            self._print_fallback()
-
-    def _create_header(self, summary: Dict[str, Any]) -> Panel:
-        """Create informative header panel"""
-        session_info = summary["session_info"]
-        timing = summary["timing"]
-        health = summary["health_indicators"]
-
-        # Status indicators
-        status_parts = []
-        if session_info["active_nodes"] > 0:
-            status_parts.append(f"🔄 Running")
-        elif session_info["failed_nodes"] > 0:
-            status_parts.append(f"❌ Errors")
-        elif session_info["completed_nodes"] == session_info["total_nodes"]:
-            status_parts.append(f"✅ Complete")
-        else:
-            status_parts.append(f"⏸️ Waiting")
-
-        status_parts[-1] += f" ({self.agent_name})"
-
-        status_text = " | ".join(status_parts)
-
-        # Progress info
-        progress_text = (f"Progress: {session_info['completed_nodes']}/{session_info['total_nodes']} "
-                         f"({health['completion_rate']:.1%})")
-
-        # Timing info
-        timing_text = f"Runtime: {human_readable_time(timing['elapsed'])}"
-        if timing["estimated_completion"]:
-            eta = timing["estimated_completion"] - time.time()
-            if eta > 0:
-                timing_text += f" | ETA: {human_readable_time(eta)}"
-
-        # Performance info
-        perf_metrics = summary["performance_metrics"]
-        perf_text = f"Events: {perf_metrics['total_events']}"
-        if perf_metrics["total_cost"] > 0:
-            perf_text += f" | Cost: {self._format_cost(perf_metrics['total_cost'])}"
-
-        header_content = f"{status_text}\n{progress_text} | {timing_text}\n{perf_text}"
-
-        return Panel(
-            header_content,
-            title=f"📊 Update #{self._print_counter}",
-            style="cyan",
-            box=box.ROUNDED
-        )
 
     def _update_progress_display(self, summary: Dict[str, Any]):
         """Update progress display for realtime mode"""
@@ -2096,7 +4514,7 @@ class ProgressiveTreePrinter:
 
             print(f"\n{'=' * 80}")
             print(f"🚀 AGENT EXECUTION UPDATE #{self._print_counter}")
-            print(f"Session: {summary.get('session_id', 'unknown')} | Runtime: {timing['elapsed']:.1f}s")
+            print(f"Runtime: {human_readable_time(timing['elapsed'])}")
             print(f"Progress: {session_info['completed_nodes']}/{session_info['total_nodes']} nodes")
 
             if session_info["failed_nodes"] > 0:
@@ -2140,73 +4558,6 @@ class ProgressiveTreePrinter:
             print(f"Errors encountered: {len(self.tree_builder.error_log)}")
             if e:
                 print(f"Print error: {e}")
-
-    async def progress_callback(self, event: ProgressEvent):
-        """Enhanced progress callback with automatic task detection"""
-        is_task_update = False
-        try:
-            # Add event to tree builder
-            self.tree_builder.add_event(event)
-
-            # Store in history with size limit
-            self.print_history.append({
-                "timestamp": event.timestamp,
-                "event_type": event.event_type,
-                "node_name": event.node_name,
-                "event_id": event.event_id
-            })
-
-            # Maintain history size limit
-            if len(self.print_history) > self.max_history:
-                self.print_history = self.print_history[-self.max_history:]
-
-            # Automatic task detection and printing
-            if event.event_type.startswith('task_'):
-                self.print_task_update_from_event(event)
-                is_task_update = True
-
-            if event.node_name == "LLMReasonerNode":
-                self.print_reasoner_update_from_event(event)
-
-            # Check if we need to show full tree (errors or completion)
-            if self.realtime_minimal:
-                if (event.event_type == "error" or
-                    event.success is False or
-                    (event.metadata and event.metadata.get("error"))):
-                    self._needs_full_tree = True
-
-                if (event.event_type in ["execution_complete", "task_complete", "node_exit"] or
-                    (event.node_name in self.tree_builder.nodes and
-                     self.tree_builder.nodes[event.node_name].is_completed())):
-                    summary = self.tree_builder.get_execution_summary()
-                    if (summary["session_info"]["completed_nodes"] + summary["session_info"][
-                        "failed_nodes"] ==
-                        summary["session_info"]["total_nodes"]):
-                        self._needs_full_tree = True
-
-            # Print debug info in debug mode
-            if self.mode == VerbosityMode.DEBUG:
-                self._print_debug_event(event)
-
-            # Agent name extraction
-            self.agent_name = event.agent_name if event.agent_name else event.metadata.get("agent_name",
-                                                                                          self.agent_name)
-            # Print strategy and plan updates
-            if (not is_task_update and
-                event.node_name != "LLMReasonerNode" and  # Don't double-print reasoner events
-                (event.node_name == "FlowAgent" or self._should_print_update())):
-                self.print_strategy_from_event(event)
-                self.print_plan_from_event(event)
-                self._print_tree_update()
-
-        except Exception as e:
-            # Emergency error handling
-            self._consecutive_errors += 1
-            print(f"⚠️ Progress callback error #{self._consecutive_errors}: {e}")
-
-            if self._consecutive_errors > self._error_threshold:
-                print("🚨 Progress printing disabled due to excessive errors")
-                self.progress_callback = self._noop_callback
 
     def print_reasoner_update_from_event(self, event: ProgressEvent):
         """Print reasoner updates and meta-tool usage based on events for all verbosity modes"""
@@ -2664,138 +5015,102 @@ class ProgressiveTreePrinter:
         self.console.print(stack_text, style="yellow")
 
     def _print_delegation_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
-        """Print delegation to LLMToolNode updates with enhanced timestamp and variable system integration"""
+        """Enhanced delegation updates with detailed task descriptions and tool usage"""
         delegated_task = metadata.get("delegated_task_description", "")
         tools_list = metadata.get("tools_list", [])
         tools_count = metadata.get("tools_count", 0)
         execution_phase = metadata.get("execution_phase", "")
-        delegation_complexity = metadata.get("delegation_complexity", "unknown")
         outline_step = metadata.get("outline_step", 0)
-        raw = metadata.get("raw_args_string", "")
-        if raw:
-            task_desc = raw.split('task_description="', 1)[1].split('", tools_list=', 1)[0]
-            tools = raw.split('tools_list=', 1)[1]
-            task_preview = f"{tools} "
-            task_preview += task_desc[:1000 if self.mode == VerbosityMode.VERBOSE or self.mode == VerbosityMode.DEBUG else 80] + '...'
-        else:
-            task_preview = ""
-        outline_step_completion = metadata.get("outline_step_completion", False)
 
-        # Enhanced timestamp formatting
+        # Get tool usage context
+        tool_usage = self._get_tool_usage_summary()
+
         time_str = timestamp.strftime("%H:%M:%S")
 
         if execution_phase == "meta_tool_start":
-            # Starting delegation - show task description in all modes
             if self.mode == VerbosityMode.VERBOSE or self.mode == VerbosityMode.DEBUG:
-                # Detailed view for verbose/debug
-                # Final minimalist output
-                delegation_text = f"🎯 [{time_str}] Delegating: {task_preview}"
+                # Show detailed task description
+                task_preview = delegated_task[:120] + "..." if len(delegated_task) > 120 else delegated_task
 
-                # Add outline step context
+                delegation_content = []
+                delegation_content.append(f"📄 Task: {task_preview}")
+
                 if outline_step > 0:
-                    delegation_text += f" (Step {outline_step})"
-                if outline_step_completion:
-                    delegation_text += " [Step Completion Expected]"
+                    delegation_content.append(f"📍 Outline Step: {outline_step}")
 
-                if tools_count > 0:
-                    tools_preview = ", ".join(tools_list[:3])
-                    if len(tools_list) > 3:
-                        tools_preview += f" +{len(tools_list) - 3} more"
-                    delegation_text += f"\n🔧 Tools: [{tools_preview}]"
+                # Show available tools with success rates
+                if tools_list:
+                    tools_with_rates = []
+                    for tool in tools_list[:6]:  # Show up to 6 tools
+                        if tool in tool_usage['tool_success_rate']:
+                            rate_info = tool_usage['tool_success_rate'][tool]
+                            success_rate = rate_info['success'] / max(rate_info['total'], 1)
+                            if success_rate == 1.0:
+                                tools_with_rates.append(f"{tool} ✓")
+                            elif success_rate > 0.8:
+                                tools_with_rates.append(f"{tool} ({success_rate:.0%})")
+                            else:
+                                tools_with_rates.append(f"{tool} ⚠️{success_rate:.0%}")
+                        else:
+                            tools_with_rates.append(tool)
 
-                if self.mode == VerbosityMode.DEBUG:
-                    delegation_text += f"\n📊 Complexity: {delegation_complexity}"
+                    if len(tools_list) > 6:
+                        tools_with_rates.append(f"+{len(tools_list) - 6} more")
 
-                    # Add variable system context if available
-                    if metadata.get("variable_system_context"):
-                        delegation_text += f"\n💾 Variables available: {metadata['variable_system_context']}"
-
-                self.console.print(delegation_text, style="green")
-
-            elif self.mode == VerbosityMode.STANDARD:
-                # Standard mode - show task description in panel
-                panel_content = f"📄 Task: {task_preview}"
-
-                # Add outline context
-                if outline_step > 0:
-                    panel_content += f"\n📍 Outline Step: {outline_step}"
-                    if outline_step_completion:
-                        panel_content += " (Completion Expected)"
-
-                if tools_count > 0:
-                    tools_preview = ", ".join(tools_list[:4])
-                    if len(tools_list) > 4:
-                        tools_preview += f" +{len(tools_list) - 4} more"
-                    panel_content += f"\n🔧 Available Tools: {tools_preview}"
+                    delegation_content.append(f"🔧 Tools: {', '.join(tools_with_rates)}")
 
                 delegation_panel = Panel(
-                    panel_content,
-                    title=f"🎯 [{time_str}] Delegating Task to LLM Tool Node",
+                    "\n".join(delegation_content),
+                    title=f"🎯 [{time_str}] Delegating to Tool System",
                     style="green",
                     box=box.ROUNDED
                 )
                 self.console.print(delegation_panel)
 
-            else:
-                # Minimalist output for other modes
-                delegation_text = f"🎯 [{time_str}] Delegating task"
-                if outline_step > 0:
-                    delegation_text += f" (Step {outline_step})"
-                self.console.print(delegation_text + task_preview[:50]+'...', style="green")
+            elif self.mode == VerbosityMode.STANDARD:
+                # Compact but informative
+                task_brief = delegated_task[:80] + "..." if len(delegated_task) > 80 else delegated_task
+                outline_info = f" (Step {outline_step})" if outline_step > 0 else ""
+
+                self.console.print(
+                    f"🎯 [{time_str}] Delegating{outline_info}: {task_brief}",
+                    style="green"
+                )
+
+                # Show tools in a compact way
+                if tools_list:
+                    successful_tools = [t for t in tools_list if t in tool_usage['tools_used']]
+                    tools_display = f"🔧 {len(successful_tools)}/{len(tools_list)} proven tools available"
+                    self.console.print(f"   {tools_display}", style="green dim")
+
+            else:  # MINIMAL/REALTIME
+                task_brief = delegated_task[:60] + "..." if len(delegated_task) > 60 else delegated_task
+                outline_info = f" (S{outline_step})" if outline_step > 0 else ""
+                self.console.print(f"🎯 [{time_str}] Delegating{outline_info}: {task_brief}", style="green")
 
         elif event.success and execution_phase != "meta_tool_start":
-            # Delegation completed with enhanced info
             duration = metadata.get("execution_duration", 0)
             duration_str = f" ({duration:.1f}s)" if duration > 0.1 else ""
 
-            if self.mode == VerbosityMode.STANDARD:
-                # Show completion with brief task reference in standard mode
-                task_brief = delegated_task[:50] + "..." if len(delegated_task) > 50 else delegated_task
-                completion_text = f"✅ [{time_str}] Task completed: {task_brief}"
+            # Show completion with tool usage summary
+            tools_used_now = len([t for t in tools_list if t in tool_usage['tools_used']])
+            completion_text = f"✅ [{time_str}] Delegation completed{duration_str}"
 
-                # Add outline step completion info
-                if outline_step_completion:
-                    completion_text += " ✓ Step Complete"
-                elif outline_step > 0:
-                    completion_text += f" (Step {outline_step})"
+            if outline_step > 0:
+                completion_text += f" (Step {outline_step})"
 
-                completion_text += duration_str
-
-                if tools_count > 0:
-                    completion_text += f" | Used {tools_count} tools"
-
-                # Show any variable system results
-                if metadata.get("variable_results_stored"):
-                    completion_text += f" | Results stored in variables"
-
-            else:
-                # Simpler completion for verbose/debug
-                completion_text = f"✅ [{time_str}] Delegation completed"
-
-                if outline_step > 0:
-                    completion_text += f" (Step {outline_step})"
-                if outline_step_completion:
-                    completion_text += " ✓ Step Complete"
-
-                completion_text += duration_str
-
-                if tools_count > 0:
-                    completion_text += f" | Used {tools_count} tools"
-
-                # Debug mode: show additional delegation details
-                if self.mode == VerbosityMode.DEBUG:
-                    debug_details = []
-                    if delegation_complexity != "unknown":
-                        debug_details.append(f"Complexity: {delegation_complexity}")
-                    if metadata.get("sub_system_execution"):
-                        debug_details.append("Sub-system executed")
-                    if metadata.get("variable_integration"):
-                        debug_details.append("Variable system integrated")
-
-                    if debug_details:
-                        completion_text += f"\n🔧 Debug: {', '.join(debug_details)}"
+            if tools_used_now > 0:
+                completion_text += f" | Used {tools_used_now}/{tools_count} tools"
 
             self.console.print(completion_text, style="green")
+
+            # Show which specific tools were used (in verbose mode)
+            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG] and tools_used_now > 0:
+                used_tools = [t for t in tools_list if t in tool_usage['tools_used']][:4]
+                tools_text = f"   🔧 Used: {', '.join(used_tools)}"
+                if len(used_tools) < tools_used_now:
+                    tools_text += f" +{tools_used_now - len(used_tools)} more"
+                self.console.print(tools_text, style="green dim")
 
     def _print_plan_execution_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
         """Print plan creation and execution updates with enhanced timeline and variable integration"""
@@ -3778,6 +6093,69 @@ class ProgressiveTreePrinter:
         except:
             return str(timestamp)
 
+    def _get_tool_usage_summary(self) -> Dict[str, Any]:
+        """
+        Tracks real tool usage from delegation events and tool calls.
+        Shows which tools were used, are being used, and are available.
+        """
+        try:
+            tool_usage = {
+                'tools_used': set(),
+                'tools_active': set(),
+                'tools_available': set(),
+                'current_tool_operation': None,
+                'tool_success_rate': {},
+                'delegation_history': []
+            }
+
+            # Look for tool usage in recent events
+            for node in self.tree_builder.nodes.values():
+                # Check direct tool calls
+                for tool_event in node.tool_calls:
+                    tool_name = tool_event.tool_name
+                    if tool_event.tool_success:
+                        tool_usage['tools_used'].add(tool_name)
+
+                    # Track success rate
+                    if tool_name not in tool_usage['tool_success_rate']:
+                        tool_usage['tool_success_rate'][tool_name] = {'success': 0, 'total': 0}
+                    tool_usage['tool_success_rate'][tool_name]['total'] += 1
+                    if tool_event.tool_success:
+                        tool_usage['tool_success_rate'][tool_name]['success'] += 1
+
+                    # Check if currently active (last 30 seconds)
+                    if tool_event.timestamp > time.time() - 30:
+                        if tool_event.tool_success is None:  # Still running
+                            tool_usage['tools_active'].add(tool_name)
+                            tool_usage['current_tool_operation'] = f"Using {tool_name}"
+
+                # Check delegation events for tool availability and usage
+                for event in node.llm_calls + node.sub_events:
+                    if (hasattr(event, 'metadata') and event.metadata and
+                        event.metadata.get('meta_tool_name') == 'delegate_to_llm_tool_node'):
+                        tools_list = event.metadata.get('tools_list', [])
+                        tool_usage['tools_available'].update(tools_list)
+
+                        # Track delegation details
+                        delegation_info = {
+                            'timestamp': event.timestamp,
+                            'task_description': event.metadata.get('delegated_task_description', ''),
+                            'tools_requested': tools_list,
+                            'success': event.success
+                        }
+                        tool_usage['delegation_history'].append(delegation_info)
+
+            # Keep only recent delegations (last 10)
+            tool_usage['delegation_history'] = tool_usage['delegation_history'][-10:]
+
+            return tool_usage
+
+        except Exception as e:
+            return {
+                'tools_used': set(), 'tools_active': set(), 'tools_available': set(),
+                'current_tool_operation': None, 'tool_success_rate': {}, 'delegation_history': []
+            }
+
 
     def _print_debug_event(self, event: ProgressEvent):
         """Print individual event details in debug mode"""
@@ -3794,38 +6172,6 @@ class ProgressiveTreePrinter:
     async def _noop_callback(self, event: ProgressEvent):
         """No-op callback when printing is disabled"""
         pass
-
-    def print_final_summary(self):
-        """Print comprehensive final summary"""
-        try:
-            if self._fallback_mode:
-                self._print_final_summary_fallback()
-                return
-
-            if not self.use_rich:
-                self._print_final_summary_fallback()
-                return
-
-            summary = self.tree_builder.get_execution_summary()
-
-            # Final completion message
-            self.console.print()
-            self.console.print("🎉 [bold green]EXECUTION COMPLETED[/bold green] 🎉")
-
-            # Final execution tree
-            final_tree = self._create_execution_tree()
-            self.console.print(final_tree)
-
-            # Comprehensive summary table
-            self._print_final_summary_table(summary)
-
-            # Performance analysis
-            if self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
-                self._print_performance_analysis(summary)
-
-        except Exception as e:
-            print(f"⚠️  Error printing final summary: {e}")
-            self._print_final_summary_fallback()
 
     def _print_final_summary_table(self, summary: Dict[str, Any]):
         """Print detailed final summary table"""

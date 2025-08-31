@@ -761,7 +761,7 @@ class FlowAgentBuilder:
                     try:
                         result = await asyncio.wait_for(
                             self._load_single_mcp_server(server_name, server_config),
-                            timeout=15.0  # Per-server timeout
+                            timeout=5.0  # Per-server timeout
                         )
 
                         if result:

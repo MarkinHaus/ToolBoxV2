@@ -548,3 +548,461 @@ def initialize_isaa_webui_module(app: App, isaa_instance=None):  # isaa_instance
         app.logger.error(f"Failed to register ISAA UI with CloudM: {e}")
 
     return Result.ok(info="ISAA WebUI Modul bereit.")
+
+
+# isaa/ui.py
+#@export(mod_name=MOD_NAME, api=True, version=VERSION, api_methods=['GET'])
+# isaa/ui.py
+
+# isaa/ui.py
+
+# isaa/ui.py
+# isaa/ui.py
+
+import asyncio
+import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+import time
+
+
+def get_agent_ui_html() -> str:
+    """
+    Returns the full HTML, CSS, and JavaScript for the interactive agent UI.
+    """
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISAA FlowAgent Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --background-color: #1a1a1a;
+            --panel-background: #242424;
+            --text-color: #e0e0e0;
+            --muted-text-color: #888;
+            --border-color: #3a3a3a;
+            --accent-color: #007acc;
+            --error-color: #e53935;
+            --success-color: #43a047;
+            --warning-color: #fdd835;
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        body {
+            font-family: var(--font-family);
+            background-color: var(--background-color);
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .panel {
+            background-color: var(--panel-background);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #chat-container { flex: 2; border-left: none; }
+        #log-container { flex: 1.5; }
+        #status-container { flex: 1; }
+        .panel-header {
+            padding: 8px 12px;
+            background-color: #2c2c2c;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: bold;
+        }
+        .panel-content {
+            padding: 12px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+        }
+        .message .avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #444;
+            margin-right: 10px;
+            text-align: center;
+            line-height: 30px;
+            font-size: 12px;
+        }
+        .message.user {
+            flex-direction: row-reverse;
+        }
+        .message.user .avatar {
+            margin-left: 10px;
+            margin-right: 0;
+            background-color: var(--accent-color);
+        }
+        .message .content {
+            max-width: 80%;
+        }
+        .message .text {
+            background-color: #333;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .message.user .text {
+            background-color: #004a7c;
+        }
+        #chat-input-area {
+            border-top: 1px solid var(--border-color);
+            padding: 10px;
+            display: flex;
+        }
+        #chat-input {
+            flex-grow: 1;
+            background-color: #333;
+            border: 1px solid #444;
+            color: var(--text-color);
+            padding: 8px;
+            border-radius: 5px;
+        }
+        #send-button {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            margin-left: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .main-controls {
+            padding: 10px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+        }
+        .main-controls button {
+            background-color: #333;
+            border: 1px solid #555;
+            color: var(--text-color);
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .main-controls button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px 15px;
+            align-items: center;
+        }
+        .status-key {
+            font-weight: bold;
+            text-align: right;
+            color: var(--muted-text-color);
+        }
+        .status-value {
+            font-family: monospace;
+        }
+        .loading {
+            color: var(--accent-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="main-controls">
+        <button id="reset-btn">Reset Context</button>
+        <span id="connection-status" style="margin-left: auto; align-self: center;">Ready</span>
+    </div>
+    <div class="main-container">
+        <div id="chat-container" class="panel">
+            <div class="panel-header">Chat</div>
+            <div class="panel-content" id="chat-messages"></div>
+            <div id="chat-input-area">
+                <input type="text" id="chat-input" placeholder="Send a message to the agent..." autocomplete="off">
+                <button id="send-button">Send</button>
+            </div>
+        </div>
+        <div id="log-container" class="panel">
+            <div class="panel-header">Execution Log</div>
+            <div class="panel-content" id="log-content">No activity yet.</div>
+        </div>
+        <div id="status-container" class="panel">
+            <div class="panel-header">System Status</div>
+            <div class="panel-content" id="status-grid"></div>
+        </div>
+    </div>
+
+    <script>
+        const app = {
+            isProcessing: false,
+
+            elements: {
+                chatMessages: document.getElementById('chat-messages'),
+                chatInput: document.getElementById('chat-input'),
+                sendButton: document.getElementById('send-button'),
+                logContent: document.getElementById('log-content'),
+                statusGrid: document.getElementById('status-grid'),
+                connectionStatus: document.getElementById('connection-status'),
+                resetBtn: document.getElementById('reset-btn'),
+            },
+
+            init() {
+                this.initEventListeners();
+                this.updateStatus();
+            },
+
+            initEventListeners() {
+                this.elements.sendButton.addEventListener('click', () => this.sendMessage());
+                this.elements.chatInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+                this.elements.resetBtn.addEventListener('click', () => this.resetContext());
+            },
+
+            async sendMessage() {
+                const message = this.elements.chatInput.value.trim();
+                if (message && !this.isProcessing) {
+                    this.addChatMessage('user', message);
+                    this.elements.chatInput.value = '';
+                    this.setProcessing(true);
+
+                    try {
+                        const response = await fetch('/api/run', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ query: message })
+                        });
+                        const result = await response.json();
+
+                        if (result.success) {
+                            this.addChatMessage('agent', result.response);
+                            this.updateLog(result.log);
+                            this.updateStatus(result.status);
+                        } else {
+                            this.addChatMessage('agent', 'Error: ' + result.error);
+                        }
+                    } catch (error) {
+                        this.addChatMessage('agent', 'Network error: ' + error.message);
+                    }
+
+                    this.setProcessing(false);
+                }
+            },
+
+            async resetContext() {
+                if (this.isProcessing) return;
+
+                try {
+                    const response = await fetch('/api/reset', { method: 'POST' });
+                    const result = await response.json();
+
+                    if (result.success) {
+                        this.elements.chatMessages.innerHTML = '';
+                        this.elements.logContent.textContent = 'Context reset.';
+                        this.updateStatus();
+                    }
+                } catch (error) {
+                    console.error('Reset failed:', error);
+                }
+            },
+
+            addChatMessage(sender, text) {
+                const messageEl = document.createElement('div');
+                messageEl.classList.add('message', sender);
+
+                const avatarEl = document.createElement('div');
+                avatarEl.classList.add('avatar');
+                avatarEl.textContent = sender === 'user' ? 'You' : 'AI';
+
+                const contentEl = document.createElement('div');
+                contentEl.classList.add('content');
+
+                const textEl = document.createElement('div');
+                textEl.classList.add('text');
+
+                if (sender === 'agent' && window.marked) {
+                    textEl.innerHTML = marked.parse(text);
+                } else {
+                    textEl.textContent = text;
+                }
+
+                contentEl.appendChild(textEl);
+                messageEl.appendChild(sender === 'user' ? contentEl : avatarEl);
+                messageEl.appendChild(sender === 'user' ? avatarEl : contentEl);
+
+                this.elements.chatMessages.appendChild(messageEl);
+                this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+            },
+
+            setProcessing(processing) {
+                this.isProcessing = processing;
+                this.elements.sendButton.disabled = processing;
+                this.elements.chatInput.disabled = processing;
+                this.elements.resetBtn.disabled = processing;
+                this.elements.connectionStatus.textContent = processing ? 'Processing...' : 'Ready';
+                this.elements.connectionStatus.className = processing ? 'loading' : '';
+            },
+
+            updateLog(logData) {
+                if (logData) {
+                    this.elements.logContent.innerHTML = logData.map(entry =>
+                        `<div>[${entry.timestamp}] ${entry.message}</div>`
+                    ).join('');
+                }
+            },
+
+            updateStatus(statusData) {
+                const defaultStatus = {
+                    'Agent Status': 'Ready',
+                    'Last Update': new Date().toLocaleString()
+                };
+
+                const status = statusData || defaultStatus;
+                let html = '';
+                for (const [key, value] of Object.entries(status)) {
+                    html += `<div class="status-key">${key}</div><div class="status-value">${value}</div>`;
+                }
+                this.elements.statusGrid.innerHTML = html;
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => app.init());
+    </script>
+</body>
+</html>
+"""
+
+
+class AgentRequestHandler(BaseHTTPRequestHandler):
+    def __init__(self, agent, module, *args, **kwargs):
+        self.agent = agent
+        self.module = module
+        self.log_entries = []
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(get_agent_ui_html().encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
+
+        if self.path == '/api/run':
+            try:
+                data = json.loads(post_data.decode('utf-8'))
+                query = data.get('query', '')
+
+                # Simple progress tracking
+                self.log_entries = [
+                    {'timestamp': time.strftime('%H:%M:%S'), 'message': f'Processing query: {query}'},
+                    {'timestamp': time.strftime('%H:%M:%S'), 'message': 'Agent started...'}
+                ]
+
+                # Run the agent synchronously (simplified)
+                try:
+                    # Create a simple event loop for async agent
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    result = loop.run_until_complete(self.agent.a_run(query))
+                    loop.close()
+
+                    self.log_entries.append({
+                        'timestamp': time.strftime('%H:%M:%S'),
+                        'message': 'Agent completed successfully'
+                    })
+
+                    response_data = {
+                        'success': True,
+                        'response': result or 'Task completed',
+                        'log': self.log_entries,
+                        'status': {
+                            'Agent Status': 'Ready',
+                            'Last Query': query,
+                            'Last Update': time.strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                    }
+                except Exception as e:
+                    self.log_entries.append({
+                        'timestamp': time.strftime('%H:%M:%S'),
+                        'message': f'Agent failed: {str(e)}'
+                    })
+
+                    response_data = {
+                        'success': False,
+                        'error': str(e),
+                        'log': self.log_entries
+                    }
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response_data).encode('utf-8'))
+
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                error_response = {'success': False, 'error': str(e)}
+                self.wfile.write(json.dumps(error_response).encode('utf-8'))
+
+        elif self.path == '/api/reset':
+            try:
+                self.agent.clear_context()
+                self.log_entries = []
+
+                response_data = {'success': True}
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response_data).encode('utf-8'))
+
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                error_response = {'success': False, 'error': str(e)}
+                self.wfile.write(json.dumps(error_response).encode('utf-8'))
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+
+    def log_message(self, format, *args):
+        # Suppress default HTTP server logs
+        pass
+
+
+
+
+
+
+

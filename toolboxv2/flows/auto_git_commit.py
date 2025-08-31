@@ -108,7 +108,7 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
             )
 
         # Clean up the commit message
-        commit_message = commit_message.strip().split('\n')[0]
+        commit_message = commit_message.strip()
 
         # Add tags to commit message if provided
         print(tags)

@@ -1,12 +1,17 @@
 import copy
 import os
+import shlex
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import asdict
+from http.server import HTTPServer
+
 import asyncio
 from pathlib import Path
 
 import requests
+import websockets
 from langchain_community.agent_toolkits.load_tools import (
     load_tools,
 )
@@ -14,6 +19,7 @@ from pebble import concurrent
 from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
+from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
@@ -61,7 +67,8 @@ from .extras.modes import (
 )
 
 from .extras.web_search import web_search
-from .ui import initialize_isaa_webui_module
+from .ui import initialize_isaa_webui_module, get_agent_ui_html, AgentRequestHandler
+
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
 version = "0.2.0"  # Version bump for significant changes
@@ -523,11 +530,6 @@ class Tools(MainTool, FileHandler):
             "deleteScript",
             """Remove a script capability. Use when a script is no longer needed or needs to be replaced. Args: name"""
         )
-
-        # Add agent orchestration tool for specific agent types
-        if name == "self" or any(keyword in name.lower() for keyword in ["task", "chain", "supervisor"]):
-            builder.add_tool(run_isaa_agent_tool, "askAgent",
-                             f"Ask any agent: {self.config.get('agents-name-list', [])} for results/status")
 
         # Add ToolsInterface tools dynamically
         if tools_interface:
@@ -993,10 +995,58 @@ class Tools(MainTool, FileHandler):
             return mem_kb
         return cm
 
+    async def host_agent_ui(
+        self,
+        agent,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        access: str = 'local'
+    ) -> str:
+        """
+        Hosts a FlowAgent instance using a simple HTTP server.
+        """
+        if not hasattr(self, 'active_hosted_agents'):
+            self.active_hosted_agents = {}
+
+        if port in self.active_hosted_agents:
+            self.print(f"Port {port} is already in use by another hosted agent.")
+            return f"http://{host}:{port}"
+
+        # Create handler with agent reference
+        def handler(*args, **kwargs):
+            return AgentRequestHandler(agent, self, *args, **kwargs)
+
+        # Start HTTP server in a separate thread
+        def run_server():
+            httpd = HTTPServer((host, port), handler)
+            self.active_hosted_agents[port] = httpd
+            self.print(f"Agent '{agent.amd.name}' UI server running on http://{host}:{port}")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                httpd.shutdown()
+            finally:
+                if port in self.active_hosted_agents:
+                    del self.active_hosted_agents[port]
+
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
+
+        return f"http://{host}:{port}"
 
 
 def shell_tool_function(command: str) -> str:
     result: dict[str, Any] = {"success": False, "output": "", "error": ""}
+    # auto python
+    tokens = shlex.split(command)
+
+    # Replace "python" or "python3" only if it’s a standalone command
+    for i, tok in enumerate(tokens):
+        if tok in ("python", "python3"):
+            tokens[i] = sys.executable
+
+    # Rebuild the command string
+    command = " ".join(shlex.quote(t) for t in tokens)
     try:
         shell_exe, cmd_flag = detect_shell()
 

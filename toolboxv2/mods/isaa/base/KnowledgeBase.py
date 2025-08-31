@@ -1747,8 +1747,7 @@ class KnowledgeBase:
                                 f"EOFError beim Laden {p} (Größe {size} bytes). Erste 128 bytes: {snippet!r}") from e
 
                 except Exception as e:
-                    raise
-                raise ValueError("Invalid path type")
+                    raise ValueError(f"Invalid path type {e}") from e
 
             # Create new knowledge base instance with saved configuration
             kb = cls(

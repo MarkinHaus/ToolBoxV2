@@ -48,6 +48,7 @@ class ProgressEvent:
     node_name: str
     event_id: str = ""
 
+    agent_name: Optional[str] = None
     # Status information
     status: Optional[NodeStatus] = None
     success: Optional[bool] = None

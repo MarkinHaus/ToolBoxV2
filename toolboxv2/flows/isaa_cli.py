@@ -2071,6 +2071,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             # As a fallback, we could run the agent directly, but the output would
             # conflict with the prompt. For now, we abort the request.
             return
+        self.printer.prompt_app = main_app
         try:
             # Prepare the agent task before suspending the UI
             agent_task = asyncio.create_task(self.isaa_tools.run_agent(

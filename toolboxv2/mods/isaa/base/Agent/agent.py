@@ -1,5 +1,6 @@
 import copy
 import os
+import random
 import re
 from enum import Enum
 import asyncio
@@ -23,7 +24,8 @@ from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
 
 from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
 
-from toolboxv2.utils.extras.Style import print_prompt
+from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain, ParallelChain, CF, IS
+from toolboxv2.utils.extras.Style import print_prompt, Spinner
 
 # Framework imports with graceful degradation
 try:
@@ -534,7 +536,7 @@ focus on correct quotation and correct yaml format!
                 model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=512,
+                max_tokens=4512,
                 node_name="TaskPlannerNode", task_id="fast_simple_planning"
             )
 
@@ -705,7 +707,7 @@ Generate the adaptive execution plan:
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=2048,
+                #max_tokens=2048,
                 node_name="TaskPlannerNode",
                 task_id="goals_based_planning" if planning_mode == "goals_based" else "adaptive_planning"
             )
@@ -1040,7 +1042,8 @@ confidence: 0.85
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=1000, node_name="TaskExecutorNode", task_id="llm_execution_planning"
+                max_tokens=2000,
+                node_name="TaskExecutorNode", task_id="llm_execution_planning"
             )
 
             yaml_match = re.search(r"```yaml\s*(.*?)\s*```", content, re.DOTALL)
@@ -1634,8 +1637,8 @@ confidence: 0.85
             },
             "variable_manager": self.variable_manager,
             "agent_instance": self.agent_instance,
-            "available_tools": [],  # No tools for LLM-only tasks
-            "tool_capabilities": {},
+            "available_tools": self.agent_instance.shared.get("available_tools", []) if self.agent_instance else [],
+            "tool_capabilities": self.agent_instance._tool_capabilities if self.agent_instance else {},
             "fast_llm_model": self.fast_llm_model,
             "complex_llm_model": self.complex_llm_model,
             "progress_tracker": self.progress_tracker,
@@ -1696,7 +1699,7 @@ confidence: 0.85
                 model=model_to_use,
                 messages=[{"role": "user", "content": final_prompt}],
                 temperature=llm_config.get("temperature", 0.7),
-                max_tokens=llm_config.get("max_tokens", 1024)
+                max_tokens=llm_config.get("max_tokens", 2048)
             )
 
             result = response
@@ -2399,7 +2402,8 @@ class LLMToolNode(AsyncNode):
                     model=model_to_use,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=2048, node_name="LLMToolNode", task_id="llm_phase_" + str(runs)
+                    # max_tokens=2048,
+                    node_name="LLMToolNode", task_id="llm_phase_" + str(runs)
                 )
 
                 llm_response = response
@@ -2489,6 +2493,12 @@ class LLMToolNode(AsyncNode):
         agent_instance = prep_res.get("agent_instance")
         query = prep_res.get('task_description', '').lower()
 
+        base_message += ("\n\nAlways follow this action pattern"
+                         "**THINK** -> **PLAN** -> (**ADJUST**) and (**UPDATE**) or **ACT** using tools!\n"
+                         "all progress must be stored to ( variable system, memory, external services )!\n"
+                         "if working on code or file based tasks, update and crate the files!\n"
+                         "all text only steps ar discarded and not stored! only the final response is stored! ")
+
         # --- Part 1: List available tools & capabilities ---
         if available_tools:
             base_message += f"\n\n## Available Tools\nYou have access to these tools: {', '.join(available_tools)}\n"
@@ -2502,7 +2512,26 @@ class LLMToolNode(AsyncNode):
                     if use_cases:
                         base_message += f"\n  Use cases: {', '.join(use_cases[:3])}"
 
-            base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
+            # base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
+            base_message += """
+## Tool Usage
+To use tools, respond with a YAML block:
+```yaml
+TOOL_CALLS:
+  - tool: tool_name
+    args:
+      arg1: value1
+      arg2: value2
+  - tool: another_tool
+    args:
+      code: |
+        def example():
+            return "multi-line code"
+      text: |
+        Multi-line text
+        with arbitrary content
+```
+You can call multiple tools in one response. Use | for multi-line strings containing code or complex text."""
 
         # --- Part 2: Add variable context ---
         if variable_manager:
@@ -2567,7 +2596,8 @@ class LLMToolNode(AsyncNode):
                 trigger_score += 0.02
         return min(1.0, trigger_score)
 
-    def _extract_tool_calls(self, text: str) -> List[Dict]:
+    @staticmethod
+    def _extract_tool_calls_custom(text: str) -> List[Dict]:
         """Extract tool calls from LLM response"""
         import re
 
@@ -2586,6 +2616,53 @@ class LLMToolNode(AsyncNode):
                 })
             except Exception as e:
                 wprint(f"Failed to parse tool call {tool_name}: {e}")
+
+        return tool_calls
+
+    @staticmethod
+    def _extract_tool_calls(text: str) -> List[Dict]:
+        """Extract tool calls from LLM response using YAML format"""
+        import re
+        import yaml
+        from typing import List, Dict
+
+        tool_calls = []
+
+        # Pattern to find YAML blocks with TOOL_CALLS
+        yaml_pattern = r'```yaml\s*\n(.*?TOOL_CALLS:.*?)\n```'
+        yaml_matches = re.findall(yaml_pattern, text, re.DOTALL | re.IGNORECASE)
+
+        # Also try without code blocks for simpler cases
+        if not yaml_matches:
+            simple_pattern = r'TOOL_CALLS:\s*\n((?:.*\n)*?)(?=\n\S|\Z)'
+            simple_matches = re.findall(simple_pattern, text, re.MULTILINE)
+            if simple_matches:
+                yaml_matches = [f"TOOL_CALLS:\n{match}" for match in simple_matches]
+
+        for yaml_content in yaml_matches:
+            try:
+                # Parse YAML content
+                parsed_yaml = yaml.safe_load(yaml_content)
+
+                if not isinstance(parsed_yaml, dict) or 'TOOL_CALLS' not in parsed_yaml:
+                    continue
+
+                calls = parsed_yaml['TOOL_CALLS']
+                if not isinstance(calls, list):
+                    calls = [calls]  # Handle single tool call
+
+                for call in calls:
+                    if isinstance(call, dict) and 'tool' in call:
+                        tool_call = {
+                            "tool_name": call['tool'],
+                            "arguments": call.get('args', {})
+                        }
+                        tool_calls.append(tool_call)
+
+            except yaml.YAMLError as e:
+                wprint(f"Failed to parse YAML tool calls: {e}")
+            except Exception as e:
+                wprint(f"Error processing tool calls: {e}")
 
         return tool_calls
 
@@ -3811,13 +3888,13 @@ Respond with just a number between 0.0 and 1.0:"""
 
             model_to_use = prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
             agent_instance = prep_res["agent_instance"]
-            score_text = await agent_instance.a_run_llm_completion(
+            score_text = (await agent_instance.a_run_llm_completion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=10,
                 node_name="QualityAssessmentNode", task_id="quality_assessment"
-            ).strip()
+            )).strip()
 
             return float(score_text)
 
@@ -4108,6 +4185,7 @@ class LLMReasonerNode(AsyncNode):
                     temperature=0.2,  # Lower temperature for more focused execution
                     # max_tokens=3072,
                     node_name="LLMReasonerNode",
+                    stop="<immediate_context>",
                     task_id=f"reasoning_loop_{self.current_loop_count}_step_{self.current_outline_step}"
                 )
 
@@ -4413,6 +4491,16 @@ Create the outline now:"""
 
             # Parse outline from response
             outline = self._parse_outline_from_response(llm_response)
+
+            if self.agent_instance and self.agent_instance.progress_tracker:
+                await self.agent_instance.progress_tracker.emit_event(ProgressEvent(
+                    event_type="llm_call",
+                    timestamp=time.time(),
+                    node_name="LLMReasonerNode",
+                    status=NodeStatus.COMPLETED,
+                    task_id="create_initial_outline",
+                    metadata={"outline": outline}
+                ))
 
             if outline:
                 self.outline = outline
@@ -5631,6 +5719,17 @@ You MUST use the specified method and achieve the expected outcome before advanc
                     result["action_taken"] = True
                     result["progress_made"] = True
                     return result
+
+                # test if tool name is in agent tools if so try to run it
+                elif tool_name in self.agent_instance.tool_registry:
+                    meta_result = await self.agent_instance.arun_function(tool_name, **args)
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+                    execution_details.update({
+                        "tool_name": tool_name,
+                        "tool_args": args,
+                        "tool_result": meta_result
+                    })
 
                 else:
                     execution_details.update({
@@ -7491,20 +7590,13 @@ class VariableManager:
             context_parts.append("- No variables are currently set.")
             return "\n".join(context_parts)
 
-        # Group variables by their top-level scope for readability
-        grouped_vars = {}
-        for path, info in variables.items():
-            top_level = path.split('.')[0]
-            if top_level not in grouped_vars:
-                grouped_vars[top_level] = []
-            grouped_vars[top_level].append((path, info))
+        if "shared" in variables:
+            del variables["shared"]
 
-        for scope, var_list in sorted(grouped_vars.items()):
-            if scope in ["shared"]:
-                continue
-            context_parts.append(f"\n#### Scope: `{scope}`")
-            for path, info in sorted(var_list):
-                context_parts.append(f"- **`{path}`**: ({info['type']}) `{info['preview']}`")
+        # yaml dump preview
+        context_parts.append("```yaml")
+        context_parts.append(yaml.dump(variables, default_flow_style=False, sort_keys=False))
+        context_parts.append("```")
 
         # Add any final complex examples or notes
         context_parts.extend([
@@ -8114,8 +8206,8 @@ class FlowAgent:
             if AGENT_VERBOSE:
                 kwargs["messages"] += [{"role": "assistant", "content": result}]
                 print_prompt(kwargs)
-            else:
-                print_prompt([{"role": "assistant", "content": result}])
+            # else:
+            #     print_prompt([{"role": "assistant", "content": result}])
 
             # Extract token usage and cost
             usage = response.usage
@@ -8569,19 +8661,61 @@ class FlowAgent:
 
         from tqdm import tqdm
 
-
         if hasattr(self.task_flow, 'llm_reasoner'):
             if "read_from_variables" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_read_from_variables'):
                 await self.add_tool(lambda scope, key, purpose: self.task_flow.llm_reasoner._execute_read_from_variables({"scope": scope, "key": key, "purpose": purpose}), "read_from_variables", "Read from variables")
             if "write_to_variables" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_write_to_variables'):
                 await self.add_tool(lambda scope, key, value, description: self.task_flow.llm_reasoner._execute_write_to_variables({"scope": scope, "key": key, "value": value, "description": description}), "write_to_variables", "Write to variables")
 
+            if "internal_reasoning" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_internal_reasoning'):
+                async def internal_reasoning_tool(thought:str, thought_number:int, total_thoughts:int, next_thought_needed:bool, current_focus:str, key_insights:list[str], potential_issues:list[str], confidence_level:float):
+                    args = {
+                        "thought": thought,
+                        "thought_number": thought_number,
+                        "total_thoughts": total_thoughts,
+                        "next_thought_needed": next_thought_needed,
+                        "current_focus": current_focus,
+                        "key_insights": key_insights,
+                        "potential_issues": potential_issues,
+                        "confidence_level": confidence_level
+                    }
+                    return await self.task_flow.llm_reasoner._execute_internal_reasoning(args, self.shared)
+                await self.add_tool(internal_reasoning_tool, "internal_reasoning", "Internal reasoning")
+
+            if "manage_internal_task_stack" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_manage_task_stack'):
+                async def manage_internal_task_stack_tool(action:str, task_description:str, outline_step_ref:str):
+                    args = {
+                        "action": action,
+                        "task_description": task_description,
+                        "outline_step_ref": outline_step_ref
+                    }
+                    return await self.task_flow.llm_reasoner._execute_manage_task_stack(args, self.shared)
+                await self.add_tool(manage_internal_task_stack_tool, "manage_internal_task_stack", "Manage internal task stack")
+
+            if "outline_step_completion" not in self.shared["available_tools"] and hasattr(self.task_flow.llm_reasoner, '_execute_outline_step_completion'):
+                async def outline_step_completion_tool(step_completed:bool, completion_evidence:str, next_step_focus:str):
+                    args = {
+                        "step_completed": step_completed,
+                        "completion_evidence": completion_evidence,
+                        "next_step_focus": next_step_focus
+                    }
+                    return await self.task_flow.llm_reasoner._execute_outline_step_completion(args, self.shared)
+                await self.add_tool(outline_step_completion_tool, "outline_step_completion", "Outline step completion")
+
+
+        registered_tools = set(self._tool_registry.keys())
+        cached_capabilities = list(self._tool_capabilities.keys())  # Create a copy of
+        for tool_name in cached_capabilities:
+            if tool_name in self._tool_capabilities and tool_name not in registered_tools:
+                del self._tool_capabilities[tool_name]
+                print(f"Removed outdated capability for unavailable tool: {tool_name}")
 
         for tool_name in tqdm(self.shared["available_tools"], desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
                 description = tool_info.get("description", "No description")
-                await self._analyze_tool_capabilities(tool_name, description, tool_info.get("args_schema", "()"))
+                with Spinner(f"Analyzing tool {tool_name}"):
+                    await self._analyze_tool_capabilities(tool_name, description, tool_info.get("args_schema", "()"))
 
             if tool_name in self._tool_capabilities:
                 function = self._tool_registry[tool_name]["function"]
@@ -9929,8 +10063,9 @@ tool_complexity: low/medium/high
         rprint(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
         target_function = self.get_tool_by_name(function_name)
 
+        start_time = time.perf_counter()
         if not target_function:
-            raise ValueError(f"Function '{function_name}' not found in the agent's registered tools.")
+            raise ValueError(f"Function '{function_name}' not found in the {self.amd.name}'s registered tools.")
 
         try:
             if asyncio.iscoroutinefunction(target_function):
@@ -9943,6 +10078,22 @@ tool_complexity: low/medium/high
             if asyncio.iscoroutine(result):
                 result = await result
 
+            if self.progress_tracker:
+                await self.progress_tracker.emit_event(ProgressEvent(
+                    event_type="function_call",
+                    timestamp=time.time(),
+                    node_name="FlowAgent",
+                    status=NodeStatus.COMPLETED,
+                    tool_name=function_name,
+                    tool_args=kwargs,
+                    tool_result=result,
+                    tool_duration=time.perf_counter() - start_time,
+                    tool_success=True,
+                    metadata={
+                        "result_type": type(result).__name__,
+                        "result_length": len(str(result))
+                    }
+                ))
             rprint(f"Function {function_name} completed successfully with result: {result}")
             return result
 
@@ -10692,6 +10843,23 @@ Respond in YAML format only:
     def tool_registry(self):
         return self._tool_registry
 
+    def __rshift__(self, other):
+        """Implements >> operator for chaining"""
+        return Chain._create_chain([self, other])
+
+    def __add__(self, other):
+        """Implements + operator for parallel execution"""
+        return ParallelChain([self, other])
+
+    def __and__(self, other):
+        """Implements & operator for parallel execution"""
+        return ParallelChain([self, other])
+
+    def __mod__(self, other):
+        """Implements % operator for conditional branching"""
+        return ConditionalChain(self, other)
+
+
 def get_progress_summary(self) -> Dict[str, Any]:
     """Get comprehensive progress summary from the agent"""
     if hasattr(self, 'progress_tracker'):
@@ -10763,6 +10931,9 @@ def _annotation_to_str(annotation: Any) -> str:
 
     return repr(annotation)
 
+
+import re
+from typing import Any, Union, Dict, List
 
 def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> List[Tuple[str, str]]:
     """Extract META_TOOL_CALL with proper bracket balance handling"""
@@ -10876,10 +11047,6 @@ def _parse_tool_args(args_str: str) -> Dict[str, Any]:
         return auto_unescape({"raw_args": args_str})
 
 
-import re
-from typing import Any, Union, Dict, List
-
-
 def unescape_string(text: str) -> str:
     """Universal string unescaping for any programming language."""
     if not isinstance(text, str) or len(text) < 2:
@@ -10928,8 +11095,556 @@ def auto_unescape(args: Any) -> Any:
     """Automatically unescape all strings in nested data structure."""
     return process_nested(args)
 
+
+
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
+if __name__ == "__main__":
+
+    agent_text = '''
+First, let me examine the results of the previous tasks:
+
+```yaml
+TOOL_CALLS:
+  - tool: list_directory
+    args:
+      dirpath: ImageCreation
+```
+
+I see that we've created the ImageCreation directory successfully, but the image move operation failed because the source image `unique_complex_image.png` couldn't be found in the current location. Let me check the current directory to locate the image file:
+
+```yaml
+TOOL_CALLS:
+  - tool: list_directory
+    args:
+      dirpath: .
+```
+
+Now I'll check if we can find information about fractal pattern generation to prepare for creating our script:
+
+```yaml
+TOOL_CALLS:
+  - tool: searchWeb
+    args:
+      query: python fractal pattern generation leaves trees stars houses
+      max_results: 5
+```
+
+Let me also check for any existing agents that might be helpful for this task:
+
+```yaml
+TOOL_CALLS:
+  - tool: list_agents
+    args:
+      detailed: false
+```
+
+Based on the search results, I'll now create a specialized agent that can help with generating complex fractal patterns:
+
+```yaml
+TOOL_CALLS:
+  - tool: create_specialized_agent
+    args:
+      agent_name: fractal_artist
+      system_prompt: "You are a specialized AI artist focused on creating complex fractal patterns. You understand mathematical concepts behind fractals and can generate code to create visual representations of fractals that resemble natural objects like leaves, trees, stars, and architectural patterns like houses. You're skilled in Python with libraries like PIL, NumPy, and matplotlib for image generation."
+      model: null
+```
+
+I'll also look for specific libraries that might be useful for generating fractal images:
+
+```yaml
+TOOL_CALLS:
+  - tool: context7-mcp_resolve-library-id
+    args:
+      libraryName: PIL
+```
+
+Let's also check for NumPy which is commonly used in fractal generation:
+
+```yaml
+TOOL_CALLS:
+  - tool: context7-mcp_resolve-library-id
+    args:
+      libraryName: NumPy
+```
+
+Now I'll create the Python script for generating fractal patterns. First, let me check if we have the required libraries' documentation:
+
+```yaml
+TOOL_CALLS:
+  - tool: context7-mcp_get-library-docs
+    args:
+      context7CompatibleLibraryID: PIL
+      topic: Image generation
+```
+
+Let's also get documentation for NumPy:
+
+```yaml
+TOOL_CALLS:
+  - tool: context7-mcp_get-library-docs
+    args:
+      context7CompatibleLibraryID: numpy
+      topic: mathematical operations
+```
+
+Now I'll create a Python script that can generate complex fractal patterns:
+
+```yaml
+TOOL_CALLS:
+  - tool: createScript
+    args:
+      name: generate_fractal_patterns.py
+      description: Generates complex fractal patterns resembling leaves, trees, stars, and houses
+      content: |
+        import numpy as np
+        from PIL import Image, ImageDraw
+        import math
+        import random
+        import os
+
+        def create_fractal_leaf(width=800, height=800):
+            """Generate a fractal leaf pattern"""
+            img = Image.new('RGB', (width, height), (0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            def draw_branch(x, y, length, angle, depth):
+                if depth == 0:
+                    return
+
+                # Calculate end point
+                end_x = x + length * math.cos(angle)
+                end_y = y + length * math.sin(angle)
+
+                # Draw the branch
+                color = (0, min(255, depth * 40), 0)
+                draw.line((x, y, end_x, end_y), fill=color, width=depth)
+
+                # Recursive calls for sub-branches
+                new_length = length * 0.7
+                draw_branch(end_x, end_y, new_length, angle - 0.3, depth - 1)
+                draw_branch(end_x, end_y, new_length, angle + 0.3, depth - 1)
+
+                # Occasionally add a leaf
+                if depth <= 2 and random.random() > 0.7:
+                    leaf_size = random.randint(2, 5)
+                    draw.ellipse((end_x - leaf_size, end_y - leaf_size,
+                                end_x + leaf_size, end_y + leaf_size),
+                               fill=(0, min(255, depth * 50), 0))
+
+            # Start with a main trunk
+            draw_branch(width/2, height, 100, -math.pi/2, 8)
+            return img
+
+        def create_fractal_tree(width=800, height=800):
+            """Generate a fractal tree pattern"""
+            img = Image.new('RGB', (width, height), (0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            def draw_tree(x, y, length, angle, depth):
+                if depth == 0:
+                    return
+
+                # Calculate end point
+                end_x = x + length * math.cos(angle)
+                end_y = y + length * math.sin(angle)
+
+                # Draw the branch with brown color
+                color = (min(139, depth * 20), min(69, depth * 10), min(19, depth * 3))
+                draw.line((x, y, end_x, end_y), fill=color, width=max(1, depth//2))
+
+                # Recursive calls for sub-branches
+                if depth > 1:
+                    # Add some randomness to angles
+                    angle1 = angle - random.uniform(0.1, 0.5)
+                    angle2 = angle + random.uniform(0.1, 0.5)
+                    angle3 = angle + random.uniform(-0.1, 0.1)
+
+                    new_length = length * random.uniform(0.6, 0.8)
+                    draw_tree(end_x, end_y, new_length, angle1, depth - 1)
+                    draw_tree(end_x, end_y, new_length, angle2, depth - 1)
+
+                    # Occasionally add a third branch
+                    if random.random() > 0.6:
+                        draw_tree(end_x, end_y, new_length * 0.7, angle3, depth - 1)
+
+            # Start with a main trunk
+            draw_tree(width/2, height, 120, -math.pi/2, 10)
+            return img
+
+        def create_fractal_stars(width=800, height=800):
+            """Generate a fractal star pattern"""
+            img = Image.new('RGB', (width, height), (0, 0, 20))
+            draw = ImageDraw.Draw(img)
+
+            def draw_star(x, y, size, depth):
+                if depth == 0:
+                    return
+
+                # Draw a star shape
+                points = []
+                for i in range(10):
+                    angle = math.pi/5 * i
+                    radius = size if i % 2 == 0 else size * 0.4
+                    px = x + radius * math.cos(angle)
+                    py = y + radius * math.sin(angle)
+                    points.append((px, py))
+
+                # Draw the star with gradient color
+                brightness = min(255, 200 + depth * 15)
+                draw.polygon(points, fill=(brightness, brightness, brightness))
+
+                # Recursive calls for smaller stars
+                if depth > 1:
+                    for i in range(5):
+                        angle = math.pi/2.5 * i
+                        distance = size * 1.5
+                        new_x = x + distance * math.cos(angle)
+                        new_y = y + distance * math.sin(angle)
+                        new_size = size * 0.4
+                        if 0 <= new_x < width and 0 <= new_y < height:
+                            draw_star(new_x, new_y, new_size, depth - 1)
+
+            # Draw several stars with different properties
+            for _ in range(20):
+                x = random.randint(0, width)
+                y = random.randint(0, height)
+                size = random.randint(10, 30)
+                depth = random.randint(2, 4)
+                draw_star(x, y, size, depth)
+
+            return img
+
+        def create_fractal_house(width=800, height=800):
+            """Generate a fractal house pattern"""
+            img = Image.new('RGB', (width, height), (135, 206, 235))  # Sky blue background
+            draw = ImageDraw.Draw(img)
+
+            def draw_house(x, y, size, depth):
+                if depth == 0:
+                    return
+
+                # Draw main house structure
+                house_color = (random.randint(180, 220), random.randint(60, 100), random.randint(40, 80))
+                draw.rectangle([x, y, x+size, y+size], fill=house_color)
+
+                # Draw roof
+                roof_color = (random.randint(100, 150), random.randint(20, 60), random.randint(10, 40))
+                roof_points = [(x-5, y), (x+size//2, y-size//3), (x+size+5, y)]
+                draw.polygon(roof_points, fill=roof_color)
+
+                # Draw door
+                door_color = (101, 67, 33)
+                draw.rectangle([x+size//3, y+size//2, x+2*size//3, y+size], fill=door_color)
+
+                # Draw windows
+                window_color = (173, 216, 230)
+                draw.rectangle([x+size//6, y+size//4, x+size//3, y+size//2], fill=window_color)
+                draw.rectangle([x+2*size//3, y+size//4, x+5*size//6, y+size//2], fill=window_color)
+
+                # Recursive calls for smaller houses
+                if depth > 1:
+                    # Draw a smaller house next to the current one
+                    new_size = size // 2
+                    new_x = x + size + 20
+                    new_y = y + size - new_size
+                    if new_x + new_size < width and new_y + new_size < height:
+                        draw_house(new_x, new_y, new_size, depth - 1)
+
+                    # Draw a smaller house above the current one
+                    new_size2 = size // 3
+                    new_x2 = x + size//2 - new_size2//2
+                    new_y2 = y - new_size2 - 10
+                    if 0 <= new_x2 and new_x2 + new_size2 < width and 0 <= new_y2:
+                        draw_house(new_x2, new_y2, new_size2, depth - 1)
+
+            # Draw main house
+            draw_house(width//4, height//2, 200, 3)
+
+            # Draw some bushes
+            for i in range(5):
+                bush_x = random.randint(0, width)
+                bush_y = height - 50
+                bush_size = random.randint(20, 40)
+                bush_color = (random.randint(0, 50), random.randint(100, 150), random.randint(0, 50))
+                draw.ellipse([bush_x, bush_y, bush_x + bush_size, bush_y + bush_size//2], fill=bush_color)
+
+            return img
+
+        def create_fractal_mosaic(width=800, height=800):
+            """Generate a fractal mosaic pattern"""
+            img = Image.new('RGB', (width, height), (0, 0, 0))
+            pixels = img.load()
+
+            def mandelbrot(c, max_iter=100):
+                z = 0
+                for n in range(max_iter):
+                    if abs(z) > 2:
+                        return n
+                    z = z*z + c
+                return max_iter
+
+            # Generate Mandelbrot set based pattern
+            for x in range(width):
+                for y in range(height):
+                    # Convert pixel coordinate to complex number
+                    c = complex(-2.0 + 3.0 * x / width, -1.5 + 3.0 * y / height)
+                    # Compute the number of iterations
+                    m = mandelbrot(c)
+                    # Color based on iterations
+                    hue = int(255 * m / 100)
+                    pixels[x, y] = (hue, (hue * 2) % 256, (hue * 3) % 256)
+
+            return img
+
+        def main():
+            """Generate all fractal patterns and save them"""
+            # Create ImageCreation directory if it doesn't exist
+            if not os.path.exists("ImageCreation"):
+                os.makedirs("ImageCreation")
+
+            # Generate and save all patterns
+            patterns = [
+                ("fractal_leaf.png", create_fractal_leaf),
+                ("fractal_tree.png", create_fractal_tree),
+                ("fractal_stars.png", create_fractal_stars),
+                ("fractal_house.png", create_fractal_house),
+                ("fractal_mosaic.png", create_fractal_mosaic)
+            ]
+
+            for filename, func in patterns:
+                print(f"Generating {filename}...")
+                img = func()
+                img.save(f"ImageCreation/{filename}")
+                print(f"Saved {filename}")
+
+            print("All fractal patterns generated successfully!")
+
+        if __name__ == "__main__":
+            main()
+      script_type: py
+```
+
+Now let's run the script to generate the fractal patterns:
+
+```yaml
+TOOL_CALLS:
+  - tool: runScript
+    args:
+      name: generate_fractal_patterns.py
+```
+
+Let's check if the images were created successfully:
+
+```yaml
+TOOL_CALLS:
+  - tool: list_directory
+    args:
+      dirpath: ImageCreation
+```
+
+Let me verify the content of the generated images by analyzing one of them:
+
+```yaml
+TOOL_CALLS:
+  - tool: askAgent
+    args:
+      target_agent_name: fractal_artist
+      instructions: "Analyze the fractal patterns generated in the ImageCreation folder. Specifically, examine the complexity of the generated images like fractal_tree.png and fractal_mosaic.png. Do they exhibit the complex, fractal-like patterns requested for leaves, trees, stars, houses, and mosaics? Please provide a detailed assessment."
+```
+
+Let me also create a summary report of what we've accomplished:
+
+```yaml
+TOOL_CALLS:
+  - tool: write_file
+    args:
+      filepath: ImageCreation/GENERATION_REPORT.md
+      content: |
+        # Fractal Pattern Generation Report
+
+        ## Overview
+        This project successfully generated complex fractal patterns resembling natural and architectural forms including leaves, trees, stars, houses, and mosaics.
+
+        ## Generated Patterns
+
+        ### 1. Fractal Leaf (`fractal_leaf.png`)
+        - Created using recursive branching algorithms
+        - Features realistic vein structures
+        - Color gradient from trunk to leaf tips
+
+        ### 2. Fractal Tree (`fractal_tree.png`)
+        - Multi-level branching structure
+        - Random variations for natural appearance
+        - Brown trunk with green foliage
+
+        ### 3. Fractal Stars (`fractal_stars.png`)
+        - Recursive star patterns
+        - Depth-based brightness variations
+        - Space-like background
+
+        ### 4. Fractal House (`fractal_house.png`)
+        - Recursive house structures
+        - Roof and window details
+        - Surrounding landscape elements
+
+        ### 5. Fractal Mosaic (`fractal_mosaic.png`)
+        - Mathematically-generated Mandelbrot set visualization
+        - Colorful, intricate patterns
+        - Infinite complexity at boundaries
+
+        ## Technical Implementation
+        - Language: Python
+        - Libraries: PIL (Pillow), NumPy
+        - Techniques: Recursive algorithms, mathematical transformations
+
+        ## Complexity Assessment
+        All generated images exhibit complex, fractal-like patterns with self-similarity at different scales. The recursive nature of the algorithms ensures that patterns repeat with variations, creating visually interesting and mathematically significant imagery.
+```
+
+Finally, let's provide a summary to the user about what we've accomplished:
+
+```yaml
+TOOL_CALLS:
+  - tool: workspace_status
+    args:
+      include_git: false
+```
+
+I'll check the final status of our tasks:
+
+```yaml
+TOOL_CALLS:
+  - tool: get_background_tasks_status
+    args:
+      show_completed: true
+```'''
+    print(LLMToolNode._extract_tool_calls(agent_text))
+
+
+# Example usage and tests
+async def tchains():
+    class CustomFormat(BaseModel):
+        value: str
+
+    print("=== Testing Basic Chain ===")
+    agent_a = FlowAgent("A")
+    agent_b = FlowAgent("B")
+    agent_c = FlowAgent("C")
+
+    # Basic sequential chain
+    c = agent_a >> agent_b
+    result = await c.a_run("Hello World")
+    print(f"Result: {result}\n")
+
+    # Three agent chain
+    c = agent_a >> agent_c >> agent_b
+    result = await c.a_run("Hello World")
+    print(f"Three agent result: {result}\n")
+
+    print("=== Testing Format Chain ===")
+    # Chain with formatting
+    c = CF(CustomFormat) >> agent_a >> CF(CustomFormat) >> agent_b
+    result = await c.a_run(CustomFormat(value="Hello World"))
+    print(f"Format chain result: {result}\n")
+
+    print("=== Testing Parallel Execution ===")
+    # Parallel execution
+    c = agent_a + agent_b
+    result = await c.a_run("Hello World")
+    print(f"Parallel result: {result}\n")
+
+    print("=== Testing Mixed Chain ===")
+    # Mixed parallel and sequential
+    c = (agent_a & agent_b) >> CF(CustomFormat)
+    result = await c.a_run("Hello World")
+    print(f"Mixed chain result: {result}\n")
+
+    i = 0
+    c: Chain = agent_a >> agent_b
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a >> agent_c >> agent_b
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = CF(CustomFormat) >> agent_a >> CF(
+        CustomFormat) >> agent_b  # using a_format_class intelligently defalt all
+    result = await c.a_run(CustomFormat(value="Hello World"))
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a >> CF(CustomFormat) >> agent_b  # using a_format_class intelligently same as above
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+    c: Chain = agent_a >> CF(CustomFormat) - '*' >> agent_b  # using a_format_class intelligently same as above
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+    c: Chain = agent_a >> CF(CustomFormat) - 'value' >> agent_b  # using a_format_class intelligently
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+    c: Chain = agent_a >> CF(CustomFormat) - '*value' >> agent_b  # using a_format_class intelligently
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+    c: Chain = agent_a >> CF(CustomFormat) - ('value', 'value2') >> agent_b  # using a_format_class intelligently
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a >> CF(
+        CustomFormat) - 'value[n]' >> agent_b  # using a_format_class intelligently runs b n times parallel
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a >> CF(CustomFormat) - IS('value',
+                                                'yes') >> agent_b % agent_c  # using a_format_class intelligently runs b n times parallel
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    chain_x = agent_b >> CF(CustomFormat)
+    chain_z = agent_c >> CF(CustomFormat)
+
+    c: Chain = agent_a >> CF(CustomFormat) - IS('value',
+                                                'yes') >> chain_x % chain_z  # using a_format_class intelligently runs b n times parallel
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a >> IS('value', 'yes') >> agent_b + agent_c | CF(
+        CustomFormat) - 'error_reson_val_from_agent_a' >> agent_c  # using a_format_class intelligently runs b n times parallel
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a + agent_b  # runs a and p in parallel combines output inteligently
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a & agent_b  # same as above
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    c: Chain = agent_a & agent_b >> CF(CustomFormat) - 'value[n]' >> agent_b  #
+    result = await c.a_run("Hello World")
+    print(f"test result: {i} {result}\n")
+    i += 1
+
+    print("=== Testing Done ===")
+
+if __name__ == "__main__5":
+    # Run the tests
+    asyncio.run(tchains())
 
 if __name__ == "__main__2":
 
