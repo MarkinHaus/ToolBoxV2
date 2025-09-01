@@ -2,6 +2,7 @@ import copy
 import os
 import random
 import re
+import types
 from enum import Enum
 import asyncio
 import yaml
@@ -33,6 +34,8 @@ try:
     from litellm import BudgetManager, Usage
     from litellm.utils import get_max_tokens
     LITELLM_AVAILABLE = True
+    # prin litllm version
+    print(f"INFO: LiteLLM version {litellm.api_version} found.")
 except ImportError:
     LITELLM_AVAILABLE = False
     class BudgetManager: pass
@@ -8152,6 +8155,8 @@ class FlowAgent:
     def progress_callback(self, value):
         self.progress_tracker.progress_callback = value
 
+    def set_progress_callback(self, progress_callback: Optional[callable] = None):
+        self.progress_callback = progress_callback
 
     async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, **kwargs) -> str:
         if "model" not in kwargs:
@@ -11099,7 +11104,7 @@ def auto_unescape(args: Any) -> Any:
 
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
-if __name__ == "__main__":
+if __name__ == "__main__3":
 
     agent_text = '''
 First, let me examine the results of the previous tasks:
@@ -11528,121 +11533,166 @@ async def tchains():
         value: str
 
     print("=== Testing Basic Chain ===")
-    agent_a = FlowAgent("A")
-    agent_b = FlowAgent("B")
-    agent_c = FlowAgent("C")
+    agent_a = FlowAgent(AgentModelData(name="A"))
+    agent_b = FlowAgent(AgentModelData(name="B"))
+    agent_c = FlowAgent(AgentModelData(name="C"))
+
+    async def a_run(self, query: str):
+        print(f"FlowAgent {self.amd.name} running query: {query}")
+        return f"Answer from {self.amd.name}"
+
+    async def a_format_class(self, pydantic_model: type[BaseModel],
+                             prompt: str,
+                             message_context: list[dict] | None = None,
+                             max_retries: int = 2):
+        print(f"FlowAgent {self.amd.name} formatting class: {pydantic_model.__name__}")
+        return {"value": 'yes' if 0.5 > random.random() else 'no'}
+    agent_a.a_run = types.MethodType(a_run, agent_a)
+    agent_a.a_format_class = types.MethodType(a_format_class, agent_a)
+    agent_b.a_run = types.MethodType(a_run, agent_b)
+    agent_b.a_format_class = types.MethodType(a_format_class, agent_b)
+    agent_c.a_run = types.MethodType(a_run, agent_c)
+    agent_c.a_format_class =types.MethodType(a_format_class, agent_c)
 
     # Basic sequential chain
     c = agent_a >> agent_b
     result = await c.a_run("Hello World")
     print(f"Result: {result}\n")
+    c.print_graph()
 
     # Three agent chain
     c = agent_a >> agent_c >> agent_b
     result = await c.a_run("Hello World")
     print(f"Three agent result: {result}\n")
+    c.print_graph()
 
     print("=== Testing Format Chain ===")
     # Chain with formatting
     c = CF(CustomFormat) >> agent_a >> CF(CustomFormat) >> agent_b
     result = await c.a_run(CustomFormat(value="Hello World"))
     print(f"Format chain result: {result}\n")
+    c.print_graph()
 
     print("=== Testing Parallel Execution ===")
     # Parallel execution
     c = agent_a + agent_b
     result = await c.a_run("Hello World")
     print(f"Parallel result: {result}\n")
+    c.print_graph()
 
     print("=== Testing Mixed Chain ===")
     # Mixed parallel and sequential
     c = (agent_a & agent_b) >> CF(CustomFormat)
     result = await c.a_run("Hello World")
     print(f"Mixed chain result: {result}\n")
+    c.print_graph()
+
+    print("=== Testing Mixed Chain v2 ===")
+    # Mixed parallel and sequential
+    c = (agent_a >> agent_c >> agent_b & agent_b) >> CF(CustomFormat)
+    result = await c.a_run("Hello World")
+    print(f"Mixed chain result: {result}\n")
+    c.print_graph()
 
     i = 0
     c: Chain = agent_a >> agent_b
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a >> agent_c >> agent_b
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = CF(CustomFormat) >> agent_a >> CF(
         CustomFormat) >> agent_b  # using a_format_class intelligently defalt all
     result = await c.a_run(CustomFormat(value="Hello World"))
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a >> CF(CustomFormat) >> agent_b  # using a_format_class intelligently same as above
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
     c: Chain = agent_a >> CF(CustomFormat) - '*' >> agent_b  # using a_format_class intelligently same as above
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
     c: Chain = agent_a >> CF(CustomFormat) - 'value' >> agent_b  # using a_format_class intelligently
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
     c: Chain = agent_a >> CF(CustomFormat) - '*value' >> agent_b  # using a_format_class intelligently
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
     c: Chain = agent_a >> CF(CustomFormat) - ('value', 'value2') >> agent_b  # using a_format_class intelligently
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a >> CF(
         CustomFormat) - 'value[n]' >> agent_b  # using a_format_class intelligently runs b n times parallel
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a >> CF(CustomFormat) - IS('value',
                                                 'yes') >> agent_b % agent_c  # using a_format_class intelligently runs b n times parallel
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
+    print("Cinc")
     chain_x = agent_b >> CF(CustomFormat)
     chain_z = agent_c >> CF(CustomFormat)
 
     c: Chain = agent_a >> CF(CustomFormat) - IS('value',
                                                 'yes') >> chain_x % chain_z  # using a_format_class intelligently runs b n times parallel
-    result = await c.a_run("Hello World")
+    result = await c.a_run("Hello World IS 12")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
-    c: Chain = agent_a >> IS('value', 'yes') >> agent_b + agent_c | CF(
+    c: Chain = agent_a >> CF(CustomFormat) - IS('value', 'yes') >> agent_b + agent_c | CF(
         CustomFormat) - 'error_reson_val_from_agent_a' >> agent_c  # using a_format_class intelligently runs b n times parallel
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a + agent_b  # runs a and p in parallel combines output inteligently
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     c: Chain = agent_a & agent_b  # same as above
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
-    c: Chain = agent_a & agent_b >> CF(CustomFormat) - 'value[n]' >> agent_b  #
+    c: Chain = agent_a & agent_b >> CF(CustomFormat) - 'value[n]' >> agent_b  # runs agent b n times parallel with different input
     result = await c.a_run("Hello World")
     print(f"test result: {i} {result}\n")
     i += 1
+    c.print_graph()
 
     print("=== Testing Done ===")
 
-if __name__ == "__main__5":
+if __name__ == "__main__":
     # Run the tests
     asyncio.run(tchains())
 

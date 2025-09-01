@@ -2,9 +2,7 @@ import asyncio
 import os
 from typing import Dict, Any, Optional, List
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.types import PromptReference, ResourceTemplateReference
+from mcp import ClientSession
 
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None

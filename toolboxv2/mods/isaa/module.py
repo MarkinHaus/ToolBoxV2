@@ -1,11 +1,13 @@
 import copy
 import os
+import secrets
 import shlex
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import asdict
-from http.server import HTTPServer
+from enum import Enum
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
 
 import asyncio
 from pathlib import Path
@@ -20,6 +22,7 @@ from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
 from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
+from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
@@ -41,7 +44,7 @@ import subprocess
 import sys
 from typing import Any, Optional, Awaitable, Dict
 
-from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles
+from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles, Result, RequestData
 
 # Updated imports for FlowAgent
 from .base.Agent.agent import (
@@ -67,7 +70,7 @@ from .extras.modes import (
 )
 
 from .extras.web_search import web_search
-from .ui import initialize_isaa_webui_module, get_agent_ui_html, AgentRequestHandler
+from .ui import initialize_isaa_webui_module, get_agent_ui_html
 
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
@@ -94,6 +97,343 @@ def get_location():
     location_data = f"city: {response.get('city')},region: {response.get('region')},country: {response.get('country_name')},"
     return location_data
 
+
+class EnhancedProgressTracker:
+    """Tracks and extracts enhanced progress information for the UI."""
+
+    def __init__(self):
+        self.outline_info = {}
+        self.current_activity = {}
+        self.meta_tools = []
+        self.system_info = {}
+        self.graph_nodes = []
+
+    def extract_progress_data(self, event) -> dict:
+        """Extract comprehensive progress data from event."""
+        progress_data = {
+            'basic': {
+                'event_type': event.event_type,
+                'status': getattr(event, 'status', 'unknown'),
+                'timestamp': event.timestamp,
+                'agent_name': getattr(event, 'agent_name', 'Unknown'),
+                'node_name': getattr(event, 'node_name', 'Unknown')
+            }
+        }
+
+        # Extract outline information
+        if hasattr(event, 'metadata') and event.metadata:
+            metadata = event.metadata
+
+            # Outline tracking
+            if 'outline_step' in metadata or 'steps_completed' in metadata:
+                outline_update = {
+                    'current_step': metadata.get('outline_step', 1),
+                    'completed_steps': metadata.get('steps_completed', []),
+                    'total_steps': metadata.get('total_steps', 0),
+                    'outline_created': metadata.get('outline_created', False)
+                }
+
+                if metadata.get('outline'):
+                    outline_update['steps'] = metadata['outline'].get('steps', [])
+
+                self.outline_info.update(outline_update)
+                progress_data['outline'] = self.outline_info
+
+            # Meta-tool tracking
+            if 'meta_tool_name' in metadata:
+                meta_tool_data = {
+                    'meta_tool_name': metadata['meta_tool_name'],
+                    'status': 'running' if event.event_type == 'meta_tool_call' else 'completed',
+                    'timestamp': event.timestamp,
+                    'execution_phase': metadata.get('execution_phase', 'unknown'),
+                    'reasoning_loop': metadata.get('reasoning_loop', 0)
+                }
+
+                self.meta_tools.append(meta_tool_data)
+                progress_data['meta_tool'] = meta_tool_data
+
+            # Activity tracking
+            if 'current_focus' in metadata or 'primary_activity' in metadata:
+                activity_data = {
+                    'primary_activity': metadata.get('primary_activity', 'Unknown'),
+                    'current_focus': metadata.get('current_focus', ''),
+                    'confidence_level': metadata.get('confidence_level', 0.0),
+                    'time_in_activity': metadata.get('time_in_current_activity', 0),
+                    'detailed_description': metadata.get('detailed_description', '')
+                }
+
+                self.current_activity.update(activity_data)
+                progress_data['activity'] = self.current_activity
+
+            # System info tracking
+            system_update = {}
+            if 'current_node' in metadata:
+                system_update['current_node'] = metadata['current_node']
+            if 'total_events' in metadata:
+                system_update['total_events'] = metadata['total_events']
+            if 'error_count' in metadata:
+                system_update['error_count'] = metadata['error_count']
+            if 'total_cost' in metadata:
+                system_update['total_cost'] = metadata['total_cost']
+
+            if system_update:
+                self.system_info.update(system_update)
+                progress_data['system'] = self.system_info
+
+            # Graph/node tracking
+            if event.node_name and event.node_name not in [node.get('name') for node in self.graph_nodes]:
+                node_data = {
+                    'name': event.node_name,
+                    'active': event.event_type in ['node_start', 'reasoning_loop'],
+                    'completed': event.event_type == 'node_complete',
+                    'timestamp': event.timestamp
+                }
+                self.graph_nodes.append(node_data)
+                progress_data['graph'] = {'nodes': self.graph_nodes}
+
+        return progress_data
+
+    def get_final_summary(self) -> dict:
+        """Get final execution summary."""
+        return {
+            'outline_completed': len(self.outline_info.get('completed_steps', [])) == self.outline_info.get(
+                'total_steps', 0),
+            'total_meta_tools': len(self.meta_tools),
+            'final_activity': self.current_activity.get('primary_activity', 'Completed'),
+            'total_nodes': len(self.graph_nodes),
+            'system_status': self.system_info
+        }
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Enum):
+            # For enum members, return their value (e.g., "pending")
+            return obj.value
+        # Let the base class default method raise the TypeError for other types
+        return super().default(obj)
+
+class EnhancedAgentRequestHandler(BaseHTTPRequestHandler):
+    """Enhanced HTTP request handler for standalone server with comprehensive UI support."""
+
+    def __init__(self, isaa_mod, agent_id: str, agent, *args, **kwargs):
+        self.isaa_mod = isaa_mod
+        self.agent_id = agent_id
+        self.agent = agent
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        """Handle GET requests for enhanced UI and status."""
+        parsed_path = urlparse(self.path)
+
+        if parsed_path.path in ['/', '/ui']:
+            self._serve_enhanced_ui()
+        elif parsed_path.path in ['/api/status', '/api/agent_ui/status', '/status']:
+            self._serve_status()
+        else:
+            self._send_404()
+
+    def do_POST(self):
+        """Handle POST requests for enhanced API endpoints."""
+        parsed_path = urlparse(self.path)
+
+        if parsed_path.path in ['/api/run', '/api/agent_ui/run_agent']:
+            self._handle_run_request()
+        elif parsed_path.path in ['/api/reset', '/api/agent_ui/reset_context']:
+            self._handle_reset_request()
+        else:
+            self._send_404()
+
+    def _serve_enhanced_ui(self):
+        """Serve the enhanced UI HTML."""
+        try:
+            html_content = self.isaa_mod._get_enhanced_agent_ui_html(self.agent_id)
+
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-Length', str(len(html_content.encode('utf-8'))))
+            self.end_headers()
+            self.wfile.write(html_content.encode('utf-8'))
+
+        except Exception as e:
+            self._send_error_response(500, f"Error serving UI: {str(e)}")
+
+    def _serve_status(self):
+        """Serve enhanced status information."""
+        try:
+            status_info = {
+                'agent_id': self.agent_id,
+                'agent_name': getattr(self.agent, 'name', 'Unknown'),
+                'agent_type': self.agent.__class__.__name__,
+                'status': 'active',
+                'server_type': 'standalone',
+                'timestamp': time.time()
+            }
+
+            if hasattr(self.agent, 'status'):
+                try:
+                    agent_status = self.agent.status()
+                    if isinstance(agent_status, dict):
+                        status_info['agent_status'] = agent_status
+                except:
+                    pass
+
+            response_data = json.dumps(status_info).encode('utf-8')
+
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-Length', str(len(response_data)))
+            self.end_headers()
+            self.wfile.write(response_data)
+
+        except Exception as e:
+            self._send_error_response(500, f"Error getting status: {str(e)}")
+
+    def _handle_run_request(self):
+        """Handle enhanced run requests with comprehensive progress tracking."""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            request_body = self.rfile.read(content_length)
+            request_data = json.loads(request_body.decode('utf-8'))
+
+            query = request_data.get('query', '')
+            session_id = request_data.get('session_id', f'standalone_{secrets.token_hex(8)}')
+            include_progress = request_data.get('include_progress', False)
+
+            if not query:
+                self._send_error_response(400, "Missing 'query' field")
+                return
+
+            # Run agent with enhanced progress tracking
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                progress_tracker = EnhancedProgressTracker()
+                progress_events = []
+                enhanced_progress = {}
+
+                async def standalone_progress_callback(event: ProgressEvent):
+                    if include_progress:
+                        progress_data = progress_tracker.extract_progress_data(event)
+                        progress_events.append({
+                            'timestamp': event.timestamp,
+                            'event_type': event.event_type,
+                            'status': getattr(event, 'status', 'unknown').value if hasattr(event, 'status') and event.status else 'unknown',
+                            'data': event.to_dict()
+                        })
+                        enhanced_progress.update(progress_data)
+
+                # Set progress callback
+                original_callback = getattr(self.agent, 'progress_callback', None)
+
+                if hasattr(self.agent, 'set_progress_callback'):
+                    self.agent.set_progress_callback(standalone_progress_callback)
+                elif hasattr(self.agent, 'progress_callback'):
+                    self.agent.progress_callback = standalone_progress_callback
+
+                # Execute agent
+                result = loop.run_until_complete(
+                    self.agent.a_run(query=query, session_id=session_id)
+                )
+
+                # Restore callback
+                if hasattr(self.agent, 'set_progress_callback'):
+                    self.agent.set_progress_callback(original_callback)
+                elif hasattr(self.agent, 'progress_callback'):
+                    self.agent.progress_callback = original_callback
+
+                # Create enhanced response
+                response_data = {
+                    'success': True,
+                    'result': result,
+                    'session_id': session_id,
+                    'agent_id': self.agent_id,
+                    'server_type': 'standalone',
+                    'timestamp': time.time()
+                }
+
+                if include_progress:
+                    response_data.update({
+                        'progress_events': progress_events,
+                        'enhanced_progress': enhanced_progress,
+                        'final_summary': progress_tracker.get_final_summary()
+                    })
+                self._send_json_response(response_data)
+
+            finally:
+                loop.close()
+
+        except Exception as e:
+            self._send_error_response(500, f"Execution error: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+
+    def _handle_reset_request(self):
+        """Handle enhanced reset requests."""
+        try:
+            success = False
+            message = "Reset not supported"
+
+            if hasattr(self.agent, 'clear_context'):
+                self.agent.clear_context()
+                success = True
+                message = "Context reset successfully"
+            elif hasattr(self.agent, 'reset'):
+                self.agent.reset()
+                success = True
+                message = "Agent reset successfully"
+
+            response_data = {
+                'success': success,
+                'message': message,
+                'agent_id': self.agent_id,
+                'timestamp': time.time()
+            }
+
+            self._send_json_response(response_data)
+
+        except Exception as e:
+            self._send_error_response(500, f"Reset error: {str(e)}")
+
+    def _send_json_response(self, data: dict):
+        """Send JSON response with CORS headers."""
+        response_body = json.dumps(data, cls=CustomJSONEncoder).encode('utf-8')
+
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _send_error_response(self, code: int, message: str):
+        """Send error response."""
+        error_data = {'success': False, 'error': message, 'code': code}
+        response_body = json.dumps(error_data).encode('utf-8')
+
+        self.send_response(code)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _send_404(self):
+        """Send 404 response."""
+        self._send_error_response(404, "Not Found")
+
+    def log_message(self, format, *args):
+        """Override to reduce logging noise."""
+        pass
+
+    def do_OPTIONS(self):
+        """Handle preflight CORS requests."""
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
 class Tools(MainTool, FileHandler):
 
@@ -998,42 +1338,2266 @@ class Tools(MainTool, FileHandler):
     async def host_agent_ui(
         self,
         agent,
-        host: str = "127.0.0.1",
-        port: int = 8765,
-        access: str = 'local'
-    ) -> str:
+        host: str = "0.0.0.0",
+        port: Optional[int] = None,
+        access: str = 'local',
+        registry_server: Optional[str] = None,
+        public_name: Optional[str] = None,
+        description: Optional[str] = None,
+        use_builtin_server: bool = None
+    ) -> Dict[str, str]:
         """
-        Hosts a FlowAgent instance using a simple HTTP server.
+        Unified agent hosting with WebSocket-enabled UI and optional registry publishing.
+
+        Args:
+            agent: Agent or Chain instance to host
+            host: Host address (default: 0.0.0.0 for remote access)
+            port: Port number (auto-assigned if None)
+            access: 'local', 'remote', or 'registry'
+            registry_server: Registry server URL for publishing (e.g., "ws://localhost:8080/ws/registry/connect")
+            public_name: Public name for registry publishing
+            description: Description for registry publishing
+            use_builtin_server: Use toolbox built-in server vs standalone Python server
+
+        Returns:
+            Dictionary with access URLs and configuration
         """
-        if not hasattr(self, 'active_hosted_agents'):
-            self.active_hosted_agents = {}
+        use_builtin_server = use_builtin_server or self.app.is_server
+        if not hasattr(self, '_hosted_agents'):
+            self._hosted_agents = {}
 
-        if port in self.active_hosted_agents:
-            self.print(f"Port {port} is already in use by another hosted agent.")
-            return f"http://{host}:{port}"
+        agent_id = f"agent_{secrets.token_urlsafe(8)}"
 
-        # Create handler with agent reference
-        def handler(*args, **kwargs):
-            return AgentRequestHandler(agent, self, *args, **kwargs)
+        # Generate unique port if not specified
+        if not port:
+            port = 8765 + len(self._hosted_agents)
 
-        # Start HTTP server in a separate thread
-        def run_server():
-            httpd = HTTPServer((host, port), handler)
-            self.active_hosted_agents[port] = httpd
-            self.print(f"Agent '{agent.amd.name}' UI server running on http://{host}:{port}")
+        # Store agent reference
+        self._hosted_agents[agent_id] = {
+            'agent': agent,
+            'port': port,
+            'host': host,
+            'access': access,
+            'public_name': public_name or f"Agent_{agent_id}",
+            'description': description
+        }
+
+        result = {
+            'agent_id': agent_id,
+            'local_url': f"http://{host}:{port}",
+            'status': 'starting'
+        }
+
+        if use_builtin_server:
+            # Use toolbox built-in server
+            result.update(await self._setup_builtin_server_hosting(agent_id, agent, host, port))
+        else:
+            # Use standalone Python server
+            result.update(await self._setup_standalone_server_hosting(agent_id, agent, host, port))
+
+        # Handle registry publishing if requested
+        if access in ['remote', 'registry'] and registry_server:
+            if not public_name:
+                raise ValueError("public_name required for registry publishing")
+
+            registry_result = await self._publish_to_registry(
+                agent=agent,
+                public_name=public_name,
+                registry_server=registry_server,
+                description=description,
+                agent_id=agent_id
+            )
+            result.update(registry_result)
+
+        self.app.print(f"🚀 Agent '{result.get('public_name', agent_id)}' hosted successfully!")
+        self.app.print(f"   Local UI: {result['local_url']}")
+        if 'public_url' in result:
+            self.app.print(f"   Public URL: {result['public_url']}")
+            self.app.print(f"   API Key: {result.get('api_key', 'N/A')}")
+
+        return result
+
+    # toolboxv2/mods/isaa/__init__.py - Missing Methods
+
+    import threading
+    import secrets
+    import time
+    import json
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from urllib.parse import urlparse, parse_qs
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+
+    async def _handle_reset_context(self, agent_id: str, agent, conn_id: str):
+        """Handle context reset requests from WebSocket UI."""
+
+        try:
+            # Reset agent context if supported
+            if hasattr(agent, 'clear_context'):
+                agent.clear_context()
+                message = "Context reset successfully"
+                success = True
+            else:
+                message = "Agent does not support context reset"
+                success = False
+
+            # Send response back to UI
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'reset_response',
+                'data': {
+                    'success': success,
+                    'message': message,
+                    'timestamp': time.time()
+                }
+            })
+
+            self.app.print(f"Context reset requested for agent {agent_id}: {message}")
+
+        except Exception as e:
+            error_message = f"Context reset failed: {str(e)}"
+            self.app.print(f"Context reset error for agent {agent_id}: {e}", error=True)
+
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'error',
+                'data': {
+                    'error': error_message,
+                    'timestamp': time.time()
+                }
+            })
+
+    async def _handle_get_status(self, agent_id: str, agent, conn_id: str):
+        """Handle status requests from WebSocket UI."""
+
+        try:
+            # Collect agent status information
+            status_info = {
+                'agent_id': agent_id,
+                'agent_name': getattr(agent, 'name', 'Unknown'),
+                'agent_type': agent.__class__.__name__,
+                'status': 'active',
+                'timestamp': time.time(),
+                'server_type': 'builtin'
+            }
+
+            # Add additional status if available
+            if hasattr(agent, 'status'):
+                try:
+                    agent_status = agent.status()
+                    if isinstance(agent_status, dict):
+                        status_info.update(agent_status)
+                except:
+                    pass
+
+            # Add hosted agent info
+            if hasattr(self, '_hosted_agents') and agent_id in self._hosted_agents:
+                hosted_info = self._hosted_agents[agent_id]
+                status_info.update({
+                    'host': hosted_info.get('host'),
+                    'port': hosted_info.get('port'),
+                    'access': hosted_info.get('access'),
+                    'public_name': hosted_info.get('public_name')
+                })
+
+            # Send status back to UI
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'status_response',
+                'data': status_info
+            })
+
+            self.app.print(f"Status requested for agent {agent_id}")
+
+        except Exception as e:
+            error_message = f"Status retrieval failed: {str(e)}"
+            self.app.print(f"Status error for agent {agent_id}: {e}", error=True)
+
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'error',
+                'data': {
+                    'error': error_message,
+                    'timestamp': time.time()
+                }
+            })
+
+
+    async def stop_hosted_agent(self, agent_id: str = None, port: int = None):
+        """Stop a hosted agent by agent_id or port."""
+
+        if not hasattr(self, '_hosted_agents') and not hasattr(self, '_standalone_servers'):
+            self.app.print("No hosted agents found")
+            return False
+
+        # Stop by agent_id
+        if agent_id:
+            if hasattr(self, '_hosted_agents') and agent_id in self._hosted_agents:
+                agent_info = self._hosted_agents[agent_id]
+                agent_port = agent_info.get('port')
+
+                # Stop standalone server if exists
+                if hasattr(self, '_standalone_servers') and agent_port in self._standalone_servers:
+                    server_info = self._standalone_servers[agent_port]
+                    try:
+                        server_info['server'].shutdown()
+                        self.app.print(f"Stopped standalone server for agent {agent_id}")
+                    except:
+                        pass
+
+                # Clean up hosted agent info
+                del self._hosted_agents[agent_id]
+                self.app.print(f"Stopped hosted agent {agent_id}")
+                return True
+
+        # Stop by port
+        if port:
+            if hasattr(self, '_standalone_servers') and port in self._standalone_servers:
+                server_info = self._standalone_servers[port]
+                try:
+                    server_info['server'].shutdown()
+                    self.app.print(f"Stopped server on port {port}")
+                    return True
+                except Exception as e:
+                    self.app.print(f"Failed to stop server on port {port}: {e}")
+                    return False
+
+        self.app.print("Agent or port not found")
+        return False
+
+    async def list_hosted_agents(self) -> Dict[str, Any]:
+        """List all currently hosted agents."""
+
+        hosted_info = {
+            'builtin_agents': {},
+            'standalone_agents': {},
+            'total_count': 0
+        }
+
+        # Built-in server agents
+        if hasattr(self, '_hosted_agents'):
+            for agent_id, info in self._hosted_agents.items():
+                hosted_info['builtin_agents'][agent_id] = {
+                    'public_name': info.get('public_name'),
+                    'host': info.get('host'),
+                    'port': info.get('port'),
+                    'access': info.get('access'),
+                    'description': info.get('description')
+                }
+
+        # Standalone server agents
+        if hasattr(self, '_standalone_servers'):
+            for port, info in self._standalone_servers.items():
+                hosted_info['standalone_agents'][info['agent_id']] = {
+                    'port': port,
+                    'thread_alive': info['thread'].is_alive(),
+                    'server_type': 'standalone'
+                }
+
+        hosted_info['total_count'] = len(hosted_info['builtin_agents']) + len(hosted_info['standalone_agents'])
+
+        return hosted_info
+
+    def _create_agent_ws_connect_handler(self, agent_id: str):
+        """Create WebSocket connect handler for specific agent."""
+
+        async def on_connect(app, conn_id: str, session: dict):
+            if not hasattr(self, '_agent_connections'):
+                self._agent_connections = {}
+
+            if agent_id not in self._agent_connections:
+                self._agent_connections[agent_id] = set()
+
+            self._agent_connections[agent_id].add(conn_id)
+
+            # Send initial status
+            await app.ws_send(conn_id, {
+                'event': 'agent_connected',
+                'data': {
+                    'agent_id': agent_id,
+                    'status': 'ready',
+                    'capabilities': ['chat', 'progress_tracking', 'real_time_updates']
+                }
+            })
+
+            self.app.print(f"UI client connected to agent {agent_id}: {conn_id}")
+
+        return on_connect
+
+    def _create_agent_ws_message_handler(self, agent_id: str, agent):
+        """Create WebSocket message handler for specific agent."""
+
+        async def on_message(app, conn_id: str, session: dict, payload: dict):
+            event = payload.get('event')
+            data = payload.get('data', {})
+
+            if event == 'chat_message':
+                await self._handle_chat_message(agent_id, agent, conn_id, data)
+            elif event == 'reset_context':
+                await self._handle_reset_context(agent_id, agent, conn_id)
+            elif event == 'get_status':
+                await self._handle_get_status(agent_id, agent, conn_id)
+            else:
+                self.app.print(f"Unknown event from UI: {event}")
+
+        return on_message
+
+    def _create_agent_ws_disconnect_handler(self, agent_id: str):
+        """Create WebSocket disconnect handler for specific agent."""
+
+        async def on_disconnect(app, conn_id: str, session: dict = None):
+            if hasattr(self, '_agent_connections') and agent_id in self._agent_connections:
+                self._agent_connections[agent_id].discard(conn_id)
+
+            self.app.print(f"UI client disconnected from agent {agent_id}: {conn_id}")
+
+        return on_disconnect
+
+
+    async def _broadcast_to_agent_ui(self, agent_id: str, message: dict):
+        """Broadcast message to all UI clients connected to specific agent."""
+        if not hasattr(self, '_agent_connections') or agent_id not in self._agent_connections:
+            return
+
+        for conn_id in self._agent_connections[agent_id].copy():
             try:
-                httpd.serve_forever()
-            except KeyboardInterrupt:
-                httpd.shutdown()
-            finally:
-                if port in self.active_hosted_agents:
-                    del self.active_hosted_agents[port]
+                await self.app.ws_send(conn_id, message)
+            except Exception as e:
+                self.app.print(f"Failed to send to UI client {conn_id}: {e}")
+                self._agent_connections[agent_id].discard(conn_id)
 
+    async def _publish_to_registry(
+        self,
+        agent,
+        public_name: str,
+        registry_server: str,
+        description: Optional[str] = None,
+        agent_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """Publish agent to registry server."""
+        try:
+            # Import registry client dynamically to avoid circular imports
+            registry_client_module = __import__("toolboxv2.mods.registry.client", fromlist=["get_registry_client"])
+            get_registry_client = registry_client_module.get_registry_client
+
+            client = get_registry_client(self.app)
+
+            # Connect if not already connected
+            if not client.ws or not client.ws.open:
+                await client.connect(registry_server)
+
+            if not client.ws or not client.ws.open:
+                raise Exception("Failed to connect to registry server")
+
+            # Register the agent
+            reg_info = await client.register(agent, public_name, description)
+
+            if reg_info:
+                return {
+                    'public_url': reg_info.public_url,
+                    'api_key': reg_info.public_api_key,
+                    'public_agent_id': reg_info.public_agent_id,
+                    'registry_status': 'published'
+                }
+            else:
+                raise Exception("Registration failed")
+
+        except Exception as e:
+            self.app.print(f"Registry publishing failed: {e}", error=True)
+            return {'registry_status': 'failed', 'registry_error': str(e)}
+
+    def _get_enhanced_agent_ui_html(self, agent_id: str) -> str:
+        """Get production-ready enhanced UI HTML with comprehensive progress visualization."""
+        agent_info = self._hosted_agents.get(agent_id, {})
+        server_info = {
+            'server_type': 'standalone' if not hasattr(self.app, 'tb') else 'builtin',
+            'agent_id': agent_id
+        }
+
+        # Update the JavaScript section in the HTML template:
+        js_config = f"""
+                window.SERVER_CONFIG = {json.dumps(server_info)};
+            """
+        html_template = """<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{agent_name}</title>
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        <style>
+            :root {
+                --bg-primary: #0d1117;
+                --bg-secondary: #161b22;
+                --bg-tertiary: #21262d;
+                --text-primary: #f0f6fc;
+                --text-secondary: #8b949e;
+                --text-muted: #6e7681;
+                --accent-blue: #58a6ff;
+                --accent-green: #3fb950;
+                --accent-red: #f85149;
+                --accent-orange: #d29922;
+                --accent-purple: #a5a5f5;
+                --accent-cyan: #39d0d8;
+                --border-color: #30363d;
+                --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+                background: var(--bg-primary);
+                color: var(--text-primary);
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            .header {
+                background: var(--bg-tertiary);
+                padding: 12px 20px;
+                border-bottom: 1px solid var(--border-color);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                box-shadow: var(--shadow);
+                z-index: 100;
+            }
+
+            .agent-info {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+
+            .agent-title {
+                font-size: 18px;
+                font-weight: 600;
+                color: var(--accent-blue);
+            }
+
+            .agent-status {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 14px;
+            }
+
+            .status-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                background: var(--accent-red);
+                animation: pulse 2s infinite;
+            }
+
+            .status-dot.connected {
+                background: var(--accent-green);
+                animation: none;
+            }
+
+            .status-dot.processing {
+                background: var(--accent-orange);
+                animation: pulse 1s infinite;
+            }
+
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+
+            .main-container {
+                display: grid;
+                grid-template-columns: 2fr 1.5fr 1fr;
+                grid-template-rows: 1fr 1fr;
+                grid-template-areas:
+                    "chat outline activity"
+                    "chat system graph";
+                flex: 1;
+                gap: 1px;
+                background: var(--border-color);
+                overflow: hidden;
+            }
+
+            .panel {
+                background: var(--bg-secondary);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            .chat-panel { grid-area: chat; }
+            .outline-panel { grid-area: outline; }
+            .activity-panel { grid-area: activity; }
+            .system-panel { grid-area: system; }
+            .graph-panel { grid-area: graph; }
+
+            .panel-header {
+                padding: 12px 16px;
+                background: var(--bg-tertiary);
+                border-bottom: 1px solid var(--border-color);
+                font-weight: 600;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .panel-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 12px;
+            }
+
+            /* Chat Panel Styles */
+            .chat-messages {
+                flex: 1;
+                overflow-y: auto;
+                padding: 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+
+            .message {
+                display: flex;
+                align-items: flex-start;
+                gap: 12px;
+                max-width: 85%;
+            }
+
+            .message.user {
+                flex-direction: row-reverse;
+                margin-left: auto;
+            }
+
+            .message-avatar {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            .message.user .message-avatar {
+                background: var(--accent-blue);
+            }
+
+            .message.agent .message-avatar {
+                background: var(--accent-green);
+            }
+
+            .message-content {
+                padding: 12px 16px;
+                border-radius: 12px;
+                line-height: 1.5;
+                font-size: 14px;
+            }
+
+            .message.user .message-content {
+                background: var(--accent-blue);
+                color: white;
+            }
+
+            .message.agent .message-content {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+            }
+
+            .chat-input-area {
+                border-top: 1px solid var(--border-color);
+                padding: 16px;
+                display: flex;
+                gap: 12px;
+            }
+
+            .chat-input {
+                flex: 1;
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                padding: 12px;
+                color: var(--text-primary);
+                font-size: 14px;
+            }
+
+            .chat-input:focus {
+                outline: none;
+                border-color: var(--accent-blue);
+            }
+
+            .send-button {
+                background: var(--accent-blue);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 12px 20px;
+                cursor: pointer;
+                font-weight: 600;
+                transition: all 0.2s;
+            }
+
+            .send-button:hover:not(:disabled) {
+                background: #4493f8;
+                transform: translateY(-1px);
+            }
+
+            .send-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+                transform: none;
+            }
+
+            /* Progress Indicator */
+            .progress-indicator {
+                display: none;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 16px;
+                background: var(--bg-tertiary);
+                border-top: 1px solid var(--border-color);
+                font-size: 14px;
+            }
+
+            .progress-indicator.active { display: flex; }
+
+            .spinner {
+                width: 16px;
+                height: 16px;
+                border: 2px solid var(--border-color);
+                border-top: 2px solid var(--accent-blue);
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+
+            /* Outline Panel Styles */
+            .outline-progress {
+                margin-bottom: 16px;
+            }
+
+            .outline-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 12px;
+            }
+
+            .outline-title {
+                font-weight: 600;
+                color: var(--accent-cyan);
+            }
+
+            .outline-stats {
+                font-size: 12px;
+                color: var(--text-muted);
+            }
+
+            .progress-bar {
+                width: 100%;
+                height: 6px;
+                background: var(--bg-primary);
+                border-radius: 3px;
+                overflow: hidden;
+                margin-bottom: 16px;
+            }
+
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+                width: 0%;
+                transition: width 0.5s ease;
+            }
+
+            .outline-steps {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .outline-step {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 8px 12px;
+                border-radius: 6px;
+                background: var(--bg-primary);
+                border-left: 3px solid var(--border-color);
+                transition: all 0.3s;
+            }
+
+            .outline-step.active {
+                border-left-color: var(--accent-orange);
+                background: rgba(217, 153, 34, 0.1);
+            }
+
+            .outline-step.completed {
+                border-left-color: var(--accent-green);
+                background: rgba(63, 185, 80, 0.1);
+            }
+
+            .step-icon {
+                font-size: 14px;
+                width: 16px;
+            }
+
+            .step-text {
+                flex: 1;
+                font-size: 13px;
+            }
+
+            .step-method {
+                font-size: 11px;
+                color: var(--text-muted);
+                background: var(--bg-tertiary);
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+
+            /* Activity Panel Styles */
+            .current-activity {
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                padding: 12px;
+                margin-bottom: 12px;
+            }
+
+            .activity-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+
+            .activity-title {
+                font-weight: 600;
+                color: var(--accent-orange);
+            }
+
+            .activity-duration {
+                font-size: 11px;
+                color: var(--text-muted);
+                background: var(--bg-tertiary);
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+
+            .activity-description {
+                font-size: 13px;
+                line-height: 1.4;
+                color: var(--text-secondary);
+            }
+
+            .meta-tools-list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .meta-tool {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 10px;
+                background: var(--bg-primary);
+                border-radius: 4px;
+                font-size: 12px;
+            }
+
+            .tool-icon {
+                width: 12px;
+                text-align: center;
+            }
+
+            .tool-name {
+                flex: 1;
+                color: var(--text-secondary);
+            }
+
+            .tool-status {
+                font-size: 10px;
+                padding: 2px 6px;
+                border-radius: 3px;
+            }
+
+            .tool-status.running {
+                background: var(--accent-orange);
+                color: white;
+            }
+
+            .tool-status.completed {
+                background: var(--accent-green);
+                color: white;
+            }
+
+            .tool-status.error {
+                background: var(--accent-red);
+                color: white;
+            }
+
+            /* System Panel Styles */
+            .system-grid {
+                display: grid;
+                grid-template-columns: 1fr 2fr;
+                gap: 8px 12px;
+                font-size: 12px;
+            }
+
+            .system-key {
+                color: var(--text-muted);
+                font-weight: 500;
+            }
+
+            .system-value {
+                color: var(--text-primary);
+                font-family: 'SF Mono', Monaco, monospace;
+                word-break: break-word;
+            }
+
+            .current-node {
+                background: var(--bg-primary);
+                padding: 8px 10px;
+                border-radius: 6px;
+                margin-bottom: 12px;
+                border: 1px solid var(--border-color);
+            }
+
+            .node-name {
+                font-weight: 600;
+                color: var(--accent-purple);
+                margin-bottom: 4px;
+            }
+
+            .node-operation {
+                font-size: 11px;
+                color: var(--text-muted);
+            }
+
+            /* Graph Panel Styles */
+            .agent-graph {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 8px;
+                padding: 8px;
+            }
+
+            .graph-node {
+                padding: 6px 12px;
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                font-size: 11px;
+                text-align: center;
+                min-width: 80px;
+            }
+
+            .graph-node.active {
+                border-color: var(--accent-orange);
+                background: rgba(217, 153, 34, 0.1);
+            }
+
+            .graph-node.completed {
+                border-color: var(--accent-green);
+                background: rgba(63, 185, 80, 0.1);
+            }
+
+            .graph-arrow {
+                color: var(--text-muted);
+                font-size: 12px;
+            }
+
+            /* Connection Error Styles */
+            .connection-error {
+                background: var(--accent-red);
+                color: white;
+                padding: 8px 12px;
+                margin: 8px;
+                border-radius: 6px;
+                font-size: 12px;
+                text-align: center;
+            }
+
+            .fallback-mode {
+                background: var(--accent-orange);
+                color: white;
+                padding: 8px 12px;
+                margin: 8px;
+                border-radius: 6px;
+                font-size: 12px;
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="agent-info">
+                <div class="agent-title">{agent_name}</div>
+                <div class="text-secondary">{agent_description}</div>
+            </div>
+            <div class="agent-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Initializing...</span>
+            </div>
+        </div>
+
+        <div class="main-container">
+            <!-- Chat Panel -->
+            <div class="panel chat-panel">
+                <div class="panel-header">💬 Conversation</div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message agent">
+                        <div class="message-avatar">AI</div>
+                        <div class="message-content">Hello! I'm ready to help you. What would you like to know?</div>
+                    </div>
+                </div>
+                <div class="progress-indicator" id="progress-indicator">
+                    <div class="spinner"></div>
+                    <span id="progress-text">Processing...</span>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="chat-input" class="chat-input" placeholder="Type your message...">
+                    <button id="send-button" class="send-button">Send</button>
+                </div>
+            </div>
+
+            <!-- Outline & Progress Panel -->
+            <div class="panel outline-panel">
+                <div class="panel-header">📋 Execution Outline</div>
+                <div class="panel-content">
+                    <div class="outline-progress">
+                        <div class="outline-header">
+                            <div class="outline-title" id="outline-title">Ready</div>
+                            <div class="outline-stats" id="outline-stats">0/0 steps</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="outline-progress-fill"></div>
+                        </div>
+                    </div>
+                    <div class="outline-steps" id="outline-steps">
+                        <div class="outline-step">
+                            <div class="step-icon">⏳</div>
+                            <div class="step-text">Waiting for query...</div>
+                        </div>
+                    </div>
+                    <div class="current-activity" id="current-activity" style="display: none;">
+                        <div class="activity-header">
+                            <div class="activity-title" id="activity-title">Current Activity</div>
+                            <div class="activity-duration" id="activity-duration">0s</div>
+                        </div>
+                        <div class="activity-description" id="activity-description"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity & Meta-Tools Panel -->
+            <div class="panel activity-panel">
+                <div class="panel-header">⚙️ Meta-Tool Activity</div>
+                <div class="panel-content">
+                    <div class="meta-tools-list" id="meta-tools-list">
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                            No activity yet
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Status Panel -->
+            <div class="panel system-panel">
+                <div class="panel-header">🔧 System Status</div>
+                <div class="panel-content">
+                    <div class="current-node" id="current-node">
+                        <div class="node-name" id="node-name">System</div>
+                        <div class="node-operation" id="node-operation">Idle</div>
+                    </div>
+                    <div class="system-grid" id="system-grid">
+                        <div class="system-key">Status</div>
+                        <div class="system-value">Ready</div>
+                        <div class="system-key">Runtime</div>
+                        <div class="system-value">0s</div>
+                        <div class="system-key">Events</div>
+                        <div class="system-value">0</div>
+                        <div class="system-key">Errors</div>
+                        <div class="system-value">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent Graph Panel -->
+            <div class="panel graph-panel">
+                <div class="panel-header">🌐 Agent Flow</div>
+                <div class="panel-content">
+                    <div class="agent-graph" id="agent-graph">
+                        <div class="graph-node">LLMReasonerNode</div>
+                        <div class="graph-arrow">↓</div>
+                        <div class="graph-node">Ready</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script unSave="true">
+            __SERVER_CONFIG__
+            class ProductionAgentUI {
+                constructor() {
+                    this.ws = null;
+                    this.isProcessing = false;
+                    this.sessionId = 'ui_session_' + Math.random().toString(36).substr(2, 9);
+                    this.startTime = null;
+                    this.reconnectAttempts = 0;
+                    this.maxReconnectAttempts = 10;
+                    this.reconnectDelay = 1000;
+                    this.useWebSocket = true;
+                    this.fallbackMode = false;
+
+                    // Progress tracking
+                    this.currentOutline = null;
+                    this.currentActivity = null;
+                    this.metaTools = new Map();
+                    this.systemStatus = {};
+                    this.agentGraph = [];
+                    this.progressEvents = [];
+
+                    this.elements = {
+                        statusDot: document.getElementById('status-dot'),
+                        statusText: document.getElementById('status-text'),
+                        chatMessages: document.getElementById('chat-messages'),
+                        chatInput: document.getElementById('chat-input'),
+                        sendButton: document.getElementById('send-button'),
+                        progressIndicator: document.getElementById('progress-indicator'),
+                        progressText: document.getElementById('progress-text'),
+
+                        // Outline elements
+                        outlineTitle: document.getElementById('outline-title'),
+                        outlineStats: document.getElementById('outline-stats'),
+                        outlineProgressFill: document.getElementById('outline-progress-fill'),
+                        outlineSteps: document.getElementById('outline-steps'),
+                        currentActivity: document.getElementById('current-activity'),
+                        activityTitle: document.getElementById('activity-title'),
+                        activityDuration: document.getElementById('activity-duration'),
+                        activityDescription: document.getElementById('activity-description'),
+
+                        // Meta-tools elements
+                        metaToolsList: document.getElementById('meta-tools-list'),
+
+                        // System elements
+                        currentNode: document.getElementById('current-node'),
+                        nodeName: document.getElementById('node-name'),
+                        nodeOperation: document.getElementById('node-operation'),
+                        systemGrid: document.getElementById('system-grid'),
+
+                        // Graph elements
+                        agentGraph: document.getElementById('agent-graph')
+                    };
+                    this.init();
+                }
+
+
+                init() {
+
+                    this.configureAPIPaths();
+                    this.setupEventListeners();
+                    this.detectServerMode();
+                    this.startStatusUpdates();
+                }
+
+                configureAPIPaths() {
+                    const serverType = window.SERVER_CONFIG?.server_type || 'standalone';
+
+                    if (serverType === 'builtin') {
+                        this.apiPaths = {
+                            status: '/api/agent_ui/status',
+                            run: '/api/agent_ui/run_agent',
+                            reset: '/api/agent_ui/reset_context'
+                        };
+                        this.useWebSocket = true;
+                    } else {
+                        this.apiPaths = {
+                            status: '/api/status',
+                            run: '/api/run',
+                            reset: '/api/reset'
+                        };
+                        this.useWebSocket = false;
+                        this.enableFallbackMode();
+                    }
+                }
+
+                setupEventListeners() {
+                    this.elements.sendButton.addEventListener('click', () => this.sendMessage());
+                    this.elements.chatInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter' && !this.isProcessing) {
+                            this.sendMessage();
+                        }
+                    });
+
+                    // Handle page visibility for reconnection
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
+                            this.connectWebSocket();
+                        }
+                    });
+                }
+
+                detectServerMode() {
+                    // Use configured paths instead of hardcoded ones
+                    fetch(this.apiPaths.status)
+                        .then(response => response.json())
+                        .then(data => {
+                            this.addLogEntry(`Server detected: ${data.server_type || 'standalone'}`, 'info');
+                            if (data.server_type === 'builtin' && this.useWebSocket) {
+                                this.connectWebSocket();
+                            }
+                        })
+                        .catch(() => {
+                            this.addLogEntry('Server detection failed, using fallback mode', 'error');
+                            this.enableFallbackMode();
+                        });
+                }
+
+                connectWebSocket() {
+                    if (!this.useWebSocket) return;
+
+                    try {
+                        // Construct WebSocket URL more robustly
+                        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = `${protocol}//${window.location.host}/ws/agent_ui/connect`;
+
+                        this.addLogEntry(`Attempting WebSocket connection to: ${wsUrl}`);
+                        this.ws = new WebSocket(wsUrl);
+
+                        this.ws.onopen = () => {
+                            this.reconnectAttempts = 0;
+                            this.fallbackMode = false;
+                            this.setStatus('connected', 'Connected');
+                            this.addLogEntry('WebSocket connected successfully', 'success');
+                            this.removeFallbackIndicators();
+                        };
+
+                        this.ws.onmessage = (event) => {
+                            try {
+                                const message = JSON.parse(event.data);
+                                this.handleWebSocketMessage(message);
+                            } catch (error) {
+                                this.addLogEntry(`WebSocket message parse error: ${error.message}`, 'error');
+                            }
+                        };
+
+                        this.ws.onclose = (event) => {
+                            this.setStatus('disconnected', 'Disconnected');
+                            this.addLogEntry(`WebSocket disconnected (code: ${event.code})`, 'error');
+                            this.scheduleReconnection();
+                        };
+
+                        this.ws.onerror = (error) => {
+                            this.setStatus('error', 'Connection Error');
+                            this.addLogEntry('WebSocket connection error', 'error');
+                            this.scheduleReconnection();
+                        };
+
+                    } catch (error) {
+                        this.addLogEntry(`WebSocket setup error: ${error.message}`, 'error');
+                        this.enableFallbackMode();
+                    }
+                }
+
+                scheduleReconnection() {
+                    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                        this.addLogEntry('Max reconnection attempts reached, enabling fallback mode', 'error');
+                        this.enableFallbackMode();
+                        return;
+                    }
+
+                    this.reconnectAttempts++;
+                    const delay = Math.min(this.reconnectDelay * this.reconnectAttempts, 30000);
+
+                    this.setStatus('error', `Reconnecting in ${delay/1000}s (attempt ${this.reconnectAttempts})`);
+
+                    setTimeout(() => {
+                        if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+                            this.connectWebSocket();
+                        }
+                    }, delay);
+                }
+
+                enableFallbackMode() {
+                    this.fallbackMode = true;
+                    this.useWebSocket = false;
+                    this.setStatus('disconnected', 'Fallback Mode (API Only)');
+                    this.showFallbackIndicator();
+                    this.addLogEntry('WebSocket unavailable - using API fallback mode', 'info');
+                }
+
+                showFallbackIndicator() {
+                    const indicator = document.createElement('div');
+                    indicator.className = 'fallback-mode';
+                    indicator.textContent = 'Using API fallback mode - limited real-time updates';
+                    indicator.id = 'fallback-indicator';
+                    document.body.appendChild(indicator);
+                }
+
+                removeFallbackIndicators() {
+                    const indicator = document.getElementById('fallback-indicator');
+                    if (indicator) {
+                        indicator.remove();
+                    }
+                }
+
+                handleWebSocketMessage(message) {
+                    try {
+                        switch (message.event) {
+                            case 'agent_connected':
+                                this.addLogEntry('Agent ready for interaction', 'success');
+                                this.updateSystemStatus({
+                                    status: 'Connected',
+                                    capabilities: message.data.capabilities
+                                });
+                                break;
+
+                            case 'processing_start':
+                                this.setProcessing(true);
+                                this.startTime = Date.now();
+                                this.addLogEntry(`Processing: ${message.data.query}`, 'progress');
+                                this.resetProgressTracking();
+                                break;
+
+                            case 'progress_update':
+                                this.handleProgressUpdate(message.data);
+                                break;
+
+                            case 'outline_update':
+                                this.handleOutlineUpdate(message.data);
+                                break;
+
+                            case 'meta_tool_update':
+                                this.handleMetaToolUpdate(message.data);
+                                break;
+
+                            case 'activity_update':
+                                this.handleActivityUpdate(message.data);
+                                break;
+
+                            case 'system_update':
+                                this.handleSystemUpdate(message.data);
+                                break;
+
+                            case 'graph_update':
+                                this.handleGraphUpdate(message.data);
+                                break;
+
+                            case 'chat_response':
+                                this.addMessage('agent', message.data.response);
+                                this.setProcessing(false);
+                                this.addLogEntry('Response completed', 'success');
+                                this.showFinalSummary(message.data);
+                                break;
+
+                            case 'error':
+                                this.addMessage('agent', `Error: ${message.data.error}`);
+                                this.setProcessing(false);
+                                this.addLogEntry(`Error: ${message.data.error}`, 'error');
+                                break;
+
+                            default:
+                                console.log('Unhandled WebSocket message:', message);
+                        }
+                    } catch (error) {
+                        this.addLogEntry(`Message handling error: ${error.message}`, 'error');
+                    }
+                }
+
+                handleProgressUpdate(data) {
+                    this.progressEvents.push(data);
+
+                    const progressText = `${data.event_type}: ${data.status || 'processing'}`;
+                    this.elements.progressText.textContent = progressText;
+
+                    // Update based on event type
+                    if (data.event_type === 'reasoning_loop') {
+                        this.addLogEntry(`🧠 Reasoning loop #${data.loop_number || '?'}`, 'reasoning');
+                        this.updateCurrentActivity({
+                            title: 'Reasoning',
+                            description: data.current_focus || 'Deep thinking in progress',
+                            duration: data.time_in_activity || 0
+                        });
+                    } else if (data.event_type === 'meta_tool_call') {
+                        this.addLogEntry(`⚙️ Meta-tool: ${data.meta_tool_name || 'unknown'}`, 'meta-tool');
+                    } else {
+                        this.addLogEntry(`Progress - ${progressText}`, 'progress');
+                    }
+
+                    // Update system status
+                    this.updateSystemStatus({
+                        current_node: data.node_name,
+                        current_operation: data.event_type,
+                        runtime: this.getRuntime(),
+                        events: this.progressEvents.length
+                    });
+                }
+
+                handleOutlineUpdate(data) {
+                    this.currentOutline = data;
+
+                    if (data.outline_created && data.steps) {
+                        this.elements.outlineTitle.textContent = 'Execution Outline';
+
+                        const completedCount = (data.completed_steps || []).length;
+                        const totalCount = data.total_steps || data.steps.length;
+
+                        this.elements.outlineStats.textContent = `${completedCount}/${totalCount} steps`;
+
+                        // Update progress bar
+                        const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+                        this.elements.outlineProgressFill.style.width = `${progress}%`;
+
+                        // Update steps
+                        this.updateOutlineSteps(data.steps, data.current_step, data.completed_steps || []);
+
+                        this.addLogEntry(`Outline progress: ${completedCount}/${totalCount} steps completed`, 'outline');
+                    }
+                }
+
+                updateOutlineSteps(steps, currentStep, completedSteps) {
+                    this.elements.outlineSteps.innerHTML = '';
+
+                    steps.forEach((step, index) => {
+                        const stepEl = document.createElement('div');
+                        stepEl.className = 'outline-step';
+
+                        const stepId = step.id || (index + 1);
+                        let icon = '⏳';
+
+                        if (completedSteps.includes(stepId)) {
+                            stepEl.classList.add('completed');
+                            icon = '✅';
+                        } else if (stepId === currentStep) {
+                            stepEl.classList.add('active');
+                            icon = '🔄';
+                        }
+
+                        stepEl.innerHTML = `
+                            <div class="step-icon">${icon}</div>
+                            <div class="step-text">${step.description || `Step ${stepId}`}</div>
+                            <div class="step-method">${step.method || 'unknown'}</div>
+                        `;
+
+                        this.elements.outlineSteps.appendChild(stepEl);
+                    });
+                }
+
+                handleMetaToolUpdate(data) {
+                    const toolId = `${data.meta_tool_name}_${Date.now()}`;
+                    const toolData = {
+                        name: data.meta_tool_name,
+                        status: data.status || 'running',
+                        timestamp: Date.now(),
+                        phase: data.execution_phase,
+                        data: data
+                    };
+
+                    this.metaTools.set(toolId, toolData);
+                    this.updateMetaToolsList();
+
+                    // Add to log with appropriate icon
+                    const statusIcon = data.status === 'completed' ? '✅' :
+                                     data.status === 'error' ? '❌' : '⚙️';
+                    this.addLogEntry(`${statusIcon} ${data.meta_tool_name}: ${data.status || 'running'}`, 'meta-tool');
+                }
+
+                updateMetaToolsList() {
+                    this.elements.metaToolsList.innerHTML = '';
+
+                    if (this.metaTools.size === 0) {
+                        this.elements.metaToolsList.innerHTML = `
+                            <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                                No meta-tool activity yet
+                            </div>
+                        `;
+                        return;
+                    }
+
+                    // Show recent meta-tools (last 8)
+                    const recentTools = Array.from(this.metaTools.values())
+                        .sort((a, b) => b.timestamp - a.timestamp)
+                        .slice(0, 8);
+
+                    recentTools.forEach(tool => {
+                        const toolEl = document.createElement('div');
+                        toolEl.className = 'meta-tool';
+
+                        const icons = {
+                            internal_reasoning: '🧠',
+                            delegate_to_llm_tool_node: '🎯',
+                            create_and_execute_plan: '📋',
+                            manage_internal_task_stack: '📚',
+                            advance_outline_step: '➡️',
+                            write_to_variables: '💾',
+                            read_from_variables: '📖',
+                            direct_response: '✨'
+                        };
+
+                        const icon = icons[tool.name] || '⚙️';
+                        const displayName = tool.name.replace(/_/g, ' ');
+                        const age = Math.floor((Date.now() - tool.timestamp) / 1000);
+
+                        toolEl.innerHTML = `
+                            <div class="tool-icon">${icon}</div>
+                            <div class="tool-name">${displayName} (${age}s ago)</div>
+                            <div class="tool-status ${tool.status}">${tool.status}</div>
+                        `;
+
+                        this.elements.metaToolsList.appendChild(toolEl);
+                    });
+                }
+
+                handleActivityUpdate(data) {
+                    this.currentActivity = data;
+                    this.updateCurrentActivity(data);
+                }
+
+                updateCurrentActivity(data) {
+                    if (data.primary_activity && data.primary_activity !== 'Unknown') {
+                        this.elements.currentActivity.style.display = 'block';
+                        this.elements.activityTitle.textContent = data.primary_activity || data.title;
+
+                        const duration = data.time_in_current_activity || data.duration || 0;
+                        if (duration > 0) {
+                            this.elements.activityDuration.textContent = this.formatDuration(duration);
+                        }
+
+                        this.elements.activityDescription.textContent =
+                            data.detailed_description || data.description || '';
+                    } else {
+                        this.elements.currentActivity.style.display = 'none';
+                    }
+                }
+
+                handleSystemUpdate(data) {
+                    this.systemStatus = { ...this.systemStatus, ...data };
+                    this.updateSystemStatus(data);
+                }
+
+                updateSystemStatus(data) {
+                    // Update current node
+                    if (data.current_node) {
+                        this.elements.nodeName.textContent = data.current_node;
+                        this.elements.nodeOperation.textContent = data.current_operation || 'Processing';
+                    }
+
+                    // Update system grid
+                    const gridData = [
+                        ['Status', data.status || this.systemStatus.status || 'Running'],
+                        ['Runtime', this.formatDuration(data.runtime || this.getRuntime())],
+                        ['Events', data.events || this.progressEvents.length],
+                        ['Errors', data.error_count || this.systemStatus.error_count || 0],
+                        ['Node', data.current_node || this.systemStatus.current_node || 'Unknown']
+                    ];
+
+                    if (data.total_cost !== undefined) {
+                        gridData.push(['Cost', `$${data.total_cost.toFixed(4)}`]);
+                    }
+
+                    if (data.total_tokens !== undefined) {
+                        gridData.push(['Tokens', data.total_tokens.toLocaleString()]);
+                    }
+
+                    this.elements.systemGrid.innerHTML = '';
+                    gridData.forEach(([key, value]) => {
+                        this.elements.systemGrid.innerHTML += `
+                            <div class="system-key">${key}</div>
+                            <div class="system-value">${value}</div>
+                        `;
+                    });
+                }
+
+                handleGraphUpdate(data) {
+                    this.agentGraph = data.nodes || [];
+                    this.updateAgentGraph();
+                }
+
+                updateAgentGraph() {
+                    this.elements.agentGraph.innerHTML = '';
+
+                    if (this.agentGraph.length === 0) {
+                        const currentNode = this.systemStatus.current_node || 'LLMReasonerNode';
+                        this.elements.agentGraph.innerHTML = `
+                            <div class="graph-node active">${currentNode}</div>
+                            <div class="graph-arrow">↓</div>
+                            <div class="graph-node">Processing</div>
+                        `;
+                        return;
+                    }
+
+                    this.agentGraph.forEach((node, index) => {
+                        const nodeEl = document.createElement('div');
+                        nodeEl.className = 'graph-node';
+
+                        if (node.active) nodeEl.classList.add('active');
+                        if (node.completed) nodeEl.classList.add('completed');
+
+                        nodeEl.textContent = node.name || `Node ${index + 1}`;
+                        this.elements.agentGraph.appendChild(nodeEl);
+
+                        if (index < this.agentGraph.length - 1) {
+                            const arrow = document.createElement('div');
+                            arrow.className = 'graph-arrow';
+                            arrow.textContent = '↓';
+                            this.elements.agentGraph.appendChild(arrow);
+                        }
+                    });
+                }
+
+                async sendMessage() {
+                    const message = this.elements.chatInput.value.trim();
+                    if (!message || this.isProcessing) return;
+
+                    this.addMessage('user', message);
+                    this.elements.chatInput.value = '';
+
+                    if (this.useWebSocket && this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        // Send via WebSocket
+                        this.ws.send(JSON.stringify({
+                            event: 'chat_message',
+                            data: {
+                                message: message,
+                                session_id: this.sessionId
+                            }
+                        }));
+                    } else {
+                        // Fallback to API
+                        await this.sendMessageViaAPI(message);
+                    }
+                }
+
+                async sendMessageViaAPI(message) {
+                    this.setProcessing(true);
+                    this.startTime = Date.now();
+                    this.resetProgressTracking();
+
+                    try {
+                        const response = await fetch(this.apiPaths.run, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                query: message,
+                                session_id: this.sessionId,
+                                include_progress: true
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            this.addMessage('agent', result.result);
+                            this.addLogEntry(`Request completed via API`, 'success');
+
+                            // Process progress events if available
+                            if (result.progress_events) {
+                                this.processAPIProgressEvents(result.progress_events);
+                            }
+
+                            // Process enhanced progress if available
+                            if (result.enhanced_progress) {
+                                this.processEnhancedProgress(result.enhanced_progress);
+                            }
+                        } else {
+                            this.addMessage('agent', `Error: ${result.error}`);
+                            this.addLogEntry(`API request failed: ${result.error}`, 'error');
+                        }
+
+                    } catch (error) {
+                        this.addMessage('agent', `Network error: ${error.message}`);
+                        this.addLogEntry(`Network error: ${error.message}`, 'error');
+                    } finally {
+                        this.setProcessing(false);
+                    }
+                }
+
+                processAPIProgressEvents(events) {
+                    events.forEach(event => {
+                        this.handleProgressUpdate(event);
+                    });
+                }
+
+                processEnhancedProgress(progress) {
+                    if (progress.outline) {
+                        this.handleOutlineUpdate(progress.outline);
+                    }
+                    if (progress.activity) {
+                        this.handleActivityUpdate(progress.activity);
+                    }
+                    if (progress.system) {
+                        this.handleSystemUpdate(progress.system);
+                    }
+                    if (progress.graph) {
+                        this.handleGraphUpdate(progress.graph);
+                    }
+                }
+
+                resetProgressTracking() {
+                    this.progressEvents = [];
+                    this.metaTools.clear();
+                    this.updateSystemStatus({ status: 'Processing', events: 0 });
+                }
+
+                showFinalSummary(data) {
+                    if (data.final_summary) {
+                        const summary = data.final_summary;
+                        this.addLogEntry(`Final Summary - Outline: ${summary.outline_completed ? 'Complete' : 'Partial'}, Meta-tools: ${summary.total_meta_tools}, Nodes: ${summary.total_nodes}`, 'success');
+                    }
+                }
+
+                addMessage(sender, content) {
+                    const messageEl = document.createElement('div');
+                    messageEl.classList.add('message', sender);
+
+                    const avatarEl = document.createElement('div');
+                    avatarEl.classList.add('message-avatar');
+                    avatarEl.textContent = sender === 'user' ? 'You' : 'AI';
+
+                    const contentEl = document.createElement('div');
+                    contentEl.classList.add('message-content');
+
+                    if (sender === 'agent' && window.marked) {
+                        try {
+                            contentEl.innerHTML = marked.parse(content);
+                        } catch (error) {
+                            contentEl.textContent = content;
+                        }
+                    } else {
+                        contentEl.textContent = content;
+                    }
+
+                    messageEl.appendChild(avatarEl);
+                    messageEl.appendChild(contentEl);
+
+                    this.elements.chatMessages.appendChild(messageEl);
+                    this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+                }
+
+                addLogEntry(message, type = 'info') {
+                    // For debugging - could show in a log panel
+                    const timestamp = new Date().toLocaleTimeString();
+                    console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
+                }
+
+                setStatus(status, text) {
+                    this.elements.statusDot.className = `status-dot ${status}`;
+                    this.elements.statusText.textContent = text;
+                }
+
+                setProcessing(processing) {
+                    this.isProcessing = processing;
+                    this.elements.sendButton.disabled = processing;
+                    this.elements.chatInput.disabled = processing;
+
+                    if (processing) {
+                        this.elements.progressIndicator.classList.add('active');
+                        this.setStatus('processing', 'Processing');
+                    } else {
+                        this.elements.progressIndicator.classList.remove('active');
+                        this.setStatus(this.ws && this.ws.readyState === WebSocket.OPEN ? 'connected' : 'disconnected',
+                                      this.ws && this.ws.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected');
+                        this.startTime = null;
+                    }
+                }
+
+                formatDuration(seconds) {
+                    if (typeof seconds !== 'number') return '0s';
+                    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+                    if (seconds < 3600) return `${Math.floor(seconds/60)}m${Math.floor(seconds%60)}s`;
+                    return `${Math.floor(seconds/3600)}h${Math.floor((seconds%3600)/60)}m`;
+                }
+
+                getRuntime() {
+                    return this.startTime ? (Date.now() - this.startTime) / 1000 : 0;
+                }
+
+                startStatusUpdates() {
+                    setInterval(() => {
+                        if (this.isProcessing) {
+                            this.updateSystemStatus({ runtime: this.getRuntime() });
+                        }
+                    }, 1000);
+                }
+            }
+
+            // Initialize the production UI
+            if (!window.TB) {
+
+                document.addEventListener('DOMContentLoaded', () => {
+                    window.agentUI = new ProductionAgentUI();
+                });
+            } else {
+                TB.once(() => {
+                    window.agentUI = new ProductionAgentUI();
+                });
+            }
+        </script>
+    </body>
+    </html>"""
+
+        return (html_template.
+                replace("{agent_name}", agent_info.get('public_name', 'Agent Interface')).
+                replace("{agent_description}", agent_info.get('description', '')).
+                replace("__SERVER_CONFIG__", js_config)
+                )
+
+    async def _handle_chat_message_with_progress_integration(self, agent_id: str, agent, conn_id: str, data: dict):
+        """Enhanced chat message handler with ProgressiveTreePrinter integration."""
+        query = data.get('message', '')
+        session_id = data.get('session_id', f"ui_session_{conn_id}")
+
+        if not query:
+            return
+
+        # Create ProgressiveTreePrinter for real-time UI updates
+
+        progress_printer = ProgressiveTreePrinter(
+            mode=VerbosityMode.STANDARD,
+            use_rich=False,
+            auto_refresh=False
+        )
+
+        # Enhanced progress callback that extracts all UI data
+        async def comprehensive_progress_callback(event):
+            try:
+                # Add event to progress printer for processing
+                progress_printer.tree_builder.add_event(event)
+
+                # Get comprehensive summary from the printer
+                summary = progress_printer.tree_builder.get_execution_summary()
+
+                # Extract outline information
+                outline_info = progress_printer._get_current_outline_info()
+
+                # Extract current activity
+                activity_info = progress_printer._get_detailed_current_activity()
+
+                # Extract tool usage
+                tool_usage = progress_printer._get_tool_usage_summary()
+
+                # Extract task progress
+                task_progress = progress_printer._get_task_executor_progress()
+
+                # Send basic progress update
+                await self._broadcast_to_agent_ui(agent_id, {
+                    'event': 'progress_update',
+                    'data': {
+                        'event_type': event.event_type,
+                        'status': getattr(event, 'status', 'processing').value if hasattr(event, 'status') and event.status else 'unknown',
+                        'node_name': getattr(event, 'node_name', 'Unknown'),
+                        'timestamp': event.timestamp,
+                        'loop_number': getattr(event.metadata, {}).get('reasoning_loop', 0),
+                        'meta_tool_name': getattr(event.metadata, {}).get('meta_tool_name'),
+                        'current_focus': getattr(event.metadata, {}).get('current_focus', ''),
+                        'time_in_activity': activity_info.get('time_in_current_activity', 0)
+                    }
+                })
+
+                # Send outline updates
+                if outline_info.get('outline_created'):
+                    await self._broadcast_to_agent_ui(agent_id, {
+                        'event': 'outline_update',
+                        'data': outline_info
+                    })
+
+                # Send meta-tool updates
+                if event.metadata and event.metadata.get('meta_tool_name'):
+                    await self._broadcast_to_agent_ui(agent_id, {
+                        'event': 'meta_tool_update',
+                        'data': {
+                            'meta_tool_name': event.metadata['meta_tool_name'],
+                            'status': 'completed' if event.success else (
+                                'error' if event.success is False else 'running'),
+                            'execution_phase': event.metadata.get('execution_phase', 'unknown'),
+                            'reasoning_loop': event.metadata.get('reasoning_loop', 0),
+                            'timestamp': event.timestamp
+                        }
+                    })
+
+                # Send activity updates
+                if activity_info['primary_activity'] != 'Unknown':
+                    await self._broadcast_to_agent_ui(agent_id, {
+                        'event': 'activity_update',
+                        'data': activity_info
+                    })
+
+                # Send system updates
+                await self._broadcast_to_agent_ui(agent_id, {
+                    'event': 'system_update',
+                    'data': {
+                        'current_node': summary['execution_flow']['current_node'],
+                        'current_operation': activity_info.get('primary_activity', 'Processing'),
+                        'status': 'Processing',
+                        'runtime': summary['timing']['elapsed'],
+                        'total_events': summary['performance_metrics']['total_events'],
+                        'error_count': summary['performance_metrics']['error_count'],
+                        'total_cost': summary['performance_metrics']['total_cost'],
+                        'total_tokens': summary['performance_metrics']['total_tokens'],
+                        'completed_nodes': summary['session_info']['completed_nodes'],
+                        'total_nodes': summary['session_info']['total_nodes'],
+                        'tool_usage': {
+                            'tools_used': list(tool_usage.get('tools_used', set())),
+                            'tools_active': list(tool_usage.get('tools_active', set())),
+                            'current_tool_operation': tool_usage.get('current_tool_operation')
+                        }
+                    }
+                })
+
+                # Send graph updates
+                flow_nodes = []
+                for node_name in summary['execution_flow']['flow']:
+                    if node_name in progress_printer.tree_builder.nodes:
+                        node = progress_printer.tree_builder.nodes[node_name]
+                        flow_nodes.append({
+                            'name': node_name,
+                            'active': node_name in summary['execution_flow']['active_nodes'],
+                            'completed': (node.status.value == 'completed') if node.status else False,
+                            'status': node.status.value if node.status else 'unknown'
+                        })
+
+                if flow_nodes:
+                    await self._broadcast_to_agent_ui(agent_id, {
+                        'event': 'graph_update',
+                        'data': {'nodes': flow_nodes}
+                    })
+
+            except Exception as e:
+                self.app.print(f"Comprehensive progress callback error: {e}")
+
+        # Set progress callback
+        original_callback = getattr(agent, 'progress_callback', None)
+
+        try:
+            if hasattr(agent, 'set_progress_callback'):
+                agent.set_progress_callback(comprehensive_progress_callback)
+            elif hasattr(agent, 'progress_callback'):
+                agent.progress_callback = comprehensive_progress_callback
+
+            # Send processing start notification
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'processing_start',
+                'data': {'query': query, 'session_id': session_id}
+            })
+
+            # Execute agent
+            result = await agent.a_run(query=query, session_id=session_id)
+
+            # Get final summary
+            final_summary = progress_printer.tree_builder.get_execution_summary()
+
+            # Extract outline information
+            outline_info = progress_printer._get_current_outline_info()
+
+            # Initialize outline_info if empty
+            if not outline_info or not outline_info.get('steps'):
+                outline_info = {
+                    'steps': [],
+                    'current_step': 1,
+                    'completed_steps': [],
+                    'total_steps': 0,
+                    'step_descriptions': {},
+                    'current_step_progress': "",
+                    'outline_raw_data': None,
+                    'outline_created': False,
+                    'actual_step_completions': []
+                }
+
+            # Try to infer outline from execution pattern if not found
+            if not outline_info.get('outline_created'):
+                outline_info = progress_printer._infer_outline_from_execution_pattern(outline_info)
+
+            # Send final result with summary
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'chat_response',
+                'data': {
+                    'response': result,
+                    'query': query,
+                    'session_id': session_id,
+                    'completed_at': asyncio.get_event_loop().time(),
+                    'final_summary': {
+                        'outline_completed': len(outline_info.get('completed_steps', [])) == outline_info.get(
+                            'total_steps', 0),
+                        'total_meta_tools': len([e for e in progress_printer.tree_builder.nodes.values()
+                                                 for event in e.llm_calls + e.sub_events
+                                                 if event.metadata and event.metadata.get('meta_tool_name')]),
+                        'total_nodes': final_summary['session_info']['total_nodes'],
+                        'execution_time': final_summary['timing']['elapsed'],
+                        'total_cost': final_summary['performance_metrics']['total_cost']
+                    }
+                }
+            })
+
+        except Exception as e:
+            await self._broadcast_to_agent_ui(agent_id, {
+                'event': 'error',
+                'data': {'error': str(e), 'query': query}
+            })
+        finally:
+            # Restore original callback
+            if hasattr(agent, 'set_progress_callback'):
+                agent.set_progress_callback(original_callback)
+            elif hasattr(agent, 'progress_callback'):
+                agent.progress_callback = original_callback
+
+    # Replace the existing method
+    async def _handle_chat_message(self, agent_id: str, agent, conn_id: str, data: dict):
+        """Delegate to enhanced handler."""
+        await self._handle_chat_message_with_progress_integration(agent_id, agent, conn_id, data)
+
+    # Unified publish and host method
+    async def publish_and_host_agent(
+        self,
+        agent,
+        public_name: str,
+        registry_server: Optional[str] = None,
+        description: Optional[str] = None,
+        local_ui: bool = True,
+        host: str = "0.0.0.0",
+        port: Optional[int] = None,
+        use_builtin_server: bool = None
+    ) -> Dict[str, str]:
+        """
+        Unified method to host agent locally and optionally publish to registry.
+
+        Args:
+            agent: Agent or Chain instance
+            public_name: Public name for the agent
+            registry_server: Registry server URL for publishing (optional)
+            description: Agent description
+            local_ui: Whether to host local UI
+            host: Host address for local UI
+            port: Port for local UI
+            use_builtin_server: Use toolbox server vs standalone
+
+        Returns:
+            Dictionary with all access URLs and configuration
+        """
+
+        use_builtin_server = use_builtin_server or self.app.is_server
+        results = {'agent_name': public_name}
+
+        if local_ui:
+            # Host local UI
+            ui_result = await self.host_agent_ui(
+                agent=agent,
+                host=host,
+                port=port,
+                access='local',
+                public_name=public_name,
+                description=description,
+                use_builtin_server=use_builtin_server
+            )
+            results.update(ui_result)
+
+        if registry_server:
+            # Publish to registry
+            registry_result = await self._publish_to_registry(
+                agent=agent,
+                public_name=public_name,
+                registry_server=registry_server,
+                description=description
+            )
+            results.update(registry_result)
+
+        return results
+
+    async def _setup_builtin_server_hosting(self, agent_id: str, agent, host, port) -> Dict[str, str]:
+        """Setup agent hosting using toolbox built-in server with enhanced WebSocket support."""
+
+        # Register WebSocket handlers for this agent
+        @self.app.tb(mod_name="agent_ui", websocket_handler="connect")
+        def register_agent_ws_handlers(_):
+            return {
+                "on_connect": self._create_agent_ws_connect_handler(agent_id),
+                "on_message": self._create_agent_ws_message_handler(agent_id, agent),
+                "on_disconnect": self._create_agent_ws_disconnect_handler(agent_id),
+            }
+
+        # Register UI endpoint - now uses enhanced UI
+        @self.app.tb(mod_name="agent_ui", api=True, version="1", api_methods=['GET'])
+        async def ui():
+            return Result.html(
+                self._get_enhanced_agent_ui_html(agent_id)
+            )
+
+        # Register API endpoint for direct agent interaction
+        @self.app.tb(mod_name="agent_ui", api=True, version="1", request_as_kwarg=True, api_methods=['POST'])
+        async def run_agent(request: RequestData):
+            return await self._handle_direct_agent_run(agent_id, agent, request)
+
+        # Register additional API endpoints for enhanced features
+        @self.app.tb(mod_name="agent_ui", api=True, version="1", request_as_kwarg=True, api_methods=['POST'])
+        async def reset_context(request: RequestData):
+            return await self._handle_api_reset_context(agent_id, agent, request)
+
+        @self.app.tb(mod_name="agent_ui", api=True, version="1", request_as_kwarg=True, api_methods=['GET'])
+        async def status(request: RequestData):
+            return await self._handle_api_get_status(agent_id, agent, request)
+
+        # WebSocket endpoint URL
+        uri = f"{host}:{port}" if port else f"{host}"
+        ws_url = f"ws://{uri}/ws/agent_ui/connect"
+        ui_url = f"http://{uri}/api/agent_ui/ui"
+        api_url = f"http://{uri}/api/agent_ui/run_agent"
+
+        return {
+            'ui_url': ui_url,
+            'ws_url': ws_url,
+            'api_url': api_url,
+            'reset_url': f"http://localhost:{self.app.args_sto.port}/api/agent_ui/reset_context",
+            'status_url': f"http://localhost:{self.app.args_sto.port}/api/agent_ui/status",
+            'server_type': 'builtin',
+            'status': 'running'
+        }
+
+    async def _setup_standalone_server_hosting(self, agent_id: str, agent, host: str, port: int) -> Dict[str, str]:
+        """Setup agent hosting using standalone Python HTTP server with enhanced UI support."""
+
+        if not hasattr(self, '_standalone_servers'):
+            self._standalone_servers = {}
+
+        if port in self._standalone_servers:
+            self.app.print(f"Port {port} is already in use by another agent")
+            return {'status': 'error', 'error': f'Port {port} already in use'}
+
+        # Store server info for the handler
+        server_info = {
+            'agent_id': agent_id,
+            'server_type': 'standalone',
+            'api_paths': {
+                'ui': '/ui',
+                'status': '/api/status',
+                'run': '/api/run',
+                'reset': '/api/reset'
+            }
+        }
+
+        # Create handler factory with agent reference and server info
+        def handler_factory(*args, **kwargs):
+            handler = EnhancedAgentRequestHandler(self, agent_id, agent, *args, **kwargs)
+            handler.server_info = server_info
+            return handler
+
+        # Start HTTP server in separate thread
+        def run_server():
+            try:
+                httpd = HTTPServer((host, port), handler_factory)
+                self._standalone_servers[port] = {
+                    'server': httpd,
+                    'agent_id': agent_id,
+                    'thread': threading.current_thread(),
+                    'server_info': server_info
+                }
+
+                self.app.print(f"Enhanced standalone server for agent '{agent_id}' running on http://{host}:{port}")
+                self.app.print(f"  UI: http://{host}:{port}/ui")
+                self.app.print(f"  API: http://{host}:{port}/api/run")
+                self.app.print(f"  Status: http://{host}:{port}/api/status")
+
+                httpd.serve_forever()
+
+            except Exception as e:
+                self.app.print(f"Standalone server failed: {e}")
+            finally:
+                if port in self._standalone_servers:
+                    del self._standalone_servers[port]
+
+        # Start server in daemon thread
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
 
-        return f"http://{host}:{port}"
+        # Wait a moment to ensure server starts
+        await asyncio.sleep(0.5)
 
+        return {
+            'server_type': 'standalone',
+            'local_url': f"http://{host}:{port}",
+            'ui_url': f"http://{host}:{port}/ui",
+            'api_url': f"http://{host}:{port}/api/run",
+            'reset_url': f"http://{host}:{port}/api/reset",
+            'status_url': f"http://{host}:{port}/api/status",
+            'status': 'running',
+            'port': port
+        }
+
+    async def _handle_direct_agent_run(self, agent_id: str, agent, request_data) -> Result:
+        """Handle direct agent API calls with enhanced progress tracking."""
+
+        try:
+            # Parse request body
+            body = request_data.body if hasattr(request_data, 'body') else {}
+
+            if not isinstance(body, dict):
+                return Result.default_user_error("Request body must be JSON object", exec_code=400)
+
+            query = body.get('query', '')
+            session_id = body.get('session_id', f'api_{secrets.token_hex(8)}')
+            kwargs = body.get('kwargs', {})
+            include_progress = body.get('include_progress', True)
+
+            if not query:
+                return Result.default_user_error("Missing 'query' field in request body", exec_code=400)
+
+            # Enhanced progress tracking for API
+            progress_events = []
+            enhanced_progress = {}
+
+            async def enhanced_api_progress_callback(event):
+                if include_progress:
+                    progress_tracker = EnhancedProgressTracker()
+                    progress_data = progress_tracker.extract_progress_data(event)
+
+                    progress_events.append({
+                        'timestamp': event.timestamp,
+                        'event_type': event.event_type,
+                        'status': event.status.value if event.status else 'unknown',
+                        'agent_name': event.agent_name,
+                        'metadata': event.metadata
+                    })
+
+                    # Store enhanced progress data
+                    enhanced_progress.update(progress_data)
+
+            # Set progress callback
+            original_callback = getattr(agent, 'progress_callback', None)
+
+            try:
+                if hasattr(agent, 'set_progress_callback'):
+                    agent.set_progress_callback(enhanced_api_progress_callback)
+                elif hasattr(agent, 'progress_callback'):
+                    agent.progress_callback = enhanced_api_progress_callback
+
+                # Execute agent
+                result = await agent.a_run(query=query, session_id=session_id, **kwargs)
+
+                # Return enhanced structured response
+                response_data = {
+                    'success': True,
+                    'result': result,
+                    'session_id': session_id,
+                    'agent_id': agent_id,
+                    'execution_time': time.time()
+                }
+
+                if include_progress:
+                    response_data.update({
+                        'progress_events': progress_events,
+                        'enhanced_progress': enhanced_progress,
+                        'outline_info': enhanced_progress.get('outline', {}),
+                        'system_info': enhanced_progress.get('system', {}),
+                        'meta_tools_used': enhanced_progress.get('meta_tools', [])
+                    })
+
+                return Result.json(data=response_data)
+
+            except Exception as e:
+                self.app.print(f"Agent execution error: {e}", error=True)
+                return Result.default_internal_error(
+                    info=f"Agent execution failed: {str(e)}",
+                    exec_code=500
+                )
+            finally:
+                # Restore original callback
+                if hasattr(agent, 'set_progress_callback'):
+                    agent.set_progress_callback(original_callback)
+                elif hasattr(agent, 'progress_callback'):
+                    agent.progress_callback = original_callback
+
+        except Exception as e:
+            self.app.print(f"Direct agent run error: {e}", error=True)
+            return Result.default_internal_error(
+                info=f"Request processing failed: {str(e)}",
+                exec_code=500
+            )
+
+    async def _handle_api_reset_context(self, agent_id: str, agent, request_data) -> Result:
+        """Handle API context reset requests."""
+        try:
+            if hasattr(agent, 'clear_context'):
+                agent.clear_context()
+                message = "Context reset successfully"
+                success = True
+            elif hasattr(agent, 'reset'):
+                agent.reset()
+                message = "Agent reset successfully"
+                success = True
+            else:
+                message = "Agent does not support context reset"
+                success = False
+
+            return Result.json(data={
+                'success': success,
+                'message': message,
+                'agent_id': agent_id,
+                'timestamp': time.time()
+            })
+
+        except Exception as e:
+            return Result.default_internal_error(
+                info=f"Context reset failed: {str(e)}",
+                exec_code=500
+            )
+
+    async def _handle_api_get_status(self, agent_id: str, agent, request_data) -> Result:
+        """Handle API status requests."""
+        try:
+            # Collect comprehensive agent status
+            status_info = {
+                'agent_id': agent_id,
+                'agent_name': getattr(agent, 'name', 'Unknown'),
+                'agent_type': agent.__class__.__name__,
+                'status': 'active',
+                'timestamp': time.time(),
+                'server_type': 'api'
+            }
+
+            # Add agent-specific status
+            if hasattr(agent, 'status'):
+                try:
+                    agent_status = agent.status()
+                    if isinstance(agent_status, dict):
+                        status_info['agent_status'] = agent_status
+                except:
+                    pass
+
+            # Add hosted agent info
+            if hasattr(self, '_hosted_agents') and agent_id in self._hosted_agents:
+                hosted_info = self._hosted_agents[agent_id]
+                status_info.update({
+                    'host': hosted_info.get('host'),
+                    'port': hosted_info.get('port'),
+                    'access': hosted_info.get('access'),
+                    'public_name': hosted_info.get('public_name'),
+                    'description': hosted_info.get('description')
+                })
+
+            # Add connection info
+            connection_count = 0
+            if hasattr(self, '_agent_connections') and agent_id in self._agent_connections:
+                connection_count = len(self._agent_connections[agent_id])
+
+            status_info['active_connections'] = connection_count
+
+            return Result.json(data=status_info)
+
+        except Exception as e:
+            return Result.default_internal_error(
+                info=f"Status retrieval failed: {str(e)}",
+                exec_code=500
+            )
 
 def shell_tool_function(command: str) -> str:
     result: dict[str, Any] = {"success": False, "output": "", "error": ""}

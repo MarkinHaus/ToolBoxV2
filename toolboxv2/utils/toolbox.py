@@ -22,7 +22,6 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
-
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
 from .singelton_class import Singleton
@@ -205,6 +204,14 @@ class App(AppType, metaclass=Singleton):
             _, server_list = self.cluster_manager.status_all()
         from .extras.blobs import BlobStorage
         self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
+        # self._start_event_loop()
+
+    def _start_event_loop(self):
+        """Starts the asyncio event loop in a separate thread."""
+        if self.loop is None:
+            self.loop = asyncio.new_event_loop()
+            self.loop_thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+            self.loop_thread.start()
 
     def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
@@ -610,9 +617,24 @@ class App(AppType, metaclass=Singleton):
         self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
 
     def init_mod(self, mod_name, spec='app'):
+        """
+        Initializes a module in a thread-safe manner by submitting the
+        asynchronous initialization to the running event loop.
+        """
         if '.' in mod_name:
             mod_name = mod_name.split('.')[0]
-        return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
+        self.run_bg_task(self.a_init_mod, mod_name, spec)
+        # loop = self.loop_gard()
+        # if loop:
+        #     # Create a future to get the result from the coroutine
+        #     future: Future = asyncio.run_coroutine_threadsafe(
+        #         self.a_init_mod(mod_name, spec), loop
+        #     )
+        #     # Block until the result is available
+        #     return future.result()
+        # else:
+        #     raise ValueError("Event loop is not running")
+        #     # return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
     def run_bg_task(self, task: Callable, *args, **kwargs) -> Optional[asyncio.Task]:
         """
@@ -846,6 +868,7 @@ class App(AppType, metaclass=Singleton):
 
     def loop_gard(self):
         if self.loop is None:
+            self._start_event_loop()
             self.loop = asyncio.get_event_loop()
         if self.loop.is_closed():
             self.loop = asyncio.get_event_loop()
@@ -1200,10 +1223,10 @@ class App(AppType, metaclass=Singleton):
         else:
             raise TypeError("Unknown function type")
 
-        if not self.mod_online(modular_name, installed=True):
-            self.get_mod(modular_name)
-
         if tb_run_with_specification == 'ws_internal':
+            modular_name = modular_name.split('/')[0]
+            if not self.mod_online(modular_name, installed=True):
+                self.get_mod(modular_name)
             handler_id, event_name = mod_function_name
             if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
                 handler_func = self.websocket_handlers[handler_id][event_name]
@@ -1220,6 +1243,9 @@ class App(AppType, metaclass=Singleton):
             else:
                 # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
                 return Result.ok(info=f"No WS handler for '{event_name}'.")
+
+        if not self.mod_online(modular_name, installed=True):
+            self.get_mod(modular_name)
 
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
@@ -1268,6 +1294,7 @@ class App(AppType, metaclass=Singleton):
             return await self.a_fuction_runner(function, function_data, args, kwargs, t0)
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
+
 
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
@@ -2207,22 +2234,47 @@ class App(AppType, metaclass=Singleton):
 
     # WS logic
 
-    def _set_rust_ws_bridge(self, bridge_object):
+    def _set_rust_ws_bridge(self, bridge_object: Any):
+        """
+        Diese Methode wird von Rust aufgerufen, um die Kommunikationsbrücke zu setzen.
+        Sie darf NICHT manuell von Python aus aufgerufen werden.
+        """
+        self.print(f"Rust WebSocket bridge has been set for instance {self.id}.")
         self._rust_ws_bridge = bridge_object
 
-    # NEU: WebSocket-Sendemethoden
     async def ws_send(self, conn_id: str, payload: dict):
-        """Sendet eine Nachricht an eine einzelne WebSocket-Verbindung."""
-        if not self._rust_ws_bridge:
-            raise RuntimeError("WebSocket bridge to Rust is not initialized.")
-        # Diese Methode ruft eine von Rust bereitgestellte Funktion auf
-        # Wir nehmen an, die Bridge hat eine Methode `send_message`
-        await self._rust_ws_bridge.send_message(conn_id, json.dumps(payload))
+        """
+        Sendet eine Nachricht asynchron an eine einzelne WebSocket-Verbindung.
 
-    async def ws_broadcast(self, channel_id: str, payload: dict, source_conn_id: str = ""):
-        """Sendet eine Nachricht an alle Clients in einem Kanal/Raum."""
-        if not self._rust_ws_bridge:
-            raise RuntimeError("WebSocket bridge to Rust is not initialized.")
-        # Ruft die Broadcast-Funktion der Rust-Bridge auf
-        await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
+        Args:
+            conn_id: Die eindeutige ID der Zielverbindung.
+            payload: Ein Dictionary, das als JSON gesendet wird.
+        """
+        if self._rust_ws_bridge is None:
+            self.logger.error("Cannot send WebSocket message: Rust bridge is not initialized.")
+            return
 
+        try:
+            # Ruft die asynchrone Rust-Methode auf und wartet auf deren Abschluss
+            await self._rust_ws_bridge.send_message(conn_id, json.dumps(payload))
+        except Exception as e:
+            self.logger.error(f"Failed to send WebSocket message to {conn_id}: {e}", exc_info=True)
+
+    async def ws_broadcast(self, channel_id: str, payload: dict, source_conn_id: str = "python_broadcast"):
+        """
+        Sendet eine Nachricht asynchron an alle Clients in einem Kanal/Raum.
+
+        Args:
+            channel_id: Der Kanal, an den gesendet werden soll.
+            payload: Ein Dictionary, das als JSON gesendet wird.
+            source_conn_id (optional): Die ID der ursprünglichen Verbindung, um Echos zu vermeiden.
+        """
+        if self._rust_ws_bridge is None:
+            self.logger.error("Cannot broadcast WebSocket message: Rust bridge is not initialized.")
+            return
+
+        try:
+            # Ruft die asynchrone Rust-Broadcast-Methode auf
+            await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
+        except Exception as e:
+            self.logger.error(f"Failed to broadcast WebSocket message to channel {channel_id}: {e}", exc_info=True)

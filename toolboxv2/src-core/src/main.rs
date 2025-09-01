@@ -196,14 +196,14 @@ struct WsMessage {
 
 struct WebSocketActor {
     conn_id: String,
-    client: ToolboxClient,
+    client:  Arc<ToolboxClient>,
     session: SessionData, // Annahme: SessionData wird aus der Session extrahiert
     channel_id: Option<String>, // Der "Raum" oder die Gruppe, der diese Verbindung angehört
     hb: Instant,
 }
 
 impl WebSocketActor {
-    fn new(client: ToolboxClient, session: Session, module: &str, function: &str) -> Self {
+    fn new(client: Arc<ToolboxClient>, session: Session, module: &str, function: &str) -> Self {
         let conn_id = Uuid::new_v4().to_string();
         let session_data = session.get("live_data").unwrap_or(None).unwrap_or_default(); // Vereinfachte Extraktion
         Self {
@@ -420,39 +420,68 @@ async fn websocket_handler(
     )
 }
 
-// --- NEU: Python-callable Funktionen für WebSocket-Kommunikation ---
-#[pyfunction]
-fn ws_send_py(conn_id: String, payload: String) -> PyResult<()> {
-    if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
-        conn.value().do_send(WsMessage {
-            source_conn_id: "python_direct".to_string(),
-            content: payload,
-            target_conn_id: Some(conn_id),
-            target_channel_id: None,
-        });
-    } else {
-        warn!("ws_send_py: Connection ID '{}' not found.", conn_id);
+// --- NEU: Die Rust-zu-Python Bridge-Klasse ---
+
+/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
+/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
+#[pyclass]
+struct RustWsBridge;
+
+#[pymethods]
+impl RustWsBridge {
+    /// KORREKTUR: Füge einen `#[new]` Konstruktor hinzu.
+    /// Dieser wird aufgerufen, wenn Python `RustWsBridge()` ausführt.
+    #[new]
+    fn new() -> Self {
+        RustWsBridge
     }
-    Ok(())
+
+    /// Sendet eine Nachricht an eine einzelne WebSocket-Verbindung.
+    #[pyo3(name = "send_message")]
+    fn send_message_py<'p>(&self, py: Python<'p>, conn_id: String, payload: String) -> PyResult<&'p PyAny> {
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
+                conn.value().do_send(WsMessage {
+                    source_conn_id: "python_direct".to_string(),
+                    content: payload,
+                    target_conn_id: Some(conn_id),
+                    target_channel_id: None,
+                });
+            } else {
+                warn!("RustWsBridge: Connection ID '{}' not found for sending.", conn_id);
+            }
+            Ok(())
+        })
+    }
+
+    /// Sendet eine Nachricht an alle Clients in einem Kanal.
+    #[pyo3(name = "broadcast_message")]
+    fn broadcast_message_py<'p>(&self, py: Python<'p>, channel_id: String, payload: String, source_conn_id: String) -> PyResult<&'p PyAny> {
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            let msg = WsMessage {
+                source_conn_id,
+                content: payload,
+                target_conn_id: None,
+                target_channel_id: Some(channel_id),
+            };
+            if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+                error!("RustWsBridge: Failed to send broadcast message: {}", e);
+            }
+            Ok(())
+        })
+    }
 }
 
-#[pyfunction]
-fn ws_broadcast_py(channel_id: String, payload: String, source_conn_id: String) -> PyResult<()> {
-    let msg = WsMessage {
-        source_conn_id,
-        content: payload,
-        target_conn_id: None,
-        target_channel_id: Some(channel_id),
-    };
-    if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
-        error!("ws_broadcast_py: Failed to send broadcast message: {}", e);
-    }
+/// Ein internes Python-Modul, das in Rust erstellt wird.
+#[pymodule]
+fn rust_bridge_internal(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<RustWsBridge>()?;
     Ok(())
 }
-
 
 lazy_static! {
-    static ref TOOLBOX_CLIENT: Mutex<Option<ToolboxClient>> = Mutex::new(None);
+    // Der Option-Typ enthält nun einen Arc<ToolboxClient>, nicht den Client selbst.
+    static ref TOOLBOX_CLIENT: Mutex<Option<Arc<ToolboxClient>>> = Mutex::new(None);
 }
 
 /// A Python toolbox instance that runs within the process
@@ -560,32 +589,37 @@ pub fn initialize_python_environment() -> Result<(), ToolboxError> {
 
 
 /// Initialize the toolbox client and immediately create an instance
-pub async fn initialize_toolbox_client(
+
+pub async fn initialize_and_get_toolbox_client(
     max_instances: usize,
     timeout_seconds: u64,
     client_prifix: String,
-) -> Result<(), ToolboxError> {
-    // Set up Python environment before creating the client
+) -> Result<Arc<ToolboxClient>, ToolboxError> {
     initialize_python_environment()?;
-
-    // Create the client
     let client = ToolboxClient::new(max_instances, timeout_seconds, client_prifix);
 
-    // Immediately create a Python instance (don't wait for first request)
-    client.create_python_instance().await?;
+    if let Err(e) = client.create_python_instance().await {
+        error!("Critical error during initial Python instance creation: {:?}", e);
+        return Err(e);
+    }
 
-    // Store the client
+    let client_arc = Arc::new(client);
+
     let mut client_mutex = TOOLBOX_CLIENT.lock().unwrap();
-    *client_mutex = Some(client);
+    // KORREKTUR: Speichere den Arc direkt. .clone() erhöht nur den Zähler.
+    *client_mutex = Some(client_arc.clone());
 
-    info!("ToolboxClient initialized with initial instance created");
-    Ok(())
+    info!("ToolboxClient initialized and first Python instance created successfully.");
+    Ok(client_arc)
 }
 
 /// Get the global toolbox client
-pub fn get_toolbox_client() -> Result<ToolboxClient, ToolboxError> {
-    let client = TOOLBOX_CLIENT.lock().unwrap();
-    client.clone().ok_or_else(|| ToolboxError::Unknown("ToolboxClient not initialized".to_string()))
+pub fn get_toolbox_client() -> Result<Arc<ToolboxClient>, ToolboxError> {
+    let client_guard = TOOLBOX_CLIENT.lock().unwrap();
+    // .clone() auf einer Option<Arc<T>> klont den Arc, was genau das ist, was wir wollen.
+    client_guard.clone().ok_or_else(|| {
+        ToolboxError::Unknown("ToolboxClient not initialized".to_string())
+    })
 }
 
 
@@ -695,6 +729,18 @@ impl ToolboxClient {
                     }
                 };
 
+                // Bridge-Injektion
+                let bridge_module = PyModule::new(py, "rust_bridge_internal")?;
+                rust_bridge_internal(py, bridge_module)?;
+                let bridge_class = bridge_module.getattr("RustWsBridge")?;
+                let bridge_instance = bridge_class.call0()?; // Dies funktioniert jetzt
+
+                if app.hasattr("_set_rust_ws_bridge")? {
+                    app.call_method1("_set_rust_ws_bridge", (bridge_instance,))?;
+                    info!("Successfully injected Rust WebSocket bridge into Python instance {}.", instance_id);
+                } else {
+                    warn!("Python App object is missing '_set_rust_ws_bridge' method.");
+                }
 
                 Ok((instance_id, app.into_py(py)))
             })
@@ -2593,28 +2639,33 @@ async fn main() -> std::io::Result<()> {
     info!("Configuration loaded: {:?}", config);
 
 
-    let _ = initialize_toolbox_client(config.toolbox.max_instances as usize,  // Port range to use
-                              config.toolbox.timeout_seconds,            // Timeout in seconds
-                              config.toolbox.client_prifix,            // Timeout in seconds
-
-    ).await;
-
-
-    let client = match get_toolbox_client() {
-        Ok(client) => Arc::new(client),
+    let client = match initialize_and_get_toolbox_client(
+        config.toolbox.max_instances as usize,
+        config.toolbox.timeout_seconds,
+        config.toolbox.client_prifix,
+    ).await {
+        Ok(client_instance) => client_instance,
         Err(e) => {
-            panic!("{:?}", e)
+            error!("FATAL: ToolboxClient initialization failed: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to initialize Python backend: {:?}", e),
+            ));
         }
     };
 
-    info!("init_modules loaded: {:?} - {:?}", config.server.init_modules, client.initialize(config.server.init_modules.clone(), Option::from("init_mod")).await.map_err(|e| ToolboxError::from(e)));
-
-    info!("watch_modules loaded: {:?} - {:?}", config.server.watch_modules, client.initialize(config.server.watch_modules.clone(), Option::from("watch_mod")).await.map_err(|e| ToolboxError::from(e)));
+    // Initialisiere die Module NACHDEM der Client erfolgreich erstellt wurde.
+    if let Err(e) = client.initialize(config.server.init_modules.clone(), Some("init_mod")).await {
+        warn!("Errors occurred during initial module loading: {:?}", e);
+    }
+    if let Err(e) = client.initialize(config.server.watch_modules.clone(), Some("watch_mod")).await {
+        warn!("Errors occurred during watched module loading: {:?}", e);
+    }
 
     // Create session manager
     let session_manager = web::Data::new(SessionManager::new(
         config.session.clone(),
-        Arc::from(client.clone()),
+        Arc::clone(&client),
     ));
 
     // Generate session key

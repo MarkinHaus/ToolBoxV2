@@ -1,8 +1,9 @@
+import json
 from enum import Enum
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass, asdict, fields
 from pydantic import BaseModel, Field
 import uuid
 import time
@@ -28,7 +29,7 @@ class TextLength(Enum):
     DETAILED_INDEPTH = "detailed-indepth"
     PHD_LEVEL = "phd-level"
 
-
+@dataclass
 class NodeStatus(Enum):
     PENDING = "pending"
     STARTING = "starting"
@@ -39,6 +40,13 @@ class NodeStatus(Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
 
+class CustomEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if is_dataclass(obj):
+            return asdict(obj)
+        if isinstance(obj, Enum):
+            return obj.value
+        return super().default(obj)
 
 @dataclass
 class ProgressEvent:
@@ -102,6 +110,96 @@ class ProgressEvent:
         if self.status == NodeStatus.COMPLETED:
             self.success = True
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert ProgressEvent to dictionary with proper handling of all field types"""
+        result = {}
+
+        # Get all fields from the dataclass
+        for field in fields(self):
+            value = getattr(self, field.name)
+
+            # Handle None values
+            if value is None:
+                result[field.name] = None
+                continue
+
+            # Handle NodeStatus enum
+            if isinstance(value, NodeStatus):
+                result[field.name] = value.value
+            # Handle other enums
+            elif isinstance(value, Enum):
+                result[field.name] = value.value
+            # Handle dataclass objects
+            elif is_dataclass(value):
+                result[field.name] = asdict(value)
+            # Handle dictionaries (recursively process nested enums/dataclasses)
+            elif isinstance(value, dict):
+                result[field.name] = self._process_dict(value)
+            # Handle lists (recursively process nested items)
+            elif isinstance(value, list):
+                result[field.name] = self._process_list(value)
+            # Handle primitive types
+            else:
+                result[field.name] = value
+
+        return result
+
+    def _process_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively process dictionary values"""
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, Enum):
+                result[k] = v.value
+            elif is_dataclass(v):
+                result[k] = asdict(v)
+            elif isinstance(v, dict):
+                result[k] = self._process_dict(v)
+            elif isinstance(v, list):
+                result[k] = self._process_list(v)
+            else:
+                result[k] = v
+        return result
+
+    def _process_list(self, lst: List[Any]) -> List[Any]:
+        """Recursively process list items"""
+        result = []
+        for item in lst:
+            if isinstance(item, Enum):
+                result.append(item.value)
+            elif is_dataclass(item):
+                result.append(asdict(item))
+            elif isinstance(item, dict):
+                result.append(self._process_dict(item))
+            elif isinstance(item, list):
+                result.append(self._process_list(item))
+            else:
+                result.append(item)
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ProgressEvent':
+        """Create ProgressEvent from dictionary"""
+        # Create a copy to avoid modifying the original
+        data_copy = dict(data)
+
+        # Handle NodeStatus enum conversion from string back to enum
+        if 'status' in data_copy and data_copy['status'] is not None:
+            if isinstance(data_copy['status'], str):
+                try:
+                    data_copy['status'] = NodeStatus(data_copy['status'])
+                except (ValueError, TypeError):
+                    # If invalid status value, set to None
+                    data_copy['status'] = None
+
+        # Filter out any keys that aren't valid dataclass fields
+        field_names = {field.name for field in fields(cls)}
+        filtered_data = {k: v for k, v in data_copy.items() if k in field_names}
+
+        # Ensure metadata is properly initialized
+        if 'metadata' not in filtered_data or filtered_data['metadata'] is None:
+            filtered_data['metadata'] = {}
+
+        return cls(**filtered_data)
 
 class ProgressTracker:
     """Advanced progress tracking with cost calculation"""

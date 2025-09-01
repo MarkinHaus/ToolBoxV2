@@ -1862,19 +1862,35 @@ Execution:
 
 from typing import Any
 
-from browser_use import Agent as BrowserAgent
-from browser_use import Browser, BrowserConfig
-from browser_use.browser.context import BrowserContextConfig
-from browser_use.llm import (
-    ChatOpenAI,
-    ChatAnthropic,
-    ChatGoogle,
-    ChatAzureOpenAI,
-    ChatAWSBedrock,
-    ChatGroq,
-    ChatOllama,
-    ChatOpenRouter,
-)
+try:
+    from browser_use import Agent as BrowserAgent
+    from browser_use import Browser, BrowserConfig
+    from browser_use.browser.context import BrowserContextConfig
+    from browser_use.llm import (
+        ChatOpenAI,
+        ChatAnthropic,
+        ChatGoogle,
+        ChatAzureOpenAI,
+        ChatAWSBedrock,
+        ChatGroq,
+        ChatOllama,
+        ChatOpenRouter,
+    )
+except ImportError:
+    BrowserAgent = Any
+    Browser = Any
+    BrowserConfig = Any
+    BrowserContextConfig = Any
+    ChatOpenAI = Any
+    ChatAnthropic = Any
+    ChatGoogle = Any
+    ChatAzureOpenAI = Any
+    ChatAWSBedrock = Any
+    ChatGroq = Any
+    ChatOllama = Any
+    ChatOpenRouter = Any
+
+    print("BrowserUse not available. Please install browser-use for full functionality.")
 
 
 _MODEL_MAP = {

@@ -325,3 +325,589 @@ asyncio.run(main_demo())
 *   **Configuration is Key**: An agent's performance is highly dependent on its configuration, especially its system message, persona, and the tools it has access to.
 *   **Security**: Be extremely cautious when using tools that can execute code (`execute_python`) or shell commands (`shell`). The default `ToolsInterface` is sandboxed to a specific directory, but care should always be taken. Avoid exposing these agents to untrusted inputs.
 *   **State and Sessions**: Use `session_id` to maintain distinct conversational contexts for different users or tasks. The agent's memory and state are tied to this ID.
+
+## Overview
+
+The Chain system provides a powerful way to orchestrate multiple ISAA agents in complex workflows. Chains allow you to create sophisticated AI pipelines with sequential execution, parallel processing, conditional branching, error handling, and automatic data formatting between agents.
+
+## Core Concepts
+
+### 1. Basic Chain Operations
+
+The chain system uses intuitive operators to define workflows:
+
+- `>>` : Sequential execution (pipe operator)
+- `+` or `&` : Parallel execution
+- `%` : Conditional branching
+- `|` : Error handling (try/catch)
+- `-` : Data extraction and formatting
+
+### 2. Chain Components
+
+#### **CF (Chain Format)**
+Handles data transformation and extraction between agents using Pydantic models.
+
+```python
+from pydantic import BaseModel
+
+class UserProfile(BaseModel):
+    name: str
+    age: int
+    interests: list[str]
+
+# Create a formatter
+profile_format = CF(UserProfile)
+```
+
+#### **IS (Conditional Check)**
+Creates conditional logic based on data values.
+
+```python
+# Check if age is over 18
+adult_check = IS("age", 18)
+```
+
+## Basic Usage
+
+### 1. Setting Up Agents for Chaining
+
+```python
+import asyncio
+from toolboxv2 import get_app
+
+# Initialize ISAA
+app = get_app("chain_demo")
+isaa = app.get_mod("isaa")
+await isaa.init_isaa()
+
+# Create specialized agents
+async def setup_agents():
+    # Data extractor agent
+    extractor_builder = isaa.get_agent_builder("data_extractor")
+    extractor_builder.with_system_message(
+        "You extract structured information from text. Always provide complete, accurate data."
+    )
+    await isaa.register_agent(extractor_builder)
+
+    # Analyzer agent
+    analyzer_builder = isaa.get_agent_builder("analyzer")
+    analyzer_builder.with_system_message(
+        "You analyze data and provide insights and recommendations."
+    )
+    await isaa.register_agent(analyzer_builder)
+
+    # Report generator
+    reporter_builder = isaa.get_agent_builder("reporter")
+    reporter_builder.with_system_message(
+        "You create detailed reports from analysis data."
+    )
+    await isaa.register_agent(reporter_builder)
+
+await setup_agents()
+```
+
+### 2. Simple Sequential Chain
+
+```python
+async def simple_sequential_chain():
+    # Get agent instances
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+    reporter = await isaa.get_agent("reporter")
+
+    # Create a sequential chain
+    chain = extractor >> analyzer >> reporter
+
+    # Execute the chain
+    user_text = "John Smith is 25 years old and loves hiking, photography, and cooking."
+    result = await chain.a_run(user_text)
+
+    print("Final Report:", result)
+
+# Run the chain
+await simple_sequential_chain()
+```
+
+## Advanced Chain Features
+
+### 1. Data Formatting with CF
+
+```python
+from pydantic import BaseModel
+from typing import List
+
+class PersonData(BaseModel):
+    name: str
+    age: int
+    interests: List[str]
+    location: str = "Unknown"
+
+class Analysis(BaseModel):
+    profile_summary: str
+    recommendations: List[str]
+    risk_score: int
+
+async def formatted_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+
+    # Chain with structured data formatting
+    chain = (
+        extractor >>
+        CF(PersonData) >>
+        analyzer >>
+        CF(Analysis)
+    )
+
+    user_input = "Sarah Johnson, 28, lives in Seattle. Enjoys rock climbing, programming, and yoga."
+
+    result = await chain.a_run(user_input)
+    print("Structured Result:", result)
+
+await formatted_chain()
+```
+
+### 2. Data Extraction with Key Selection
+
+```python
+async def extraction_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+
+    # Extract specific fields using the - operator
+    chain = (
+        extractor >>
+        CF(PersonData) - "interests" >>  # Extract only interests
+        analyzer
+    )
+
+    # Extract multiple fields
+    multi_extract_chain = (
+        extractor >>
+        CF(PersonData) - ("name", "age") >>  # Extract name and age
+        analyzer
+    )
+
+    # Extract all fields
+    all_extract_chain = (
+        extractor >>
+        CF(PersonData) - "*" >>  # Extract everything
+        analyzer
+    )
+
+    user_input = "Mike loves surfing and coding. He's 30 years old."
+
+    result1 = await chain.a_run(user_input)
+    result2 = await multi_extract_chain.a_run(user_input)
+    result3 = await all_extract_chain.a_run(user_input)
+
+    print("Interests only:", result1)
+    print("Name and age:", result2)
+    print("All data:", result3)
+
+await extraction_chain()
+```
+
+### 3. Parallel Processing
+
+```python
+async def parallel_chain():
+    analyzer = await isaa.get_agent("analyzer")
+    reporter = await isaa.get_agent("reporter")
+
+    # Create a specialized summarizer
+    summarizer_builder = isaa.get_agent_builder("summarizer")
+    summarizer_builder.with_system_message("You create concise summaries.")
+    await isaa.register_agent(summarizer_builder)
+
+    summarizer = await isaa.get_agent("summarizer")
+
+    # Parallel execution using + operator
+    parallel_chain = analyzer + reporter + summarizer
+
+    # Sequential then parallel
+    extractor = await isaa.get_agent("data_extractor")
+    complex_chain = extractor >> (analyzer + reporter)
+
+    data = "Complex project data with multiple stakeholders and requirements..."
+
+    # This will run analyzer, reporter, and summarizer simultaneously
+    parallel_result = await parallel_chain.a_run(data)
+    print("Parallel Results:", parallel_result)
+
+    # This will run extractor first, then analyzer and reporter in parallel
+    complex_result = await complex_chain.a_run(data)
+    print("Complex Chain Result:", complex_result)
+
+await parallel_chain()
+```
+
+### 4. Auto-Parallel Processing
+
+```python
+class TaskList(BaseModel):
+    tasks: List[str]
+    priority: str
+
+async def auto_parallel_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+
+    # Auto-parallel: Process each task in the list simultaneously
+    chain = (
+        extractor >>
+        CF(TaskList) - "tasks[n]" >>  # [n] creates auto-parallel
+        analyzer
+    )
+
+    input_text = """
+    I have these tasks to analyze:
+    - Review quarterly reports
+    - Plan next sprint
+    - Update documentation
+    - Conduct team interviews
+    """
+
+    # The analyzer will process each task in parallel automatically
+    results = await chain.a_run(input_text)
+    print("Auto-parallel Results:", results)
+
+await auto_parallel_chain()
+```
+
+### 5. Conditional Chains
+
+```python
+async def conditional_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+    reporter = await isaa.get_agent("reporter")
+
+    # Create a simple approval agent
+    approver_builder = isaa.get_agent_builder("approver")
+    approver_builder.with_system_message(
+        "You approve or reject based on criteria. Return 'approved' or 'rejected'."
+    )
+    await isaa.register_agent(approver_builder)
+    approver = await isaa.get_agent("approver")
+
+    # Conditional chain: different paths based on approval
+    chain = (
+        extractor >>
+        approver >>
+        IS("status", "approved") >> reporter %  # If approved, generate report
+        analyzer  # If not approved, send to analyzer for revision
+    )
+
+    approved_request = "This is a well-structured, reasonable business proposal."
+    rejected_request = "This request lacks proper documentation and justification."
+
+    result1 = await chain.a_run(approved_request)  # Goes to reporter
+    result2 = await chain.a_run(rejected_request)  # Goes to analyzer
+
+    print("Approved path result:", result1)
+    print("Rejected path result:", result2)
+
+await conditional_chain()
+```
+
+### 6. Error Handling Chains
+
+```python
+async def error_handling_chain():
+    # Create a potentially failing agent
+    risky_builder = isaa.get_agent_builder("risky_processor")
+    risky_builder.with_system_message(
+        "You process data but sometimes fail. Randomly throw errors for demonstration."
+    )
+    await isaa.register_agent(risky_builder)
+
+    risky_agent = await isaa.get_agent("risky_processor")
+    safe_agent = await isaa.get_agent("analyzer")  # Fallback
+
+    # Error handling chain using | operator
+    chain = risky_agent | safe_agent
+
+    # If risky_agent fails, safe_agent will handle it
+    try:
+        result = await chain.a_run("Process this potentially problematic data")
+        print("Chain completed:", result)
+    except Exception as e:
+        print("Chain failed despite fallback:", e)
+
+await error_handling_chain()
+```
+
+## Complex Workflow Examples
+
+### 1. Multi-Stage Document Processing
+
+```python
+class DocumentMetadata(BaseModel):
+    title: str
+    author: str
+    document_type: str
+    complexity_score: int
+
+class ProcessingResult(BaseModel):
+    summary: str
+    key_points: List[str]
+    action_items: List[str]
+
+async def document_processing_workflow():
+    # Set up specialized agents
+    metadata_extractor = await isaa.get_agent("data_extractor")
+    content_analyzer = await isaa.get_agent("analyzer")
+    summarizer = await isaa.get_agent("summarizer")
+    action_extractor = await isaa.get_agent("reporter")
+
+    # Complex multi-path workflow
+    workflow = (
+        metadata_extractor >>
+        CF(DocumentMetadata) >>
+        # Branch based on complexity
+        (IS("complexity_score", "high") >>
+         (content_analyzer + summarizer) >>  # Parallel processing for complex docs
+         action_extractor) %
+        (summarizer >> action_extractor) >>  # Simple path for easy docs
+        CF(ProcessingResult)
+    )
+
+    complex_doc = """
+    Title: Advanced AI Architecture Proposal
+    Author: Dr. Sarah Chen
+    Type: Technical Specification
+
+    This document outlines a comprehensive approach to implementing
+    next-generation AI systems with distributed processing capabilities...
+    [Complex technical content continues...]
+    """
+
+    simple_doc = """
+    Title: Meeting Notes
+    Author: John Smith
+    Type: Meeting Minutes
+
+    Brief discussion about quarterly goals and upcoming deadlines.
+    """
+
+    complex_result = await workflow.a_run(complex_doc)
+    simple_result = await workflow.a_run(simple_doc)
+
+    print("Complex Document Result:", complex_result)
+    print("Simple Document Result:", simple_result)
+
+await document_processing_workflow()
+```
+
+### 2. Customer Service Chain
+
+```python
+class CustomerInquiry(BaseModel):
+    customer_id: str
+    inquiry_type: str
+    priority: str
+    issue_description: str
+
+class ServiceResponse(BaseModel):
+    response_text: str
+    escalation_needed: bool
+    follow_up_required: bool
+    estimated_resolution_time: str
+
+async def customer_service_chain():
+    # Specialized customer service agents
+    classifier = await isaa.get_agent("data_extractor")  # Classifies inquiries
+    support_agent = await isaa.get_agent("analyzer")     # Handles standard issues
+    specialist = await isaa.get_agent("reporter")        # Handles complex issues
+
+    # Customer service workflow
+    service_chain = (
+        classifier >>
+        CF(CustomerInquiry) >>
+        # Route based on priority
+        (IS("priority", "high") >> specialist) %      # High priority to specialist
+        (IS("priority", "medium") >> support_agent) %  # Medium to support
+        support_agent >>                               # Low to standard support
+        CF(ServiceResponse) |
+        # Fallback for any errors
+        "I apologize, but I'm unable to process your request right now. Please contact our support team directly."
+    )
+
+    high_priority = """
+    Customer ID: CUST001
+    Issue: Critical system outage affecting production
+    Priority: HIGH
+    Description: Our entire payment system is down, affecting thousands of transactions.
+    """
+
+    low_priority = """
+    Customer ID: CUST002
+    Issue: Question about account settings
+    Priority: LOW
+    Description: How do I change my email preferences?
+    """
+
+    high_result = await service_chain.a_run(high_priority)
+    low_result = await service_chain.a_run(low_priority)
+
+    print("High Priority Response:", high_result)
+    print("Low Priority Response:", low_result)
+
+await customer_service_chain()
+```
+
+## Chain Visualization and Debugging
+
+### 1. Visualize Chain Structure
+
+```python
+async def visualize_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+    reporter = await isaa.get_agent("reporter")
+
+    # Create a complex chain
+    complex_chain = (
+        extractor >>
+        CF(PersonData) - "interests[n]" >>  # Auto-parallel
+        (analyzer + reporter) >>            # Parallel processing
+        CF(Analysis) |                      # Error handling
+        "Fallback response"
+    )
+
+    # Visualize the chain structure
+    complex_chain.print_graph()
+
+await visualize_chain()
+```
+
+### 2. Progress Tracking
+
+```python
+from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
+
+class ChainProgressTracker:
+    def __init__(self):
+        self.events = []
+
+    async def emit_event(self, event: ProgressEvent):
+        self.events.append(event)
+        print(f"[{event.event_type}] {event.node_name}: {event.status}")
+
+async def tracked_chain():
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer = await isaa.get_agent("analyzer")
+
+    chain = extractor >> analyzer
+
+    # Set up progress tracking
+    tracker = ChainProgressTracker()
+    chain.set_progress_callback(tracker)
+
+    result = await chain.a_run("Process this data with tracking")
+
+    print("\nProgress Events:")
+    for event in tracker.events:
+        print(f"  {event.timestamp}: {event.event_type} - {event.node_name}")
+
+await tracked_chain()
+```
+
+## Best Practices
+
+### 1. Agent Specialization
+
+```python
+async def specialized_agents_example():
+    # Create highly specialized agents for better chain performance
+
+    # JSON extractor
+    json_extractor_builder = isaa.get_agent_builder("json_extractor")
+    json_extractor_builder.with_system_message(
+        "You extract data and return it in valid JSON format. Always use proper JSON syntax."
+    )
+    await isaa.register_agent(json_extractor_builder)
+
+    # Validator agent
+    validator_builder = isaa.get_agent_builder("validator")
+    validator_builder.with_system_message(
+        "You validate data for completeness and accuracy. Return 'valid' or 'invalid' with reasons."
+    )
+    await isaa.register_agent(validator_builder)
+
+    # Clean chain with specialized agents
+    extraction_chain = (
+        await isaa.get_agent("json_extractor") >>
+        CF(PersonData) >>
+        await isaa.get_agent("validator") >>
+        await isaa.get_agent("analyzer")
+    )
+
+    return extraction_chain
+```
+
+### 2. Error Recovery Patterns
+
+```python
+async def robust_chain_pattern():
+    primary_agent = await isaa.get_agent("analyzer")
+    backup_agent = await isaa.get_agent("data_extractor")
+
+    # Multi-layer error recovery
+    robust_chain = (
+        primary_agent |                    # Try primary
+        (backup_agent >> primary_agent) |  # Try backup + primary
+        "Unable to process request"        # Final fallback
+    )
+
+    return robust_chain
+```
+
+### 3. Performance Optimization
+
+```python
+async def optimized_chain():
+    # Use parallel processing for independent operations
+    extractor = await isaa.get_agent("data_extractor")
+    analyzer1 = await isaa.get_agent("analyzer")
+    analyzer2 = await isaa.get_agent("reporter")  # Different analysis
+
+    # Optimize: parallel analysis, then combine
+    optimized = (
+        extractor >>
+        CF(PersonData) >>
+        (analyzer1 + analyzer2) >>  # Parallel analysis
+        await isaa.get_agent("summarizer")  # Combine results
+    )
+
+    return optimized
+```
+
+### Direckt call Support
+
+- chain(...) → ruft sofort run
+- await chain(...) → ruft automatisch a_run
+
+## Chain Operators Reference
+
+| Operator | Purpose | Example |
+|----------|---------|---------|
+| `>>` | Sequential execution | `agent1 >> agent2` |
+| `+` | Parallel execution | `agent1 + agent2` |
+| `&` | Parallel execution (alias) | `agent1 & agent2` |
+| `%` | False branch in conditional | `condition >> true_branch % false_branch` |
+| `\|` | Error handling fallback | `risky_agent \| safe_agent` |
+| `-` | Data extraction | `CF(Model) - "field"` |
+
+## CF (Chain Format) Reference
+
+| Pattern | Purpose | Example |
+|---------|---------|---------|
+| `CF(Model)` | Format to Pydantic model | `CF(UserProfile)` |
+| `CF(Model) - "field"` | Extract single field | `CF(User) - "name"` |
+| `CF(Model) - ("f1", "f2")` | Extract multiple fields | `CF(User) - ("name", "age")` |
+| `CF(Model) - "*"` | Extract all fields | `CF(User) - "*"` |
+| `CF(Model) - "field[n]"` | Auto-parallel extraction | `CF(Tasks) - "tasks[n]"` |
+
+This documentation provides comprehensive guidance for using the ISAA Chain system to create sophisticated AI agent workflows with powerful orchestration capabilities.

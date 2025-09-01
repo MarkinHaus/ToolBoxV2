@@ -1239,9 +1239,20 @@ def server_helper(instance_id:str="main", db_mode=None):
     app.loop = loop
     if db_mode is None:
         db_mode = os.getenv("DB_MODE_KEY", "LC")
+    app.is_server = True
     db = app.get_mod("DB")
     db.edit_cli(db_mode)
     db.initialize_database()
+    # execute all flows starting with server as bg tasks
+    def task():
+        flows_dict = flows_dict_func(remote=False)
+        app.set_flows(flows_dict)
+        for flow in flows_dict:
+            if flow.startswith("server"):
+                print(f"Starting server flow: {flow}")
+
+                app.run_bg_task_advanced(app.run_flows,flow)
+    app.run_bg_task_advanced(task)
     return app
 
 if __name__ == "__main__":

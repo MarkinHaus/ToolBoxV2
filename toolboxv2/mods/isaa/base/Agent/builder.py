@@ -43,10 +43,21 @@ if LITELLM_AVAILABLE:
     import litellm
 
 if OTEL_AVAILABLE:
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+        #try:
+        #    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        #except ImportError:
+        OTLPSpanExporter = None
+    except ImportError:
+        OTEL_AVAILABLE = False
+        trace = None
+        TracerProvider = None
+        BatchSpanProcessor = None
+        ConsoleSpanExporter = None
+        OTLPSpanExporter = None
 
 if MCP_AVAILABLE:
     from mcp import ClientSession

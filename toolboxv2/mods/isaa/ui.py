@@ -1,4 +1,6 @@
 # toolboxv2/mods/isaa/ui.py
+import secrets
+
 import asyncio
 import json
 import time  # Keep for now, might be useful elsewhere
@@ -568,331 +570,515 @@ import time
 
 
 def get_agent_ui_html() -> str:
-    """
-    Returns the full HTML, CSS, and JavaScript for the interactive agent UI.
-    """
+    """Enhanced 3-panel UI with real-time WebSocket updates."""
     return """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISAA FlowAgent Interface</title>
+    <title>ISAA Registry - Agent Interface</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         :root {
-            --background-color: #1a1a1a;
-            --panel-background: #242424;
-            --text-color: #e0e0e0;
-            --muted-text-color: #888;
-            --border-color: #3a3a3a;
-            --accent-color: #007acc;
-            --error-color: #e53935;
-            --success-color: #43a047;
-            --warning-color: #fdd835;
-            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --bg-primary: #1e1e1e;
+            --bg-secondary: #252525;
+            --bg-tertiary: #2d2d2d;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --text-muted: #707070;
+            --accent-blue: #0078d4;
+            --accent-green: #107c10;
+            --accent-orange: #ff8c00;
+            --accent-red: #d83b01;
+            --border-color: #404040;
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: var(--font-family);
-            background-color: var(--background-color);
-            color: var(--text-color);
-            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
             display: flex;
             flex-direction: column;
-            height: 100vh;
             overflow: hidden;
         }
-        .main-container {
+
+        .toolbar {
+            background: var(--bg-tertiary);
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            transition: background 0.3s;
+        }
+
+        .status-indicator.connected { background: var(--accent-green); }
+        .status-indicator.processing { background: var(--accent-orange); }
+
+        .panel-container {
             display: flex;
             flex: 1;
             overflow: hidden;
         }
+
         .panel {
-            background-color: var(--panel-background);
-            border-left: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
             overflow: hidden;
         }
-        #chat-container { flex: 2; border-left: none; }
-        #log-container { flex: 1.5; }
-        #status-container { flex: 1; }
+
+        .panel:last-child { border-right: none; }
+
+        .chat-panel { flex: 2; }
+        .log-panel { flex: 1.5; }
+        .status-panel { flex: 1; }
+
         .panel-header {
-            padding: 8px 12px;
-            background-color: #2c2c2c;
+            background: var(--bg-tertiary);
+            padding: 12px 16px;
             border-bottom: 1px solid var(--border-color);
-            font-weight: bold;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
+
         .panel-content {
-            padding: 12px;
+            flex: 1;
             overflow-y: auto;
-            flex-grow: 1;
+            padding: 16px;
         }
-        .message {
-            margin-bottom: 15px;
-            display: flex;
-        }
-        .message .avatar {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background-color: #444;
-            margin-right: 10px;
-            text-align: center;
-            line-height: 30px;
-            font-size: 12px;
-        }
-        .message.user {
-            flex-direction: row-reverse;
-        }
-        .message.user .avatar {
-            margin-left: 10px;
-            margin-right: 0;
-            background-color: var(--accent-color);
-        }
-        .message .content {
-            max-width: 80%;
-        }
-        .message .text {
-            background-color: #333;
-            padding: 10px;
-            border-radius: 8px;
-        }
-        .message.user .text {
-            background-color: #004a7c;
-        }
-        #chat-input-area {
+
+        .chat-input-area {
             border-top: 1px solid var(--border-color);
-            padding: 10px;
+            padding: 16px;
             display: flex;
+            gap: 12px;
         }
-        #chat-input {
-            flex-grow: 1;
-            background-color: #333;
-            border: 1px solid #444;
-            color: var(--text-color);
-            padding: 8px;
-            border-radius: 5px;
+
+        .chat-input {
+            flex: 1;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            color: var(--text-primary);
+            font-size: 14px;
         }
-        #send-button {
-            background-color: var(--accent-color);
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .send-button {
+            background: var(--accent-blue);
             color: white;
             border: none;
-            padding: 8px 15px;
-            margin-left: 10px;
-            border-radius: 5px;
+            border-radius: 6px;
+            padding: 12px 20px;
             cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
         }
-        #send-button:disabled {
+
+        .send-button:hover:not(:disabled) {
+            background: #106ebe;
+        }
+
+        .send-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
-        .main-controls {
-            padding: 10px;
-            border-bottom: 1px solid var(--border-color);
+
+        .message {
+            margin-bottom: 16px;
             display: flex;
-            gap: 10px;
+            max-width: 100%;
         }
-        .main-controls button {
-            background-color: #333;
-            border: 1px solid #555;
-            color: var(--text-color);
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-content {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            background: var(--bg-tertiary);
+            line-height: 1.4;
+        }
+
+        .message.user .message-content {
+            background: var(--accent-blue);
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
             padding: 8px 12px;
-            border-radius: 5px;
-            cursor: pointer;
+            border-radius: 4px;
+            background: var(--bg-primary);
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            border-left: 3px solid var(--border-color);
         }
-        .main-controls button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+
+        .log-entry.progress { border-left-color: var(--accent-blue); }
+        .log-entry.error { border-left-color: var(--accent-red); }
+        .log-entry.success { border-left-color: var(--accent-green); }
+
         .status-grid {
             display: grid;
-            grid-template-columns: auto 1fr;
-            gap: 8px 15px;
-            align-items: center;
+            grid-template-columns: 1fr 2fr;
+            gap: 8px;
+            font-size: 13px;
         }
+
         .status-key {
-            font-weight: bold;
-            text-align: right;
-            color: var(--muted-text-color);
+            color: var(--text-muted);
+            font-weight: 500;
         }
+
         .status-value {
-            font-family: monospace;
+            font-family: 'Consolas', monospace;
+            word-break: break-all;
         }
-        .loading {
-            color: var(--accent-color);
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-primary);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
         }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent-blue);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .pulsing { animation: pulse 1.5s infinite; }
     </style>
 </head>
 <body>
-    <div class="main-controls">
-        <button id="reset-btn">Reset Context</button>
-        <span id="connection-status" style="margin-left: auto; align-self: center;">Ready</span>
+    <div class="toolbar">
+        <button id="clear-chat" class="toolbar-button">Clear Chat</button>
+        <button id="reset-context" class="toolbar-button">Reset Context</button>
+        <div class="connection-status">
+            <div class="status-indicator" id="connection-indicator"></div>
+            <span id="connection-text">Connecting...</span>
+        </div>
     </div>
-    <div class="main-container">
-        <div id="chat-container" class="panel">
-            <div class="panel-header">Chat</div>
+
+    <div class="panel-container">
+        <div class="panel chat-panel">
+            <div class="panel-header">Agent Chat</div>
             <div class="panel-content" id="chat-messages"></div>
-            <div id="chat-input-area">
-                <input type="text" id="chat-input" placeholder="Send a message to the agent..." autocomplete="off">
-                <button id="send-button">Send</button>
+            <div class="chat-input-area">
+                <input type="text" id="chat-input" class="chat-input"
+                       placeholder="Enter your message..." autocomplete="off">
+                <button id="send-button" class="send-button">Send</button>
             </div>
         </div>
-        <div id="log-container" class="panel">
+
+        <div class="panel log-panel">
             <div class="panel-header">Execution Log</div>
-            <div class="panel-content" id="log-content">No activity yet.</div>
+            <div class="panel-content" id="log-content">
+                <div class="log-entry">System initialized. Ready for agent interactions.</div>
+            </div>
         </div>
-        <div id="status-container" class="panel">
+
+        <div class="panel status-panel">
             <div class="panel-header">System Status</div>
-            <div class="panel-content" id="status-grid"></div>
+            <div class="panel-content">
+                <div class="status-grid" id="status-grid"></div>
+                <div class="progress-bar" id="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        const app = {
-            isProcessing: false,
+        class AgentUI {
+            constructor() {
+                this.ws = null;
+                this.isProcessing = false;
+                this.currentProgress = 0;
 
-            elements: {
-                chatMessages: document.getElementById('chat-messages'),
-                chatInput: document.getElementById('chat-input'),
-                sendButton: document.getElementById('send-button'),
-                logContent: document.getElementById('log-content'),
-                statusGrid: document.getElementById('status-grid'),
-                connectionStatus: document.getElementById('connection-status'),
-                resetBtn: document.getElementById('reset-btn'),
-            },
+                this.elements = {
+                    chatInput: document.getElementById('chat-input'),
+                    sendButton: document.getElementById('send-button'),
+                    chatMessages: document.getElementById('chat-messages'),
+                    logContent: document.getElementById('log-content'),
+                    statusGrid: document.getElementById('status-grid'),
+                    connectionIndicator: document.getElementById('connection-indicator'),
+                    connectionText: document.getElementById('connection-text'),
+                    progressFill: document.getElementById('progress-fill'),
+                    clearChat: document.getElementById('clear-chat'),
+                    resetContext: document.getElementById('reset-context')
+                };
+
+                this.init();
+            }
 
             init() {
-                this.initEventListeners();
+                this.setupEventListeners();
+                this.connectWebSocket();
                 this.updateStatus();
-            },
+            }
 
-            initEventListeners() {
+            setupEventListeners() {
                 this.elements.sendButton.addEventListener('click', () => this.sendMessage());
-                this.elements.chatInput.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') {
+                this.elements.chatInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         this.sendMessage();
                     }
                 });
-                this.elements.resetBtn.addEventListener('click', () => this.resetContext());
-            },
+
+                this.elements.clearChat.addEventListener('click', () => this.clearChat());
+                this.elements.resetContext.addEventListener('click', () => this.resetContext());
+            }
+
+            connectWebSocket() {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}/ws/registry/ui`;
+
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.setConnectionStatus('connected', 'Connected');
+                    this.addLogEntry('WebSocket connection established', 'success');
+                };
+
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleWebSocketMessage(message);
+                };
+
+                this.ws.onclose = () => {
+                    this.setConnectionStatus('disconnected', 'Disconnected');
+                    this.addLogEntry('WebSocket connection closed', 'error');
+                    setTimeout(() => this.connectWebSocket(), 3000);
+                };
+
+                this.ws.onerror = (error) => {
+                    this.setConnectionStatus('disconnected', 'Connection Error');
+                    this.addLogEntry(`WebSocket error: ${error.message}`, 'error');
+                };
+            }
+
+            handleWebSocketMessage(message) {
+                switch (message.event) {
+                    case 'ui_update':
+                        this.handleUIUpdate(message.data);
+                        break;
+                    case 'progress_update':
+                        this.handleProgressUpdate(message.data);
+                        break;
+                    case 'execution_error':
+                        this.handleExecutionError(message.data);
+                        break;
+                    default:
+                        console.log('Unhandled message:', message);
+                }
+            }
+
+            handleUIUpdate(data) {
+                if (data.event === 'progress_update') {
+                    const payload = data.data.payload;
+                    this.addLogEntry(`Progress: ${payload.status || 'running'}`, 'progress');
+
+                    if (payload.details && payload.details.progress) {
+                        this.updateProgress(payload.details.progress);
+                    }
+                }
+            }
+
+            handleProgressUpdate(data) {
+                this.addLogEntry(`Agent progress: ${JSON.stringify(data.payload)}`, 'progress');
+
+                if (data.is_final) {
+                    this.setProcessing(false);
+                    const result = data.payload.details?.result;
+                    if (result) {
+                        this.addChatMessage('agent', result);
+                    }
+                }
+            }
+
+            handleExecutionError(data) {
+                this.addLogEntry(`Execution error: ${data.error}`, 'error');
+                this.addChatMessage('agent', `Error: ${data.error}`);
+                this.setProcessing(false);
+            }
 
             async sendMessage() {
                 const message = this.elements.chatInput.value.trim();
-                if (message && !this.isProcessing) {
-                    this.addChatMessage('user', message);
-                    this.elements.chatInput.value = '';
-                    this.setProcessing(true);
+                if (!message || this.isProcessing) return;
 
-                    try {
-                        const response = await fetch('/api/run', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ query: message })
-                        });
-                        const result = await response.json();
-
-                        if (result.success) {
-                            this.addChatMessage('agent', result.response);
-                            this.updateLog(result.log);
-                            this.updateStatus(result.status);
-                        } else {
-                            this.addChatMessage('agent', 'Error: ' + result.error);
-                        }
-                    } catch (error) {
-                        this.addChatMessage('agent', 'Network error: ' + error.message);
-                    }
-
-                    this.setProcessing(false);
-                }
-            },
-
-            async resetContext() {
-                if (this.isProcessing) return;
+                this.addChatMessage('user', message);
+                this.elements.chatInput.value = '';
+                this.setProcessing(true);
 
                 try {
-                    const response = await fetch('/api/reset', { method: 'POST' });
-                    const result = await response.json();
+                    const response = await fetch('/api/registry/run_stream', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer your-api-key' // This should be dynamic
+                        },
+                        body: JSON.stringify({
+                            query: message,
+                            session_id: 'ui-session'
+                        })
+                    });
 
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
                     if (result.success) {
-                        this.elements.chatMessages.innerHTML = '';
-                        this.elements.logContent.textContent = 'Context reset.';
-                        this.updateStatus();
+                        this.addChatMessage('agent', result.data.result);
+                    } else {
+                        this.addChatMessage('agent', `Error: ${result.error}`);
                     }
                 } catch (error) {
-                    console.error('Reset failed:', error);
+                    this.addChatMessage('agent', `Network error: ${error.message}`);
+                    this.addLogEntry(`Request failed: ${error.message}`, 'error');
+                } finally {
+                    this.setProcessing(false);
                 }
-            },
+            }
 
             addChatMessage(sender, text) {
                 const messageEl = document.createElement('div');
                 messageEl.classList.add('message', sender);
 
-                const avatarEl = document.createElement('div');
-                avatarEl.classList.add('avatar');
-                avatarEl.textContent = sender === 'user' ? 'You' : 'AI';
-
                 const contentEl = document.createElement('div');
-                contentEl.classList.add('content');
-
-                const textEl = document.createElement('div');
-                textEl.classList.add('text');
+                contentEl.classList.add('message-content');
 
                 if (sender === 'agent' && window.marked) {
-                    textEl.innerHTML = marked.parse(text);
+                    contentEl.innerHTML = marked.parse(text);
                 } else {
-                    textEl.textContent = text;
+                    contentEl.textContent = text;
                 }
 
-                contentEl.appendChild(textEl);
-                messageEl.appendChild(sender === 'user' ? contentEl : avatarEl);
-                messageEl.appendChild(sender === 'user' ? avatarEl : contentEl);
-
+                messageEl.appendChild(contentEl);
                 this.elements.chatMessages.appendChild(messageEl);
                 this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
-            },
+            }
+
+            addLogEntry(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEl = document.createElement('div');
+                logEl.classList.add('log-entry', type);
+                logEl.textContent = `[${timestamp}] ${message}`;
+
+                this.elements.logContent.appendChild(logEl);
+                this.elements.logContent.scrollTop = this.elements.logContent.scrollHeight;
+            }
+
+            setConnectionStatus(status, text) {
+                this.elements.connectionIndicator.className = `status-indicator ${status}`;
+                this.elements.connectionText.textContent = text;
+            }
 
             setProcessing(processing) {
                 this.isProcessing = processing;
                 this.elements.sendButton.disabled = processing;
                 this.elements.chatInput.disabled = processing;
-                this.elements.resetBtn.disabled = processing;
-                this.elements.connectionStatus.textContent = processing ? 'Processing...' : 'Ready';
-                this.elements.connectionStatus.className = processing ? 'loading' : '';
-            },
 
-            updateLog(logData) {
-                if (logData) {
-                    this.elements.logContent.innerHTML = logData.map(entry =>
-                        `<div>[${entry.timestamp}] ${entry.message}</div>`
-                    ).join('');
+                if (processing) {
+                    this.elements.connectionIndicator.classList.add('pulsing');
+                    this.setConnectionStatus('processing', 'Processing...');
+                } else {
+                    this.elements.connectionIndicator.classList.remove('pulsing');
+                    this.setConnectionStatus('connected', 'Connected');
+                    this.updateProgress(0);
                 }
-            },
+            }
 
-            updateStatus(statusData) {
-                const defaultStatus = {
-                    'Agent Status': 'Ready',
-                    'Last Update': new Date().toLocaleString()
+            updateProgress(percent) {
+                this.currentProgress = Math.max(0, Math.min(100, percent));
+                this.elements.progressFill.style.width = `${this.currentProgress}%`;
+            }
+
+            updateStatus() {
+                const status = {
+                    'Connection': this.ws?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected',
+                    'Processing': this.isProcessing ? 'Active' : 'Idle',
+                    'Messages': this.elements.chatMessages.children.length,
+                    'Last Update': new Date().toLocaleTimeString()
                 };
 
-                const status = statusData || defaultStatus;
                 let html = '';
                 for (const [key, value] of Object.entries(status)) {
                     html += `<div class="status-key">${key}</div><div class="status-value">${value}</div>`;
                 }
                 this.elements.statusGrid.innerHTML = html;
             }
-        };
 
-        document.addEventListener('DOMContentLoaded', () => app.init());
+            clearChat() {
+                this.elements.chatMessages.innerHTML = '';
+                this.updateStatus();
+            }
+
+            resetContext() {
+                if (this.isProcessing) return;
+
+                this.clearChat();
+                this.elements.logContent.innerHTML = '<div class="log-entry">Context reset. Ready for new conversation.</div>';
+                this.addLogEntry('Context reset by user', 'info');
+            }
+        }
+
+        // Initialize the UI when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            window.agentUI = new AgentUI();
+
+            // Update status every 5 seconds
+            setInterval(() => {
+                window.agentUI.updateStatus();
+            }, 5000);
+        });
     </script>
 </body>
 </html>
 """
 
 
-class AgentRequestHandler(BaseHTTPRequestHandler):
+class AgentRequestHandlerV0(BaseHTTPRequestHandler):
     def __init__(self, agent, module, *args, **kwargs):
         self.agent = agent
         self.module = module
@@ -1001,6 +1187,135 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         pass
 
 
+# Create custom request handler class with agent reference
+class AgentRequestHandler(BaseHTTPRequestHandler):
+    def __init__(self, isaa_module, agent_id,agent, *args, **kwargs):
+        self.agent_id = agent_id
+        self.agent = agent
+        self.isaa_module = isaa_module
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        if self.path == '/' or self.path == '/ui':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            html_content = self.isaa_module._get_standalone_agent_ui_html_0(self.agent_id)
+            self.wfile.write(html_content.encode('utf-8'))
+
+        elif self.path.startswith('/ws'):
+            # WebSocket upgrade handling (simplified)
+            self.send_response(101)
+            self.send_header('Upgrade', 'websocket')
+            self.send_header('Connection', 'Upgrade')
+            self.end_headers()
+            # Note: Full WebSocket implementation would require additional libraries
+
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+
+    def do_POST(self):
+        if self.path == '/api/run':
+            self._handle_api_run()
+        elif self.path == '/api/reset':
+            self._handle_api_reset()
+        elif self.path == '/api/status':
+            self._handle_api_status()
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error": "Endpoint not found"}')
+
+    def _handle_api_run(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+
+            query = data.get('query', '')
+            session_id = data.get('session_id', f'standalone_{secrets.token_hex(8)}')
+
+            # Run agent synchronously in thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                result = loop.run_until_complete(self.agent.a_run(query, session_id=session_id))
+                response = {
+                    'success': True,
+                    'result': result,
+                    'session_id': session_id,
+                    'agent_id': self.agent_id
+                }
+                self._send_json_response(200, response)
+
+            except Exception as e:
+                error_response = {
+                    'success': False,
+                    'error': str(e),
+                    'session_id': session_id,
+                    'agent_id': self.agent_id
+                }
+                self._send_json_response(500, error_response)
+            finally:
+                loop.close()
+
+        except Exception as e:
+            error_response = {'success': False, 'error': f'Request processing error: {str(e)}'}
+            self._send_json_response(400, error_response)
+
+    def _handle_api_reset(self):
+        try:
+            if hasattr(self.agent, 'clear_context'):
+                self.agent.clear_context()
+                response = {'success': True, 'message': 'Context reset successfully'}
+            else:
+                response = {'success': False, 'error': 'Agent does not support context reset'}
+
+            self._send_json_response(200, response)
+
+        except Exception as e:
+            error_response = {'success': False, 'error': str(e)}
+            self._send_json_response(500, error_response)
+
+    def _handle_api_status(self):
+        try:
+            status_info = {
+                'agent_id': self.agent_id,
+                'agent_name': getattr(self.agent, 'name', 'Unknown'),
+                'status': 'active',
+                'uptime': time.time(),
+                'server_type': 'standalone'
+            }
+            self._send_json_response(200, status_info)
+
+        except Exception as e:
+            error_response = {'success': False, 'error': str(e)}
+            self._send_json_response(500, error_response)
+
+    def _send_json_response(self, status_code: int, data: dict):
+        self.send_response(status_code)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode('utf-8'))
+
+    def do_OPTIONS(self):
+        # Handle CORS preflight
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress default HTTP server logs or redirect to app logger
+        self.isaa_module.app.print(f"HTTP {self.address_string()}: {format % args}")
 
 
 

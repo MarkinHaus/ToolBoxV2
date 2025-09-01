@@ -15,6 +15,7 @@ from typing import Any, Union
 
 from pydantic import BaseModel
 
+
 from ..system.db_cli_manager import ClusterManager
 from ..extras.blobs import BlobStorage
 from ..extras import generate_test_cases
@@ -1218,6 +1219,7 @@ class AppType:
     data_dir: str
     config_dir: str
     info_dir: str
+    is_server:bool = False
 
     logger: logging.Logger
     logging_filename: str
@@ -1280,6 +1282,13 @@ class AppType:
         self.args_sto = args
         self.prefix = prefix
         """proxi attr"""
+
+    def start_server(self):
+        from toolboxv2.utils.system.api import manage_server
+        if self.is_server:
+            return
+        manage_server("start")
+        self.is_server = False
 
     @staticmethod
     def exit_main(*args, **kwargs):
