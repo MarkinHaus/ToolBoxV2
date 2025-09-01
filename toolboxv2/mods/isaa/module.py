@@ -723,11 +723,6 @@ class Tools(MainTool, FileHandler):
         # Create or get existing ToolsInterface for this agent
         if name not in self.tools_interfaces:
             try:
-                # Determine if web capabilities are needed
-                web_llm = None
-                if any(keyword in name.lower() for keyword in ["web", "browser", "scrape", "search"]):
-                    web_llm = config.fast_llm_model
-
                 # Initialize ToolsInterface
                 tools_interface = ToolsInterface(
                     session_dir=str(Path(get_app().data_dir) / "Agents" / name / "tools_session"),
@@ -737,7 +732,6 @@ class Tools(MainTool, FileHandler):
                         'isaa_instance': self
                     },
                     variable_manager=getattr(self, 'variable_manager', None),
-                    web_llm=web_llm
                 )
 
                 self.tools_interfaces[name] = tools_interface
@@ -843,7 +837,6 @@ class Tools(MainTool, FileHandler):
                 # Determine which tools to add based on agent name/type
                 tool_categories = {
                     'code': ['execute_python', 'execute_rust', 'install_package'],
-                    'web': ['execute_javascript', 'navigate_web', 'extract_web_data'],
                     'file': ['write_file', 'replace_in_file', 'read_file', 'list_directory', 'create_directory'],
                     'session': ['get_execution_history', 'clear_session', 'get_variables'],
                     'config': ['set_base_directory', 'set_current_file']
@@ -859,7 +852,7 @@ class Tools(MainTool, FileHandler):
 
                 # Web tools for web-focused agents
                 if any(keyword in name_lower for keyword in ["web", "browser", "scrape", "crawl", "extract"]):
-                    include_categories.update(['web', 'file', 'session'])
+                    include_categories.update(['file', 'session'])
 
                 # File tools for file management agents
                 if any(keyword in name_lower for keyword in ["file", "fs", "document", "write", "read"]):
@@ -868,9 +861,6 @@ class Tools(MainTool, FileHandler):
                 # Default: add core tools for general agents
                 if not include_categories or name == "self":
                     include_categories.update(['code', 'file', 'session', 'config'])
-                    # Add web tools if web_llm is available
-                    if tools_interface.browser:
-                        include_categories.add('web')
 
                 # Add selected tools
                 tools_added = 0
@@ -913,7 +903,6 @@ class Tools(MainTool, FileHandler):
                 'name': name,
                 'created_at': time.time(),
                 'tools_interface_available': tools_interface is not None,
-                'web_enabled': tools_interface.browser is not None if tools_interface else False,
                 'session_dir': str(agent_dir / "tools_session")
             }
 

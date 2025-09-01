@@ -59,7 +59,7 @@ def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) ->
                         'content': markdown_content
                     })
 
-                time.sleep(1)  # Be respectful
+                #time.sleep(1)  # Be respectful
 
         return results
 
@@ -112,7 +112,7 @@ def web_search_bing(query: str, max_results: int = 5, api_key: str = None) -> Li
                         'content': markdown_content
                     })
 
-                time.sleep(1)
+                # time.sleep(1)
 
         return results
 
