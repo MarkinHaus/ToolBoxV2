@@ -221,7 +221,7 @@ import asyncio
 from toolboxv2 import get_app
 
 
-async def setup_complete_agent_system():
+async def setup_complete_agent_system(local=True):
     """Vollständiges Beispiel für Agent-System mit Live-Progress."""
 
     app = get_app("CompleteAgentSystem")
@@ -255,7 +255,7 @@ async def setup_complete_agent_system():
     result = await isaa.publish_and_host_agent(
         agent=agent,
         public_name="Production AI Assistant",
-        registry_server="ws://localhost:8080/ws/registry/connect",
+        registry_server="ws://localhost:8080/ws/registry/connect" if local else "wss://simplecore.app/ws/registry/connect",
         description="Production-ready AI assistant with comprehensive progress tracking, step-by-step reasoning, and meta-tool visualization. Supports real-time progress updates, outline tracking, and multi-user access.",
         access_level="public"
     )
@@ -304,9 +304,9 @@ async def setup_complete_agent_system():
     await agent.close()
 
 
-if __name__ == "__main__a":
-    asyncio.run(setup_complete_agent_system())
+if __name__ == "__main__":
+    asyncio.run(setup_complete_agent_system(local=False))
 if __name__ == "__main__d":
     asyncio.run(setup_multiple_live_agents())
-if __name__ == "__main__":
+if __name__ == "__main__d":
     asyncio.run(setup_chain_with_live_updates())

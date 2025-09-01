@@ -43,6 +43,8 @@ dependencies = [
     "lxml>=6.0.0",
     "chardet>=5.2.0",
     "mcp>=1.13.1",
+    "dill>=0.3.8",
+    "faiss-cpu>=1.12.0",
 ]
 
 [project.scripts]
@@ -81,7 +83,6 @@ members = ["toolboxv2/mods/isaa"]
 # Definiert für die Extra-Gruppe "isaa" die Quelldatei
 isaa = [
     "beautifulsoup4>=4.12.0",
-    "browser-use>=0.1.40",
     "chromadb>=0.4.0",
     "gtts>=2.3.0",
     "langchain>=0.1.0",

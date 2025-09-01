@@ -1850,7 +1850,9 @@ def get_agent_ui_html() -> str:
                 this.updateConnectionStatus('connecting', 'Connecting...');
 
                 try {
-                    const wsUrl = `ws://${window.location.host}/ws/registry/ui_connect`;
+                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                    const wsProtocol = isLocal ? 'ws' : 'wss';
+                    const wsUrl = `${wsProtocol}://${window.location.host}/ws/registry/ui_connect`;
                     this.ws = new WebSocket(wsUrl);
 
                     this.ws.onopen = () => {

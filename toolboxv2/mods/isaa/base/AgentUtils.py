@@ -13,7 +13,6 @@ from json import JSONDecodeError
 
 import requests
 import tiktoken
-from pebble import concurrent
 
 from toolboxv2 import Singleton, Style, get_logger, remove_styles
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
@@ -80,7 +79,6 @@ def get_ip():
     return response["ip"]
 
 
-@concurrent.process(timeout=12)
 def get_location():
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()

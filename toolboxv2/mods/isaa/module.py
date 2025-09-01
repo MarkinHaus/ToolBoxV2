@@ -17,7 +17,6 @@ import websockets
 from langchain_community.agent_toolkits.load_tools import (
     load_tools,
 )
-from pebble import concurrent
 from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
@@ -90,7 +89,6 @@ def get_ip():
     return response["ip"]
 
 
-@concurrent.process(timeout=12)
 def get_location():
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
