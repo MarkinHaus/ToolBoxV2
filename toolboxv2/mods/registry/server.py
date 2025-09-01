@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 import asyncio
 from typing import Dict, Any, Set
@@ -73,7 +74,10 @@ async def handle_registration(app: App, conn_id: str, session: dict, message: Ws
         STATE.key_to_agent[api_key] = agent_id
         STATE.agent_details[agent_id] = reg_data.model_dump()
 
-        base_url = session.get('host', 'localhost:8080')
+        base_url = os.getenv("APP_BASE_URL", "http://localhost:8080") or session.get('host', 'localhost:8080')
+        if base_url == "localhost":
+            base_url = "localhost:8080"
+            app.print(f"APP_BASE_URL is localhost. Using default port 8080.")
         public_url = f"http://{base_url}/api/registry/run?public_agent_id={agent_id}"
 
         response = AgentRegistered(
