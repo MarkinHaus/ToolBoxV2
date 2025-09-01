@@ -96,7 +96,7 @@ class RegistryClient:
             while self.ws and self.ws.open and self.is_connected:
                 try:
                     message_raw = await asyncio.wait_for(self.ws.recv(), timeout=30.0)
-                    self.app.print(f"Received message from server: {message_raw[:200]}...")
+                    self.app.print(f"Received message from server: {message_raw}")
 
                     try:
                         message = WsMessage.model_validate_json(message_raw)

@@ -1,3 +1,5 @@
+import types
+
 import asyncio
 import random
 from enum import Enum
@@ -62,12 +64,13 @@ class ParallelChain:
     def __init__(self, agents: List[Union['FlowAgent', 'Chain']]):
         self.agents = agents
 
-    async def a_run(self, query):
+    async def a_run(self, query, **kwargs):
         """Run all agents in parallel"""
         tasks = []
+
         for agent in self.agents:
             if hasattr(agent, 'a_run'):
-                tasks.append(agent.a_run(query))
+                tasks.append(agent.a_run(query, **kwargs))
             else:
                 tasks.append(agent.run(query))  # For other chain types
 
@@ -89,31 +92,6 @@ class ParallelChain:
             return combined
         else:
             return results
-
-    def set_progress_callback(self, progress_tracker):
-        """
-        Sets the progress callback for every agent in the chain.
-        """
-        for task in self.tasks:
-            if isinstance(task, ('FlowAgent', Chain)):
-                task.set_progress_callback(progress_tracker)
-            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
-                if hasattr(task, 'agents'): # ParallelChain
-                    for agent in task.agents:
-                         if hasattr(agent, 'set_progress_callback'):
-                            agent.set_progress_callback(progress_tracker)
-                if hasattr(task, 'true_branch'): # ConditionalChain
-                    if hasattr(task.true_branch, 'set_progress_callback'):
-                        task.true_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'false_branch') and task.false_branch: # ConditionalChain
-                    if hasattr(task.false_branch, 'set_progress_callback'):
-                        task.false_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'primary'): # ErrorHandlingChain
-                     if hasattr(task.primary, 'set_progress_callback'):
-                        task.primary.set_progress_callback(progress_tracker)
-                if hasattr(task, 'fallback'): # ErrorHandlingChain
-                     if hasattr(task.fallback, 'set_progress_callback'):
-                        task.fallback.set_progress_callback(progress_tracker)
 
     def __rshift__(self, other):
         """Implements >> operator"""
@@ -150,13 +128,15 @@ class ConditionalChain:
         self.condition = condition
         self.true_branch = true_branch
         self.false_branch = false_branch
+        self.kwargs_for_agent = {}
 
     def __mod__(self, other):
         """Implements % operator for false branch"""
         return ConditionalChain(self.condition, self.true_branch, other)
 
-    async def a_run(self, query_or_data):
+    async def a_run(self, query_or_data, **kwargs):
         """Execute based on condition"""
+        self.kwargs_for_agent = kwargs
         if isinstance(self.condition, IS):
             # Check condition
             if isinstance(query_or_data, dict) and self.condition.key in query_or_data:
@@ -176,36 +156,11 @@ class ConditionalChain:
 
     async def _run_branch(self, branch, data):
         if hasattr(branch, 'a_run'):
-            return await branch.a_run(data)
+            return await branch.a_run(data, **self.kwargs_for_agent)
         elif hasattr(branch, 'run'):
-            return await branch.run(data)
+            return await branch.run(data, **self.kwargs_for_agent)
         else:
             return data
-
-    def set_progress_callback(self, progress_tracker):
-        """
-        Sets the progress callback for every agent in the chain.
-        """
-        for task in self.tasks:
-            if isinstance(task, ('FlowAgent', Chain)):
-                task.set_progress_callback(progress_tracker)
-            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
-                if hasattr(task, 'agents'): # ParallelChain
-                    for agent in task.agents:
-                         if hasattr(agent, 'set_progress_callback'):
-                            agent.set_progress_callback(progress_tracker)
-                if hasattr(task, 'true_branch'): # ConditionalChain
-                    if hasattr(task.true_branch, 'set_progress_callback'):
-                        task.true_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'false_branch') and task.false_branch: # ConditionalChain
-                    if hasattr(task.false_branch, 'set_progress_callback'):
-                        task.false_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'primary'): # ErrorHandlingChain
-                     if hasattr(task.primary, 'set_progress_callback'):
-                        task.primary.set_progress_callback(progress_tracker)
-                if hasattr(task, 'fallback'): # ErrorHandlingChain
-                     if hasattr(task.fallback, 'set_progress_callback'):
-                        task.fallback.set_progress_callback(progress_tracker)
 
 
     def __call__(self, *args, **kwargs):
@@ -234,41 +189,16 @@ class ErrorHandlingChain:
         self.primary = primary
         self.fallback = fallback
 
-    async def a_run(self, query):
+    async def a_run(self, query, **kwargs):
         try:
-            return await self.primary.a_run(query)
+            return await self.primary.a_run(query, **kwargs)
         except Exception as e:
             print(f"Primary chain failed with {e}, trying fallback")
             if hasattr(self.fallback, 'a_run'):
-                return await self.fallback.a_run(query)
+                return await self.fallback.a_run(query, **kwargs)
             else:
-                return await self.fallback.run(query)
+                return await self.fallback.run(query, **kwargs)
 
-
-    def set_progress_callback(self, progress_tracker):
-        """
-        Sets the progress callback for every agent in the chain.
-        """
-        for task in self.tasks:
-            if isinstance(task, ('FlowAgent', Chain)):
-                task.set_progress_callback(progress_tracker)
-            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
-                if hasattr(task, 'agents'): # ParallelChain
-                    for agent in task.agents:
-                         if hasattr(agent, 'set_progress_callback'):
-                            agent.set_progress_callback(progress_tracker)
-                if hasattr(task, 'true_branch'): # ConditionalChain
-                    if hasattr(task.true_branch, 'set_progress_callback'):
-                        task.true_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'false_branch') and task.false_branch: # ConditionalChain
-                    if hasattr(task.false_branch, 'set_progress_callback'):
-                        task.false_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'primary'): # ErrorHandlingChain
-                     if hasattr(task.primary, 'set_progress_callback'):
-                        task.primary.set_progress_callback(progress_tracker)
-                if hasattr(task, 'fallback'): # ErrorHandlingChain
-                     if hasattr(task.fallback, 'set_progress_callback'):
-                        task.fallback.set_progress_callback(progress_tracker)
 
     def __call__(self, *args, **kwargs):
         return self._Runner(self, args, kwargs)
@@ -296,11 +226,22 @@ class Chain:
             self.tasks = [agent]
         else:
             self.tasks = []
-        self.name = "chain"
+        self._name = "chain"
         self.progress_tracker = None
         self.description = "A chain of tasks"
         self.return_key = "chain"
         self.use = "chain"
+
+        self.amd = lambda: None
+        self.amd.name = "chain"
+
+    @property
+    def name(self):
+        return self._name
+    @name.setter
+    def name(self, value):
+        self._name = value
+        self.amd.name = value
 
     @classmethod
     def _create_chain(cls, components):
@@ -329,10 +270,11 @@ class Chain:
         else:
             return data
 
-    async def a_run(self, query: Union[str, BaseModel], task_id=None):
+    async def a_run(self, query: Union[str, BaseModel], task_id=None, **kwargs):
         """Execute the chain asynchronously with auto-parallel support"""
         import time
 
+        self.kwargs_for_agent = kwargs
         current_data = query
         node_name = self.name or "Unnamed Chain"
 
@@ -372,7 +314,7 @@ class Chain:
                             parallel_tasks = []
                             for item in extracted_data:
                                 if hasattr(next_task, 'a_run'):
-                                    parallel_tasks.append(next_task.a_run(str(item)))
+                                    parallel_tasks.append(next_task.a_run(str(item), **self.kwargs_for_agent))
                                 else:
                                     parallel_tasks.append(next_task.run(str(item)))
 
@@ -388,15 +330,15 @@ class Chain:
                         current_data = extracted_data
 
                 elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
-                    current_data = await task.a_run(current_data)
+                    current_data = await task.a_run(current_data, **self.kwargs_for_agent)
                 elif hasattr(task, 'format_class'):
                     # Regular CF processing
                     current_data = self._extract_data(current_data, task)
                 elif hasattr(task, 'a_run'):
                     if isinstance(current_data, BaseModel):
-                        current_data = await task.a_run(str(current_data.model_dump()))
+                        current_data = await task.a_run(str(current_data.model_dump()), **self.kwargs_for_agent)
                     else:
-                        current_data = await task.a_run(str(current_data))
+                        current_data = await task.a_run(str(current_data), **self.kwargs_for_agent)
 
                 if self.progress_tracker:
                     await self.progress_tracker.emit_event(ProgressEvent(
@@ -430,9 +372,9 @@ class Chain:
 
         return current_data
 
-    def run(self, query: Union[str, BaseModel], use="auto"):
+    def run(self, query: Union[str, BaseModel], use="auto", **kwargs):
         """Synchronous wrapper"""
-        return asyncio.run(self.a_run(query, use))
+        return asyncio.run(self.a_run(query, use, **kwargs))
 
     def __rshift__(self, other):
         """Implements >> operator for extending chains"""
@@ -461,9 +403,15 @@ class Chain:
         Sets the progress callback for every agent in the chain.
         """
         for task in self.tasks:
-            if isinstance(task, ('FlowAgent', Chain)):
+            if hasattr(task, 'set_progress_callback'):
                 task.set_progress_callback(progress_tracker)
-            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
+            else:
+                ok = False
+                for typ in (ParallelChain, ConditionalChain, ErrorHandlingChain):
+                    if isinstance(task, typ):
+                        ok = True
+                if not ok:
+                    continue
                 if hasattr(task, 'agents'): # ParallelChain
                     for agent in task.agents:
                          if hasattr(agent, 'set_progress_callback'):
@@ -934,3 +882,7 @@ Chain.print_graph = print_graph
 ParallelChain.print_graph = print_graph
 ConditionalChain.print_graph = print_graph
 ErrorHandlingChain.print_graph = print_graph
+
+ParallelChain.print_graph = Chain.set_progress_callback
+ConditionalChain.print_graph = Chain.set_progress_callback
+ErrorHandlingChain.print_graph = Chain.set_progress_callback

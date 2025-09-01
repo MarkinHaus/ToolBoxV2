@@ -1,3 +1,6 @@
+import concurrent
+
+import asyncio
 import os
 
 import requests
@@ -566,27 +569,43 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
     good_results = []
     processed_count = 0
 
-    for candidate in candidate_urls:
-        if len(good_results) >= max_results:
-            break
-
-        processed_count += 1
-        print(f"\n[{processed_count}/{len(candidate_urls)}] Processing: {candidate['title'][:80]}...")
-
+    def task(candidate):
         markdown_content = url_to_markdown_robust(candidate['url'])
-
         if markdown_content:
-            good_results.append({
+            return {
                 'url': candidate['url'],
                 'title': candidate['title'],
                 'content': markdown_content
-            })
-            print(f"✅ Success! Got result {len(good_results)}/{max_results}")
-        else:
-            print("❌ Skipped (unparseable or low quality)")
+            }
 
-        # Small delay to be respectful
-        time.sleep(1.5)
+    # runn all tasks in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(task, candidate_urls))
+        processed_count = len(candidate_urls)
+
+    good_results = [result for result in results if result]
+
+    #for candidate in candidate_urls:
+    #    if len(good_results) >= max_results:
+    #        break
+
+    #    processed_count += 1
+    #    print(f"\n[{processed_count}/{len(candidate_urls)}] Processing: {candidate['title'][:80]}...")
+
+    #    markdown_content = url_to_markdown_robust(candidate['url'])
+
+    #    if markdown_content:
+    #        good_results.append({
+    #            'url': candidate['url'],
+    #            'title': candidate['title'],
+    #            'content': markdown_content
+    #        })
+    #        print(f"✅ Success! Got result {len(good_results)}/{max_results}")
+    #    else:
+    #        print("❌ Skipped (unparseable or low quality)")
+
+    #    # Small delay to be respectful
+    #    time.sleep(1.5)
 
     print(f"\n🎉 Final results: {len(good_results)} good results out of {processed_count} attempted")
     return good_results

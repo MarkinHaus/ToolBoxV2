@@ -1528,7 +1528,7 @@ def get_agent_ui_html() -> str:
                     <div class="section-title">Current Status</div>
                     <div id="current-status">
                         <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                            No active execution
+                             No active execution
                         </div>
                     </div>
                 </div>
@@ -1615,6 +1615,19 @@ def get_agent_ui_html() -> str:
                     progressPanel: document.getElementById('progress-panel')
                 };
 
+                setInterval(() => {
+                    if (this.isTyping && this.currentExecution) {
+                        const timeSinceLastUpdate = Date.now() - this.currentExecution.lastUpdate;
+                        // If no updates for 30 seconds, hide typing indicator
+                        if (timeSinceLastUpdate > 30000) {
+                            console.log('🧹 Cleanup: Hiding stuck typing indicator');
+                            this.showTypingIndicator(false);
+                            this.currentExecution = null;
+                            this.updateCurrentStatusToIdle();
+                        }
+                    }
+                }, 5000);
+
                 this.init();
             }
 
@@ -1622,7 +1635,6 @@ def get_agent_ui_html() -> str:
                 this.setupEventListeners();
                 this.setupPanelControls();
                 this.showApiKeyModal();
-                // this.connect(); // TODO: Remove for production
             }
 
             showApiKeyModal() {
@@ -1935,8 +1947,11 @@ handleAgentExecutionEvent(eventData) {
 
     console.log(`🎯 Processing Event: ${eventType}`, payload);
 
-    // FIXED: Handle final execution complete with proper result extraction
-    if (isFinal) {
+    // FIXED: Handle final execution or completion events
+    if (isFinal || eventType === 'execution_complete' || payload.status === 'completed') {
+        // Hide typing indicator immediately for any final event
+        this.showTypingIndicator(false);
+
         // Extract result from metadata or other possible locations
         const result = payload.metadata?.result ||
                       payload.result ||
@@ -1946,7 +1961,7 @@ handleAgentExecutionEvent(eventData) {
         if (result && typeof result === 'string' && result.trim()) {
             this.addMessage('agent', result);
         }
-        this.showTypingIndicator(false);
+
         this.currentExecution = null;
         this.updateCurrentStatusToIdle();
         return;
@@ -1994,12 +2009,20 @@ handleAgentExecutionEvent(eventData) {
             case 'node_exit':
                 this.handleNodeEvent(payload);
                 this.updateCurrentStatus(payload, '✅ Completed Phase');
+                // FIXED: Hide typing indicator on successful node exit
+                if (payload.status === 'completed' || payload.success === true) {
+                    setTimeout(() => this.showTypingIndicator(false), 500);
+                }
                 break;
             case 'execution_start':
                 this.updateCurrentStatus(payload, '🚀 Starting');
                 break;
             case 'execution_complete':
+                // FIXED: Always hide typing indicator on execution complete
+                this.showTypingIndicator(false);
                 this.updateCurrentStatus(payload, '✅ Complete');
+                this.currentExecution = null;
+                this.updateCurrentStatusToIdle();
                 break;
             default:
                 // Still update status for unknown events
@@ -2009,6 +2032,8 @@ handleAgentExecutionEvent(eventData) {
     } catch (error) {
         console.error('❌ Error handling event:', error, payload);
         this.showError(`Event processing error: ${error.message}`);
+        // FIXED: Hide typing indicator on error
+        this.showTypingIndicator(false);
     }
 }
 
@@ -2074,7 +2099,7 @@ handleReasoningLoop(payload) {
                 <span>Planning Step ${outlineStep} of ${outlineTotal}</span>
             </div>
             <div class="thinking-step-content">
-                ${JSON.stringify(metadata, null, 2)}
+                <span>Loop ${loopNumber}</span>
             </div>
         `;
         this.elements.messagesContainer.appendChild(stepDiv);
@@ -2531,67 +2556,92 @@ getEventIcon(eventType, status) {
                 });
             }
 
-            sendMessage() {
-                if (!this.currentAgent || !this.elements.messageInput.value.trim()) return;
+sendMessage() {
+    if (!this.currentAgent || !this.elements.messageInput.value.trim()) return;
 
-                const message = this.elements.messageInput.value.trim();
-                this.addMessage('user', message);
+    const message = this.elements.messageInput.value.trim();
+    this.addMessage('user', message);
 
-                this.sendWebSocketMessage({
-                    event: 'chat_message',
-                    data: {
-                        public_agent_id: this.currentAgent.public_agent_id,
-                        message: message,
-                        session_id: this.sessionId,
-                        api_key: this.apiKey
-                    }
-                });
+    this.sendWebSocketMessage({
+        event: 'chat_message',
+        data: {
+            public_agent_id: this.currentAgent.public_agent_id,
+            message: message,
+            session_id: this.sessionId,
+            api_key: this.apiKey
+        }
+    });
 
-                this.elements.messageInput.value = '';
+    this.elements.messageInput.value = '';
 
-                // Reset progress panels
-                this.elements.currentStatus.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">Processing...</div>';
-                this.elements.performanceMetrics.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">Waiting for metrics...</div>';
-            }
+    // Reset progress panels
+    this.elements.currentStatus.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">Processing...</div>';
+    this.elements.performanceMetrics.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">Waiting for metrics...</div>';
 
-            addMessage(sender, content) {
-                const messageDiv = document.createElement('div');
-                messageDiv.classList.add('message', sender);
+    // FIXED: Failsafe timeout to hide typing indicator if no response in 60 seconds
+    setTimeout(() => {
+        if (this.currentExecution) {
+            console.log('⏰ Timeout: Hiding typing indicator and resetting execution state');
+            this.showTypingIndicator(false);
+            this.currentExecution = null;
+            this.updateCurrentStatusToIdle();
+            this.showError('Agent response timeout - please try again');
+        }
+    }, 60000); // 60 seconds timeout
+}
 
-                const avatar = document.createElement('div');
-                avatar.classList.add('message-avatar');
-                avatar.textContent = sender === 'user' ? 'U' : 'AI';
+// FIXED: Enhanced showTypingIndicator method with state tracking
+showTypingIndicator(show) {
+    console.log(`💭 ${show ? 'Showing' : 'Hiding'} typing indicator`);
 
-                const contentDiv = document.createElement('div');
-                contentDiv.classList.add('message-content');
-
-                if (sender === 'agent' && window.marked) {
-                    try {
-                        contentDiv.innerHTML = marked.parse(content);
-                    } catch (error) {
-                        contentDiv.textContent = content;
-                    }
-                } else {
-                    contentDiv.textContent = content;
-                }
-
-                messageDiv.appendChild(avatar);
-                messageDiv.appendChild(contentDiv);
-
-                this.elements.messagesContainer.appendChild(messageDiv);
-                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
-            }
-
-            showTypingIndicator(show) {
     this.elements.typingIndicator.classList.toggle('active', show);
+
     if (show) {
-     this.elements.typingIndicator.display = 'flex';
         this.elements.typingIndicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
 
+    // Store the state for debugging
+    this.isTyping = show;
+}
+
+addMessage(sender, content) {
+    const messageDiv = document.createElement('div');
+    messageDiv.classList.add('message', sender);
+
+    const avatar = document.createElement('div');
+    avatar.classList.add('message-avatar');
+    avatar.textContent = sender === 'user' ? 'U' : 'AI';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.classList.add('message-content');
+
+    if (sender === 'agent' && window.marked) {
+        try {
+            contentDiv.innerHTML = marked.parse(content);
+        } catch (error) {
+            contentDiv.textContent = content;
+        }
     } else {
-        this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
-        this.elements.typingIndicator.display = 'none';
+        contentDiv.textContent = content;
+    }
 
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(contentDiv);
+
+    this.elements.messagesContainer.appendChild(messageDiv);
+    this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+
+    // FIXED: Hide typing indicator when agent sends a message
+    if (sender === 'agent') {
+        this.showTypingIndicator(false);
+
+        // Clear current execution after a brief delay to allow for any final events
+        setTimeout(() => {
+            if (this.currentExecution) {
+                this.currentExecution = null;
+                this.updateCurrentStatusToIdle();
+            }
+        }, 1000);
     }
 }
 
