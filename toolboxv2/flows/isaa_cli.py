@@ -1171,8 +1171,9 @@ class WorkspaceIsaasCli:
                 if hasattr(agent.amd, 'system_message') and agent.amd.system_message:
                     msg = (agent.amd.system_message[:250] + '...') if len(
                         agent.amd.system_message) > 250 else agent.amd.system_message
+                    x = Style.GREY(msg.replace('\n', '\n     '))
                     output_lines.append(
-                        f"\n   {Style.Underlined('System Prompt')}:\n     {Style.GREY(msg.replace('\n', '\n     '))}")
+                        f"\n   {Style.Underlined('System Prompt')}:\n     {x}")
 
                 # Tools
                 if hasattr(agent, '_tool_registry') and agent.tool_registry:
