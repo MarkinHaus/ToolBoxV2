@@ -1591,6 +1591,11 @@ class App(AppType, metaclass=Singleton):
             else:
                 text = r.text
 
+            if isinstance(text, Callable):
+                if asyncio.iscoroutinefunction(text):
+                    text = await text()
+                else:
+                    text = text()
 
             # Attempt YAML
             if 'yaml' in content_type or text.strip().startswith('---'):
