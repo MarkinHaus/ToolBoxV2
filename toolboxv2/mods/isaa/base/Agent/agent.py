@@ -266,6 +266,8 @@ def with_progress_tracking(cls):
     if original_post:
         @functools.wraps(original_post)
         async def wrapped_post_async(self, shared, prep_res, exec_res):
+            if isinstance(exec_res, str):
+                print("exec_res is string:", exec_res)
             progress_tracker = shared.get("progress_tracker")
             node_name = self.__class__.__name__
 
@@ -310,6 +312,7 @@ def with_progress_tracking(cls):
                 return result
             except Exception as e:
                 # Fehler in der post-Phase
+
                 post_duration = progress_tracker.end_timer(timer_key_post)
                 total_duration = progress_tracker.end_timer(f"{node_name}_total")
                 await progress_tracker.emit_event(ProgressEvent(
@@ -8208,7 +8211,7 @@ class FlowAgent:
             llm_duration = time.perf_counter() - llm_start
             result = response.choices[0].message.content
 
-            if AGENT_VERBOSE:
+            if AGENT_VERBOSE and self.verbose:
                 kwargs["messages"] += [{"role": "assistant", "content": result}]
                 print_prompt(kwargs)
             # else:

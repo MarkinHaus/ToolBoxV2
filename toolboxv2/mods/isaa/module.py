@@ -98,112 +98,6 @@ def get_location():
     return location_data
 
 
-class EnhancedProgressTracker:
-    """Tracks and extracts enhanced progress information for the UI."""
-
-    def __init__(self):
-        self.outline_info = {}
-        self.current_activity = {}
-        self.meta_tools = []
-        self.system_info = {}
-        self.graph_nodes = []
-
-    def extract_progress_data(self, event) -> dict:
-        """Extract comprehensive progress data from event."""
-        progress_data = {
-            'basic': {
-                'event_type': event.event_type,
-                'status': getattr(event, 'status', 'unknown'),
-                'timestamp': event.timestamp,
-                'agent_name': getattr(event, 'agent_name', 'Unknown'),
-                'node_name': getattr(event, 'node_name', 'Unknown')
-            }
-        }
-
-        # Extract outline information
-        if hasattr(event, 'metadata') and event.metadata:
-            metadata = event.metadata
-
-            # Outline tracking
-            if 'outline_step' in metadata or 'steps_completed' in metadata:
-                outline_update = {
-                    'current_step': metadata.get('outline_step', 1),
-                    'completed_steps': metadata.get('steps_completed', []),
-                    'total_steps': metadata.get('total_steps', 0),
-                    'outline_created': metadata.get('outline_created', False)
-                }
-
-                if metadata.get('outline'):
-                    outline_update['steps'] = metadata['outline'].get('steps', [])
-
-                self.outline_info.update(outline_update)
-                progress_data['outline'] = self.outline_info
-
-            # Meta-tool tracking
-            if 'meta_tool_name' in metadata:
-                meta_tool_data = {
-                    'meta_tool_name': metadata['meta_tool_name'],
-                    'status': 'running' if event.event_type == 'meta_tool_call' else 'completed',
-                    'timestamp': event.timestamp,
-                    'execution_phase': metadata.get('execution_phase', 'unknown'),
-                    'reasoning_loop': metadata.get('reasoning_loop', 0)
-                }
-
-                self.meta_tools.append(meta_tool_data)
-                progress_data['meta_tool'] = meta_tool_data
-
-            # Activity tracking
-            if 'current_focus' in metadata or 'primary_activity' in metadata:
-                activity_data = {
-                    'primary_activity': metadata.get('primary_activity', 'Unknown'),
-                    'current_focus': metadata.get('current_focus', ''),
-                    'confidence_level': metadata.get('confidence_level', 0.0),
-                    'time_in_activity': metadata.get('time_in_current_activity', 0),
-                    'detailed_description': metadata.get('detailed_description', '')
-                }
-
-                self.current_activity.update(activity_data)
-                progress_data['activity'] = self.current_activity
-
-            # System info tracking
-            system_update = {}
-            if 'current_node' in metadata:
-                system_update['current_node'] = metadata['current_node']
-            if 'total_events' in metadata:
-                system_update['total_events'] = metadata['total_events']
-            if 'error_count' in metadata:
-                system_update['error_count'] = metadata['error_count']
-            if 'total_cost' in metadata:
-                system_update['total_cost'] = metadata['total_cost']
-
-            if system_update:
-                self.system_info.update(system_update)
-                progress_data['system'] = self.system_info
-
-            # Graph/node tracking
-            if event.node_name and event.node_name not in [node.get('name') for node in self.graph_nodes]:
-                node_data = {
-                    'name': event.node_name,
-                    'active': event.event_type in ['node_start', 'reasoning_loop'],
-                    'completed': event.event_type == 'node_complete',
-                    'timestamp': event.timestamp
-                }
-                self.graph_nodes.append(node_data)
-                progress_data['graph'] = {'nodes': self.graph_nodes}
-
-        return progress_data
-
-    def get_final_summary(self) -> dict:
-        """Get final execution summary."""
-        return {
-            'outline_completed': len(self.outline_info.get('completed_steps', [])) == self.outline_info.get(
-                'total_steps', 0),
-            'total_meta_tools': len(self.meta_tools),
-            'final_activity': self.current_activity.get('primary_activity', 'Completed'),
-            'total_nodes': len(self.graph_nodes),
-            'system_status': self.system_info
-        }
-
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Enum):
@@ -246,7 +140,7 @@ class EnhancedAgentRequestHandler(BaseHTTPRequestHandler):
     def _serve_enhanced_ui(self):
         """Serve the enhanced UI HTML."""
         try:
-            html_content = self.isaa_mod._get_enhanced_agent_ui_html(self.agent_id)
+            html_content = get_agent_ui_html()
 
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
@@ -434,6 +328,75 @@ class EnhancedAgentRequestHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
+
+class EnhancedProgressTracker:
+    """Enhanced progress tracker for detailed UI updates."""
+
+    def __init__(self):
+        self.session_state = {}
+        self.last_outline_update = None
+        self.last_activity_update = None
+
+    def extract_progress_data(self, event: ProgressEvent) -> Dict[str, Any]:
+        """Extract comprehensive progress data from event."""
+        progress_data = {}
+
+        # Outline progress
+        if hasattr(event, 'outline_data') or 'outline' in event.metadata:
+            outline_info = getattr(event, 'outline_data', event.metadata.get('outline', {}))
+            progress_data['outline'] = {
+                'current_step': outline_info.get('current_step', 'Unknown'),
+                'total_steps': outline_info.get('total_steps', 0),
+                'step_name': outline_info.get('step_name', 'Processing'),
+                'progress_percentage': outline_info.get('progress_percentage', 0),
+                'substeps': outline_info.get('substeps', []),
+                'estimated_completion': outline_info.get('estimated_completion')
+            }
+
+        # Activity information
+        if hasattr(event, 'activity_data') or 'activity' in event.metadata:
+            activity_info = getattr(event, 'activity_data', event.metadata.get('activity', {}))
+            progress_data['activity'] = {
+                'current_action': activity_info.get('current_action', 'Processing'),
+                'action_details': activity_info.get('action_details', ''),
+                'start_time': activity_info.get('start_time'),
+                'elapsed_time': activity_info.get('elapsed_time'),
+                'expected_duration': activity_info.get('expected_duration')
+            }
+
+        # Meta tool information
+        if hasattr(event, 'meta_tool_data') or 'meta_tool' in event.metadata:
+            meta_tool_info = getattr(event, 'meta_tool_data', event.metadata.get('meta_tool', {}))
+            progress_data['meta_tool'] = {
+                'tool_name': meta_tool_info.get('tool_name', 'Unknown'),
+                'tool_status': meta_tool_info.get('tool_status', 'active'),
+                'tool_input': meta_tool_info.get('tool_input', ''),
+                'tool_output': meta_tool_info.get('tool_output', ''),
+                'execution_time': meta_tool_info.get('execution_time')
+            }
+
+        # System status
+        if hasattr(event, 'system_data') or 'system' in event.metadata:
+            system_info = getattr(event, 'system_data', event.metadata.get('system', {}))
+            progress_data['system'] = {
+                'memory_usage': system_info.get('memory_usage', 0),
+                'cpu_usage': system_info.get('cpu_usage', 0),
+                'active_threads': system_info.get('active_threads', 1),
+                'queue_size': system_info.get('queue_size', 0)
+            }
+
+        # Graph/workflow information
+        if hasattr(event, 'graph_data') or 'graph' in event.metadata:
+            graph_info = getattr(event, 'graph_data', event.metadata.get('graph', {}))
+            progress_data['graph'] = {
+                'current_node': graph_info.get('current_node', 'Unknown'),
+                'completed_nodes': graph_info.get('completed_nodes', []),
+                'remaining_nodes': graph_info.get('remaining_nodes', []),
+                'node_connections': graph_info.get('node_connections', []),
+                'execution_path': graph_info.get('execution_path', [])
+            }
+
+        return progress_data
 
 class Tools(MainTool, FileHandler):
 
@@ -1456,7 +1419,7 @@ class Tools(MainTool, FileHandler):
 
         except Exception as e:
             error_message = f"Context reset failed: {str(e)}"
-            self.app.print(f"Context reset error for agent {agent_id}: {e}", error=True)
+            self.app.print(f"Context reset error for agent {agent_id}: {e}")
 
             await self._broadcast_to_agent_ui(agent_id, {
                 'event': 'error',
@@ -1509,7 +1472,7 @@ class Tools(MainTool, FileHandler):
 
         except Exception as e:
             error_message = f"Status retrieval failed: {str(e)}"
-            self.app.print(f"Status error for agent {agent_id}: {e}", error=True)
+            self.app.print(f"Status error for agent {agent_id}: {e}")
 
             await self._broadcast_to_agent_ui(agent_id, {
                 'event': 'error',
@@ -1700,7 +1663,7 @@ class Tools(MainTool, FileHandler):
                 raise Exception("Registration failed")
 
         except Exception as e:
-            self.app.print(f"Registry publishing failed: {e}", error=True)
+            self.app.print(f"Registry publishing failed: {e}")
             return {'registry_status': 'failed', 'registry_error': str(e)}
 
     def _get_enhanced_agent_ui_html(self, agent_id: str) -> str:
@@ -3258,61 +3221,226 @@ class Tools(MainTool, FileHandler):
         await self._handle_chat_message_with_progress_integration(agent_id, agent, conn_id, data)
 
     # Unified publish and host method
+    # toolboxv2/mods/isaa/Tools.py
+
     async def publish_and_host_agent(
         self,
         agent,
         public_name: str,
-        registry_server: Optional[str] = None,
+        registry_server: str = "ws://localhost:8080/ws/registry/connect",
         description: Optional[str] = None,
-        local_ui: bool = True,
-        host: str = "0.0.0.0",
-        port: Optional[int] = None,
-        use_builtin_server: bool = None
-    ) -> Dict[str, str]:
-        """
-        Unified method to host agent locally and optionally publish to registry.
+        access_level: str = "public"
+    ) -> Dict[str, Any]:
+        """FIXED: Mit Debug-Ausgaben für Troubleshooting."""
 
-        Args:
-            agent: Agent or Chain instance
-            public_name: Public name for the agent
-            registry_server: Registry server URL for publishing (optional)
-            description: Agent description
-            local_ui: Whether to host local UI
-            host: Host address for local UI
-            port: Port for local UI
-            use_builtin_server: Use toolbox server vs standalone
+        try:
+            # Registry Client initialisieren
+            from toolboxv2.mods.registry.client import get_registry_client
+            registry_client = get_registry_client(self.app)
 
-        Returns:
-            Dictionary with all access URLs and configuration
-        """
+            self.app.print(f"Connecting to registry server: {registry_server}")
+            await registry_client.connect(registry_server)
 
-        use_builtin_server = use_builtin_server or self.app.is_server
-        results = {'agent_name': public_name}
+            # Progress Callback für Live-Updates einrichten
+            callback_success = await self.setup_live_progress_callback(agent, registry_client, f"agent_{agent.amd.name}")
+            if not callback_success:
+                self.app.print("Warning: Progress callback setup failed")
+            else:
+                self.app.print("✅ Progress callback setup successful")
 
-        if local_ui:
-            # Host local UI
-            ui_result = await self.host_agent_ui(
-                agent=agent,
-                host=host,
-                port=port,
-                access='local',
+            # Agent beim Registry registrieren
+            self.app.print(f"Registering agent: {public_name}")
+            registration_info = await registry_client.register(
+                agent_instance=agent,
                 public_name=public_name,
-                description=description,
-                use_builtin_server=use_builtin_server
+                description=description or f"Agent: {public_name}"
             )
-            results.update(ui_result)
 
-        if registry_server:
-            # Publish to registry
-            registry_result = await self._publish_to_registry(
-                agent=agent,
-                public_name=public_name,
-                registry_server=registry_server,
-                description=description
+            if not registration_info:
+                return {"error": "Registration failed", "success": False}
+
+            self.app.print(f"✅ Agent registration successful: {registration_info.public_agent_id}")
+
+            result = {
+                "success": True,
+                "agent_name": public_name,
+                "public_agent_id": registration_info.public_agent_id,
+                "public_api_key": registration_info.public_api_key,
+                "public_url": registration_info.public_url,
+                "registry_server": registry_server,
+                "access_level": access_level,
+                "ui_url": registration_info.public_url.replace("/api/registry/run", "/api/registry/ui"),
+                "websocket_url": registry_server.replace("/connect", "/ui_connect"),
+                "status": "registered"
+            }
+
+            return result
+
+        except Exception as e:
+            self.app.print(f"Failed to publish agent: {e}")
+            return {"error": str(e), "success": False}
+
+    # toolboxv2/mods/isaa/Tools.py
+
+    async def setup_live_progress_callback(self, agent, registry_client, agent_id: str = None):
+        """Enhanced setup for live progress callback with proper error handling."""
+
+        if not registry_client:
+            self.app.print("Warning: No registry client provided for progress updates")
+            return False
+
+        if not registry_client.is_connected:
+            self.app.print("Warning: Registry client is not connected")
+            return False
+
+        progress_tracker = EnhancedProgressTracker()
+
+        # Generate agent ID if not provided
+        if not agent_id:
+            agent_id = getattr(agent, 'name', f'agent_{id(agent)}')
+
+        async def enhanced_live_progress_callback(event: ProgressEvent):
+            """Enhanced progress callback with comprehensive data extraction."""
+            try:
+                # Validate event
+                if not event:
+                    self.app.print("Warning: Received null progress event")
+                    return
+
+                # Debug output for local development
+                event_type = getattr(event, 'event_type', 'unknown')
+                status = getattr(event, 'status', 'unknown')
+                agent_name = getattr(event, 'agent_name', 'Unknown Agent')
+
+                self.app.print(f"📊 Progress Event: {event_type} | {status} | {agent_name}")
+
+                # Extract comprehensive progress data
+                progress_data = progress_tracker.extract_progress_data(event)
+
+                # Prepare enhanced progress message
+                ui_progress_data = {
+                    "agent_id": agent_id,
+                    "event_type": event_type,
+                    "status": status.value if hasattr(status, 'value') else str(status),
+                    "timestamp": getattr(event, 'timestamp', asyncio.get_event_loop().time()),
+                    "agent_name": agent_name,
+                    "node_name": getattr(event, 'node_name', 'Unknown'),
+                    "session_id": getattr(event, 'session_id', None),
+
+                    # Core event metadata
+                    "metadata": {
+                        **getattr(event, 'metadata', {}),
+                        "event_id": getattr(event, 'event_id', f"evt_{asyncio.get_event_loop().time()}"),
+                        "sequence_number": getattr(event, 'sequence_number', 0),
+                        "parent_event_id": getattr(event, 'parent_event_id', None)
+                    },
+
+                    # Detailed progress data for UI panels
+                    "progress_data": progress_data,
+
+                    # UI-specific flags for selective updates
+                    "ui_flags": {
+                        "should_update_outline": bool(progress_data.get('outline')),
+                        "should_update_activity": bool(progress_data.get('activity')),
+                        "should_update_meta_tools": bool(progress_data.get('meta_tool')),
+                        "should_update_system": bool(progress_data.get('system')),
+                        "should_update_graph": bool(progress_data.get('graph')),
+                        "is_error": event_type.lower() in ['error', 'exception', 'failed'],
+                        "is_completion": event_type.lower() in ['complete', 'finished', 'success'],
+                        "requires_user_input": getattr(event, 'requires_user_input', False)
+                    },
+
+                    # Performance metrics
+                    "performance": {
+                        "execution_time": getattr(event, 'execution_time', None),
+                        "memory_delta": getattr(event, 'memory_delta', None),
+                        "tokens_used": getattr(event, 'tokens_used', None),
+                        "api_calls_made": getattr(event, 'api_calls_made', None)
+                    }
+                }
+
+                # Send live update to registry server
+                await registry_client.send_ui_progress(ui_progress_data)
+
+                # Also send agent status update if this is a significant event
+                if event_type in ['started', 'completed', 'error', 'paused', 'resumed']:
+                    agent_status = 'processing'
+                    if event_type == 'completed':
+                        agent_status = 'idle'
+                    elif event_type == 'error':
+                        agent_status = 'error'
+                    elif event_type == 'paused':
+                        agent_status = 'paused'
+
+                    await registry_client.send_agent_status(
+                        agent_id=agent_id,
+                        status=agent_status,
+                        details={
+                            "last_event": event_type,
+                            "last_update": ui_progress_data["timestamp"],
+                            "current_node": progress_data.get('graph', {}).get('current_node', 'Unknown')
+                        }
+                    )
+
+                # Log successful progress update
+                self.app.print(f"✅ Sent progress update: {event_type} -> Registry Server")
+
+            except Exception as e:
+                self.app.print(f"❌ Progress callback error: {e}")
+                # Send error notification to UI
+                try:
+                    await registry_client.send_ui_progress({
+                        "agent_id": agent_id,
+                        "event_type": "progress_callback_error",
+                        "status": "error",
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "agent_name": getattr(agent, 'name', 'Unknown'),
+                        "metadata": {"error": str(e)},
+                        "ui_flags": {"is_error": True}
+                    })
+                except Exception as nested_error:
+                    self.app.print(f"Failed to send error notification: {nested_error}")
+
+        # Set up progress callback with enhanced error handling
+        callback_set = False
+
+        if hasattr(agent, 'set_progress_callback'):
+            try:
+                self.app.print(f"🔧 Setting progress callback via set_progress_callback for agent: {agent_id}")
+                agent.set_progress_callback(enhanced_live_progress_callback)
+                callback_set = True
+            except Exception as e:
+                self.app.print(f"Failed to set progress callback via set_progress_callback: {e}")
+
+        if not callback_set and hasattr(agent, 'progress_callback'):
+            try:
+                self.app.print(f"🔧 Setting progress callback via direct assignment for agent: {agent_id}")
+                agent.progress_callback = enhanced_live_progress_callback
+                callback_set = True
+            except Exception as e:
+                self.app.print(f"Failed to set progress callback via direct assignment: {e}")
+
+        if not callback_set:
+            self.app.print(f"⚠️ Warning: Agent {agent_id} doesn't support progress callbacks")
+            return False
+
+        # Send initial agent status
+        try:
+            await registry_client.send_agent_status(
+                agent_id=agent_id,
+                status='online',
+                details={
+                    "progress_callback_enabled": True,
+                    "callback_setup_time": asyncio.get_event_loop().time(),
+                    "agent_type": type(agent).__name__
+                }
             )
-            results.update(registry_result)
+            self.app.print(f"✅ Progress callback successfully set up for agent: {agent_id}")
+        except Exception as e:
+            self.app.print(f"Failed to send initial agent status: {e}")
 
-        return results
+        return True
+
 
     async def _setup_builtin_server_hosting(self, agent_id: str, agent, host, port) -> Dict[str, str]:
         """Setup agent hosting using toolbox built-in server with enhanced WebSocket support."""
@@ -3330,7 +3458,7 @@ class Tools(MainTool, FileHandler):
         @self.app.tb(mod_name="agent_ui", api=True, version="1", api_methods=['GET'])
         async def ui():
             return Result.html(
-                self._get_enhanced_agent_ui_html(agent_id)
+                self._get_enhanced_agent_ui_html(agent_id), row=True
             )
 
         # Register API endpoint for direct agent interaction
@@ -3504,7 +3632,7 @@ class Tools(MainTool, FileHandler):
                 return Result.json(data=response_data)
 
             except Exception as e:
-                self.app.print(f"Agent execution error: {e}", error=True)
+                self.app.print(f"Agent execution error: {e}")
                 return Result.default_internal_error(
                     info=f"Agent execution failed: {str(e)}",
                     exec_code=500
@@ -3517,7 +3645,7 @@ class Tools(MainTool, FileHandler):
                     agent.progress_callback = original_callback
 
         except Exception as e:
-            self.app.print(f"Direct agent run error: {e}", error=True)
+            self.app.print(f"Direct agent run error: {e}")
             return Result.default_internal_error(
                 info=f"Request processing failed: {str(e)}",
                 exec_code=500

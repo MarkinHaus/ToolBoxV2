@@ -2723,6 +2723,8 @@ class ProgressiveTreePrinter:
                 flow_branch.add(node_text, style=status_style)
 
         except Exception as e:
+            import traceback
+            print(traceback.format_exc())
             flow_branch.add(f"⚠️ System flow error: {e}", style="red dim")
 
     def _add_dynamic_overview(self, tree: Tree, summary: Dict[str, Any]) -> None:

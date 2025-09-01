@@ -569,35 +569,89 @@ from urllib.parse import urlparse, parse_qs
 import time
 
 
+# toolboxv2/mods/registry/ui.py
+
 def get_agent_ui_html() -> str:
-    """Enhanced 3-panel UI with real-time WebSocket updates."""
-    return """
-<!DOCTYPE html>
+    """Produktionsfertige UI mit Live-Progress-Tracking."""
+
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ISAA Registry - Agent Interface</title>
+    <title>Agent Registry - Live Interface</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
+        /* Modernes Dark Theme UI */
         :root {
-            --bg-primary: #1e1e1e;
-            --bg-secondary: #252525;
-            --bg-tertiary: #2d2d2d;
-            --text-primary: #e0e0e0;
-            --text-secondary: #a0a0a0;
-            --text-muted: #707070;
-            --accent-blue: #0078d4;
-            --accent-green: #107c10;
-            --accent-orange: #ff8c00;
-            --accent-red: #d83b01;
-            --border-color: #404040;
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --accent-purple: #a5a5f5;
+            --accent-cyan: #39d0d8;
+            --border-color: #30363d;
+            --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+            --sidebar-width: 300px;
+            --progress-width: 400px;
+            --sidebar-collapsed: 60px;
+            --progress-collapsed: 60px;
+        }
+
+        @media (max-width: 1200px) {
+            :root {
+                --sidebar-width: 250px;
+                --progress-width: 350px;
+            }
+        }
+
+        @media (max-width: 1024px) {
+            :root {
+                --sidebar-width: 220px;
+                --progress-width: 300px;
+            }
+        }
+
+        .sidebar.collapsed::before {
+            content: '📋';
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .progress-panel.collapsed::before {
+            content: '📊';
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border-color);
+            writing-mode: vertical-lr;
+        }
+
+        .sidebar, .progress-panel {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .main-container {
+            transition: grid-template-columns 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             height: 100vh;
@@ -606,87 +660,565 @@ def get_agent_ui_html() -> str:
             overflow: hidden;
         }
 
-        .toolbar {
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .api-key-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .api-key-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+        }
+
+        .api-key-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 16px;
+        }
+
+        .api-key-description {
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .api-key-input {
+            width: 100%;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            color: var(--text-primary);
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .api-key-button {
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        /* Updated Header */
+        .header {
             background: var(--bg-tertiary);
-            padding: 8px 16px;
+            padding: 16px 24px;
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
+            justify-content: space-between;
+            box-shadow: var(--shadow);
+            flex-shrink: 0;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
             gap: 12px;
+        }
+
+        .panel-toggle {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .panel-toggle:hover {
+            background: var(--bg-primary);
+        }
+
+        .panel-toggle.active {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent-blue);
         }
 
         .connection-status {
             display: flex;
             align-items: center;
-            gap: 6px;
-            margin-left: auto;
+            gap: 12px;
         }
 
         .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-indicator.connected {
+            background: rgba(63, 185, 80, 0.1);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .status-indicator.disconnected {
+            background: rgba(248, 81, 73, 0.1);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+
+        .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: var(--accent-red);
-            transition: background 0.3s;
+            background: currentColor;
+            animation: pulse 2s infinite;
         }
 
-        .status-indicator.connected { background: var(--accent-green); }
-        .status-indicator.processing { background: var(--accent-orange); }
+        .status-dot.connected { animation: none; }
 
-        .panel-container {
-            display: flex;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* FIXED: Better grid layout that properly handles collapsing */
+        .main-container {
+            display: grid;
+            grid-template-areas: "sidebar chat progress";
+            grid-template-columns: var(--sidebar-width) 1fr var(--progress-width);
             flex: 1;
             overflow: hidden;
+            min-height: 0;
+            height: 100%;
         }
 
-        .panel {
-            display: flex;
-            flex-direction: column;
+        .main-container.sidebar-collapsed {
+            grid-template-columns: var(--sidebar-collapsed) 1fr var(--progress-width);
+        }
+
+        .main-container.progress-collapsed {
+            grid-template-columns: var(--sidebar-width) 1fr var(--progress-collapsed);
+        }
+
+        .main-container.both-collapsed {
+            grid-template-columns: var(--sidebar-collapsed) 1fr var(--progress-collapsed);
+        }
+
+        .sidebar {
+            grid-area: sidebar;
             background: var(--bg-secondary);
             border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            height: 100%;
+        }
+
+        .sidebar.collapsed .agents-list,
+        .sidebar.collapsed .system-info {
+            display: none;
+        }
+
+        .sidebar.collapsed .sidebar-header {
+            padding: 12px 8px;
+            justify-content: center;
+        }
+
+        .sidebar.collapsed .sidebar-title {
+            display: none;
+        }
+
+        .sidebar.collapsed .collapse-btn {
+            writing-mode: vertical-lr;
+            text-orientation: mixed;
+        }
+
+        .progress-panel.collapsed .collapse-btn {
+            writing-mode: vertical-lr;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+        }
+
+        .sidebar-header {
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            min-height: 48px;
+        }
+
+        .sidebar-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .collapse-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .collapse-btn:hover {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        /* FIXED: Chat area properly uses grid area and expands */
+        .chat-area {
+            grid-area: chat;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-primary);
+            min-height: 0;
+            height: 100%;
             overflow: hidden;
         }
 
-        .panel:last-child { border-right: none; }
+        /* Updated Progress Panel */
+        .progress-panel {
+            grid-area: progress;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            height: 100%;
+        }
 
-        .chat-panel { flex: 2; }
-        .log-panel { flex: 1.5; }
-        .status-panel { flex: 1; }
+        .progress-panel.collapsed .panel-content {
+            display: none;
+        }
 
-        .panel-header {
-            background: var(--bg-tertiary);
+        .progress-panel.collapsed .progress-header {
+            padding: 12px 8px;
+            justify-content: center;
+            writing-mode: vertical-lr;
+            text-orientation: mixed;
+        }
+
+        .progress-panel.collapsed .progress-header span {
+            transform: rotate(180deg);
+        }
+
+        .progress-header {
             padding: 12px 16px;
+            background: var(--bg-tertiary);
             border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
             font-weight: 600;
-            font-size: 13px;
+            font-size: 14px;
+            min-height: 48px;
+        }
+
+        /* FIXED: Hide mobile tabs on desktop by default */
+        .mobile-tabs {
+            display: none;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .main-container {
+                display: flex !important;
+                flex-direction: column;
+                height: 100%;
+                grid-template-areas: none;
+                grid-template-columns: none;
+            }
+
+            .mobile-tabs {
+                display: flex;
+                background: var(--bg-tertiary);
+                border-bottom: 1px solid var(--border-color);
+                flex-shrink: 0;
+            }
+
+            .header-controls {
+                display: none;
+            }
+
+            .mobile-tab {
+                flex: 1;
+                padding: 12px;
+                text-align: center;
+                background: var(--bg-secondary);
+                border-right: 1px solid var(--border-color);
+                cursor: pointer;
+                transition: all 0.2s;
+                font-size: 14px;
+            }
+
+            .mobile-tab:last-child {
+                border-right: none;
+            }
+
+            .mobile-tab.active {
+                background: var(--accent-blue);
+                color: white;
+            }
+
+            .sidebar,
+            .progress-panel {
+                flex: 1;
+                border-right: none;
+                border-left: none;
+                border-bottom: 1px solid var(--border-color);
+                min-height: 0;
+                max-height: none;
+            }
+
+            .chat-area {
+                flex: 1;
+                min-height: 0;
+            }
+
+            .sidebar,
+            .chat-area,
+            .progress-panel {
+                display: none;
+            }
+        }
+
+        @media (min-width: 769px) {
+            .main-container {
+                display: grid !important;
+            }
+
+            .sidebar,
+            .chat-area,
+            .progress-panel {
+                display: flex !important;
+                height: 100%;
+            }
+        }
+
+        .agents-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            min-height: 0;
+        }
+
+        .agents-header {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
 
-        .panel-content {
+        .agent-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .agent-item:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-1px);
+        }
+
+        .agent-item.active {
+            border-color: var(--accent-blue);
+            background: rgba(88, 166, 255, 0.1);
+        }
+
+        .agent-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .agent-description {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .agent-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+        }
+
+        .agent-status.online { color: var(--accent-green); }
+        .agent-status.offline { color: var(--accent-red); }
+
+        .chat-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            flex-shrink: 0;
+        }
+
+        .chat-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+
+        .chat-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .messages-container {
             flex: 1;
             overflow-y: auto;
-            padding: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-height: 0;
         }
 
-        .chat-input-area {
-            border-top: 1px solid var(--border-color);
-            padding: 16px;
+        .message {
             display: flex;
             gap: 12px;
+            max-width: 85%;
         }
 
-        .chat-input {
+        .message.user {
+            flex-direction: row-reverse;
+            margin-left: auto;
+        }
+
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .message.user .message-avatar {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .message.agent .message-avatar {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .message-content {
+            padding: 12px 16px;
+            border-radius: 16px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+
+        .message.user .message-content {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .message.agent .message-content {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        /* NEW: Thinking step styles */
+        .thinking-step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--accent-purple);
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin: 8px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .thinking-step.outline-step {
+            border-color: var(--accent-cyan);
+            background: rgba(57, 208, 216, 0.05);
+        }
+
+        .thinking-step-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text-primary);
+        }
+
+        .thinking-step-content {
+            line-height: 1.4;
+        }
+
+        .message-input {
+            border-top: 1px solid var(--border-color);
+            padding: 16px 20px;
+            display: flex;
+            gap: 12px;
+            flex-shrink: 0;
+            background: var(--bg-secondary);
+        }
+
+        .input-field {
             flex: 1;
             background: var(--bg-primary);
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: 8px;
             padding: 12px;
             color: var(--text-primary);
             font-size: 14px;
         }
 
-        .chat-input:focus {
+        .input-field:focus {
             outline: none;
             border-color: var(--accent-blue);
         }
@@ -695,156 +1227,392 @@ def get_agent_ui_html() -> str:
             background: var(--accent-blue);
             color: white;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             padding: 12px 20px;
             cursor: pointer;
             font-weight: 600;
-            transition: background 0.2s;
+            transition: all 0.2s;
         }
 
         .send-button:hover:not(:disabled) {
-            background: #106ebe;
+            background: #4493f8;
+            transform: translateY(-1px);
         }
 
         .send-button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
         }
 
-        .message {
-            margin-bottom: 16px;
-            display: flex;
-            max-width: 100%;
-        }
-
-        .message.user {
-            justify-content: flex-end;
-        }
-
-        .message-content {
-            max-width: 80%;
-            padding: 12px 16px;
-            border-radius: 12px;
+        .panel-header {
+            padding: 16px;
             background: var(--bg-tertiary);
-            line-height: 1.4;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: 600;
+            font-size: 14px;
         }
 
-        .message.user .message-content {
-            background: var(--accent-blue);
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            min-height: 0;
         }
 
-        .log-entry {
-            margin-bottom: 8px;
-            padding: 8px 12px;
-            border-radius: 4px;
-            background: var(--bg-primary);
-            font-family: 'Consolas', 'Monaco', monospace;
+        .progress-section {
+            margin-bottom: 20px;
+        }
+
+        .section-title {
             font-size: 12px;
-            border-left: 3px solid var(--border-color);
-        }
-
-        .log-entry.progress { border-left-color: var(--accent-blue); }
-        .log-entry.error { border-left-color: var(--accent-red); }
-        .log-entry.success { border-left-color: var(--accent-green); }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 8px;
-            font-size: 13px;
-        }
-
-        .status-key {
+            font-weight: 600;
             color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            letter-spacing: 0.5px;
+        }
+
+        /* NEW: Enhanced progress item styles */
+        .progress-item {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .progress-item:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-1px);
+        }
+
+        .progress-item-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .progress-icon {
+            width: 16px;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .progress-title {
+            font-weight: 500;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .progress-status {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
             font-weight: 500;
         }
 
-        .status-value {
-            font-family: 'Consolas', monospace;
-            word-break: break-all;
+        .progress-status.running {
+            background: var(--accent-orange);
+            color: white;
         }
 
-        .progress-bar {
-            width: 100%;
-            height: 4px;
-            background: var(--bg-primary);
-            border-radius: 2px;
-            overflow: hidden;
-            margin-top: 8px;
+        .progress-status.completed {
+            background: var(--accent-green);
+            color: white;
         }
 
-        .progress-fill {
+        .progress-status.error {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .progress-status.starting {
+            background: var(--accent-cyan);
+            color: white;
+        }
+
+        .progress-details {
+            color: var(--text-secondary);
+            font-size: 11px;
+            line-height: 1.3;
+        }
+
+        .performance-metrics {
+            background: rgba(88, 166, 255, 0.05);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+            border-radius: 6px;
+            padding: 8px;
+            margin-top: 6px;
+            font-size: 10px;
+        }
+
+        .performance-metrics .metric {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        .no-agent-selected {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 16px;
             height: 100%;
-            background: var(--accent-blue);
-            width: 0%;
-            transition: width 0.3s;
+            color: var(--text-muted);
+            text-align: center;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+        .no-agent-selected .icon {
+            font-size: 48px;
+            opacity: 0.5;
         }
 
-        .pulsing { animation: pulse 1.5s infinite; }
+        .typing-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            margin: 12px 20px;
+            border-radius: 16px;
+            font-size: 14px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .typing-indicator.active { display: flex; }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { opacity: 0.3; }
+            30% { opacity: 1; }
+        }
+
+        .system-info {
+            margin-top: auto;
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+            font-size: 11px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .error-message {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            padding: 12px;
+            border-radius: 6px;
+            margin: 12px;
+            font-size: 14px;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            max-width: 300px;
+        }
     </style>
 </head>
 <body>
-    <div class="toolbar">
-        <button id="clear-chat" class="toolbar-button">Clear Chat</button>
-        <button id="reset-context" class="toolbar-button">Reset Context</button>
-        <div class="connection-status">
-            <div class="status-indicator" id="connection-indicator"></div>
-            <span id="connection-text">Connecting...</span>
+
+<div class="api-key-modal" id="api-key-modal">
+        <div class="api-key-content">
+            <div class="api-key-title">🔐 Enter API Key</div>
+            <div class="api-key-description">
+                Please enter your API key to access the agent. You can find this key in your agent registration details.
+            </div>
+            <input type="text" class="api-key-input" id="api-key-input"
+                   placeholder="tbk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+            <button class="api-key-button" id="api-key-submit">Connect</button>
         </div>
     </div>
 
-    <div class="panel-container">
-        <div class="panel chat-panel">
-            <div class="panel-header">Agent Chat</div>
-            <div class="panel-content" id="chat-messages"></div>
-            <div class="chat-input-area">
-                <input type="text" id="chat-input" class="chat-input"
-                       placeholder="Enter your message..." autocomplete="off">
-                <button id="send-button" class="send-button">Send</button>
+     <div class="header">
+        <div class="logo">
+            <span>🤖</span>
+            <span>Agent Registry</span>
+        </div>
+        <div class="header-controls">
+            <button class="panel-toggle active" id="sidebar-toggle">📋 Agents</button>
+            <button class="panel-toggle active" id="progress-toggle">📊 Progress</button>
+            <div class="status-indicator disconnected" id="connection-status">
+                <div class="status-dot"></div>
+                <span>Connecting...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="mobile-tabs">
+        <div class="mobile-tab active" data-tab="chat">💬 Chat</div>
+        <div class="mobile-tab" data-tab="agents">📋 Agents</div>
+        <div class="mobile-tab" data-tab="progress">📊 Progress</div>
+    </div>
+
+    <div class="main-container">
+        <!-- Agents Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Available Agents</div>
+                <button class="collapse-btn" id="sidebar-collapse">◀</button>
+            </div>
+            <div class="agents-list">
+                <div id="agents-container">
+                    <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                        Loading agents...
+                    </div>
+                </div>
+            </div>
+            <div class="system-info">
+                <div>Registry Server</div>
+                <div id="server-info">ws://localhost:8080</div>
             </div>
         </div>
 
-        <div class="panel log-panel">
-            <div class="panel-header">Execution Log</div>
-            <div class="panel-content" id="log-content">
-                <div class="log-entry">System initialized. Ready for agent interactions.</div>
+        <!-- Chat Area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <div class="chat-title" id="chat-title">Select an Agent</div>
+                <div class="chat-subtitle" id="chat-subtitle">Choose an agent from the sidebar to start chatting</div>
+            </div>
+
+            <div class="messages-container" id="messages-container">
+                <div class="no-agent-selected">
+                    <div class="icon">💬</div>
+                    <div>Select an agent to start a conversation</div>
+                </div>
+            </div>
+
+            <div class="typing-indicator" id="typing-indicator">
+                <span>Agent is thinking</span>
+                <div class="typing-dots">
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                </div>
+            </div>
+
+            <div class="message-input">
+                <input type="text" class="input-field" id="message-input"
+                       placeholder="Type your message..." disabled>
+                <button class="send-button" id="send-button" disabled>Send</button>
             </div>
         </div>
+        <!-- Progress Panel -->
+        <div class="progress-panel" id="progress-panel">
+            <div class="progress-header">
+                <span>Live Progress</span>
+                <button class="collapse-btn" id="progress-collapse">▶</button>
+            </div>
+            <div class="panel-content" id="progress-content">
+                <div class="progress-section">
+                    <div class="section-title">Current Status</div>
+                    <div id="current-status">
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                            No active execution
+                        </div>
+                    </div>
+                </div>
 
-        <div class="panel status-panel">
-            <div class="panel-header">System Status</div>
-            <div class="panel-content">
-                <div class="status-grid" id="status-grid"></div>
-                <div class="progress-bar" id="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
+                <div class="progress-section">
+                    <div class="section-title">Performance Metrics</div>
+                    <div id="performance-metrics">
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                            No metrics available
+                        </div>
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <div class="section-title">Meta Tools History</div>
+                    <div id="meta-tools-history">
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                            No meta-tool activity
+                        </div>
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <div class="section-title">System Events</div>
+                    <div id="system-events">
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                            System idle
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <script>
-        class AgentUI {
+    <script unSave="true">
+        class AgentRegistryUI {
             constructor() {
                 this.ws = null;
-                this.isProcessing = false;
-                this.currentProgress = 0;
+                this.currentAgent = null;
+                this.sessionId = 'ui_session_' + Math.random().toString(36).substr(2, 9);
+                this.isConnected = false;
+                this.reconnectAttempts = 0;
+                this.apiKey = null;
+                this.maxReconnectAttempts = 10;
+                this.reconnectDelay = 1000;
+
+                this.panelStates = {
+                    sidebar: true,
+                    progress: true,
+                    mobile: 'chat'
+                };
+
+                this.agents = new Map();
+                this.progressData = new Map();
+                this.currentExecution = null;
 
                 this.elements = {
-                    chatInput: document.getElementById('chat-input'),
+                    connectionStatus: document.getElementById('connection-status'),
+                    agentsContainer: document.getElementById('agents-container'),
+                    chatTitle: document.getElementById('chat-title'),
+                    chatSubtitle: document.getElementById('chat-subtitle'),
+                    messagesContainer: document.getElementById('messages-container'),
+                    messageInput: document.getElementById('message-input'),
                     sendButton: document.getElementById('send-button'),
-                    chatMessages: document.getElementById('chat-messages'),
-                    logContent: document.getElementById('log-content'),
-                    statusGrid: document.getElementById('status-grid'),
-                    connectionIndicator: document.getElementById('connection-indicator'),
-                    connectionText: document.getElementById('connection-text'),
-                    progressFill: document.getElementById('progress-fill'),
-                    clearChat: document.getElementById('clear-chat'),
-                    resetContext: document.getElementById('reset-context')
+                    typingIndicator: document.getElementById('typing-indicator'),
+                    currentStatus: document.getElementById('current-status'),
+                    performanceMetrics: document.getElementById('performance-metrics'),
+                    metaToolsHistory: document.getElementById('meta-tools-history'),
+                    systemEvents: document.getElementById('system-events'),
+                    serverInfo: document.getElementById('server-info'),
+
+                    // API Key elements
+                    apiKeyModal: document.getElementById('api-key-modal'),
+                    apiKeyInput: document.getElementById('api-key-input'),
+                    apiKeySubmit: document.getElementById('api-key-submit'),
+
+                    // Panel control elements with fallbacks
+                    sidebarToggle: document.getElementById('sidebar-toggle'),
+                    progressToggle: document.getElementById('progress-toggle'),
+                    sidebarCollapse: document.getElementById('sidebar-collapse'),
+                    progressCollapse: document.getElementById('progress-collapse'),
+                    mainContainer: document.querySelector('.main-container'),
+                    sidebar: document.getElementById('sidebar'),
+                    progressPanel: document.getElementById('progress-panel')
                 };
 
                 this.init();
@@ -852,230 +1620,1016 @@ def get_agent_ui_html() -> str:
 
             init() {
                 this.setupEventListeners();
-                this.connectWebSocket();
-                this.updateStatus();
+                this.setupPanelControls();
+                this.showApiKeyModal();
+                // this.connect(); // TODO: Remove for production
+            }
+
+            showApiKeyModal() {
+                // Check if API key is stored
+                const storedKey = localStorage.getItem('agent_registry_api_key');
+                if (storedKey) {
+                    this.apiKey = storedKey;
+                    this.elements.apiKeyModal.style.display = 'none';
+                    this.connect();
+                } else {
+                    this.elements.apiKeyModal.style.display = 'flex';
+                }
+            }
+
+            async validateAndStoreApiKey() {
+                const apiKey = this.elements.apiKeyInput.value.trim();
+                if (!apiKey) {
+                    this.showError('Please enter an API key');
+                    return;
+                }
+
+                if (!apiKey.startsWith('tbk_')) {
+                    this.showError('Invalid API key format (should start with tbk_)');
+                    return;
+                }
+
+                this.apiKey = apiKey;
+                // localStorage.setItem('agent_registry_api_key', apiKey);
+                this.elements.apiKeyModal.style.display = 'none';
+                this.connect();
+            }
+
+            // Panel Controls Setup
+            setupPanelControls() {
+                this.elements.sidebarToggle?.addEventListener('click', () => {
+                    this.togglePanel('sidebar');
+                });
+
+                this.elements.progressToggle?.addEventListener('click', () => {
+                    this.togglePanel('progress');
+                });
+
+                this.elements.sidebarCollapse?.addEventListener('click', () => {
+                    this.togglePanel('sidebar');
+                });
+
+                this.elements.progressCollapse?.addEventListener('click', () => {
+                    this.togglePanel('progress');
+                });
+
+                const mobileTabs = document.querySelectorAll('.mobile-tab');
+                if (mobileTabs.length > 0) {
+                    mobileTabs.forEach(tab => {
+                        tab.addEventListener('click', () => {
+                            this.switchMobileTab(tab.dataset.tab);
+                        });
+                    });
+                }
+
+                this.setupResponsiveHandlers();
+            }
+
+            togglePanel(panel) {
+                this.panelStates[panel] = !this.panelStates[panel];
+                this.updatePanelStates();
+            }
+
+            updatePanelStates() {
+                const { sidebar, progress } = this.panelStates;
+
+                if (this.elements.mainContainer) {
+                    this.elements.mainContainer.classList.remove(
+                        'sidebar-collapsed',
+                        'progress-collapsed',
+                        'both-collapsed'
+                    );
+
+                    if (!sidebar && !progress) {
+                        this.elements.mainContainer.classList.add('both-collapsed');
+                    } else if (!sidebar) {
+                        this.elements.mainContainer.classList.add('sidebar-collapsed');
+                    } else if (!progress) {
+                        this.elements.mainContainer.classList.add('progress-collapsed');
+                    }
+                }
+
+                if (this.elements.sidebar) {
+                    this.elements.sidebar.classList.toggle('collapsed', !sidebar);
+                }
+
+                if (this.elements.progressPanel) {
+                    this.elements.progressPanel.classList.toggle('collapsed', !progress);
+                }
+
+                // Update toggle button states
+                if (this.elements.sidebarToggle) {
+                    this.elements.sidebarToggle.classList.toggle('active', sidebar);
+                    this.elements.sidebarToggle.textContent = sidebar ? '📋 Agents' : '📋';
+                }
+
+                if (this.elements.progressToggle) {
+                    this.elements.progressToggle.classList.toggle('active', progress);
+                    this.elements.progressToggle.textContent = progress ? '📊 Progress' : '📊';
+                }
+
+                if (this.elements.sidebarCollapse) {
+                    this.elements.sidebarCollapse.textContent = sidebar ? '◀' : '▶';
+                }
+                if (this.elements.progressCollapse) {
+                    this.elements.progressCollapse.textContent = progress ? '▶' : '◀';
+                }
+
+                // Force layout recalculation
+                if (this.elements.mainContainer) {
+                    this.elements.mainContainer.offsetHeight; // Trigger reflow
+                }
+            }
+
+            handleWindowResize() {
+                const chatArea = document.querySelector('.chat-area');
+                const mainContainer = this.elements.mainContainer;
+
+                if (chatArea && mainContainer) {
+                    const currentDisplay = mainContainer.style.display;
+                    mainContainer.style.display = 'none';
+                    mainContainer.offsetHeight;
+                    mainContainer.style.display = currentDisplay || '';
+                }
+            }
+
+            switchMobileTab(tab) {
+                this.panelStates.mobile = tab;
+
+                const mobileTabs = document.querySelectorAll('.mobile-tab');
+                if (mobileTabs.length > 0) {
+                    mobileTabs.forEach(t => {
+                        t.classList.toggle('active', t.dataset.tab === tab);
+                    });
+                }
+
+                const sidebarEl = document.querySelector('.sidebar');
+                const chatAreaEl = document.querySelector('.chat-area');
+                const progressPanelEl = document.querySelector('.progress-panel');
+
+                if (sidebarEl) {
+                    sidebarEl.style.display = tab === 'agents' ? 'flex' : 'none';
+                }
+                if (chatAreaEl) {
+                    chatAreaEl.style.display = tab === 'chat' ? 'flex' : 'none';
+                }
+                if (progressPanelEl) {
+                    progressPanelEl.style.display = tab === 'progress' ? 'flex' : 'none';
+                }
+            }
+
+            setupResponsiveHandlers() {
+                const mediaQuery = window.matchMedia('(max-width: 768px)');
+
+                const handleResponsive = (e) => {
+                    if (e.matches) {
+                        this.switchMobileTab(this.panelStates.mobile);
+                    } else {
+                        const panels = document.querySelectorAll('.sidebar, .chat-area, .progress-panel');
+                        panels.forEach(panel => {
+                            if (panel) {
+                                panel.style.display = '';
+                            }
+                        });
+                    }
+                };
+
+                if (mediaQuery.addEventListener) {
+                    mediaQuery.addEventListener('change', handleResponsive);
+                } else {
+                    mediaQuery.addListener(handleResponsive);
+                }
+
+                handleResponsive(mediaQuery);
             }
 
             setupEventListeners() {
+                this.elements.apiKeySubmit?.addEventListener('click', () => {
+                    this.validateAndStoreApiKey();
+                });
+
+                window.addEventListener('resize', () => {
+                    this.handleWindowResize();
+                });
+
+                this.elements.apiKeyInput?.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.validateAndStoreApiKey();
+                    }
+                });
                 this.elements.sendButton.addEventListener('click', () => this.sendMessage());
-                this.elements.chatInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                this.elements.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && this.currentAgent) {
                         e.preventDefault();
                         this.sendMessage();
                     }
                 });
 
-                this.elements.clearChat.addEventListener('click', () => this.clearChat());
-                this.elements.resetContext.addEventListener('click', () => this.resetContext());
-            }
-
-            connectWebSocket() {
-                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${wsProtocol}//${window.location.host}/ws/registry/ui`;
-
-                this.ws = new WebSocket(wsUrl);
-
-                this.ws.onopen = () => {
-                    this.setConnectionStatus('connected', 'Connected');
-                    this.addLogEntry('WebSocket connection established', 'success');
-                };
-
-                this.ws.onmessage = (event) => {
-                    const message = JSON.parse(event.data);
-                    this.handleWebSocketMessage(message);
-                };
-
-                this.ws.onclose = () => {
-                    this.setConnectionStatus('disconnected', 'Disconnected');
-                    this.addLogEntry('WebSocket connection closed', 'error');
-                    setTimeout(() => this.connectWebSocket(), 3000);
-                };
-
-                this.ws.onerror = (error) => {
-                    this.setConnectionStatus('disconnected', 'Connection Error');
-                    this.addLogEntry(`WebSocket error: ${error.message}`, 'error');
-                };
-            }
-
-            handleWebSocketMessage(message) {
-                switch (message.event) {
-                    case 'ui_update':
-                        this.handleUIUpdate(message.data);
-                        break;
-                    case 'progress_update':
-                        this.handleProgressUpdate(message.data);
-                        break;
-                    case 'execution_error':
-                        this.handleExecutionError(message.data);
-                        break;
-                    default:
-                        console.log('Unhandled message:', message);
-                }
-            }
-
-            handleUIUpdate(data) {
-                if (data.event === 'progress_update') {
-                    const payload = data.data.payload;
-                    this.addLogEntry(`Progress: ${payload.status || 'running'}`, 'progress');
-
-                    if (payload.details && payload.details.progress) {
-                        this.updateProgress(payload.details.progress);
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
+                        this.connect();
                     }
-                }
+                });
             }
 
-            handleProgressUpdate(data) {
-                this.addLogEntry(`Agent progress: ${JSON.stringify(data.payload)}`, 'progress');
+            connect() {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
-                if (data.is_final) {
-                    this.setProcessing(false);
-                    const result = data.payload.details?.result;
-                    if (result) {
-                        this.addChatMessage('agent', result);
-                    }
-                }
-            }
-
-            handleExecutionError(data) {
-                this.addLogEntry(`Execution error: ${data.error}`, 'error');
-                this.addChatMessage('agent', `Error: ${data.error}`);
-                this.setProcessing(false);
-            }
-
-            async sendMessage() {
-                const message = this.elements.chatInput.value.trim();
-                if (!message || this.isProcessing) return;
-
-                this.addChatMessage('user', message);
-                this.elements.chatInput.value = '';
-                this.setProcessing(true);
+                this.updateConnectionStatus('connecting', 'Connecting...');
 
                 try {
-                    const response = await fetch('/api/registry/run_stream', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer your-api-key' // This should be dynamic
-                        },
-                        body: JSON.stringify({
-                            query: message,
-                            session_id: 'ui-session'
-                        })
-                    });
+                    const wsUrl = `ws://${window.location.host}/ws/registry/ui_connect`;
+                    this.ws = new WebSocket(wsUrl);
 
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
+                    this.ws.onopen = () => {
+                        this.isConnected = true;
+                        this.reconnectAttempts = 0;
+                        this.updateConnectionStatus('connected', 'Connected');
+                        console.log('Connected to Registry Server');
+                    };
 
-                    const result = await response.json();
-                    if (result.success) {
-                        this.addChatMessage('agent', result.data.result);
-                    } else {
-                        this.addChatMessage('agent', `Error: ${result.error}`);
-                    }
+                    this.ws.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleWebSocketMessage(data);
+                        } catch (error) {
+                            console.error('Message parse error:', error);
+                        }
+                    };
+
+                    this.ws.onclose = () => {
+                        this.isConnected = false;
+                        this.updateConnectionStatus('disconnected', 'Disconnected');
+                        this.scheduleReconnection();
+                    };
+
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateConnectionStatus('error', 'Connection Error');
+                    };
+
                 } catch (error) {
-                    this.addChatMessage('agent', `Network error: ${error.message}`);
-                    this.addLogEntry(`Request failed: ${error.message}`, 'error');
-                } finally {
-                    this.setProcessing(false);
+                    console.error('Connection error:', error);
+                    this.updateConnectionStatus('error', 'Connection Failed');
+                    this.scheduleReconnection();
                 }
             }
 
-            addChatMessage(sender, text) {
-                const messageEl = document.createElement('div');
-                messageEl.classList.add('message', sender);
+            scheduleReconnection() {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    this.updateConnectionStatus('error', 'Connection Failed (Max attempts reached)');
+                    return;
+                }
 
-                const contentEl = document.createElement('div');
-                contentEl.classList.add('message-content');
+                this.reconnectAttempts++;
+                const delay = Math.min(this.reconnectDelay * this.reconnectAttempts, 30000);
+
+                this.updateConnectionStatus('connecting', `Reconnecting in ${delay/1000}s (attempt ${this.reconnectAttempts})`);
+
+                setTimeout(() => {
+                    if (!this.isConnected) {
+                        this.connect();
+                    }
+                }, delay);
+            }
+
+            updateConnectionStatus(status, text) {
+                this.elements.connectionStatus.className = `status-indicator ${status}`;
+                this.elements.connectionStatus.querySelector('span').textContent = text;
+            }
+
+            // Replace the entire handleWebSocketMessage method and related handlers
+handleWebSocketMessage(data) {
+    console.log('WebSocket message received:', data);
+
+    // FIXED: Handle execution_progress events properly
+    if (data.event === 'execution_progress') {
+        // Extract the nested execution data
+        const executionData = data.data;
+        if (executionData && executionData.payload) {
+            this.handleAgentExecutionEvent(executionData);
+        }
+        return;
+    }
+
+    // Handle direct execution events (when data has request_id and payload directly)
+    if (data.request_id && data.payload) {
+        this.handleAgentExecutionEvent(data);
+        return;
+    }
+
+    // Handle other registry events
+    if (data.event) {
+        this.handleRegistryEvent(data);
+        return;
+    }
+
+    console.log('Unhandled message format:', data);
+}
+
+handleAgentExecutionEvent(eventData) {
+    const payload = eventData.payload;
+    const eventType = payload.event_type;
+    const isFinal = eventData.is_final;
+    const requestId = eventData.request_id;
+
+    console.log(`🎯 Processing Event: ${eventType}`, payload);
+
+    // FIXED: Handle final execution complete with proper result extraction
+    if (isFinal) {
+        // Extract result from metadata or other possible locations
+        const result = payload.metadata?.result ||
+                      payload.result ||
+                      payload.response ||
+                      payload.output;
+
+        if (result && typeof result === 'string' && result.trim()) {
+            this.addMessage('agent', result);
+        }
+        this.showTypingIndicator(false);
+        this.currentExecution = null;
+        this.updateCurrentStatusToIdle();
+        return;
+    }
+
+    // Start execution tracking
+    if (!this.currentExecution) {
+        this.currentExecution = {
+            requestId,
+            startTime: Date.now(),
+            events: [],
+            lastUpdate: Date.now()
+        };
+        this.showTypingIndicator(true);
+    }
+
+    // Store event if we have active execution
+    if (this.currentExecution) {
+        this.currentExecution.events.push({
+            ...payload,
+            timestamp: Date.now()
+        });
+        this.currentExecution.lastUpdate = Date.now();
+    }
+
+    // FIXED: Route events to specific handlers with better error handling
+    try {
+        switch (eventType) {
+            case 'reasoning_loop':
+                this.handleReasoningLoop(payload);
+                this.updateCurrentStatus(payload, '🧠 Reasoning');
+                break;
+            case 'meta_tool_call':
+                this.handleMetaToolCall(payload);
+                this.updateCurrentStatus(payload, '⚙️ Using Tool');
+                break;
+            case 'llm_call':
+                this.handleLLMCall(payload);
+                this.updateCurrentStatus(payload, '💭 AI Thinking');
+                break;
+            case 'node_phase':
+                this.handleNodeEvent(payload);
+                this.updateCurrentStatus(payload, '🔧 Processing Phase');
+                break;
+            case 'node_exit':
+                this.handleNodeEvent(payload);
+                this.updateCurrentStatus(payload, '✅ Completed Phase');
+                break;
+            case 'execution_start':
+                this.updateCurrentStatus(payload, '🚀 Starting');
+                break;
+            case 'execution_complete':
+                this.updateCurrentStatus(payload, '✅ Complete');
+                break;
+            default:
+                // Still update status for unknown events
+                this.updateCurrentStatus(payload, `⚡ ${eventType.replace(/_/g, ' ')}`);
+                console.log('📝 Unhandled event type:', eventType, payload);
+        }
+    } catch (error) {
+        console.error('❌ Error handling event:', error, payload);
+        this.showError(`Event processing error: ${error.message}`);
+    }
+}
+
+handleRegistryEvent(data) {
+    const event = data.event;
+    const payload = data.data || data;
+
+    console.log(`📋 Registry Event: ${event}`, payload);
+
+    switch (event) {
+        case 'api_key_validation':
+            if (payload.valid) {
+                console.log('✅ API key validated successfully');
+            } else {
+                this.showError('❌ Invalid API key for this agent');
+                this.currentAgent = null;
+                this.elements.messageInput.disabled = true;
+                this.elements.sendButton.disabled = true;
+            }
+            break;
+        case 'agents_list':
+            console.log('📝 Updating agents list:', payload.agents);
+            this.updateAgentsList(payload.agents);
+            break;
+        case 'agent_registered':
+            console.log('🆕 Agent registered:', payload);
+            this.addAgent(payload);
+            break;
+        case 'error':
+            console.error('❌ WebSocket error:', payload);
+            this.showError(payload.error || payload.message || 'Unknown error');
+            break;
+        case 'execution_progress':
+            // This shouldn't happen anymore with the fixed routing above
+            console.log('🔄 Legacy execution progress event:', payload);
+            if (payload.payload) {
+                this.handleAgentExecutionEvent(payload);
+            }
+            break;
+        default:
+            console.log('❓ Unhandled registry event:', event, payload);
+    }
+}
+
+// FIXED: Enhanced reasoning loop handler
+handleReasoningLoop(payload) {
+    const metadata = payload.metadata || {};
+    const loopNumber = metadata.loop_number || 0;
+    const outlineStep = metadata.outline_step || 0;
+    const outlineTotal = metadata.outline_total || 0;
+    const performance = metadata.performance_metrics || {};
+    const status = payload.status || 'running';
+
+    console.log(`🧠 Reasoning Loop ${loopNumber}:`, metadata);
+
+    // Show outline progress in chat
+    if (outlineStep > 0 && status === 'running') {
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'thinking-step outline-step';
+        stepDiv.innerHTML = `
+            <div class="thinking-step-header">
+                <span>🗺️</span>
+                <span>Planning Step ${outlineStep} of ${outlineTotal}</span>
+            </div>
+            <div class="thinking-step-content">
+                ${JSON.stringify(metadata, null, 2)}
+            </div>
+        `;
+        this.elements.messagesContainer.appendChild(stepDiv);
+        this.scrollToBottom();
+    }
+
+    // Update performance metrics in progress panel
+    if (performance && Object.keys(performance).length > 0) {
+        this.updatePerformanceMetrics(performance);
+    }
+}
+
+// FIXED: Enhanced meta tool handler
+handleMetaToolCall(payload) {
+    const metadata = payload.metadata || {};
+    const metaToolName = metadata.meta_tool_name || 'unknown_tool';
+    const status = payload.status || 'running';
+    const phase = metadata.execution_phase || 'unknown';
+
+    console.log(`⚙️ Meta Tool: ${metaToolName} (${status})`, metadata);
+
+    // FIXED: Show internal reasoning in chat with better formatting
+    if (metaToolName === 'internal_reasoning' && status === 'completed') {
+        const args = metadata.parsed_args || {};
+        const thought = args.thought;
+        const thoughtNumber = args.thought_number;
+        const confidence = args.confidence_level || 0;
+
+        if (thought) {
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'thinking-step';
+            thinkingDiv.innerHTML = `
+                <div class="thinking-step-header">
+                    <span>🧠</span>
+                    <span>Internal Reasoning ${thoughtNumber ? `#${thoughtNumber}` : ''}</span>
+                    <span style="font-size: 10px; color: var(--text-muted);">${Math.round(confidence * 100)}% confidence</span>
+                </div>
+                <div class="thinking-step-content">
+                    ${this.formatThinkingContent(thought)}
+                </div>
+            `;
+            this.elements.messagesContainer.appendChild(thinkingDiv);
+            this.scrollToBottom();
+        }
+    }
+
+    // FIXED: Always update meta tools history
+    this.updateMetaToolsHistory(payload);
+}
+
+// NEW: Format thinking content nicely
+formatThinkingContent(thought) {
+    if (!thought) return '';
+
+    // Simple formatting for better readability
+    return thought
+        .replace(/\\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>');
+}
+
+// FIXED: Enhanced LLM call handler
+handleLLMCall(payload) {
+    const model = payload.llm_model || 'Unknown Model';
+    const tokens = payload.llm_total_tokens || 0;
+    const cost = payload.llm_cost || 0;
+    const duration = payload.llm_duration || 0;
+    const status = payload.status || 'running';
+
+    console.log(`💭 LLM Call: ${model} (${status})`, { tokens, cost, duration });
+
+    this.updateSystemEvents({
+        type: 'llm_call',
+        model,
+        tokens,
+        cost,
+        duration,
+        status,
+        timestamp: Date.now()
+    });
+}
+
+// FIXED: Enhanced node event handler
+handleNodeEvent(payload) {
+    const nodeName = payload.node_name || 'Unknown Node';
+    const phase = payload.node_phase || 'processing';
+    const status = payload.status || 'running';
+    const duration = payload.node_duration || 0;
+    const routingDecision = payload.routing_decision;
+
+    console.log(`🔧 Node Event: ${nodeName}`, { phase, status, duration, routingDecision });
+
+    this.updateSystemEvents({
+        type: 'node_event',
+        nodeName,
+        phase,
+        status,
+        duration,
+        routingDecision,
+        timestamp: Date.now()
+    });
+}
+
+// FIXED: Enhanced current status updates
+updateCurrentStatus(payload, userFriendlyAction = null) {
+    const eventType = payload.event_type || 'unknown';
+    const status = payload.status || 'processing';
+    const nodeName = payload.node_name || '';
+    const timestamp = new Date().toLocaleTimeString();
+    const agentName = payload.agent_name || 'Agent';
+
+    // FIXED: Use user-friendly action or derive from event type
+    const displayAction = userFriendlyAction || this.getDisplayAction(eventType, payload);
+    const icon = this.getEventIcon(eventType, status);
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'progress-item';
+    statusDiv.innerHTML = `
+        <div class="progress-item-header">
+            <div class="progress-icon">${icon}</div>
+            <div class="progress-title">${displayAction}</div>
+            <div class="progress-status ${status}">${status}</div>
+        </div>
+        <div class="progress-details">
+            ${agentName} • ${timestamp}
+            ${nodeName ? ` • ${nodeName}` : ''}
+            ${payload.routing_decision ? ` • Route: ${payload.routing_decision}` : ''}
+        </div>
+        ${this.createProgressBar(payload)}
+    `;
+
+    // FIXED: Clear and update status
+    this.elements.currentStatus.innerHTML = '';
+    this.elements.currentStatus.appendChild(statusDiv);
+}
+
+// NEW: Create progress bars for certain events
+createProgressBar(payload) {
+    const metadata = payload.metadata || {};
+
+    // For reasoning loops, show progress
+    if (payload.event_type === 'reasoning_loop') {
+        const outlineStep = metadata.outline_step || 0;
+        const outlineTotal = metadata.outline_total || 0;
+
+        if (outlineTotal > 0) {
+            const percentage = Math.round((outlineStep / outlineTotal) * 100);
+            return `
+                <div style="margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-bottom: 2px;">
+                        <span>Progress</span>
+                        <span>${percentage}%</span>
+                    </div>
+                    <div style="background: var(--bg-primary); border-radius: 4px; overflow: hidden; height: 4px;">
+                        <div style="background: var(--accent-blue); height: 100%; width: ${percentage}%; transition: width 0.3s;"></div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    return '';
+}
+
+// FIXED: Enhanced performance metrics
+updatePerformanceMetrics(performance) {
+    console.log('📊 Updating Performance Metrics:', performance);
+
+    const metricsDiv = document.createElement('div');
+    metricsDiv.className = 'progress-item';
+
+    const metrics = {
+        'Action Efficiency': `${Math.round((performance.action_efficiency || 0) * 100)}%`,
+        'Avg Loop Time': `${(performance.avg_loop_time || 0).toFixed(1)}s`,
+        'Progress Rate': `${Math.round((performance.progress_rate || 0) * 100)}%`,
+        'Total Loops': performance.total_loops || 0,
+        'Progress Loops': performance.progress_loops || 0
+    };
+
+    const metricsHtml = Object.entries(metrics)
+        .map(([key, value]) => `
+            <div class="metric">
+                <span>${key}:</span>
+                <span style="font-weight: 600;">${value}</span>
+            </div>
+        `).join('');
+
+    metricsDiv.innerHTML = `
+        <div class="progress-item-header">
+            <div class="progress-icon">📊</div>
+            <div class="progress-title">Performance Metrics</div>
+            <div class="progress-status running">live</div>
+        </div>
+        <div class="performance-metrics">
+            ${metricsHtml}
+        </div>
+    `;
+
+    this.elements.performanceMetrics.innerHTML = '';
+    this.elements.performanceMetrics.appendChild(metricsDiv);
+}
+
+// FIXED: Enhanced meta tools history
+updateMetaToolsHistory(payload) {
+    const metadata = payload.metadata || {};
+    const toolName = metadata.meta_tool_name || 'unknown_tool';
+    const status = payload.status || 'running';
+    const phase = metadata.execution_phase || 'unknown';
+    const timestamp = new Date().toLocaleTimeString();
+
+    console.log('🛠️ Updating Meta Tools History:', { toolName, status, phase });
+
+    let icon = '⚙️';
+    if (toolName.includes('reasoning')) icon = '🧠';
+    else if (toolName.includes('delegate')) icon = '🎯';
+    else if (toolName.includes('plan')) icon = '📋';
+    else if (toolName.includes('variables')) icon = '💾';
+    else if (toolName.includes('internal')) icon = '🔍';
+    else if (status === 'completed') icon = '✅';
+    else if (status === 'error') icon = '❌';
+
+    const toolDiv = document.createElement('div');
+    toolDiv.className = 'progress-item';
+
+    // Add different styling based on tool type
+    if (status === 'error') {
+        toolDiv.style.borderColor = 'var(--accent-red)';
+        toolDiv.style.backgroundColor = 'rgba(248, 81, 73, 0.05)';
+    } else if (status === 'completed') {
+        toolDiv.style.borderColor = 'var(--accent-green)';
+    }
+
+    toolDiv.innerHTML = `
+        <div class="progress-item-header">
+            <div class="progress-icon">${icon}</div>
+            <div class="progress-title">${toolName.replace(/_/g, ' ')}</div>
+            <div class="progress-status ${status}">${status}</div>
+        </div>
+        <div class="progress-details">
+            Phase: ${phase} • ${timestamp}
+            ${metadata.reasoning_loop ? ` • Loop: ${metadata.reasoning_loop}` : ''}
+            ${metadata.parsed_args?.confidence_level ? ` • ${Math.round(metadata.parsed_args.confidence_level * 100)}% confidence` : ''}
+        </div>
+    `;
+
+    this.elements.metaToolsHistory.insertBefore(toolDiv, this.elements.metaToolsHistory.firstChild);
+
+    // Keep only last 10 items
+    const items = this.elements.metaToolsHistory.children;
+    while (items.length > 10) {
+        this.elements.metaToolsHistory.removeChild(items[items.length - 1]);
+    }
+}
+
+// FIXED: Enhanced system events
+updateSystemEvents(eventData) {
+    const timestamp = new Date(eventData.timestamp).toLocaleTimeString();
+
+    console.log('🔔 Updating System Events:', eventData);
+
+    let icon = '🔧';
+    let title = 'System Event';
+    let details = '';
+    let statusClass = 'running';
+
+    if (eventData.type === 'llm_call') {
+        icon = '💬';
+        title = `LLM: ${eventData.model}`;
+        details = `${eventData.tokens} tokens`;
+        if (eventData.cost > 0) {
+            details += ` • $${eventData.cost.toFixed(4)}`;
+        }
+        if (eventData.duration > 0) {
+            details += ` • ${eventData.duration.toFixed(2)}s`;
+        }
+        statusClass = eventData.status || 'running';
+    } else if (eventData.type === 'node_event') {
+        icon = eventData.status === 'completed' ? '✅' : '🔧';
+        title = `${eventData.nodeName}`;
+        details = eventData.phase;
+        if (eventData.duration > 0) {
+            details += ` • ${eventData.duration.toFixed(2)}s`;
+        }
+        if (eventData.routingDecision) {
+            details += ` • → ${eventData.routingDecision}`;
+        }
+        statusClass = eventData.status || 'running';
+    }
+
+    const eventDiv = document.createElement('div');
+    eventDiv.className = 'progress-item';
+    eventDiv.innerHTML = `
+        <div class="progress-item-header">
+            <div class="progress-icon">${icon}</div>
+            <div class="progress-title">${title}</div>
+            <div class="progress-status ${statusClass}">${statusClass}</div>
+        </div>
+        <div class="progress-details">
+            ${details}<br>
+            ${timestamp}
+        </div>
+    `;
+
+    this.elements.systemEvents.insertBefore(eventDiv, this.elements.systemEvents.firstChild);
+
+    // Keep only last 8 events
+    const items = this.elements.systemEvents.children;
+    while (items.length > 8) {
+        this.elements.systemEvents.removeChild(items[items.length - 1]);
+    }
+}
+
+// NEW: Helper method to scroll messages to bottom
+scrollToBottom() {
+    if (this.elements.messagesContainer) {
+        this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+    }
+}
+
+// FIXED: Better display action generation
+getDisplayAction(eventType, payload) {
+    const metadata = payload.metadata || {};
+
+    switch (eventType) {
+        case 'reasoning_loop':
+            const step = metadata.outline_step || 0;
+            const total = metadata.outline_total || 0;
+            return step > 0 ? `Planning Step ${step}/${total}` : 'Deep Reasoning';
+        case 'meta_tool_call':
+            const toolName = metadata.meta_tool_name || 'tool';
+            return `${toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+        case 'llm_call':
+            const model = payload.llm_model || 'AI';
+            return `${model} Thinking`;
+        case 'node_phase':
+            return `${payload.node_name || 'Processing'} • ${payload.node_phase || 'Phase'}`;
+        case 'node_exit':
+            return `${payload.node_name || 'Processing'} • Complete`;
+        case 'execution_start':
+            return 'Starting Execution';
+        case 'execution_complete':
+            return 'Execution Complete';
+        default:
+            return eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    }
+}
+
+// Enhanced idle status
+updateCurrentStatusToIdle() {
+    const timestamp = new Date().toLocaleTimeString();
+    this.elements.currentStatus.innerHTML = `
+        <div class="progress-item">
+            <div class="progress-item-header">
+                <div class="progress-icon">💤</div>
+                <div class="progress-title">Ready & Waiting</div>
+                <div class="progress-status completed">idle</div>
+            </div>
+            <div class="progress-details">
+                Agent is ready for your next message • ${timestamp}
+            </div>
+        </div>
+    `;
+}
+
+getEventIcon(eventType, status) {
+    if (status === 'error') return '❌';
+    if (status === 'completed') return '✅';
+
+    switch (eventType) {
+        case 'reasoning_loop': return '🧠';
+        case 'meta_tool_call': return '⚙️';
+        case 'llm_call': return '💭';
+        case 'node_phase':
+        case 'node_exit': return '🔧';
+        case 'execution_complete': return '✅';
+        default: return '⚡';
+    }
+}
+
+
+            updateAgentsList(agents) {
+                this.elements.agentsContainer.innerHTML = '';
+
+                if (!agents || agents.length === 0) {
+                    this.elements.agentsContainer.innerHTML = `
+                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                            No agents available
+                        </div>
+                    `;
+                    return;
+                }
+
+                agents.forEach(agent => {
+                    this.agents.set(agent.public_agent_id, agent);
+                    const agentEl = this.createAgentElement(agent);
+                    this.elements.agentsContainer.appendChild(agentEl);
+                });
+            }
+
+            createAgentElement(agent) {
+                const div = document.createElement('div');
+                div.className = 'agent-item';
+                div.dataset.agentId = agent.public_agent_id;
+
+                div.innerHTML = `
+                    <div class="agent-name">${agent.public_name}</div>
+                    <div class="agent-description">${agent.description || 'No description'}</div>
+                    <div class="agent-status ${agent.status}">
+                        <div class="status-dot"></div>
+                        <span>${agent.status.toUpperCase()}</span>
+                    </div>
+                `;
+
+                div.addEventListener('click', () => this.selectAgent(agent));
+
+                return div;
+            }
+
+            selectAgent(agent) {
+                if (!this.apiKey) {
+                    this.showError('Please set your API key first');
+                    return;
+                }
+
+                this.sendWebSocketMessage({
+                    event: 'validate_api_key',
+                    data: {
+                        public_agent_id: agent.public_agent_id,
+                        api_key: this.apiKey
+                    }
+                });
+
+                document.querySelectorAll('.agent-item').forEach(el => el.classList.remove('active'));
+                document.querySelector(`[data-agent-id="${agent.public_agent_id}"]`)?.classList.add('active');
+
+                this.currentAgent = agent;
+                this.elements.chatTitle.textContent = agent.public_name;
+                this.elements.chatSubtitle.textContent = agent.description || 'Ready for conversation';
+
+                this.elements.messageInput.disabled = false;
+                this.elements.sendButton.disabled = false;
+
+                this.elements.messagesContainer.innerHTML = '';
+                this.addMessage('agent', `Hello! I'm ${agent.public_name}. How can I help you?`);
+
+                this.sendWebSocketMessage({
+                    event: 'subscribe_agent',
+                    data: { public_agent_id: agent.public_agent_id }
+                });
+
+                this.sendWebSocketMessage({
+                    event: 'get_agent_status',
+                    data: { public_agent_id: agent.public_agent_id }
+                });
+            }
+
+            sendMessage() {
+                if (!this.currentAgent || !this.elements.messageInput.value.trim()) return;
+
+                const message = this.elements.messageInput.value.trim();
+                this.addMessage('user', message);
+
+                this.sendWebSocketMessage({
+                    event: 'chat_message',
+                    data: {
+                        public_agent_id: this.currentAgent.public_agent_id,
+                        message: message,
+                        session_id: this.sessionId,
+                        api_key: this.apiKey
+                    }
+                });
+
+                this.elements.messageInput.value = '';
+
+                // Reset progress panels
+                this.elements.currentStatus.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">Processing...</div>';
+                this.elements.performanceMetrics.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">Waiting for metrics...</div>';
+            }
+
+            addMessage(sender, content) {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message', sender);
+
+                const avatar = document.createElement('div');
+                avatar.classList.add('message-avatar');
+                avatar.textContent = sender === 'user' ? 'U' : 'AI';
+
+                const contentDiv = document.createElement('div');
+                contentDiv.classList.add('message-content');
 
                 if (sender === 'agent' && window.marked) {
-                    contentEl.innerHTML = marked.parse(text);
+                    try {
+                        contentDiv.innerHTML = marked.parse(content);
+                    } catch (error) {
+                        contentDiv.textContent = content;
+                    }
                 } else {
-                    contentEl.textContent = text;
+                    contentDiv.textContent = content;
                 }
 
-                messageEl.appendChild(contentEl);
-                this.elements.chatMessages.appendChild(messageEl);
-                this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+                messageDiv.appendChild(avatar);
+                messageDiv.appendChild(contentDiv);
+
+                this.elements.messagesContainer.appendChild(messageDiv);
+                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
             }
 
-            addLogEntry(message, type = 'info') {
-                const timestamp = new Date().toLocaleTimeString();
-                const logEl = document.createElement('div');
-                logEl.classList.add('log-entry', type);
-                logEl.textContent = `[${timestamp}] ${message}`;
+            showTypingIndicator(show) {
+    this.elements.typingIndicator.classList.toggle('active', show);
+    if (show) {
+     this.elements.typingIndicator.display = 'flex';
+        this.elements.typingIndicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
 
-                this.elements.logContent.appendChild(logEl);
-                this.elements.logContent.scrollTop = this.elements.logContent.scrollHeight;
+    } else {
+        this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+        this.elements.typingIndicator.display = 'none';
+
+    }
+}
+
+            showError(message) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.textContent = message;
+
+                document.body.appendChild(errorDiv);
+                setTimeout(() => {
+                    if (errorDiv.parentNode) {
+                        errorDiv.parentNode.removeChild(errorDiv);
+                    }
+                }, 5000);
             }
 
-            setConnectionStatus(status, text) {
-                this.elements.connectionIndicator.className = `status-indicator ${status}`;
-                this.elements.connectionText.textContent = text;
-            }
-
-            setProcessing(processing) {
-                this.isProcessing = processing;
-                this.elements.sendButton.disabled = processing;
-                this.elements.chatInput.disabled = processing;
-
-                if (processing) {
-                    this.elements.connectionIndicator.classList.add('pulsing');
-                    this.setConnectionStatus('processing', 'Processing...');
+            sendWebSocketMessage(data) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify(data));
                 } else {
-                    this.elements.connectionIndicator.classList.remove('pulsing');
-                    this.setConnectionStatus('connected', 'Connected');
-                    this.updateProgress(0);
+                    console.warn('WebSocket not connected, cannot send message');
                 }
-            }
-
-            updateProgress(percent) {
-                this.currentProgress = Math.max(0, Math.min(100, percent));
-                this.elements.progressFill.style.width = `${this.currentProgress}%`;
-            }
-
-            updateStatus() {
-                const status = {
-                    'Connection': this.ws?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected',
-                    'Processing': this.isProcessing ? 'Active' : 'Idle',
-                    'Messages': this.elements.chatMessages.children.length,
-                    'Last Update': new Date().toLocaleTimeString()
-                };
-
-                let html = '';
-                for (const [key, value] of Object.entries(status)) {
-                    html += `<div class="status-key">${key}</div><div class="status-value">${value}</div>`;
-                }
-                this.elements.statusGrid.innerHTML = html;
-            }
-
-            clearChat() {
-                this.elements.chatMessages.innerHTML = '';
-                this.updateStatus();
-            }
-
-            resetContext() {
-                if (this.isProcessing) return;
-
-                this.clearChat();
-                this.elements.logContent.innerHTML = '<div class="log-entry">Context reset. Ready for new conversation.</div>';
-                this.addLogEntry('Context reset by user', 'info');
             }
         }
 
-        // Initialize the UI when the page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            window.agentUI = new AgentUI();
-
-            // Update status every 5 seconds
-            setInterval(() => {
-                window.agentUI.updateStatus();
-            }, 5000);
-        });
+        // Initialize UI when DOM is ready
+        if (!window.TB) {
+            document.addEventListener('DOMContentLoaded', () => {
+                window.agentUI = new AgentRegistryUI();
+            });
+        } else {
+            TB.once(() => {
+                window.agentUI = new AgentRegistryUI();
+            });
+        }
     </script>
 </body>
-</html>
-"""
+</html>"""
 
 
 class AgentRequestHandlerV0(BaseHTTPRequestHandler):

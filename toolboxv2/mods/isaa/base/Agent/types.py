@@ -29,7 +29,6 @@ class TextLength(Enum):
     DETAILED_INDEPTH = "detailed-indepth"
     PHD_LEVEL = "phd-level"
 
-@dataclass
 class NodeStatus(Enum):
     PENDING = "pending"
     STARTING = "starting"
@@ -52,9 +51,10 @@ class CustomEncoder(json.JSONEncoder):
 class ProgressEvent:
     """Enhanced progress event with better error handling"""
     event_type: str
-    timestamp: float
-    node_name: str
     event_id: str = ""
+
+    node_name: str = "system"
+    timestamp: float = None
 
     agent_name: Optional[str] = None
     # Status information
@@ -95,6 +95,10 @@ class ProgressEvent:
     metadata: Dict[str, Any] = None
 
     def __post_init__(self):
+
+        if self.timestamp is None:
+            self.timestamp = time.time()
+
         if self.metadata is None:
             self.metadata = {}
         if not self.event_id:
@@ -109,6 +113,7 @@ class ProgressEvent:
             self.success = False
         if self.status == NodeStatus.COMPLETED:
             self.success = True
+
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert ProgressEvent to dictionary with proper handling of all field types"""
