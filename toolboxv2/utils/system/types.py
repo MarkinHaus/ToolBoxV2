@@ -667,9 +667,7 @@ class Result:
             return False
         if self.info.exec_code == 0:
             return False
-        if self.info.exec_code == 200:
-            return False
-        return True
+        return self.info.exec_code != 200
 
     def is_ok(self):
         return not self.is_error()
@@ -2083,7 +2081,7 @@ class SSEGenerator:
                     if 'data' in json_data:
                         payload_content = json_data['data']
                         # If payload_content is complex, re-serialize it to JSON string
-                        if isinstance(payload_content, (dict, list)):
+                        if isinstance(payload_content, dict | list):
                             sse_data_field = json.dumps(payload_content)
                         else:  # Simple type (string, number, bool)
                             sse_data_field = str(payload_content)

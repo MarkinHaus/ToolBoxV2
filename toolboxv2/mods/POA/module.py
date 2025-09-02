@@ -1,5 +1,6 @@
 # --- START OF FILE POA.py ---
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import date, datetime, timedelta
@@ -164,20 +165,14 @@ class ActionItem(BaseModel):
         # Manual parsing for enums if needed (Pydantic might do this automatically)
         for field_name, value in json_data.items():
             if field_name == 'item_type' and isinstance(value, str):
-                try:
+                with contextlib.suppress(ValueError):
                     json_data[field_name] = ItemType(value)
-                except ValueError:
-                    pass
             elif field_name == 'frequency' and isinstance(value, str):
-                try:
+                with contextlib.suppress(ValueError):
                     json_data[field_name] = Frequency(value)
-                except ValueError:
-                    pass
             elif field_name == 'status' and isinstance(value, str):
-                try:
+                with contextlib.suppress(ValueError):
                     json_data[field_name] = ActionStatus(value)
-                except ValueError:
-                    pass
 
         instance = cls.model_validate(json_data)
         return instance
@@ -676,7 +671,7 @@ class ActionManagerEnhanced:
         processed_ids = set()
         root_items_temp = []
 
-        for item_id, item_dict in item_map.items():
+        for _item_id, item_dict in item_map.items():
             parent_id = item_dict.get("parent_id")
             if parent_id and parent_id in item_map:
                 if "children" not in item_map[parent_id]:

@@ -1,4 +1,6 @@
 import asyncio
+import builtins
+import contextlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -373,10 +375,8 @@ class RegistryClient:
         """Handle connection errors and cleanup."""
         self.is_connected = False
         if self.ws:
-            try:
+            with contextlib.suppress(builtins.BaseException):
                 await self.ws.close()
-            except:
-                pass
             self.ws = None
 
     async def disconnect(self):
@@ -385,17 +385,13 @@ class RegistryClient:
 
         if self.connection_task:
             self.connection_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self.connection_task
-            except asyncio.CancelledError:
-                pass
             self.connection_task = None
 
         if self.ws:
-            try:
+            with contextlib.suppress(builtins.BaseException):
                 await self.ws.close()
-            except:
-                pass
             self.ws = None
 
         # Cancel pending registrations

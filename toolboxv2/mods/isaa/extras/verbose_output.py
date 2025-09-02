@@ -255,7 +255,7 @@ class DynamicVerboseFormatter:
     def _print_table_row(self, row: list[str], widths: list[int], is_header: bool = False):
         """Helper method to print a table row"""
         formatted_cells = []
-        for i, (cell, width) in enumerate(zip(row, widths, strict=False)):
+        for _i, (cell, width) in enumerate(zip(row, widths, strict=False)):
             cell_str = str(cell)
             if len(cell_str) > width:
                 cell_str = cell_str[:width - 3] + "..."
@@ -421,10 +421,7 @@ class EnhancedVerboseOutput:
             return
 
         elapsed = time.time() - self._start_time
-        if elapsed > 60:
-            timing = f" ({elapsed / 60:.1f}m)"
-        else:
-            timing = f" ({elapsed:.1f}s)"
+        timing = f" ({elapsed / 60:.1f}m)" if elapsed > 60 else f" ({elapsed:.1f}s)"
 
         self.formatter.print_header(f"{text}{timing}")
 

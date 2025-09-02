@@ -550,18 +550,14 @@ def extract_text_natively(data: bytes, filename: str = "") -> str:
             raise ValueError(f"PDF-Verarbeitung mit PyPDF2 fehlgeschlagen: {e}")
 
     # 3. Fallback auf reinen Text (TXT)
-    if file_ext == 'txt' or True:
-        try:
-            return data.decode('utf-8')
-        except UnicodeDecodeError:
-            try:
-                return data.decode('latin-1')
-            except Exception as e:
-                raise ValueError(f"Text-Dekodierung fehlgeschlagen: {e}")
 
-    # 4. Nicht unterstützte Formate
-    raise ValueError(
-        f"Dateityp '{file_ext}' wird nicht unterstützt. Für alte .doc-Dateien wird eine Bibliothek wie 'textract' empfohlen.")
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            return data.decode('latin-1')
+        except Exception as e:
+            raise ValueError(f"Text-Dekodierung fehlgeschlagen: {e}")
 
 
 class AISemanticMemory(metaclass=Singleton):

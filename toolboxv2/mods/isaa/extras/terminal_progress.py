@@ -20,7 +20,13 @@ except ImportError:
     RICH_AVAILABLE = False
     print("Warning: Rich not available. Install with: pip install rich")
 
-from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent, NodeStatus, TaskPlan, LLMTask, ToolTask
+from toolboxv2.mods.isaa.base.Agent.types import (
+    LLMTask,
+    NodeStatus,
+    ProgressEvent,
+    TaskPlan,
+    ToolTask,
+)
 
 
 class VerbosityMode(Enum):
@@ -2707,7 +2713,7 @@ class ProgressiveTreePrinter:
             execution_flow = summary["execution_flow"]["flow"]
             active_nodes = set(summary["execution_flow"]["active_nodes"])
 
-            for i, node_name in enumerate(execution_flow[-5:], 1):  # Show last 5 nodes
+            for _i, node_name in enumerate(execution_flow[-5:], 1):  # Show last 5 nodes
                 if node_name not in self.tree_builder.nodes:
                     continue
 

@@ -222,7 +222,7 @@ class BlobStorage:
     def exit(self):
         if len(self.blob_ids) < 5:
             return
-        for i in range(len(self.servers)//2+1):
+        for _i in range(len(self.servers)//2+1):
             self.share_blobs(self.blob_ids)
 
 
@@ -276,7 +276,7 @@ class BlobFile(io.IOBase):
         except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError) as e:
             if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
                 blob_content = {}  # Blob doesn't exist yet, treat as empty
-            elif isinstance(e, (EOFError, pickle.UnpicklingError)):
+            elif isinstance(e, EOFError | pickle.UnpicklingError):
                 blob_content = {}  # Blob is empty or corrupt, treat as empty for writing
             else:
                 self.storage.create_blob(blob_id=self.blob_id, data=pickle.dumps({}))

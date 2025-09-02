@@ -1183,7 +1183,7 @@ class WorkspaceIsaasCli:
 
                 # Tools
                 if hasattr(agent, '_tool_registry') and agent.tool_registry:
-                    tool_names = [tool.name if hasattr(tool, 'name') else tool for tool in agent.tool_registry.keys()]
+                    tool_names = [tool.name if hasattr(tool, 'name') else tool for tool in agent.tool_registry]
                     output_lines.append(f"\n   {Style.Underlined('Tools')}:")
                     if tool_names:
                         tools_str = ", ".join(tool_names)

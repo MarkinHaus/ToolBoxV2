@@ -1170,12 +1170,11 @@ def main_runner():
         if not gui_exe:
             print(f"Executable '{name_with_ext}' not found in standard locations. Build or download")
             return
-        if not 'bin' in str(gui_exe):
-            if gui_exe:
-                bin_dir = tb_root_dir / "bin"
-                bin_dir.mkdir(exist_ok=True)
-                shutil.copy(gui_exe, bin_dir / Path(gui_exe).name)
-                print(f"Copied executable to '{bin_dir.resolve()}'")
+        if not 'bin' in str(gui_exe) and gui_exe:
+            bin_dir = tb_root_dir / "bin"
+            bin_dir.mkdir(exist_ok=True)
+            shutil.copy(gui_exe, bin_dir / Path(gui_exe).name)
+            print(f"Copied executable to '{bin_dir.resolve()}'")
         run_executable_in_background(gui_exe)
     def py_gui_helper():
         run_executable_in_background(sys.executable, ["-m", "toolboxv2.__gui__.start"])

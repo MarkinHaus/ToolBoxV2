@@ -63,9 +63,8 @@ def setup_uv_api_env():
 def install_dev_tools():
     print("🔧 Installiere Dev-Tools...")
     d = ["cargo", "node"]
-    if a := input("With docker (N/y)"):
-        if a.lower() == 'y':
-            d.append("docker")
+    if (a := input("With docker (N/y)")) and a.lower() == 'y':
+        d.append("docker")
     for _d in d.copy():
         if is_installed(_d):
             d.remove(_d)

@@ -1527,10 +1527,7 @@ async def load_game_from_db_final(app: App, game_id: str) -> GameState | None:  
     result = db.get(key)
     if result.is_data() and result.get():
         try:
-            if isinstance(result.get(), list):
-                data = result.get()[0]
-            else:
-                data = result.get()
+            data = result.get()[0] if isinstance(result.get(), list) else result.get()
             return GameState.model_validate_json(data)
         except Exception as e:
             app.logger.error(f"Error validating/loading game {game_id} from DB: {e}", exc_info=True)
@@ -1543,10 +1540,7 @@ async def get_user_stats(app: App, session_id: str) -> UserSessionStats:  # Rena
     result = db.get(key)
     if result.is_data() and result.get():
         try:
-            if isinstance(result.get(), list):
-                data = result.get()[0]
-            else:
-                data = result.get()
+            data = result.get()[0] if isinstance(result.get(), list) else result.get()
             return UserSessionStats.model_validate_json(data)
         except Exception:
             pass

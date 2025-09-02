@@ -1,5 +1,6 @@
 # --- START OF FILE counter_tracker_api.py ---
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import date, datetime, time, timedelta
@@ -142,10 +143,8 @@ class CounterItem(BaseModel):
         for field_name in date_fields:
             value = values.get(field_name)
             if isinstance(value, str):
-                try:
+                with contextlib.suppress(ValueError):
                     values[field_name] = isoparse(value).date()
-                except ValueError:
-                    pass
 
         if '_user_timezone_str_context' in values:
             del values['_user_timezone_str_context']

@@ -1,6 +1,7 @@
 # toolboxv2/mods/Canvas.py
 import asyncio
 import base64
+import contextlib
 import json
 import uuid
 from collections import defaultdict
@@ -365,8 +366,7 @@ async def list_sessions(self, request: RequestData) -> Result:
         try:
             list_content = list_res_obj.get()  # Get can return list or string based on DB adapter
             json_str_to_load = list_content[0] if isinstance(list_content,
-                                                             list) and list_content else list_content if isinstance(
-                list_content, str) or isinstance(list_content, bytes) else "[]"
+                                                             list) and list_content else list_content if isinstance(list_content, str | bytes) else "[]"
             user_sessions = json.loads(json_str_to_load)
             if not isinstance(user_sessions, list): user_sessions = []
         except (json.JSONDecodeError, TypeError) as e:
@@ -491,10 +491,8 @@ async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: s
             async def cleanup_coro():
                 app.logger.info(f"SSE: Cleaning up for client {session_client_id}, C:{canvas_id}.")
                 if canvas_id in canvas_tool.live_canvas_sessions:
-                    try:
+                    with contextlib.suppress(ValueError):
                         canvas_tool.live_canvas_sessions[canvas_id].remove(sse_client_queue)
-                    except ValueError:
-                        pass
                     if not canvas_tool.live_canvas_sessions[canvas_id]:
                         del canvas_tool.live_canvas_sessions[canvas_id]
 

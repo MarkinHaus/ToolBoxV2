@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import math
@@ -847,14 +848,13 @@ class KnowledgeBase:
         if len(texts) != len(metadata):
             raise ValueError("Length of texts and metadata must match")
 
-        if not direct:
-            if len(texts) == 1 and len(texts[0]) < 10_000:
-                if len(self.sto) < self.batch_size and len(texts) == 1:
-                    self.sto.append((texts[0], metadata[0]))
-                    return -1, -1
-                if len(self.sto) >= self.batch_size:
-                    _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
-                    self.sto = []
+        if not direct and len(texts) == 1 and len(texts[0]) < 10_000:
+            if len(self.sto) < self.batch_size and len(texts) == 1:
+                self.sto.append((texts[0], metadata[0]))
+                return -1, -1
+            if len(self.sto) >= self.batch_size:
+                _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
+                self.sto = []
 
         # Split large texts
         split_texts = []
@@ -1695,10 +1695,8 @@ class KnowledgeBase:
             finally:
                 # Aufräumen falls tmp noch existiert (bei Fehlern)
                 if tmp.exists():
-                    try:
+                    with contextlib.suppress(Exception):
                         tmp.unlink()
-                    except Exception:
-                        pass
             return None
             # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
@@ -1719,7 +1717,7 @@ class KnowledgeBase:
             KnowledgeBase: A fully restored knowledge base instance
         """
         try:
-            if isinstance(path, (bytes, bytearray, memoryview)):
+            if isinstance(path, bytes | bytearray | memoryview):
                 data_bytes = bytes(path)
                 try:
                     data = pickle.loads(data_bytes)

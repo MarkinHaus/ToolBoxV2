@@ -130,7 +130,7 @@ class ProgressEvent:
                 continue
 
             # Handle NodeStatus enum
-            if isinstance(value, NodeStatus) or isinstance(value, Enum):
+            if isinstance(value, NodeStatus | Enum):
                 result[field.name] = value.value
             # Handle dataclass objects
             elif is_dataclass(value):
@@ -677,11 +677,11 @@ class AgentModelData(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     max_input_tokens: int = 32768
-    api_key: Optional[str]  = None
-    api_base: Optional[str]  = None
+    api_key: str | None  = None
+    api_base: str | None  = None
     budget_manager: Any  = None
     caching: bool = True
-    persona: Optional[PersonaConfig] = True
+    persona: PersonaConfig | None = True
     use_fast_response: bool = True
 
     def get_system_message_with_persona(self) -> str:

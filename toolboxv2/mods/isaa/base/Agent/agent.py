@@ -1858,7 +1858,7 @@ Your decision:"""
 
             # Find matching key (case-insensitive)
             matched_key = None
-            for key in task.routing_map.keys():
+            for key in task.routing_map:
                 if key.lower() == decision:
                     matched_key = key
                     break
@@ -2200,7 +2200,7 @@ Your decision:"""
         if isinstance(result, bool):
             return result
 
-        if isinstance(result, (list, dict)):
+        if isinstance(result, list | dict):
             return len(result) > 0
 
         if isinstance(result, str):
@@ -2247,7 +2247,7 @@ Your decision:"""
         failed_approaches = []
 
         # Analyze failed tasks
-        for task_id, result_data in self.results_store.items():
+        for _task_id, result_data in self.results_store.items():
             if not result_data.get("metadata", {}).get("success", True):
                 error = result_data.get("error", "")
                 if "tool" in error.lower():
@@ -3485,7 +3485,7 @@ Erstelle eine finale Antwort:"""
 
     def _format_successful_results(self, results: dict) -> str:
         formatted = []
-        for task_id, result_info in results.items():
+        for _task_id, result_info in results.items():
             formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:20000]}...")
         return "\n".join(formatted) if formatted else "No successful results to report."
 
@@ -3516,7 +3516,7 @@ Erstelle eine finale Antwort:"""
 
         if context.get("successful_results"):
             response_parts.append("\nDetailed results:")
-            for task_id, result in list(context["successful_results"].items())[:2]:  # Top 2
+            for _task_id, result in list(context["successful_results"].items())[:2]:  # Top 2
                 response_parts.append(f"- {result['task_description']}: {str(result['result'])[:150]}")
 
         if context.get("adaptation_summary"):
@@ -6172,7 +6172,7 @@ Access: Successfully retrieved from variable system"""
 
     def _format_variable_value(self, value: any) -> str:
         """Format variable value for display with intelligent truncation"""
-        if isinstance(value, (dict, list)):
+        if isinstance(value, dict | list):
             value_str = json.dumps(value, default=str, indent=2)
         else:
             value_str = str(value)
@@ -6203,7 +6203,7 @@ Access: Successfully retrieved from variable system"""
             # Show actual keys available
             if latest.get('results'):
                 discovery_msg += "\n\n🔍 Available result keys:"
-                for result_id in latest['results'].keys():
+                for result_id in latest['results']:
                     discovery_msg += f"\n• results.{result_id}.data"
 
             return discovery_msg
@@ -7377,7 +7377,7 @@ class VariableManager:
         """Convert value to string representation"""
         if isinstance(value, str):
             return value
-        elif isinstance(value, (dict, list)):
+        elif isinstance(value, dict | list):
             return json.dumps(value, default=str)
         else:
             return str(value)
@@ -7499,7 +7499,7 @@ class VariableManager:
                 }
 
                 # Recurse into nested structures
-                if isinstance(value, (dict, list)):
+                if isinstance(value, dict | list):
                     self._document_structure(value, current_path, docs)
 
         elif isinstance(data, list):
@@ -7523,7 +7523,7 @@ class VariableManager:
                 }
 
                 # Recurse into nested structures
-                if isinstance(item, (dict, list)):
+                if isinstance(item, dict | list):
                     self._document_structure(item, current_path, docs)
 
     def get_available_variables(self) -> dict[str, dict]:
@@ -7544,7 +7544,7 @@ class VariableManager:
                     "..." if len(scope_data.keys()) > 3 else "")
             elif isinstance(scope_data, list):
                 preview = f"List with {len(scope_data)} items"
-            elif isinstance(scope_data, str) or isinstance(scope_data, int):
+            elif isinstance(scope_data, str | int):
                 preview = str(scope_data)
             else:
                 continue
@@ -7976,7 +7976,7 @@ class UnifiedContextManager:
         """Invalidate cache for specific session or all"""
         if session_id:
             # Remove all cache entries for this session
-            keys_to_remove = [k for k in self._context_cache.keys() if session_id in k]
+            keys_to_remove = [k for k in self._context_cache if session_id in k]
             for key in keys_to_remove:
                 del self._context_cache[key]
         else:
@@ -8583,7 +8583,7 @@ class FlowAgent:
         variables = self.variable_manager.get_available_variables()
         for scope_name, scope_vars in variables.items():
             docs.append(f"\n### {scope_name}:")
-            for var_name, var_info in scope_vars.items():
+            for _var_name, var_info in scope_vars.items():
                 docs.append(f"- `{var_info['path']}`: {var_info['preview']} ({var_info['type']})")
 
         return "\n".join(docs)
@@ -10455,7 +10455,7 @@ Respond in YAML format only:
             # Deep clean session storage
             session_managers = self.shared.get("session_managers", {})
             if session_managers:
-                for manager_name, manager in session_managers.items():
+                for _manager_name, manager in session_managers.items():
                     if hasattr(manager, 'clear_all_history'):
                         await manager.clear_all_history()
                     elif hasattr(manager, 'clear_history'):
@@ -11078,7 +11078,7 @@ def process_nested(data: Any, max_depth: int = 20) -> Any:
     if isinstance(data, dict):
         return {k: process_nested(v, max_depth - 1) for k, v in data.items()}
 
-    elif isinstance(data, (list, tuple)):
+    elif isinstance(data, list | tuple):
         processed = [process_nested(item, max_depth - 1) for item in data]
         return type(data)(processed)
 

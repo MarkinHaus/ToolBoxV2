@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 from typing import Any
 
@@ -133,10 +134,8 @@ class MCPSessionManager:
             eprint(f"Failed to create stdio session for {server_name}: {e}")
             # Cleanup on failure
             if server_name in self.connections:
-                try:
+                with contextlib.suppress(Exception):
                     await self.connections[server_name].__aexit__(None, None, None)
-                except Exception:
-                    pass
                 del self.connections[server_name]
             return None
 

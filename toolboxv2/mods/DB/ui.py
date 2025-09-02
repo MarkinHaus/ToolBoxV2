@@ -1,3 +1,5 @@
+import contextlib
+
 from toolboxv2 import RequestData, Result, get_app
 from toolboxv2.mods.DB.types import DatabaseModes
 
@@ -11,10 +13,8 @@ export = get_app(from_="DB.EXPORT").tb
 def _unwrap_data(data: any) -> any:
     """Helper to unwrap data if it's in a single-element list."""
     if isinstance(data, bytes):
-        try:
+        with contextlib.suppress(UnicodeDecodeError):
             data = data.decode('utf-8')
-        except UnicodeDecodeError:
-            pass
     if isinstance(data, list) and len(data) == 1:
         return data[0]
     return data

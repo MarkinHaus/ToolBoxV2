@@ -347,6 +347,8 @@ async def upload_mod(app: App, request: RequestData, form_data: dict[str, Any] |
     # TODO: update file upload
     if not isinstance(form_data, dict):
         return Result.default_user_error("No file provided.")
+    if form_data is None:
+        return Result.default_user_error("No file provided.")
     uploaded_file =  form_data.get('files')[0]  # Assuming single file upload
     file_name = uploaded_file.filename
     file_bytes = uploaded_file.file.read()

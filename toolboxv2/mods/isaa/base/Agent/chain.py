@@ -248,7 +248,7 @@ class Chain(ChainBase):
                     # Keine Extraktion, Daten bleiben unverändert (CF dient nur als Marker)
                     pass
 
-            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
+            elif isinstance(task, ParallelChain | ConditionalChain | ErrorHandlingChain):
                 current_data = await task.a_run(current_data, **kwargs)
 
             elif isinstance(task, IS):
@@ -343,7 +343,7 @@ def chain_to_graph(self) -> dict[str, Any]:
                 }
 
             # Parallel chain detection
-            if hasattr(comp, 'agents') and isinstance(comp.agents, (list, tuple)):
+            if hasattr(comp, 'agents') and isinstance(comp.agents, list | tuple):
                 branches = []
                 for i, agent in enumerate(comp.agents):
                     if agent:
@@ -395,7 +395,7 @@ def chain_to_graph(self) -> dict[str, Any]:
                 }
 
             # Regular chain detection
-            if hasattr(comp, 'tasks') and isinstance(comp.tasks, (list, tuple)):
+            if hasattr(comp, 'tasks') and isinstance(comp.tasks, list | tuple):
                 tasks = []
                 for i, task in enumerate(comp.tasks):
                     if task is not None:
@@ -680,7 +680,7 @@ def print_graph(self):
                 if hasattr(self, attr):
                     val = getattr(self, attr)
                     if val is not None:
-                        if isinstance(val, (list, tuple)):
+                        if isinstance(val, list | tuple):
                             attrs.append(f"{attr}: {len(val)} items")
                         else:
                             attrs.append(f"{attr}: {type(val).__name__}")
