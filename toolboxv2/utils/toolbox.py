@@ -1,8 +1,7 @@
 """Main module."""
-import json
-
 import asyncio
 import inspect
+import json
 import logging
 import os
 import pkgutil
@@ -18,7 +17,7 @@ from importlib import import_module, reload
 from inspect import signature
 from platform import node, system
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -194,7 +193,7 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
-        if len(sys.argv) > 2 and "db" == sys.argv[1]:
+        if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
         from .system.db_cli_manager import ClusterManager, get_executable_path
         self.cluster_manager = ClusterManager()
@@ -639,7 +638,7 @@ class App(AppType, metaclass=Singleton):
         #     raise ValueError("Event loop is not running")
         #     # return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
-    def run_bg_task(self, task: Callable, *args, **kwargs) -> Optional[asyncio.Task]:
+    def run_bg_task(self, task: Callable, *args, **kwargs) -> asyncio.Task | None:
         """
         Runs a coroutine in the background without blocking the caller.
 

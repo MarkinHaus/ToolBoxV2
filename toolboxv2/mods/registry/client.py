@@ -1,11 +1,18 @@
-from dataclasses import asdict, is_dataclass
-from enum import Enum
 import asyncio
-import json
-from typing import Dict, Any, Optional, Callable, Awaitable
-from toolboxv2 import get_app, App
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from toolboxv2 import App
 from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
-from .types import WsMessage, AgentRegistration, RunRequest, ExecutionResult, ExecutionError, AgentRegistered
+
+from .types import (
+    AgentRegistered,
+    AgentRegistration,
+    ExecutionError,
+    ExecutionResult,
+    RunRequest,
+    WsMessage,
+)
 
 # Use a more robust websocket client library if available, or fallback
 try:
@@ -21,14 +28,14 @@ class RegistryClient:
 
     def __init__(self, app: App):
         self.app = app
-        self.ws: Optional[ws_client.WebSocketClientProtocol] = None
-        self.connection_task: Optional[asyncio.Task] = None
-        self.local_agents: Dict[str, Any] = {}
-        self.registered_info: Dict[str, AgentRegistered] = {}
-        self.custom_event_handlers: Dict[str, Callable[[Dict], Awaitable[None]]] = {}
+        self.ws: ws_client.WebSocketClientProtocol | None = None
+        self.connection_task: asyncio.Task | None = None
+        self.local_agents: dict[str, Any] = {}
+        self.registered_info: dict[str, AgentRegistered] = {}
+        self.custom_event_handlers: dict[str, Callable[[dict], Awaitable[None]]] = {}
 
         # Registration handling
-        self.pending_registrations: Dict[str, asyncio.Future] = {}
+        self.pending_registrations: dict[str, asyncio.Future] = {}
         self.registration_counter = 0
 
         # Connection state
@@ -69,12 +76,12 @@ class RegistryClient:
                 else:
                     self.app.print("Max reconnection attempts reached. Connection failed.")
 
-    def on(self, event_name: str, handler: Callable[[Dict], Awaitable[None]]):
+    def on(self, event_name: str, handler: Callable[[dict], Awaitable[None]]):
         """Register an async callback function to handle a custom event from the server."""
         self.app.print(f"Handler for custom event '{event_name}' registered.")
         self.custom_event_handlers[event_name] = handler
 
-    async def send_custom_event(self, event_name: str, data: Dict[str, Any]):
+    async def send_custom_event(self, event_name: str, data: dict[str, Any]):
         """Send a custom event with a JSON payload to the server."""
         if not self.is_connected or not self.ws or not self.ws.open:
             self.app.print("Cannot send custom event: Not connected.")
@@ -105,7 +112,7 @@ class RegistryClient:
                     except Exception as e:
                         self.app.print(f"Error processing message from server: {e} | Raw: {message_raw[:200]}")
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send ping to keep connection alive
                     if self.ws and self.ws.open:
                         await self.ws.ping()
@@ -153,8 +160,7 @@ class RegistryClient:
         except Exception as e:
             self.app.print(f"Error handling message: {e}")
 
-    async def register(self, agent_instance: Any, public_name: str, description: Optional[str] = None) -> Optional[
-        AgentRegistered]:
+    async def register(self, agent_instance: Any, public_name: str, description: str | None = None) -> AgentRegistered | None:
         """Register an agent with the server."""
         if not self.is_connected or not self.ws:
             self.app.print("Not connected. Cannot register agent.")
@@ -188,7 +194,7 @@ class RegistryClient:
 
                 return reg_info
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self.app.print("Timeout waiting for registration confirmation.")
                 return None
 
@@ -267,7 +273,7 @@ class RegistryClient:
             elif hasattr(agent, 'progress_callback'):
                 agent.progress_callback = original_callback
 
-    async def send_ui_progress(self, progress_data: Dict[str, Any], retry_count: int = 3):
+    async def send_ui_progress(self, progress_data: dict[str, Any], retry_count: int = 3):
         """Enhanced UI progress sender with retry logic."""
         if not self.is_connected or not self.ws or not self.ws.open:
             self.app.print("Registry client WebSocket not connected - queuing progress update")
@@ -324,7 +330,7 @@ class RegistryClient:
 
         return False
 
-    async def send_agent_status(self, agent_id: str, status: str, details: Dict[str, Any] = None):
+    async def send_agent_status(self, agent_id: str, status: str, details: dict[str, Any] = None):
         """Send agent status updates."""
         if not self.is_connected or not self.ws or not self.ws.open:
             return
@@ -403,7 +409,7 @@ class RegistryClient:
 
 # --- Module setup ---
 Name = "registry"
-registry_clients: Dict[str, RegistryClient] = {}
+registry_clients: dict[str, RegistryClient] = {}
 
 
 def get_registry_client(app: App) -> RegistryClient:

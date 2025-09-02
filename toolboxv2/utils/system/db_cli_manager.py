@@ -11,16 +11,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 # --- Enhanced UI Imports ---
 try:
     # This path is relative to the execution context of the script
-    from ..extras.Style import Style, Spinner
+    from ..extras.Style import Spinner, Style
 except ImportError:
     # Fallback for direct execution or if the structure is different
     try:
-        from toolboxv2.extras.Style import Style, Spinner
+        from toolboxv2.extras.Style import Spinner, Style
     except ImportError:
         print("FATAL: UI utilities not found. Ensure 'toolboxv2/extras/Style.py' exists.")
         sys.exit(1)
@@ -41,7 +40,7 @@ EXECUTABLE_NAME = "r_blob_db"
 
 
 # --- Helper Functions ---
-def get_executable_path(base_name: str = EXECUTABLE_NAME, update=False) -> Optional[Path]:
+def get_executable_path(base_name: str = EXECUTABLE_NAME, update=False) -> Path | None:
     """Finds the release executable in standard locations."""
     name_with_ext = f"{base_name}.exe" if platform.system() == "Windows" else base_name
     from toolboxv2 import tb_root_dir
@@ -70,18 +69,18 @@ class DBInstanceManager:
         self.state_file = self.data_dir / "instance_state.json"
         self.log_file = self.data_dir / "instance.log"  # Added for better logging info
 
-    def read_state(self) -> Tuple[Optional[int], Optional[str]]:
+    def read_state(self) -> tuple[int | None, str | None]:
         """Reads the PID and version from the instance's state file."""
         if not self.state_file.exists():
             return None, None
         try:
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file) as f:
                 state = json.load(f)
             return state.get('pid'), state.get('version')
         except (json.JSONDecodeError, ValueError, FileNotFoundError):
             return None, None
 
-    def write_state(self, pid: Optional[int], version: Optional[str]):
+    def write_state(self, pid: int | None, version: str | None):
         """Writes the PID and version to the state file."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         state = {'pid': pid, 'version': version}
@@ -193,9 +192,9 @@ class ClusterManager:
 
     def __init__(self, config_path: str = CLUSTER_CONFIG_FILE):
         self.config_path = Path(config_path)
-        self.instances: Dict[str, DBInstanceManager] = self._load_config()
+        self.instances: dict[str, DBInstanceManager] = self._load_config()
 
-    def _load_config(self) -> Dict[str, DBInstanceManager]:
+    def _load_config(self) -> dict[str, DBInstanceManager]:
         """Loads and validates the cluster configuration."""
         from toolboxv2 import tb_root_dir
         if not self.config_path.is_absolute():
@@ -215,7 +214,7 @@ class ClusterManager:
             config_data = default_config
         else:
             try:
-                with open(self.config_path, 'r') as f:
+                with open(self.config_path) as f:
                     config_data = json.load(f)
             except json.JSONDecodeError:
                 print(Style.RED(f"Error: Cluster config '{self.config_path}' is not valid JSON. using default config."))
@@ -223,7 +222,7 @@ class ClusterManager:
 
         return {id: DBInstanceManager(id, cfg) for id, cfg in config_data.items()}
 
-    def get_instances(self, instance_id: Optional[str] = None) -> List[DBInstanceManager]:
+    def get_instances(self, instance_id: str | None = None) -> list[DBInstanceManager]:
         """Returns a list of instances to operate on."""
         if instance_id:
             if instance_id not in self.instances:
@@ -231,15 +230,15 @@ class ClusterManager:
             return [self.instances[instance_id]]
         return list(self.instances.values())
 
-    def start_all(self, executable_path: Path, version: str, instance_id: Optional[str] = None):
+    def start_all(self, executable_path: Path, version: str, instance_id: str | None = None):
         for instance in self.get_instances(instance_id):
             instance.start(executable_path, version)
 
-    def stop_all(self, instance_id: Optional[str] = None):
+    def stop_all(self, instance_id: str | None = None):
         for instance in self.get_instances(instance_id):
             instance.stop()
 
-    def status_all(self, instance_id: Optional[str] = None, silent=False):
+    def status_all(self, instance_id: str | None = None, silent=False):
         if not silent:
             header = f"--- {Style.Bold('Cluster Status')} ---"
             print(header)
@@ -264,7 +263,7 @@ class ClusterManager:
             print("-" * len(header))
         return services_online, server_list
 
-    def health_check_all(self, instance_id: Optional[str] = None):
+    def health_check_all(self, instance_id: str | None = None):
         header = f"--- {Style.Bold('Cluster Health Check')} ---"
         print(header)
         print(
@@ -292,7 +291,7 @@ class ClusterManager:
                 f"  {Style.WHITE(instance.id):<16} {color(status_str):<22} {Style.GREY(str(pid)):<8} {Style.GREEN(latency):<12} {details}")
         print("-" * len(header))
 
-    def update_all_rolling(self, new_executable_path: Path, new_version: str, instance_id: Optional[str] = None):
+    def update_all_rolling(self, new_executable_path: Path, new_version: str, instance_id: str | None = None):
         """Performs a zero-downtime rolling update of the cluster."""
         print(f"--- {Style.Bold(f'Starting Rolling Update to Version {Style.YELLOW(new_version)}')} ---")
         instances_to_update = self.get_instances(instance_id)

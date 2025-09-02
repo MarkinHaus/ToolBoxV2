@@ -1,35 +1,30 @@
 import asyncio
+import base64
 import cProfile
+import inspect
 import io
+import json
 import logging
 import multiprocessing as mp
 import os
 import pstats
 import time
-from collections.abc import Callable
+import traceback
+from collections.abc import AsyncGenerator, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from inspect import signature
 from types import ModuleType
-from typing import Any, Union
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-
-from ..system.db_cli_manager import ClusterManager
-from ..extras.blobs import BlobStorage
 from ..extras import generate_test_cases
+from ..extras.blobs import BlobStorage
 from ..extras.Style import Spinner
+from ..system.db_cli_manager import ClusterManager
 from .all_functions_enums import *
 from .file_handler import FileHandler
-
-import asyncio
-import base64
-import inspect
-import json
-import traceback
-from collections.abc import AsyncGenerator, Callable
-from typing import Any, TypeVar
 
 T = TypeVar('T')
 
@@ -733,11 +728,10 @@ class Result:
     def stream(cls,
                stream_generator: Any,  # Renamed from source for clarity
                content_type: str = "text/event-stream",  # Default to SSE
-               headers: Union[dict, None] = None,
+               headers: dict | None = None,
                info: str = "OK",
                interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
-               cleanup_func: Union[
-                   Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None):
+               cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None):
         """
         Create a streaming response Result. Handles SSE and other stream types.
 
@@ -813,8 +807,7 @@ class Result:
             stream_generator: Any,
             info: str = "OK",
             interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
-            cleanup_func: Union[
-                Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None,
+            cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None,
             # http_headers: Optional[dict] = None # If we want to allow overriding default SSE HTTP headers
             ):
         """
@@ -2145,7 +2138,7 @@ class SSEGenerator:
     async def create_sse_stream(
         cls,
         source: Any,  # Changed from positional arg to keyword for clarity in Result.stream
-        cleanup_func: Union[Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None
+        cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None
     ) -> AsyncGenerator[str, None]:
         """
         Convert any source to a properly formatted SSE stream.

@@ -1,15 +1,16 @@
 # toolboxv2/mods/CloudM/UserDashboard.py
 
-import uuid
 from dataclasses import asdict
-import json
 
-from toolboxv2 import TBEF, App, Result, get_app, RequestData
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user, get_magic_link_email as request_magic_link_backend
-from .types import User
+from toolboxv2 import App, RequestData, Result, get_app
+from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user
+from toolboxv2.mods.CloudM.AuthManager import (
+    get_magic_link_email as request_magic_link_backend,
+)
+
 from .UserAccountManager import get_current_user_from_request
-from .UserInstances import get_user_instance as get_user_instance_internal, \
-    close_user_instance as close_user_instance_internal
+from .UserInstances import close_user_instance as close_user_instance_internal
+from .UserInstances import get_user_instance as get_user_instance_internal
 
 # We'll need a new function in UserInstances or a dedicated module manager for user instances
 # from .UserInstanceManager import update_active_modules_for_user_instance # Placeholder

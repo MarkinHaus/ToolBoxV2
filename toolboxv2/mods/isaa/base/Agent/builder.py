@@ -1,46 +1,40 @@
-import platform
-import shutil
-
 import asyncio
+import inspect
 import json
-import yaml
 import logging
 import os
-import sys
-import inspect
-import tempfile
-import subprocess
+import platform
+import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable, Union, Type
-from pydantic import BaseModel, Field, ValidationError, ConfigDict
-from dataclasses import asdict
-from datetime import datetime
-import uuid
+from typing import Any
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
 from toolboxv2 import Spinner
 from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
+
 # Import agent components
 from .agent import (
-    FlowAgent,
+    A2A_AVAILABLE,
+    LITELLM_AVAILABLE,
+    MCP_AVAILABLE,
+    OTEL_AVAILABLE,
     AgentModelData,
-    PersonaConfig,
+    FlowAgent,
     FormatConfig,
+    PersonaConfig,
     ResponseFormat,
     TextLength,
-    rprint,
-    wprint,
     eprint,
     iprint,
-    LITELLM_AVAILABLE,
-    A2A_AVAILABLE,
-    MCP_AVAILABLE,
-    OTEL_AVAILABLE
+    wprint,
 )
 
 # Framework imports
 if LITELLM_AVAILABLE:
     from litellm import BudgetManager
-    import litellm
 
 if OTEL_AVAILABLE:
     try:
@@ -63,7 +57,7 @@ if MCP_AVAILABLE:
     from mcp import ClientSession
 
 if A2A_AVAILABLE:
-    from python_a2a import A2AServer, AgentCard
+    pass
 
 def detect_shell() -> tuple[str, str]:
     """
@@ -96,12 +90,12 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     enabled: bool = False
-    config_path: Optional[str] = None  # Path to MCP tools config file
-    server_name: Optional[str] = None
+    config_path: str = None  # Path to MCP tools config file
+    server_name: str = None
     host: str = "0.0.0.0"
     port: int = 8000
     auto_expose_tools: bool = True
-    tools_from_config: List[Dict[str, Any]] = Field(default_factory=list)
+    tools_from_config: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class A2AConfig(BaseModel):
@@ -111,8 +105,8 @@ class A2AConfig(BaseModel):
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 5000
-    agent_name: Optional[str] = None
-    agent_description: Optional[str] = None
+    agent_name: str = None
+    agent_description: str = None
     agent_version: str = "1.0.0"
     expose_tools_as_skills: bool = True
 
@@ -120,8 +114,8 @@ class A2AConfig(BaseModel):
 class TelemetryConfig(BaseModel):
     """OpenTelemetry configuration"""
     enabled: bool = False
-    service_name: Optional[str] = None
-    endpoint: Optional[str] = None  # OTLP endpoint
+    service_name: str = None
+    endpoint: str = None  # OTLP endpoint
     console_export: bool = True
     batch_export: bool = True
     sample_rate: float = 1.0
@@ -161,7 +155,7 @@ Always utilize available tools when they can help solve the user's request effic
     temperature: float = 0.7
     max_tokens_output: int = 2048
     max_tokens_input: int = 32768
-    api_key_env_var: Optional[str] = "OPENROUTER_API_KEY"
+    api_key_env_var: str | None = "OPENROUTER_API_KEY"
     use_fast_response: bool = True
 
     # Features
@@ -175,13 +169,13 @@ Always utilize available tools when they can help solve the user's request effic
     verbose_logging: bool = False
 
     # Persona and formatting
-    active_persona: Optional[str] = None
-    persona_profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
-    default_format_config: Optional[Dict[str, Any]] = None
+    active_persona: str = None
+    persona_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    default_format_config: dict[str, Any] = None
 
     # Custom variables and world model
-    custom_variables: Dict[str, Any] = Field(default_factory=dict)
-    initial_world_model: Dict[str, Any] = Field(default_factory=dict)
+    custom_variables: dict[str, Any] = Field(default_factory=dict)
+    initial_world_model: dict[str, Any] = Field(default_factory=dict)
 
 
 # ===== PRODUCTION FLOWAGENT BUILDER =====
@@ -203,13 +197,13 @@ class FlowAgentBuilder:
             self.config = AgentConfig()
 
         # Runtime components
-        self._custom_tools: Dict[str, tuple[Callable, str]] = {}
-        self._mcp_tools: Dict[str, Dict] = {}
+        self._custom_tools: dict[str, tuple[Callable, str]] = {}
+        self._mcp_tools: dict[str, dict] = {}
         self._mcp_session_manager = MCPSessionManager()
 
-        self._budget_manager: Optional[BudgetManager] = None
-        self._tracer_provider: Optional[TracerProvider] = None
-        self._a2a_server: Optional[Any] = None
+        self._budget_manager: BudgetManager = None
+        self._tracer_provider: TracerProvider = None
+        self._a2a_server: Any = None
 
         # Set logging level
         if self.config.verbose_logging:
@@ -226,7 +220,7 @@ class FlowAgentBuilder:
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 if path.suffix.lower() in ['.yaml', '.yml']:
                     data = yaml.safe_load(f)
                 else:
@@ -320,7 +314,7 @@ class FlowAgentBuilder:
         iprint(f"MCP server enabled: {host}:{port}")
         return self
 
-    async def _load_mcp_server_capabilities(self, server_name: str, server_config: Dict[str, Any]):
+    async def _load_mcp_server_capabilities(self, server_name: str, server_config: dict[str, Any]):
         """Load all capabilities from MCP server with persistent session"""
         try:
             # Get or create persistent session
@@ -397,10 +391,9 @@ class FlowAgentBuilder:
         except Exception as e:
             eprint(f"Failed to load capabilities from MCP server {server_name}: {e}")
 
-    def _create_tool_wrapper(self, server_name: str, tool_name: str, tool_info: Dict, session: ClientSession):
+    def _create_tool_wrapper(self, server_name: str, tool_name: str, tool_info: dict, session: ClientSession):
         """Create wrapper function for MCP tool with dynamic signature based on schema"""
         import inspect
-        from typing import get_type_hints
 
         # Extract parameter information from input schema
         input_schema = tool_info.get('input_schema', {})
@@ -520,7 +513,7 @@ class FlowAgentBuilder:
 
         return tool_wrapper
 
-    def _create_resource_wrapper(self, server_name: str, resource_uri: str, resource_info: Dict,
+    def _create_resource_wrapper(self, server_name: str, resource_uri: str, resource_info: dict,
                                  session: ClientSession):
         """Create wrapper function for MCP resource with proper signature"""
         import inspect
@@ -559,7 +552,7 @@ class FlowAgentBuilder:
 
         return resource_wrapper
 
-    def _create_resource_template_wrapper(self, server_name: str, template_uri: str, template_info: Dict,
+    def _create_resource_template_wrapper(self, server_name: str, template_uri: str, template_info: dict,
                                           session: ClientSession):
         """Create wrapper function for MCP resource template with dynamic parameters"""
         import inspect
@@ -629,7 +622,7 @@ class FlowAgentBuilder:
 
         return template_wrapper
 
-    def _create_prompt_wrapper(self, server_name: str, prompt_name: str, prompt_info: Dict, session: ClientSession):
+    def _create_prompt_wrapper(self, server_name: str, prompt_name: str, prompt_info: dict, session: ClientSession):
         """Create wrapper function for MCP prompt with dynamic parameters"""
         import inspect
 
@@ -702,7 +695,7 @@ class FlowAgentBuilder:
 
         docstring = f"Execute MCP prompt: {prompt_info.get('description', prompt_name)}"
         if param_docs:
-            docstring += f"\n\nParameters:\n" + "\n".join(param_docs)
+            docstring += "\n\nParameters:\n" + "\n".join(param_docs)
 
         prompt_wrapper.__doc__ = docstring
         prompt_wrapper.__annotations__ = {'return': str}
@@ -724,7 +717,7 @@ class FlowAgentBuilder:
             raise FileNotFoundError(f"MCP config not found: {config_path}")
 
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
+            with open(config_path, encoding='utf-8') as f:
                 if config_path.suffix.lower() in ['.yaml', '.yml']:
                     mcp_config = yaml.safe_load(f)
                 else:
@@ -781,7 +774,7 @@ class FlowAgentBuilder:
                         else:
                             wprint(f"⚠ MCP server {server_name} loaded with issues")
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         eprint(f"✗ MCP server {server_name} timed out after 15 seconds")
                     except Exception as e:
                         eprint(f"✗ Failed to load MCP server {server_name}: {e}")
@@ -797,7 +790,7 @@ class FlowAgentBuilder:
                 except Exception as e:
                     eprint(f"Failed to load direct MCP tool: {e}")
 
-    async def _load_single_mcp_server(self, server_name: str, server_config: Dict[str, Any]) -> bool:
+    async def _load_single_mcp_server(self, server_name: str, server_config: dict[str, Any]) -> bool:
         """Load a single MCP server with timeout and error handling"""
         try:
             iprint(f"🔄 Processing MCP server: {server_name}")
@@ -826,7 +819,7 @@ class FlowAgentBuilder:
             eprint(f"✗ Error loading MCP server {server_name}: {e}")
             return False
 
-    async def _create_capability_wrappers(self, server_name: str, capabilities: Dict, session: ClientSession):
+    async def _create_capability_wrappers(self, server_name: str, capabilities: dict, session: ClientSession):
         """Create wrappers for all capabilities with error handling"""
 
         # Create tool wrappers
@@ -900,7 +893,7 @@ class FlowAgentBuilder:
                 eprint(f"Failed to create prompt wrapper {prompt_name}: {e}")
 
     @staticmethod
-    def _validate_mcp_server_config(server_name: str, server_config: Dict[str, Any]) -> bool:
+    def _validate_mcp_server_config(server_name: str, server_config: dict[str, Any]) -> bool:
         """Validate MCP server configuration"""
         command = server_config.get('command')
         if not command:
@@ -934,7 +927,7 @@ class FlowAgentBuilder:
         iprint(f"Validated MCP server config: {server_name}")
         return True
 
-    def _load_direct_mcp_tool(self, tool_config: Dict[str, Any]):
+    def _load_direct_mcp_tool(self, tool_config: dict[str, Any]):
         """Load tool from direct configuration"""
         name = tool_config.get('name')
         description = tool_config.get('description', '')
@@ -1057,7 +1050,7 @@ class FlowAgentBuilder:
         iprint(f"Tool added: {tool_name}")
         return self
 
-    def add_tools_from_module(self, module, prefix: str = "", exclude: List[str] = None) -> 'FlowAgentBuilder':
+    def add_tools_from_module(self, module, prefix: str = "", exclude: list[str] = None) -> 'FlowAgentBuilder':
         """Add all functions from a module as tools"""
         exclude = exclude or []
 
@@ -1074,7 +1067,7 @@ class FlowAgentBuilder:
     # ===== PERSONA MANAGEMENT =====
 
     def add_persona_profile(self, profile_name: str, name: str, style: str = "professional",
-                            tone: str = "friendly", personality_traits: List[str] = None,
+                            tone: str = "friendly", personality_traits: list[str] = None,
                             custom_instructions: str = "", response_format: str = None,
                             text_length: str = None) -> 'FlowAgentBuilder':
         """Add a persona profile with optional format configuration"""
@@ -1194,19 +1187,19 @@ class FlowAgentBuilder:
 
     # ===== VARIABLE MANAGEMENT =====
 
-    def with_custom_variables(self, variables: Dict[str, Any]) -> 'FlowAgentBuilder':
+    def with_custom_variables(self, variables: dict[str, Any]) -> 'FlowAgentBuilder':
         """Add custom variables"""
         self.config.custom_variables.update(variables)
         return self
 
-    def with_world_model(self, world_model: Dict[str, Any]) -> 'FlowAgentBuilder':
+    def with_world_model(self, world_model: dict[str, Any]) -> 'FlowAgentBuilder':
         """Set initial world model"""
         self.config.initial_world_model.update(world_model)
         return self
 
     # ===== VALIDATION =====
 
-    def validate_config(self) -> Dict[str, List[str]]:
+    def validate_config(self) -> dict[str, list[str]]:
         """Validate the current configuration"""
         issues = {"errors": [], "warnings": []}
 
@@ -1379,7 +1372,7 @@ class FlowAgentBuilder:
 
 
                 # Final summary
-                iprint(f"ok FlowAgent built successfully!")
+                iprint("ok FlowAgent built successfully!")
                 iprint(f"   Agent: {agent.amd.name}")
                 iprint(f"   Tools: {tools_added}")
                 iprint(f"   MCP: {'ok' if self.config.mcp.enabled else 'F'}")

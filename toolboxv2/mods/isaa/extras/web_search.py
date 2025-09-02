@@ -1,27 +1,14 @@
 import concurrent
-
-import asyncio
 import os
-
-import requests
-from bs4 import BeautifulSoup
-import html2text
 import re
-import time
-import json
-from typing import List, Dict, Optional
 from urllib.parse import quote_plus
 
+import html2text
 import requests
 from bs4 import BeautifulSoup
-import html2text
-import re
-import time
-from typing import List, Dict, Optional
-import json
 
 
-def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) -> List[Dict[str, str]]:
+def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) -> list[dict[str, str]]:
     """
     Web search using SerpAPI (free tier: 100 searches/month)
     Get your free API key at: https://serpapi.com/
@@ -71,7 +58,7 @@ def web_search_serpapi(query: str, max_results: int = 5, api_key: str = None) ->
 # Usage:
 # results = web_search_serpapi("Python web scraping", api_key="your_serpapi_key")
 
-def web_search_bing(query: str, max_results: int = 5, api_key: str = None) -> List[Dict[str, str]]:
+def web_search_bing(query: str, max_results: int = 5, api_key: str = None) -> list[dict[str, str]]:
     """
     Web search using Bing Search API (free tier: 3,000 queries/month)
     Get your free API key at: https://azure.microsoft.com/en-us/services/cognitive-services/bing-web-search-api/
@@ -121,15 +108,8 @@ def web_search_bing(query: str, max_results: int = 5, api_key: str = None) -> Li
         return []
 
 
-import requests
-from bs4 import BeautifulSoup
-import html2text
-import re
-import time
+
 import chardet
-from typing import List, Dict, Optional
-from urllib.parse import quote_plus
-import unicodedata
 
 
 def is_content_parseable(content: str) -> bool:
@@ -177,7 +157,7 @@ def is_content_parseable(content: str) -> bool:
     )
 
     if not is_parseable:
-        print(f"Content failed parseability check:")
+        print("Content failed parseability check:")
         print(f"  Replacement ratio: {replacement_ratio:.1%}")
         print(f"  Problematic ratio: {problematic_ratio:.1%}")
         print(f"  English ratio: {english_ratio:.1%}")
@@ -186,7 +166,7 @@ def is_content_parseable(content: str) -> bool:
     return is_parseable
 
 
-def url_to_markdown_robust(url: str) -> Optional[str]:
+def url_to_markdown_robust(url: str) -> str | None:
     """
     Robust URL to markdown converter with multiple encoding strategies
     """
@@ -478,7 +458,7 @@ def clean_markdown_robust(content: str) -> str:
     return result.strip()
 
 
-def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) -> List[Dict[str, str]]:
+def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) -> list[dict[str, str]]:
     """
     Robust search that keeps trying until it gets enough good results
     """
@@ -491,7 +471,7 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
             max_attempts = max_attempts[1:-1]
         max_attempts = int(max_attempts.strip())
 
-    def get_more_search_urls(search_query: str, num_urls: int = 15) -> List[Dict[str, str]]:
+    def get_more_search_urls(search_query: str, num_urls: int = 15) -> list[dict[str, str]]:
         """Get more URLs than needed so we can filter out bad ones"""
         try:
             headers = {
@@ -533,7 +513,7 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
             print(f"Search error: {e}")
             return []
 
-    def get_fallback_urls(search_query: str) -> List[Dict[str, str]]:
+    def get_fallback_urls(search_query: str) -> list[dict[str, str]]:
         """Get fallback URLs from known good sites"""
         encoded_query = quote_plus(search_query)
         fallback_urls = [
@@ -612,7 +592,7 @@ def web_search_robust(query: str, max_results: int = 5, max_attempts: int = 15) 
 
 
 # Main search function
-def web_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
+def web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
     """
     Main search function with robust fallbacks
     """

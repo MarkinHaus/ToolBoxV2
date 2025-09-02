@@ -4,6 +4,7 @@ import hashlib
 import os
 import queue
 import random
+import secrets
 from collections.abc import Callable
 from functools import wraps
 
@@ -12,18 +13,10 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
-
-from ..system.tb_logger import get_logger
-
-
-import os
-import hashlib
-from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-import secrets
-import base64
 from dotenv import load_dotenv
 
+from ..system.tb_logger import get_logger
 
 load_dotenv()
 

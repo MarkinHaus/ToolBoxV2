@@ -1,7 +1,6 @@
 # toolboxv2/mods/chat_module.py
 
-import asyncio
-from toolboxv2 import get_app, App
+from toolboxv2 import App, get_app
 from toolboxv2.utils.system.types import Result
 
 # -----------------

@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import os
-from typing import Callable
+from collections.abc import Callable
 
 from toolboxv2.utils.extras import Style
 
@@ -88,7 +88,7 @@ class MainTool:
         self.name = kwargs["name"]
         self.logger = kwargs.get("logs", get_logger())
         self.color = kwargs.get("color", "WHITE")
-        self.todo = kwargs.get("load", kwargs.get("on_start", None))
+        self.todo = kwargs.get("load", kwargs.get("on_start"))
         if not hasattr(self, 'config'):
             self.config = {}
         self.user = None

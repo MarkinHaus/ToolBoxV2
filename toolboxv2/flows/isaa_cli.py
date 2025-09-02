@@ -1,26 +1,31 @@
+import asyncio
 import base64
 import datetime
-import mimetypes
-import re
-from dataclasses import asdict
-
-import asyncio
 import json
+import mimetypes
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import Generator
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Generator
+from typing import Any
 
+import litellm
 import psutil
 from prompt_toolkit import PromptSession
-from prompt_toolkit.application import Application,in_terminal, get_app_or_none as get_pt_app
-from prompt_toolkit.completion import (FuzzyCompleter, NestedCompleter,
-                                       PathCompleter, WordCompleter)
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.application import Application
+from prompt_toolkit.completion import (
+    FuzzyCompleter,
+    NestedCompleter,
+    PathCompleter,
+    WordCompleter,
+)
+from prompt_toolkit.formatted_text import ANSI, HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import HSplit, Window
@@ -28,15 +33,16 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 
 from toolboxv2 import get_app
-from toolboxv2.mods.isaa.extras.verbose_output import EnhancedVerboseOutput
 from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent, ProgressEvent
-from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode, NodeStatus
-from toolboxv2.mods.isaa.module import detect_shell, Tools as Isaatools
+from toolboxv2.mods.isaa.extras.terminal_progress import (
+    NodeStatus,
+    ProgressiveTreePrinter,
+    VerbosityMode,
+)
+from toolboxv2.mods.isaa.extras.verbose_output import EnhancedVerboseOutput
+from toolboxv2.mods.isaa.module import Tools as Isaatools
+from toolboxv2.mods.isaa.module import detect_shell
 from toolboxv2.utils.extras.Style import Style, remove_styles
-
-from prompt_toolkit.formatted_text import ANSI
-import litellm
-
 
 NAME = "isaa_cli"
 
@@ -75,9 +81,9 @@ class WorkspaceIsaasCli:
         self.app = app_instance
         # New agent system
         self.agent_builder = None
-        self.workspace_agent: Optional[FlowAgent] = None
-        self.worker_agents: Dict[str, FlowAgent] = {}
-        self.active_agent: Optional[FlowAgent] = None
+        self.workspace_agent: FlowAgent | None = None
+        self.worker_agents: dict[str, FlowAgent] = {}
+        self.active_agent: FlowAgent | None = None
 
 
         self.formatter = EnhancedVerboseOutput(verbose=True, print_func=print)
@@ -143,7 +149,7 @@ class WorkspaceIsaasCli:
 
 
 
-    def _init_session_stats(self) -> Dict:
+    def _init_session_stats(self) -> dict:
         """Initialisiert die Struktur für die Sitzungsstatistiken."""
         return {
             "session_start_time": asyncio.get_event_loop().time(),
@@ -163,11 +169,11 @@ class WorkspaceIsaasCli:
         """Lädt dynamische Vervollständigungs-Tags aus einer JSON-Datei."""
         try:
             if self.dynamic_completions_file.exists():
-                with open(self.dynamic_completions_file, 'r') as f:
+                with open(self.dynamic_completions_file) as f:
                     data = json.load(f)
                     self.dynamic_completions["world_tags"] = data.get("world_tags", [])
                     self.dynamic_completions["context_tags"] = data.get("context_tags", [])
-        except (IOError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):
             self.dynamic_completions = {"world_tags": [], "context_tags": []}
 
     async def _save_dynamic_completions(self):
@@ -177,7 +183,7 @@ class WorkspaceIsaasCli:
         try:
             with open(self.dynamic_completions_file, 'w') as f:
                 json.dump(self.dynamic_completions, f, indent=2)
-        except IOError as e:
+        except OSError as e:
             self.formatter.print_error(f"Konnte Vervollständigungen nicht speichern: {e}")
 
         # In der `WorkspaceIsaasCli`-Klasse
@@ -408,7 +414,7 @@ class WorkspaceIsaasCli:
             used_encoding = 'utf-8'  # Default encoding
             for encoding in ['utf-8', 'latin-1', 'cp1252']:
                 try:
-                    with open(path, 'r', encoding=encoding) as f:
+                    with open(path, encoding=encoding) as f:
                         content = f.read()
                     used_encoding = encoding
                     break
@@ -442,18 +448,18 @@ class WorkspaceIsaasCli:
             plural = "s" if replacements_count > 1 else ""
             return f"✅ Success: Replaced {replacements_count} occurrence{plural} in '{file_path}'."
 
-        except IOError as e:
+        except OSError as e:
             return f"❌ File Error: Could not process '{file_path}'. Reason: {e}"
         except Exception as e:
             return f"❌ An unexpected error occurred: {e}"
 
-    async def read_file_tool(self, file_path: str, encoding: str = "utf-8", lines_range: Optional[str] = None):
+    async def read_file_tool(self, file_path: str, encoding: str = "utf-8", lines_range: str | None = None):
         """Read file content with optional line range (e.g., '1-10' or '5-')"""
         try:
             path = Path(self.workspace_path / file_path)
             if not path.exists():
                 return f"❌ File {file_path} does not exist"
-            with open(path, 'r', encoding=encoding) as f:
+            with open(path, encoding=encoding) as f:
                 if lines_range:
                     lines = f.readlines()
                     if '-' in lines_range:
@@ -533,7 +539,7 @@ class WorkspaceIsaasCli:
 
                 # --- LaTeX (text/plain fallback with .tex extension) ---
                 elif file_path.endswith(".tex"):
-                    with open(path, 'r', encoding='utf-8') as f:
+                    with open(path, encoding='utf-8') as f:
                         latex_code = f.read()
                     content_parts.append({
                         "type": "text",
@@ -543,7 +549,7 @@ class WorkspaceIsaasCli:
                 # --- TEXT or UNKNOWN MIME (fallback) ---
                 else:
                     try:
-                        with open(path, 'r', encoding='utf-8') as f:
+                        with open(path, encoding='utf-8') as f:
                             text_content = f.read()
                         content_parts.append({"type": "text", "text": f"File Content:\n\n{text_content}"})
                     except UnicodeDecodeError:
@@ -610,8 +616,8 @@ class WorkspaceIsaasCli:
         search_for: str = "content",
         recursive: bool = True,
         ignore_case: bool = False,
-        exclude_dirs: Optional[List[str]] = None,
-        max_depth: Optional[int] = None
+        exclude_dirs: list[str] | None = None,
+        max_depth: int | None = None
     ):
         """
         Highly efficient file search tool optimized for speed with intelligent directory exclusion.
@@ -664,7 +670,7 @@ class WorkspaceIsaasCli:
         )
 
     async def _search_filenames_optimized(
-        self, base_path: Path, query_to_check: str, patterns: List[str],
+        self, base_path: Path, query_to_check: str, patterns: list[str],
         exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
     ) -> str:
         """Optimized filename search using generators and efficient tools."""
@@ -715,7 +721,7 @@ class WorkspaceIsaasCli:
             return f"Error during filename search: {e}"
 
     async def _search_content_optimized(
-        self, base_path: Path, query: str, patterns: List[str],
+        self, base_path: Path, query: str, patterns: list[str],
         exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
     ) -> str:
         """Optimized content search with multiple fallback strategies."""
@@ -759,9 +765,9 @@ class WorkspaceIsaasCli:
         )
 
     async def _try_native_filename_search(
-        self, base_path: Path, query: str, patterns: List[str],
+        self, base_path: Path, query: str, patterns: list[str],
         exclude_dirs: set, recursive: bool, max_depth: int
-    ) -> Optional[str]:
+    ) -> str | None:
         """Try native tools for filename search."""
 
         # Try ripgrep first
@@ -833,9 +839,9 @@ class WorkspaceIsaasCli:
         return None
 
     async def _try_native_content_search(
-        self, base_path: Path, query: str, patterns: List[str],
+        self, base_path: Path, query: str, patterns: list[str],
         exclude_dirs: set, recursive: bool, max_depth: int, ignore_case: bool
-    ) -> Optional[str]:
+    ) -> str | None:
         """Try native tools for content search."""
 
         # Try ripgrep first
@@ -913,7 +919,7 @@ class WorkspaceIsaasCli:
                             continue
 
                     # Search in text file
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    with open(file_path, encoding='utf-8', errors='ignore') as f:
                         for line_num, line in enumerate(f, 1):
                             line_to_check = line.lower() if ignore_case else line
                             if search_query in line_to_check:
@@ -1015,8 +1021,8 @@ class WorkspaceIsaasCli:
         except Exception as e:
             self.formatter.print_error(f"Error logging user assistance request: {e}")
 
-    async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: Optional[str] = None,
-                                  show_hidden: bool = False, exclude_dirs: Optional[List[str]] = None):
+    async def list_directory_tool(self, directory: str = ".", recursive: bool = False, file_types: str | None = None,
+                                  show_hidden: bool = False, exclude_dirs: list[str] | None = None):
         """
         List directory contents in a clear, visual tree structure.
         This version is optimized for speed and readability.
@@ -1104,7 +1110,7 @@ class WorkspaceIsaasCli:
             return f"❌ Error listing directory: {str(e)}"
 
     async def create_specialized_agent_tool(self, agent_name: str, system_prompt: str,
-                                            model: Optional[str] = None):
+                                            model: str | None = None):
         """Create a specialized agent with predefined or custom capabilities"""
         try:
             new_builder = self.isaa_tools.get_agent_builder(agent_name)
@@ -1218,9 +1224,9 @@ class WorkspaceIsaasCli:
         self,
         task_prompt: str,
         task_name: str,
-        agent_name: Optional[str],
-        depends_on: Optional[List[str]] = None,
-        session_id: Optional[str] = None,
+        agent_name: str | None,
+        depends_on: list[str] | None = None,
+        session_id: str | None = None,
         priority: str = "normal",
         notify_supervisor: bool = True,
         auto_respond_to_user: bool = False
@@ -1465,7 +1471,7 @@ This task has failed. Please evaluate if recovery actions are needed or if the u
         print(f"💰 Cost: ${status_info['performance']['total_cost']:.4f}")
         print(f"🔄 Tasks: {status_info['task_execution']['completed_tasks']} completed")
 
-    def set_verbosity_mode(self, mode: VerbosityMode, realtime_minimal: Optional[bool] = None):
+    def set_verbosity_mode(self, mode: VerbosityMode, realtime_minimal: bool | None = None):
         """Dynamically change verbosity mode during runtime"""
         self._current_verbosity_mode = mode
         if realtime_minimal is not None:
@@ -1824,7 +1830,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         try:
             workspace_config_file = self.workspace_path / ".isaa_workspace.json"
             if workspace_config_file.exists():
-                with open(workspace_config_file, 'r') as f:
+                with open(workspace_config_file) as f:
                     workspace_config = json.load(f)
                 if 'default_agent' in workspace_config: self.active_agent_name = workspace_config['default_agent']
                 if 'session_id' in workspace_config: self.session_id = workspace_config['session_id']
@@ -2051,7 +2057,6 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 print(f"Error exiting app: {e}")
 
         # Statuszeile ganz unten mit invertierter Farbe
-        from prompt_toolkit.layout.dimension import D
         content_area = TextArea(
             text="",
             read_only=True
@@ -2108,7 +2113,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                     try:
                         if main_app.is_running:
                             main_app.exit(result=response)
-                    except Exception as e:
+                    except Exception:
                         pass
 
             main_app.create_background_task(run_task())
@@ -2309,7 +2314,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 self.formatter.print(f"⚠️ Command finished with an error (Exit Code: {return_code}).")
 
         except FileNotFoundError:
-            self.formatter.print(f"Error: Command not found. Make sure it's installed and in your system's PATH.")
+            self.formatter.print("Error: Command not found. Make sure it's installed and in your system's PATH.")
         except Exception as e:
             self.formatter.print(f"An unexpected error occurred while running the shell command: {e}")
 
@@ -2332,7 +2337,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         }
         handler = command_map.get(command)
         if not handler:
-            for cmd_ in command_map.keys():
+            for cmd_ in command_map:
                 if cmd_.startswith(command):
                     handler = command_map.get(cmd_)
                     break
@@ -2420,7 +2425,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
             tag = args[1]
             world_model_file = Path(self.app.data_dir) / f"world_model_{self.active_agent_name}_{tag}.json"
             try:
-                with open(world_model_file, "r") as f:
+                with open(world_model_file) as f:
                     data = json.load(f)
                 agent.world_model = data
                 self.formatter.print_success("World model loaded")
@@ -2727,7 +2732,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
                 contexts_data = []
                 for f in context_files:
                     try:
-                        with open(f, 'r') as file:
+                        with open(f) as file:
                             data = json.load(file)
                         contexts_data.append([f.stem.replace("context_", ""), f"{len(data)} messages", f.stat().st_mtime])
                     except:
@@ -2792,7 +2797,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
 
     async def load_context(self, file_path: Path):
         """Load context with async operation"""
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             history = json.load(f)
         await asyncio.sleep(0.1)
         return history
@@ -2986,7 +2991,7 @@ Your purpose is to function reliably for extended periods with minimal oversight
         try:
             await asyncio.gather(app.run_async(), monitor_loop())
         except Exception as e:
-            print(f"\x1b[?1049l", end="")  # Ensure exiting alternate screen buffer
+            print("\x1b[?1049l", end="")  # Ensure exiting alternate screen buffer
             import traceback
             traceback.print_exc()
             self.formatter.print_error(f"Monitor crashed: {e}")

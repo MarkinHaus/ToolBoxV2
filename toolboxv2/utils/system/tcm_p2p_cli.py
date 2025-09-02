@@ -4,19 +4,17 @@
 
 import argparse
 import json
-import os
 import platform
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # --- Enhanced UI Imports ---
 # Assuming your style utilities are in 'utils/style.py'
 try:
-    from ..extras.Style import Style, Spinner
+    from ..extras.Style import Spinner, Style
 except ImportError:
     print("FATAL: UI utilities not found. Ensure 'utils/style.py' exists.")
     sys.exit(1)
@@ -34,6 +32,7 @@ EXECUTABLE_NAME = "tcm.exe" if platform.system() == "Windows" else "tcm"
 # Base directory for all managed instances and their state
 
 from ... import tb_root_dir
+
 INSTANCES_ROOT_DIR = tb_root_dir / ".info" / "p2p_instances"
 
 
@@ -57,7 +56,7 @@ def get_executable_path(update=False) -> Path | None:
 
 
 
-def find_instances() -> List['InstanceManager']:
+def find_instances() -> list['InstanceManager']:
     """Discovers all managed instances by scanning the instances directory."""
     if not INSTANCES_ROOT_DIR.is_dir():
         return []
@@ -81,17 +80,17 @@ class InstanceManager:
         self.config_file = self.instance_dir / "config.toml"
         self.log_file = self.instance_dir / "instance.log"
 
-    def read_state(self) -> Dict:
+    def read_state(self) -> dict:
         """Reads the instance's state (pid, mode, etc.) from its state file."""
         if not self.state_file.exists():
             return {}
         try:
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file) as f:
                 return json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             return {}
 
-    def write_state(self, state_data: Dict):
+    def write_state(self, state_data: dict):
         """Writes the instance's state to its state file."""
         self.instance_dir.mkdir(parents=True, exist_ok=True)
         with open(self.state_file, 'w') as f:
@@ -102,7 +101,7 @@ class InstanceManager:
         pid = self.read_state().get('pid')
         return psutil.pid_exists(pid) if pid else False
 
-    def generate_config(self, mode: str, config_data: Dict):
+    def generate_config(self, mode: str, config_data: dict):
         """Generates the config.toml file for this specific instance."""
         content = f'mode = "{mode}"\n\n'
 
@@ -221,11 +220,12 @@ def handle_start_peer(args):
         "forward_to_address": args.forward,
         "target_peer_id": args.target
     }
-    
+
     if args.forward:
-        from toolboxv2.mods.P2PRPCServer import start_rpc_server
-        from toolboxv2 import get_app
         import asyncio
+
+        from toolboxv2 import get_app
+        from toolboxv2.mods.P2PRPCServer import start_rpc_server
         app = get_app("P2P_RPC_Server_Starter")
         host, port = args.forward.split(':')
         asyncio.create_task(start_rpc_server(app, host, int(port)))
@@ -293,7 +293,7 @@ def handle_logs(args):
 
     header = f"--- Tailing last {args.lines} lines of log for '{Style.Bold(args.name)}' ---"
     print(header)
-    with open(manager.log_file, "r") as f:
+    with open(manager.log_file) as f:
         lines = f.readlines()
         for line in lines[-args.lines:]:
             print(Style.GREY(line.strip()))

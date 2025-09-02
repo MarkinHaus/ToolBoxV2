@@ -1,18 +1,17 @@
 # FileWidget.py
+import base64  # Added for base64 decoding
+import json
 import mimetypes
 import os
-import pickle
-import re
-import json
 import secrets  # For generating secure share IDs
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Any, AsyncGenerator
-import base64  # Added for base64 decoding
+from typing import Any
 
 # Assuming toolboxv2 and its components are in the Python path
-from toolboxv2 import App, Result, RequestData, get_app, MainTool
+from toolboxv2 import App, MainTool, RequestData, Result, get_app
 from toolboxv2.utils.extras.base_widget import get_current_user_from_request
 from toolboxv2.utils.extras.blobs import BlobFile, BlobStorage
 
@@ -125,7 +124,7 @@ class Tools(MainTool):
 
     def on_start(self):
         self.shares_metadata_path = Path(self.app.data_dir) / SHARES_METADATA_FILENAME
-        self.shares: Dict[str, Dict[str, Any]] = self._load_shares()
+        self.shares: dict[str, dict[str, Any]] = self._load_shares()
 
         self.temp_upload_dir = Path(self.app.data_dir) / "filewidget_tmp_uploads"
         self.temp_upload_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +137,7 @@ class Tools(MainTool):
         self.app.run_any(("CloudM", "add_ui"),
                          name="FileWidget",
                          title="FileWidget",
-                         path=f"/api/FileWidget/ui",
+                         path="/api/FileWidget/ui",
                          # This path is where CloudM lists it, not necessarily where users access it directly
                          description="file management", auth=True
                          )
@@ -151,10 +150,10 @@ class Tools(MainTool):
         self.app.logger.info(f"{self.name} Version: {self.version}")
         return self.version
 
-    def _load_shares(self) -> Dict[str, Dict[str, Any]]:
+    def _load_shares(self) -> dict[str, dict[str, Any]]:
         if self.shares_metadata_path is not None and self.shares_metadata_path.exists():
             try:
-                with open(self.shares_metadata_path, 'r') as f:
+                with open(self.shares_metadata_path) as f:
                     return json.load(f)
             except json.JSONDecodeError:
                 self.app.logger.error(
@@ -166,13 +165,13 @@ class Tools(MainTool):
         try:
             with open(self.shares_metadata_path, 'w') as f:
                 json.dump(self.shares, f, indent=4)
-        except IOError:
+        except OSError:
             self.app.logger.error(f"Error writing shares to {self.shares_metadata_path}.")
 
     def _generate_share_id(self) -> str:
         return secrets.token_urlsafe(16)
 
-    async def _get_user_uid_from_request(self, request: RequestData) -> Optional[str]:
+    async def _get_user_uid_from_request(self, request: RequestData) -> str | None:
         user = await get_current_user_from_request(self.app, request)
         if user and hasattr(user, 'uid') and user.uid:  # Ensure uid attribute exists and is not empty
             return user.uid
@@ -190,9 +189,9 @@ class Tools(MainTool):
                 f"User object found but no UID. Session keys: {list(request.session.keys()) if request.session else 'No session'}")
         return None
 
-    async def get_blob_storage(self, request: Optional[RequestData] = None,
-                               owner_uid_override: Optional[str] = None) -> BlobStorage:
-        user_uid: Optional[str] = None
+    async def get_blob_storage(self, request: RequestData | None = None,
+                               owner_uid_override: str | None = None) -> BlobStorage:
+        user_uid: str | None = None
 
         if owner_uid_override:
             user_uid = owner_uid_override
@@ -604,7 +603,7 @@ async def get_main_ui(self) -> Result:
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="upload", api_methods=['POST'], request_as_kwarg=True)
-async def handle_upload(self, request: RequestData, form_data: Optional[Dict[str, Any]] = None) -> Result:
+async def handle_upload(self, request: RequestData, form_data: dict[str, Any] | None = None) -> Result:
     """
     Handles file uploads. Expects chunked data via form_data kwarg from Rust server.
     'form_data' structure (from Rust's parsing of multipart) after client sends FormData with fields:
@@ -852,7 +851,7 @@ async def handle_download(self, request: RequestData, **kwargs) -> Result:  # Re
 async def get_file_tree(self, request: RequestData) -> Result:
     try:
         storage = await self.get_blob_storage(request)  # Handles auth
-        tree: Dict[str, Any] = {}
+        tree: dict[str, Any] = {}
         all_paths = []
 
         # Adapt to BlobStorage's way of listing files.
@@ -921,8 +920,8 @@ async def create_share_link_test(self):
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="create_share_link", api_methods=['GET', 'POST'],
         request_as_kwarg=True)
-async def create_share_link(self, request: RequestData, file_path: Optional[str] = None,
-                            share_type: Optional[str] = 'public') -> Result:
+async def create_share_link(self, request: RequestData, file_path: str | None = None,
+                            share_type: str | None = 'public') -> Result:
     user_uid = await self._get_user_uid_from_request(request)
     if not user_uid:  # Should be caught by get_blob_storage called next, but explicit check is good.
         return Result.default_user_error(info="Authentication required to create share links.", exec_code=401)

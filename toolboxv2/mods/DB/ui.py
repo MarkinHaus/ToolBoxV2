@@ -1,5 +1,4 @@
-import json
-from toolboxv2 import Result, get_app, RequestData
+from toolboxv2 import RequestData, Result, get_app
 from toolboxv2.mods.DB.types import DatabaseModes
 
 # --- Unchanged Backend API Endpoints ---
@@ -559,6 +558,6 @@ def db_manager_ui(**kwargs):
         # Prepend the web context to include necessary framework scripts (like TB.js)
         web_context = app.web_context()
         return Result.html(web_context + html_content)
-    except Exception as e:
+    except Exception:
         # Fallback in case web_context is not available
         return Result.html(html_content)

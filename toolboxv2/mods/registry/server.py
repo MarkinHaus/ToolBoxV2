@@ -1,10 +1,19 @@
+import asyncio
 import json
 import os
 import secrets
-import asyncio
-from typing import Dict, Any, Set
-from toolboxv2 import get_app, App, Result, RequestData
-from .types import WsMessage, AgentRegistration, RunRequest, AgentRegistered, ExecutionResult, ExecutionError
+from typing import Any
+
+from toolboxv2 import App, RequestData, Result, get_app
+
+from .types import (
+    AgentRegistered,
+    AgentRegistration,
+    ExecutionError,
+    ExecutionResult,
+    RunRequest,
+    WsMessage,
+)
 
 app_server = get_app("RegistryServer")
 export = app_server.tb
@@ -13,13 +22,13 @@ Name = "registry"
 
 class RegistryState:
     def __init__(self):
-        self.client_agents: Dict[str, list[str]] = {}
-        self.agent_to_client: Dict[str, str] = {}
-        self.agent_details: Dict[str, Dict[str, Any]] = {}
-        self.key_to_agent: Dict[str, str] = {}
-        self.pending_requests: Dict[str, asyncio.Queue] = {}
-        self.ui_clients: Set[str] = set()
-        self.recent_progress: Dict[str, list] = {}
+        self.client_agents: dict[str, list[str]] = {}
+        self.agent_to_client: dict[str, str] = {}
+        self.agent_details: dict[str, dict[str, Any]] = {}
+        self.key_to_agent: dict[str, str] = {}
+        self.pending_requests: dict[str, asyncio.Queue] = {}
+        self.ui_clients: set[str] = set()
+        self.recent_progress: dict[str, list] = {}
 
 
 STATE = RegistryState()
@@ -77,7 +86,7 @@ async def handle_registration(app: App, conn_id: str, session: dict, message: Ws
         base_url = os.getenv("APP_BASE_URL", "http://localhost:8080") or session.get('host', 'localhost:8080')
         if base_url == "localhost":
             base_url = "localhost:8080"
-            app.print(f"APP_BASE_URL is localhost. Using default port 8080.")
+            app.print("APP_BASE_URL is localhost. Using default port 8080.")
         public_url = f"{base_url}/api/registry/run?public_agent_id={agent_id}"
 
         if not public_url.startswith('http'):
@@ -192,7 +201,7 @@ async def handle_agent_status_update(app: App, message: WsMessage):
         app.print(f"Agent status update error: {e}", error=True)
 
 
-async def broadcast_to_ui_clients(app: App, data: Dict[str, Any]):
+async def broadcast_to_ui_clients(app: App, data: dict[str, Any]):
     """Broadcast updates to all connected UI clients."""
     if not STATE.ui_clients:
         app.print("No active UI clients to broadcast to")
@@ -356,9 +365,9 @@ def register_ui_ws_handlers(app: App):
 async def run(app: App, public_agent_id: str, request: RequestData):
     """Public API endpoint to run agents."""
     if request is None:
-        return Result.default_user_error(info=f"Failed to run agent: No request provided.")
+        return Result.default_user_error(info="Failed to run agent: No request provided.")
     if not request.headers:
-        return Result.default_user_error(info=f"Failed to run agent: No request headers provided.")
+        return Result.default_user_error(info="Failed to run agent: No request headers provided.")
 
     auth_header = request.headers.authorization or request.headers.to_dict().get('authorization')
 
@@ -408,7 +417,7 @@ async def run(app: App, public_agent_id: str, request: RequestData):
 
         return Result.json(data={"result": final_result})
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return Result.default_internal_error(
             info="The request timed out as the agent did not respond in time.",
             exec_code=504

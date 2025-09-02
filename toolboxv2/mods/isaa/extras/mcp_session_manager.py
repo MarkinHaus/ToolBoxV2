@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 from mcp import ClientSession
 
@@ -13,27 +13,26 @@ class MCPSessionManager:
     """Manages persistent MCP sessions with automatic reconnection and parallel processing"""
 
     def __init__(self):
-        self.sessions: Dict[str, ClientSession] = {}
-        self.connections: Dict[str, Any] = {}
-        self.capabilities_cache: Dict[str, Dict] = {}
-        self.retry_count: Dict[str, int] = {}
+        self.sessions: dict[str, ClientSession] = {}
+        self.connections: dict[str, Any] = {}
+        self.capabilities_cache: dict[str, dict] = {}
+        self.retry_count: dict[str, int] = {}
         self.max_retries = 3
         self.connection_timeout = 15.0  # 10 seconds timeout
         self.operation_timeout = 10.0  # 5 seconds for operations
 
-    async def get_session_with_timeout(self, server_name: str, server_config: Dict[str, Any]) -> Optional[
-        ClientSession]:
+    async def get_session_with_timeout(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Get session with timeout protection"""
         try:
             return await asyncio.wait_for(
                 self.get_session(server_name, server_config),
                 timeout=self.connection_timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             eprint(f"MCP session creation timeout for {server_name}")
             return None
 
-    async def get_session(self, server_name: str, server_config: Dict[str, Any]) -> Optional[ClientSession]:
+    async def get_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Get or create persistent MCP session with proper context management"""
         if server_name in self.sessions:
             try:
@@ -52,7 +51,7 @@ class MCPSessionManager:
 
         return await self._create_session(server_name, server_config)
 
-    async def _create_session(self, server_name: str, server_config: Dict[str, Any]) -> Optional[ClientSession]:
+    async def _create_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Create new MCP session with improved error handling"""
         try:
             command = server_config.get('command')
@@ -95,8 +94,8 @@ class MCPSessionManager:
                 eprint(f"✗ MCP session creation failed after {self.max_retries} attempts: {e}")
                 return None
 
-    async def _create_stdio_session(self, server_name: str, command: str, args: List[str], env: Dict[str, str]) -> \
-    Optional[ClientSession]:
+    async def _create_stdio_session(self, server_name: str, command: str, args: list[str], env: dict[str, str]) -> \
+    ClientSession | None:
         """Create stdio MCP session with fixed async context handling"""
         try:
             from mcp import StdioServerParameters
@@ -141,7 +140,7 @@ class MCPSessionManager:
                 del self.connections[server_name]
             return None
 
-    async def _create_http_session(self, server_name: str, server_config: Dict[str, Any]) -> Optional[ClientSession]:
+    async def _create_http_session(self, server_name: str, server_config: dict[str, Any]) -> ClientSession | None:
         """Create HTTP MCP session with timeout"""
         try:
             from mcp.client.streamable_http import streamablehttp_client
@@ -168,18 +167,18 @@ class MCPSessionManager:
             eprint(f"Failed to create HTTP session for {server_name}: {e}")
             return None
 
-    async def extract_capabilities_with_timeout(self, session: ClientSession, server_name: str) -> Dict[str, Dict]:
+    async def extract_capabilities_with_timeout(self, session: ClientSession, server_name: str) -> dict[str, dict]:
         """Extract capabilities with timeout protection"""
         try:
             return await asyncio.wait_for(
                 self.extract_capabilities(session, server_name),
                 timeout=self.operation_timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             eprint(f"Capability extraction timeout for {server_name}")
             return {'tools': {}, 'resources': {}, 'resource_templates': {}, 'prompts': {}, 'images': {}}
 
-    async def extract_capabilities(self, session: ClientSession, server_name: str) -> Dict[str, Dict]:
+    async def extract_capabilities(self, session: ClientSession, server_name: str) -> dict[str, dict]:
         """Extract all capabilities from MCP session"""
         if server_name in self.capabilities_cache:
             return self.capabilities_cache[server_name]
@@ -204,7 +203,7 @@ class MCPSessionManager:
                         'output_schema': getattr(tool, 'outputSchema', None),
                         'display_name': getattr(tool, 'title', tool.name)
                     }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 wprint(f"Tools extraction timeout for {server_name}")
             except Exception as e:
                 wprint(f"Failed to extract tools from {server_name}: {e}")
@@ -219,7 +218,7 @@ class MCPSessionManager:
                         'description': resource.description or '',
                         'mime_type': getattr(resource, 'mimeType', None)
                     }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 wprint(f"Resources extraction timeout for {server_name}")
             except Exception as e:
                 wprint(f"Failed to extract resources from {server_name}: {e}")
@@ -233,7 +232,7 @@ class MCPSessionManager:
                         'name': template.name or template.uriTemplate,
                         'description': template.description or ''
                     }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 wprint(f"Resource templates extraction timeout for {server_name}")
             except Exception as e:
                 wprint(f"Failed to extract resource templates from {server_name}: {e}")
@@ -253,7 +252,7 @@ class MCPSessionManager:
                             } for arg in (prompt.arguments or [])
                         ]
                     }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 wprint(f"Prompts extraction timeout for {server_name}")
             except Exception as e:
                 wprint(f"Failed to extract prompts from {server_name}: {e}")
@@ -277,7 +276,7 @@ class MCPSessionManager:
                 try:
                     session = self.sessions[server_name]
                     await asyncio.wait_for(session.__aexit__(None, None, None), timeout=2.0)
-                except (asyncio.TimeoutError, Exception) as e:
+                except (TimeoutError, Exception) as e:
                     wprint(f"Session cleanup warning for {server_name}: {e}")
                 finally:
                     del self.sessions[server_name]
@@ -287,7 +286,7 @@ class MCPSessionManager:
                 try:
                     connection = self.connections[server_name]
                     await asyncio.wait_for(connection.__aexit__(None, None, None), timeout=2.0)
-                except (asyncio.TimeoutError, Exception) as e:
+                except (TimeoutError, Exception) as e:
                     wprint(f"Connection cleanup warning for {server_name}: {e}")
                 finally:
                     del self.connections[server_name]
@@ -316,5 +315,5 @@ class MCPSessionManager:
                     asyncio.gather(*cleanup_tasks, return_exceptions=True),
                     timeout=5.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 wprint("MCP session cleanup timeout")

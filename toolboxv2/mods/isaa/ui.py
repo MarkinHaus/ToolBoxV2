@@ -1,15 +1,20 @@
 # toolboxv2/mods/isaa/ui.py
-import secrets
-
 import asyncio
 import json
+import secrets
 import time  # Keep for now, might be useful elsewhere
 import uuid
-from typing import Dict, Optional, List, Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from toolboxv2 import get_app, App, RequestData, Result, ToolBoxError, ToolBoxResult, ToolBoxInfo, ToolBoxInterfaces
+from toolboxv2 import (
+    App,
+    RequestData,
+    Result,
+    get_app,
+)
 
 # Moduldefinition
 MOD_NAME = "isaa.ui"
@@ -41,7 +46,7 @@ async def version(app: App):
 class RunAgentStreamParams(BaseModel):  # For GET query parameters
     agent_name: str = "self"
     prompt: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 # Note: The 'export' decorator and your app framework must support
@@ -60,7 +65,7 @@ async def run_agent_stream(app: App, session_id, agent_name, prompt, request: Re
     try:
         agent = await isaa.get_agent(agent_name)  # isaa.get_agent is async
 
-        async def sse_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+        async def sse_event_generator() -> AsyncGenerator[dict[str, Any], None]:
             # This generator yields dictionaries that SSEGenerator will format.
             # SSEGenerator will add 'stream_start' and 'stream_end' events.
 
@@ -95,7 +100,7 @@ async def run_agent_stream(app: App, session_id, agent_name, prompt, request: Re
                             break
                         yield event_dict
                         event_queue.task_done()
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if agent_processing_task.done() and event_queue.empty():
                             break  # Agent finished and queue is empty
                         continue  # Agent still running or queue has items, just timed out waiting
@@ -129,7 +134,7 @@ async def run_agent_stream(app: App, session_id, agent_name, prompt, request: Re
 class RunAgentRequest(BaseModel):  # For POST body of run_agent_once
     agent_name: str = "self"
     prompt: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['POST'])
@@ -140,7 +145,7 @@ async def run_agent_once(app: App, request: RequestData, data: RunAgentRequest):
     #     if hasattr(isaa, 'init_isaa'):
     #         await isaa.init_isaa(build=True) # Or however ISAA is initialized
     if request is None or data is None:
-        return Result.default_user_error(info=f"Failed to run agent: No request provided.")
+        return Result.default_user_error(info="Failed to run agent: No request provided.")
     if isinstance(data, dict):  # Should be automatically handled by Pydantic if type hint is RunAgentRequest
         data = RunAgentRequest(**data)
 
@@ -162,7 +167,7 @@ async def run_agent_once(app: App, request: RequestData, data: RunAgentRequest):
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, request_as_kwarg=True, api_methods=['GET'])
-async def list_agents(app: App, request: Optional[RequestData] = None):
+async def list_agents(app: App, request: RequestData | None = None):
     isaa = get_isaa_instance(app)
     agent_names = []
     if hasattr(isaa, 'config') and isaa.config:  # Check if isaa has config and it's not None
@@ -199,7 +204,7 @@ async def list_agents(app: App, request: Optional[RequestData] = None):
 
 # --- Hauptseite ---
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="main", api_methods=['GET'])
-async def get_isaa_webui_page(app: App, request: Optional[RequestData] = None):
+async def get_isaa_webui_page(app: App, request: RequestData | None = None):
     if app is None:  # Should not happen if called via export
         app = get_app()
     # HTML content (truncated for brevity, only script part shown)
@@ -561,13 +566,7 @@ def initialize_isaa_webui_module(app: App, isaa_instance=None):  # isaa_instance
 # isaa/ui.py
 # isaa/ui.py
 
-import asyncio
-import json
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-import time
-
+from http.server import BaseHTTPRequestHandler
 
 # toolboxv2/mods/registry/ui.py
 
@@ -2159,8 +2158,8 @@ formatThinkingContent(thought) {
     // Simple formatting for better readability
     return thought
         .replace(/\\n/g, '<br>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>');
+        .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
+        .replace(/\\*(.*?)\\*/g, '<em>$1</em>');
 }
 
 // FIXED: Enhanced LLM call handler
@@ -2432,7 +2431,7 @@ getDisplayAction(eventType, payload) {
             return step > 0 ? `Planning Step ${step}/${total}` : 'Deep Reasoning';
         case 'meta_tool_call':
             const toolName = metadata.meta_tool_name || 'tool';
-            return `${toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+            return `${toolName.replace(/_/g, ' ').replace(/\b\\w/g, l => l.toUpperCase())}`;
         case 'llm_call':
             const model = payload.llm_model || 'AI';
             return `${model} Thinking`;
@@ -2445,7 +2444,7 @@ getDisplayAction(eventType, payload) {
         case 'execution_complete':
             return 'Execution Complete';
         default:
-            return eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            return eventType.replace(/_/g, ' ').replace(/\b\\w/g, l => l.toUpperCase());
     }
 }
 

@@ -1,13 +1,10 @@
-import types
 
 import asyncio
-import random
-from enum import Enum
-from typing import Any, Union, List, Dict, Tuple, Optional, Type
-from pydantic import BaseModel
 import copy
+from enum import Enum
+from typing import Any, Union
 
-from toolboxv2.mods.isaa.base.Agent.types import NodeStatus, ProgressEvent
+from pydantic import BaseModel
 
 
 class ChainRunType(Enum):
@@ -19,12 +16,12 @@ class ChainRunType(Enum):
 class CF:
     """Chain Format - handles formatting and data extraction between tasks."""
 
-    def __init__(self, format_class: Type[BaseModel]):
+    def __init__(self, format_class: type[BaseModel]):
         self.format_class = format_class
-        self.extract_key: Union[str, tuple, None] = None
+        self.extract_key: str | tuple | None = None
         self.is_parallel_extraction = False
 
-    def __sub__(self, key: Union[str, tuple]):
+    def __sub__(self, key: str | tuple):
         """Implements the - operator for data extraction keys."""
         new_cf = copy.copy(self)
         if isinstance(key, str):
@@ -116,7 +113,7 @@ class ChainBase:
 class ParallelChain(ChainBase):
     """Handles parallel execution of multiple agents or chains."""
 
-    def __init__(self, agents: List[Union['FlowAgent', ChainBase]]):
+    def __init__(self, agents: list[Union['FlowAgent', ChainBase]]):
         self.agents = agents
 
     async def a_run(self, query: Any, **kwargs):
@@ -125,7 +122,7 @@ class ParallelChain(ChainBase):
         results = await asyncio.gather(*tasks)
         return self._combine_results(results)
 
-    def _combine_results(self, results: List[Any]) -> Any:
+    def _combine_results(self, results: list[Any]) -> Any:
         """Intelligently combines parallel results."""
         if all(isinstance(r, str) for r in results):
             return " | ".join(results)
@@ -174,16 +171,16 @@ class Chain(ChainBase):
     """The main class for creating and executing sequential chains of tasks."""
 
     def __init__(self, agent: 'FlowAgent' = None):
-        self.tasks: List[Any] = [agent] if agent else []
-        self.progress_tracker: Union['ProgressTracker', None] = None
+        self.tasks: list[Any] = [agent] if agent else []
+        self.progress_tracker: ProgressTracker | None = None
 
     @classmethod
-    def _create_chain(cls, components: List[Any]) -> 'Chain':
+    def _create_chain(cls, components: list[Any]) -> 'Chain':
         chain = cls()
         chain.tasks = components
         return chain
 
-    def _extract_data(self, data: Dict, cf: CF) -> Any:
+    def _extract_data(self, data: dict, cf: CF) -> Any:
         """Extracts data from a dictionary based on the CF configuration."""
         if not isinstance(data, dict):
             return data
@@ -276,7 +273,7 @@ class Chain(ChainBase):
         return current_data
 
 
-def chain_to_graph(self) -> Dict[str, Any]:
+def chain_to_graph(self) -> dict[str, Any]:
     """Convert chain to hierarchical structure with complete component detection."""
 
     def process_component(comp, depth=0, visited=None):
@@ -663,10 +660,7 @@ def print_graph(self):
                 else:
                     print(f"{indent}└─ {style_component(branch)}")
 
-        elif struct_type == "Conditional":
-            render_task_flow([structure])
-
-        elif struct_type == "ErrorHandling":
+        elif struct_type == "Conditional" or struct_type == "ErrorHandling":
             render_task_flow([structure])
 
         else:

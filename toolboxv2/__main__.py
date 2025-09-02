@@ -11,7 +11,10 @@ import time
 from functools import wraps
 from platform import node, system
 
+from dotenv import load_dotenv
+
 from toolboxv2 import tb_root_dir
+
 # from sqlalchemy.testing.suite.test_reflection import metadata
 from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.setup_helper import run_command
@@ -22,14 +25,13 @@ from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import CallingObject, get_state_from_app
 from toolboxv2.utils.system.api import cli_api_runner
-from toolboxv2.utils.system.db_cli_manager import cli_db_runner
 from toolboxv2.utils.system.conda_runner import conda_runner_main
+from toolboxv2.utils.system.db_cli_manager import cli_db_runner
 from toolboxv2.utils.system.exe_bg import run_executable_in_background
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.system.tcm_p2p_cli import cli_tcm_runner
 from toolboxv2.utils.toolbox import App
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -1150,7 +1152,7 @@ def main_runner():
     sys.excepthook = sys.__excepthook__
 
     def helper_gui():
-        name_with_ext = f"simple-core.exe" if system() == "Windows" else "simple-core"
+        name_with_ext = "simple-core.exe" if system() == "Windows" else "simple-core"
         # Look in a dedicated 'bin' folder first, then cargo's default
         from pathlib import Path
         search_paths = [
@@ -1191,7 +1193,7 @@ def main_runner():
         "p2p": cli_tcm_runner,
         "status": status_helper,
     }
-    if len(sys.argv) >= 2 and sys.argv[1] in runner.keys():
+    if len(sys.argv) >= 2 and sys.argv[1] in runner:
         if len(sys.argv) >= 3 and sys.argv[-1] == "status":
             pass
         else:
@@ -1199,7 +1201,7 @@ def main_runner():
         command = sys.argv[1]
         sys.argv[1:] = sys.argv[2:]
         sys.exit(runner[command]())
-    elif len(sys.argv) >= 6 and sys.argv[5] in runner.keys():
+    elif len(sys.argv) >= 6 and sys.argv[5] in runner:
         command = sys.argv[5]
         sys.argv[4:] = sys.argv[5:]
         sys.exit(runner[command]())

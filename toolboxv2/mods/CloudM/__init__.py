@@ -1,14 +1,13 @@
+from .AdminDashboard import Name as AdminDashboard
 from .extras import login
+from .mini import *
+from .ModManager_tests import run_mod_manager_tests
 from .module import Tools
 from .types import User
 from .UI.widget import get_widget
-from .UserInstances import UserInstances
-from .mini import *
-
-from .AdminDashboard import Name as AdminDashboard
 from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
-from .ModManager_tests import run_mod_manager_tests
+from .UserInstances import UserInstances
 
 tools = Tools
 Name = 'CloudM'

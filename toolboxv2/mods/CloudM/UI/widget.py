@@ -1,7 +1,6 @@
 # toolboxv2/mods/CloudM/UI/widget.py
 
-import uuid
-from toolboxv2 import App, Result, get_app, RequestData, TBEF
+from toolboxv2 import App, RequestData, get_app
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb

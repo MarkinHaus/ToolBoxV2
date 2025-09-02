@@ -1,11 +1,12 @@
+import datetime
+import os
 import smtplib
+import uuid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from jinja2 import Environment, BaseLoader
-import os
-import uuid
-import datetime
 from urllib.parse import quote  # For URL encoding parameters
+
+from jinja2 import BaseLoader, Environment
 
 # Assuming Code is available from your toolboxv2 installation
 try:
@@ -22,9 +23,11 @@ except ImportError:
 
     print("Warning: toolboxv2.utils.security.cryp.Code not found, using placeholder.")
 
-from toolboxv2 import App, Result, get_app, get_logger, MainTool  # MainTool not used directly here
-from toolboxv2.utils.system.types import ApiResult, \
-    ToolBoxInterfaces, ToolBoxError  # ToolBoxError, ToolBoxInterfaces not used directly
+from toolboxv2 import App, Result, get_app, get_logger  # MainTool not used directly here
+from toolboxv2.utils.system.types import (
+    ApiResult,
+    ToolBoxInterfaces,  # ToolBoxError, ToolBoxInterfaces not used directly
+)
 
 # --- Configuration ---
 Name = "CloudM.email_services"  # Renamed to reflect broader scope
@@ -345,7 +348,7 @@ if __name__ == "__main__":
     # For simplicity, this example won't run without a proper App context
     # or if GMAIL_EMAIL/PASSWORD are not set.
 
-    print(f"To test, ensure GMAIL_EMAIL, GMAIL_PASSWORD, and SENDER_EMAIL are set.")
+    print("To test, ensure GMAIL_EMAIL, GMAIL_PASSWORD, and SENDER_EMAIL are set.")
     print(f"Using SMTP Server: {SMTP_SERVER}:{SMTP_PORT}")
     print(f"App Name: {APP_NAME}, Base URL: {APP_BASE_URL}")
     print(f"Optional: EMAIL_BG_LIGHT_URL='{EMAIL_BG_LIGHT_URL}', EMAIL_LOGO_URL='{EMAIL_LOGO_URL}'")

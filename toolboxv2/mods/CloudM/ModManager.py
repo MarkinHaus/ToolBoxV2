@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import os
 import shutil
 import subprocess
@@ -9,7 +8,7 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
 
 import yaml
 from packaging import version as pv
@@ -20,7 +19,7 @@ from toolboxv2 import App, Spinner, __version__, get_app
 from toolboxv2.utils.extras.reqbuilder import generate_requirements
 from toolboxv2.utils.system.api import find_highest_zip_version
 from toolboxv2.utils.system.state_system import get_state_from_app
-from toolboxv2.utils.system.types import Result, ToolBoxInterfaces, RequestData
+from toolboxv2.utils.system.types import RequestData, Result, ToolBoxInterfaces
 
 Name = 'CloudM'
 export = get_app(f"{Name}.Export").tb
@@ -342,7 +341,7 @@ def uninstaller(app: App | None, module_name: str):
 
 
 @export(mod_name=Name, name="upload_mod", api=True, api_methods=['POST'])
-async def upload_mod(app: App, request: RequestData, form_data: Optional[Dict[str, Any]] = None):
+async def upload_mod(app: App, request: RequestData, form_data: dict[str, Any] | None = None):
     if form_data or not form_data.get('files'):
         return Result.default_user_error("No file provided.")
     # TODO: update file upload

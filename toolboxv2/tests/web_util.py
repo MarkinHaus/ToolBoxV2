@@ -19,7 +19,7 @@ try:
         sync_playwright,
     )
 except ImportError:
-    os.system(f"pip install playwright")
+    os.system("pip install playwright")
 
     (ABrowser, ABrowserContext, APage, APlaywright,
      async_playwright, Browser, BrowserContext, Page,

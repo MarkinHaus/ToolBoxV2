@@ -1,4 +1,6 @@
 # file: blobs.py
+import bisect
+import hashlib
 import io
 import json
 import os
@@ -14,8 +16,6 @@ import yaml
 from ..security.cryp import Code
 from ..system.getting_and_closing_app import get_logger
 
-import hashlib
-import bisect
 
 class ConsistentHashRing:
     """
@@ -354,7 +354,7 @@ class BlobFile(io.IOBase):
         self.data_buffer = b''
 
     def write(self, data):
-        if 'w' not in self.mode: raise IOError("File not opened in write mode.")
+        if 'w' not in self.mode: raise OSError("File not opened in write mode.")
         if isinstance(data, str):
             self.data_buffer += data.encode()
         elif isinstance(data, bytes):
@@ -363,7 +363,7 @@ class BlobFile(io.IOBase):
             raise TypeError("write() argument must be str or bytes")
 
     def read(self):
-        if 'r' not in self.mode: raise IOError("File not opened in read mode.")
+        if 'r' not in self.mode: raise OSError("File not opened in read mode.")
         return self.data_buffer
 
     def read_json(self):

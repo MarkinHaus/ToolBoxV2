@@ -2,14 +2,13 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime, timedelta, date, time
+from datetime import date, datetime, time, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any
 
 import pytz
 from dateutil.parser import isoparse
 from dateutil.relativedelta import relativedelta  # For more accurate month/year additions
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from toolboxv2 import App, RequestData, Result, get_app
@@ -63,7 +62,7 @@ class CounterSettings(BaseModel):
         return self.model_dump(mode="json")
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Union[str, Dict[str, Any]]):
+    def model_validate_json_safe(cls, json_data: str | dict[str, Any]):
         if isinstance(json_data, str):
             json_data = json.loads(json_data)
         return cls.model_validate(json_data)
@@ -74,13 +73,13 @@ class CountEntry(BaseModel):
     counter_id: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
     amount: int = Field(default=1, ge=1)
-    notes: Optional[str] = None
+    notes: str | None = None
 
     def model_dump_json_safe(self):
         return self.model_dump(mode="json")
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Union[str, Dict[str, Any]]):
+    def model_validate_json_safe(cls, json_data: str | dict[str, Any]):
         if isinstance(json_data, str):
             json_data = json.loads(json_data)
         return cls.model_validate(json_data)
@@ -89,21 +88,21 @@ class CountEntry(BaseModel):
 class CounterItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     unit_name: str = Field(default="times")  # e.g., "glasses", "km", "pages"
 
     target_count: int = Field(default=1, ge=1)
     frequency: CounterFrequency = CounterFrequency.DAILY
 
     # For ONE_TIME: this is the deadline. For repeating: this is when the series of repetitions ends.
-    series_end_date: Optional[date] = None
+    series_end_date: date | None = None
 
     is_active: bool = True  # User can pause/archive
     current_count_in_period: int = 0
     total_accumulated_count: int = 0  # Overall count, ignoring resets
 
-    current_period_start_utc: Optional[datetime] = None
-    current_period_end_utc: Optional[datetime] = None
+    current_period_start_utc: datetime | None = None
+    current_period_end_utc: datetime | None = None
     # last_period_status: Optional[CounterStatus] = None # For stats/streaks, or derived from entries
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
@@ -111,10 +110,10 @@ class CounterItem(BaseModel):
 
     # Tracks when the counter itself was last meaningfully reset (e.g., period advanced)
     # Not just any update.
-    last_period_advanced_at_utc: Optional[datetime] = None
+    last_period_advanced_at_utc: datetime | None = None
 
     @model_validator(mode='before')
-    def _handle_datetime_and_date_str_input(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def _handle_datetime_and_date_str_input(cls, values: dict[str, Any]) -> dict[str, Any]:
         datetime_fields = ['current_period_start_utc', 'current_period_end_utc', 'created_at', 'updated_at',
                            'last_period_advanced_at_utc']
         date_fields = ['series_end_date']
@@ -157,7 +156,7 @@ class CounterItem(BaseModel):
         return self.model_dump(mode="json")
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Union[str, Dict[str, Any]], user_timezone_str: str = "UTC"):
+    def model_validate_json_safe(cls, json_data: str | dict[str, Any], user_timezone_str: str = "UTC"):
         if isinstance(json_data, str):
             json_data = json.loads(json_data)
         json_data['_user_timezone_str_context'] = user_timezone_str
@@ -192,8 +191,8 @@ class CounterManager:
         self.user_id = user_id
         self.db = app.get_mod("DB")
         self.settings: CounterSettings = self._load_settings()
-        self.counters: List[CounterItem] = self._load_counters()
-        self.entries: List[CountEntry] = self._load_entries()  # Load all, filter as needed
+        self.counters: list[CounterItem] = self._load_counters()
+        self.entries: list[CountEntry] = self._load_entries()  # Load all, filter as needed
 
     def _get_db_key(self, prefix: str) -> str:
         return f"{prefix}_{self.user_id}"
@@ -212,7 +211,7 @@ class CounterManager:
     def _save_settings(self):
         self.db.set(self._get_db_key(DB_SETTINGS_PREFIX), self.settings.model_dump_json_safe())
 
-    def update_settings(self, settings_data: Dict[str, Any]) -> CounterSettings:
+    def update_settings(self, settings_data: dict[str, Any]) -> CounterSettings:
         # Ensure user_id isn't changed
         updated_data = {**self.settings.model_dump(), **settings_data, "user_id": self.user_id}
         self.settings = CounterSettings.model_validate(updated_data)
@@ -223,7 +222,7 @@ class CounterManager:
         self._save_counters()
         return self.settings
 
-    def _load_counters(self) -> List[CounterItem]:
+    def _load_counters(self) -> list[CounterItem]:
         key = self._get_db_key(DB_COUNTERS_PREFIX)
         data = self.db.get(key)
         loaded_counters = []
@@ -244,7 +243,7 @@ class CounterManager:
     def _save_counters(self):
         self.db.set(self._get_db_key(DB_COUNTERS_PREFIX), json.dumps([c.model_dump_json_safe() for c in self.counters]))
 
-    def _load_entries(self) -> List[CountEntry]:
+    def _load_entries(self) -> list[CountEntry]:
         key = self._get_db_key(DB_ENTRIES_PREFIX)
         data = self.db.get(key)
         if data.is_data() and data.get():
@@ -269,8 +268,8 @@ class CounterManager:
         except pytz.UnknownTimeZoneError:
             return pytz.utc
 
-    def _calculate_current_period_boundaries_utc(self, counter: CounterItem, ref_datetime_utc: datetime) -> Tuple[
-        Optional[datetime], Optional[datetime]]:
+    def _calculate_current_period_boundaries_utc(self, counter: CounterItem, ref_datetime_utc: datetime) -> tuple[
+        datetime | None, datetime | None]:
         user_tz = self.get_user_timezone()
         ref_datetime_user = ref_datetime_utc.astimezone(user_tz)
 
@@ -351,7 +350,7 @@ class CounterManager:
             counter.last_period_advanced_at_utc = now_utc
             counter.updated_at = now_utc
 
-    def create_counter(self, data: Dict[str, Any]) -> CounterItem:
+    def create_counter(self, data: dict[str, Any]) -> CounterItem:
         # Pass user's timezone to model_validate_json_safe for context
         counter = CounterItem.model_validate_json_safe(data, user_timezone_str=self.settings.timezone)
         counter.updated_at = datetime.now(pytz.utc)  # Ensure fresh timestamp
@@ -363,14 +362,14 @@ class CounterManager:
         self._save_counters()
         return counter
 
-    def get_counter(self, counter_id: str) -> Optional[CounterItem]:
+    def get_counter(self, counter_id: str) -> CounterItem | None:
         for counter in self.counters:
             if counter.id == counter_id:
                 if counter.is_active: self._advance_period_if_due(counter)  # Check period before returning
                 return counter
         return None
 
-    def update_counter(self, counter_id: str, data: Dict[str, Any]) -> Optional[CounterItem]:
+    def update_counter(self, counter_id: str, data: dict[str, Any]) -> CounterItem | None:
         idx = next((i for i, c in enumerate(self.counters) if c.id == counter_id), None)
         if idx is None:
             return None
@@ -421,7 +420,7 @@ class CounterManager:
             return True
         return False
 
-    def increment_counter(self, counter_id: str, amount: int = 1, notes: Optional[str] = None) -> Optional[CounterItem]:
+    def increment_counter(self, counter_id: str, amount: int = 1, notes: str | None = None) -> CounterItem | None:
         counter = self.get_counter(counter_id)
         if not counter or not counter.is_active:
             return None
@@ -459,7 +458,7 @@ class CounterManager:
 
         return counter
 
-    def get_all_counters(self) -> List[CounterItem]:
+    def get_all_counters(self) -> list[CounterItem]:
         now_utc = datetime.now(pytz.utc)
         # Refresh periods for all active counters before returning list
         for counter in self.counters:
@@ -469,7 +468,7 @@ class CounterManager:
         return sorted([c for c in self.counters if c.is_active or c.get_status() != CounterStatus.INACTIVE],
                       key=lambda x: (not x.is_active, x.name.lower()))  # Active first, then by name
 
-    def get_counter_stats(self, counter_id: str) -> Optional[Dict[str, Any]]:
+    def get_counter_stats(self, counter_id: str) -> dict[str, Any] | None:
         counter = self.get_counter(counter_id)
         if not counter: return None
 
@@ -598,7 +597,7 @@ class CounterManager:
 
 
 # --- Manager Cache & Getter ---
-_managers: Dict[str, CounterManager] = {}
+_managers: dict[str, CounterManager] = {}
 
 
 async def get_manager(app: App, request: RequestData) -> CounterManager:
@@ -630,7 +629,7 @@ async def api_get_settings(app: App, request: RequestData):
 
 
 @export(mod_name=MODULE_NAME, name="update-settings", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_update_settings(app: App, request: RequestData, data: Dict[str, Any]):
+async def api_update_settings(app: App, request: RequestData, data: dict[str, Any]):
     manager = await get_manager(app, request)
     try:
         updated_settings = manager.update_settings(data)
@@ -643,7 +642,7 @@ async def api_update_settings(app: App, request: RequestData, data: Dict[str, An
 
 
 @export(mod_name=MODULE_NAME, name="create-counter", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_create_counter(app: App, request: RequestData, data: Dict[str, Any]):
+async def api_create_counter(app: App, request: RequestData, data: dict[str, Any]):
     manager = await get_manager(app, request)
     try:
         counter = manager.create_counter(data)
@@ -674,7 +673,7 @@ async def api_get_counter(app: App, request: RequestData, counter_id: str):
 
 @export(mod_name=MODULE_NAME, name="update-counter", api=True, request_as_kwarg=True,
         api_methods=['POST'])  # Path: /api/CounterTracker/update-counter/{counter_id}
-async def api_update_counter(app: App, request: RequestData, counter_id: str, data: Dict[str, Any]):
+async def api_update_counter(app: App, request: RequestData, counter_id: str, data: dict[str, Any]):
     manager = await get_manager(app, request)
     try:
         counter = manager.update_counter(counter_id, data)
@@ -691,7 +690,7 @@ async def api_update_counter(app: App, request: RequestData, counter_id: str, da
 @export(mod_name=MODULE_NAME, name="delete-counter", api=True, request_as_kwarg=True,
         api_methods=['POST'])  # Path: /api/CounterTracker/delete-counter/{counter_id}
 async def api_delete_counter(app: App, request: RequestData, counter_id: str,
-                             data: Optional[Dict] = None):  # data can be None if ID is from path
+                             data: dict | None = None):  # data can be None if ID is from path
     manager = await get_manager(app, request)
     if manager.delete_counter(counter_id):
         return Result.ok("Counter deleted.")
@@ -700,7 +699,7 @@ async def api_delete_counter(app: App, request: RequestData, counter_id: str,
 
 @export(mod_name=MODULE_NAME, name="increment-counter", api=True, request_as_kwarg=True,
         api_methods=['POST'])  # Path: /api/CounterTracker/increment-counter/{counter_id}
-async def api_increment_counter(app: App, request: RequestData, counter_id: str, data: Optional[Dict[str, Any]] = None):
+async def api_increment_counter(app: App, request: RequestData, counter_id: str, data: dict[str, Any] | None = None):
     manager = await get_manager(app, request)
     amount = data.get("amount", 1) if data else 1
     notes = data.get("notes") if data else None
@@ -728,7 +727,7 @@ async def api_get_counter_stats(app: App, request: RequestData, counter_id: str)
 
 @export(mod_name=MODULE_NAME, name="get-counter-entries", api=True,
         request_as_kwarg=True)  # Path: /api/CounterTracker/get-counter-entries/{counter_id}
-async def api_get_counter_entries(app: App, request: RequestData, counter_id: str, limit: Optional[int] = 50):
+async def api_get_counter_entries(app: App, request: RequestData, counter_id: str, limit: int | None = 50):
     manager = await get_manager(app, request)
     if limit is None:
         limit = 50
@@ -748,9 +747,9 @@ async def api_get_counter_entries(app: App, request: RequestData, counter_id: st
 
 # --- UI Endpoint ---
 @get_app().tb(mod_name=MODULE_NAME, version=VERSION, level=0, api=True, name="ui", state=False)
-def counter_tracker_ui_page(app_ref: Optional[App] = None):
+def counter_tracker_ui_page(app_ref: App | None = None):
     app_instance = app_ref if app_ref else get_app(MODULE_NAME)
-    html_content = f"""<!DOCTYPE html>
+    html_content = """<!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import asyncio
 import hashlib
 import json
@@ -8,11 +6,11 @@ import os
 import pickle
 import re
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NamedTuple
-import dill
+
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
@@ -21,7 +19,6 @@ from sklearn.cluster import HDBSCAN
 from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
 from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
-
 from toolboxv2.mods.isaa.extras.adapter import litellm_complete
 from toolboxv2.mods.isaa.extras.filter import after_format
 
@@ -1792,7 +1789,7 @@ class KnowledgeBase:
             # print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
-        except Exception as e:
+        except Exception:
             #print(f"Error loading knowledge base: {str(e)}")
             #import traceback
             #traceback.print_exception(e)

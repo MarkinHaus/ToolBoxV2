@@ -4,17 +4,14 @@ import os
 import pickle
 import platform
 import re
-import socket
 import subprocess
 import sys
 import threading
-from datetime import datetime
-from json import JSONDecodeError
 
 import requests
 import tiktoken
 
-from toolboxv2 import Singleton, Style, get_logger, remove_styles
+from toolboxv2 import Singleton, get_logger, remove_styles
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
 
 
@@ -87,13 +84,11 @@ def get_location():
     return location_data, ip_address
 
 
-import subprocess
-import os
-import pickle
-import platform
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
+
+
 def detect_shell() -> tuple[str, str]:
     """
     Detects the best available shell and the argument to execute a command.
@@ -130,13 +125,6 @@ def safe_decode(data: bytes) -> str:
 
 
 import asyncio
-import os
-import pickle
-import platform
-import tempfile
-import shutil
-from pathlib import Path
-import functools
 
 
 class Scripts:
@@ -268,7 +256,6 @@ class Scripts:
 
     def _run_python_script_sync(self, script_path: Path, args: list, dependencies: str):
         """Run Python script sync with uv dependency management"""
-        import subprocess
 
         cmd = []
 
@@ -311,7 +298,7 @@ class Scripts:
                     process.communicate(),
                     timeout=timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 await process.wait()
                 return f"⏱️ Script timed out after {timeout} seconds"
@@ -330,7 +317,6 @@ class Scripts:
 
     def _execute_command_sync(self, cmd: list, timeout: int = 60):
         """Execute command sync safely with timeout"""
-        import subprocess
 
         try:
             result = subprocess.run(
@@ -490,6 +476,94 @@ class IsaaQuestionBinaryTree:
         return IsaaQuestionBinaryTree(_cut_tree(self.root, cut_key))
 
 
+import io
+import xml.etree.ElementTree as ET
+import zipfile
+
+# Import der PyPDF2-Bibliothek
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
+
+
+def extract_text_natively(data: bytes, filename: str = "") -> str:
+    """
+    Extrahiert Text aus verschiedenen Dateitypen mit nativen Python-Methoden
+    oder reinen Python-Bibliotheken (speziell PyPDF2 für PDFs).
+
+    Args:
+        data (bytes): Der Inhalt der Datei als Bytes.
+        filename (str, optional): Der Originaldateiname, um den Typ zu bestimmen.
+
+    Returns:
+        str: Der extrahierte Text.
+
+    Raises:
+        ValueError: Wenn der Dateityp nicht unterstützt wird oder die Verarbeitung fehlschlägt.
+        ImportError: Wenn PyPDF2 für die Verarbeitung von PDF-Dateien benötigt, aber nicht installiert ist.
+    """
+    file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
+
+    # 1. DOCX-Verarbeitung (nativ mit zipfile und xml)
+    if data.startswith(b'PK\x03\x04'):
+        try:
+            docx_file = io.BytesIO(data)
+            text_parts = []
+            with zipfile.ZipFile(docx_file) as zf:
+                namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+                body_path = "word/document.xml"
+                if body_path in zf.namelist():
+                    xml_content = zf.read(body_path)
+                    tree = ET.fromstring(xml_content)
+                    for para in tree.iter(f"{namespace}p"):
+                        texts_in_para = [node.text for node in para.iter(f"{namespace}t") if node.text]
+                        if texts_in_para:
+                            text_parts.append("".join(texts_in_para))
+                return "\n".join(text_parts)
+        except (zipfile.BadZipFile, ET.ParseError):
+            pass  # Fährt fort, falls es eine ZIP-Datei, aber kein gültiges DOCX ist
+
+    # 2. PDF-Verarbeitung (mit PyPDF2)
+    if data.startswith(b'%PDF-'):
+        if PyPDF2 is None:
+            raise ImportError(
+                "Die Bibliothek 'PyPDF2' wird benötigt, um PDF-Dateien zu verarbeiten. Bitte installieren Sie sie mit 'pip install PyPDF2'.")
+
+        try:
+            # Erstelle ein In-Memory-Dateiobjekt für PyPDF2
+            pdf_file = io.BytesIO(data)
+            # Verwende PdfFileReader aus PyPDF2
+            pdf_reader = PyPDF2.PdfFileReader(pdf_file)
+
+            text_parts = []
+            # Iteriere durch die Seiten
+            for page_num in range(pdf_reader.numPages):
+                page = pdf_reader.getPage(page_num)
+                # Extrahiere Text mit extractText()
+                page_text = page.extractText()
+                if page_text:
+                    text_parts.append(page_text)
+
+            return "\n".join(text_parts)
+        except Exception as e:
+            raise ValueError(f"PDF-Verarbeitung mit PyPDF2 fehlgeschlagen: {e}")
+
+    # 3. Fallback auf reinen Text (TXT)
+    if file_ext == 'txt' or True:
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                return data.decode('latin-1')
+            except Exception as e:
+                raise ValueError(f"Text-Dekodierung fehlgeschlagen: {e}")
+
+    # 4. Nicht unterstützte Formate
+    raise ValueError(
+        f"Dateityp '{file_ext}' wird nicht unterstützt. Für alte .doc-Dateien wird eine Bibliothek wie 'textract' empfohlen.")
+
+
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
@@ -617,8 +691,7 @@ class AISemanticMemory(metaclass=Singleton):
         texts = []
         if isinstance(data, bytes):
             try:
-                import textract
-                text = textract.process(data).decode('utf-8')
+                text = extract_text_natively(data, filename="" if metadata is None else metadata.get("filename", ""))
                 texts = [text.replace('\\t', '').replace('\t', '')]
             except Exception as e:
                 raise ValueError(f"File processing failed: {str(e)}")
@@ -753,9 +826,9 @@ class AISemanticMemory(metaclass=Singleton):
             if file.endswith(".pkl"):
                 try:
                     self.memories[file[:-4]] = KnowledgeBase.load(os.path.join(path, file))
-                except EOFError as e:
+                except EOFError:
                     return False
-                except FileNotFoundError as e:
+                except FileNotFoundError:
                     return False
                 except Exception as e:
                     print(f"Error loading memory: {str(e)}")
@@ -1631,12 +1704,7 @@ def _extract_from_string_de(agent_text, all_actions):
 
 
 import os
-import re
-import threading
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
-
-
+from dataclasses import asdict, dataclass, field
 
 
 @dataclass

@@ -1,6 +1,4 @@
 import ast
-import types
-
 import asyncio
 import importlib
 import io
@@ -13,34 +11,24 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import traceback
-from collections import defaultdict
-from contextlib import redirect_stderr, redirect_stdout, contextmanager
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass
 
 ### ---- Styles ------- ###
-from enum import Enum, auto
 from inspect import (
-    Signature,
     currentframe,
-    getdoc,
-    isclass,
-    isfunction,
-    ismethod,
     signature,
 )
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any
 
 import nest_asyncio
-from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 import toolboxv2
-from toolboxv2 import Spinner, Style, get_app
-from toolboxv2.mods.isaa.extras.session import ChatSession
+from toolboxv2 import Spinner, get_app
 
 
 class CargoRustInterface:
@@ -1254,14 +1242,8 @@ Execution:
                 return "No Rust files found in the project."
 
 
-import asyncio
-import json
-import os
-import shutil
-import tempfile
-import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 
 class ToolsInterface:
@@ -1271,10 +1253,10 @@ class ToolsInterface:
     """
 
     def __init__(self,
-                 session_dir: Optional[str] = None,
+                 session_dir: str | None = None,
                  auto_remove: bool = True,
-                 variables: Optional[Dict[str, Any]] = None,
-                 variable_manager: Optional[Any] = None):
+                 variables: dict[str, Any] | None = None,
+                 variable_manager: Any | None = None):
         """
         Initialize the tools interface.
 
@@ -1448,7 +1430,7 @@ class ToolsInterface:
 
             # Update variable manager if available
             if self.variable_manager:
-                self.variable_manager.set(f"files.last_read", {
+                self.variable_manager.set("files.last_read", {
                     'path': filepath,
                     'size': len(content),
                     'content_preview': content[:200] + '...' if len(content) > 200 else content
@@ -1544,7 +1526,7 @@ class ToolsInterface:
         except Exception as e:
             return f"Set current file error: {str(e)}"
 
-    async def install_package(self, package_name: str, version: Optional[str] = None) -> str:
+    async def install_package(self, package_name: str, version: str | None = None) -> str:
         """
         Install a Python package in the virtual environment.
 
@@ -1646,7 +1628,7 @@ print(f"Successfully imported {package_name}")
         except Exception as e:
             return f"Get variables error: {str(e)}"
 
-    def get_tools(self) -> List[Tuple[Any, str, str]]:
+    def get_tools(self) -> list[tuple[Any, str, str]]:
         """
         Get all available tools as list of tuples (function, name, description).
 

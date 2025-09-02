@@ -1,4 +1,4 @@
-from toolboxv2 import App, get_app, Result, TBEF
+from toolboxv2 import TBEF, App, Result, get_app
 
 # Define the module name and export function
 Name = 'helper'
@@ -41,7 +41,7 @@ async def init_system(app: App):
             print("   You can now use other CLI commands or log into the web UI.")
             return Result.ok("System initialized successfully.")
         else:
-            print(f"\n❌ Error creating administrator account:")
+            print("\n❌ Error creating administrator account:")
             result.print()
             return result
 
@@ -77,7 +77,7 @@ def create_user(app: App, username: str, email: str):
     if result.is_ok():
         print(f"✅ User '{username}' created successfully.")
     else:
-        print(f"❌ Error creating user:")
+        print("❌ Error creating user:")
         result.print()
     return result
 
@@ -117,7 +117,7 @@ def list_users_cli(app: App):
             print(f"{user['username']:<25} {user['email']:<30} {user['level']}")
         print("------------------------")
     else:
-        print(f"❌ Error listing users:")
+        print("❌ Error listing users:")
         result.print()
 
     return result
@@ -134,7 +134,7 @@ def create_invitation(app: App, username: str):
     if result.is_ok():
         print(f"✅ Invitation code for '{username}': {result.get()}")
     else:
-        print(f"❌ Error creating invitation:")
+        print("❌ Error creating invitation:")
         result.print()
     return result
 
@@ -151,6 +151,6 @@ def send_magic_link(app: App, username: str):
     if result.is_ok():
         print(f"✅ Magic link sent successfully to the email address associated with '{username}'.")
     else:
-        print(f"❌ Error sending magic link:")
+        print("❌ Error sending magic link:")
         result.print()
     return result

@@ -4,16 +4,17 @@ import base64
 import json
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Dict, Optional, List, Any, Union, AsyncGenerator
-
-from pydantic import BaseModel, Field as PydanticField
-
-from toolboxv2 import App, Result, RequestData, get_app, MainTool
-from toolboxv2.utils.extras.base_widget import get_user_from_request
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Any
 
 import markdown2
-from xml.etree.ElementTree import Element, tostring
+from pydantic import BaseModel
+from pydantic import Field as PydanticField
+
+from toolboxv2 import App, MainTool, RequestData, Result, get_app
+from toolboxv2.utils.extras.base_widget import get_user_from_request
+
 # --- Module Definition ---
 MOD_NAME = Name = "Canvas"  # Renamed slightly for clarity if this is a new version
 VERSION = "0.1.0"
@@ -31,27 +32,27 @@ class CanvasElement(BaseModel):
     id: str = PydanticField(default_factory=lambda: str(uuid.uuid4().hex[:12]))
     type: str  # "pen", "rectangle", "ellipse", "text", "image"
 
-    x: Optional[float] = None
-    y: Optional[float] = None
-    width: Optional[float] = None
-    height: Optional[float] = None
+    x: float | None = None
+    y: float | None = None
+    width: float | None = None
+    height: float | None = None
     strokeColor: str = "#000000"
     strokeWidth: float = 2
     angle: float = 0.0
 
-    points: Optional[List[List[float]]] = None  # For pen: [[x, y, pressure], ...]
+    points: list[list[float]] | None = None  # For pen: [[x, y, pressure], ...]
 
-    fillStyle: Optional[str] = "hachure"
-    roughness: Optional[float] = 1
-    fill: Optional[str] = None
-    seed: Optional[int] = None
+    fillStyle: str | None = "hachure"
+    roughness: float | None = 1
+    fill: str | None = None
+    seed: int | None = None
 
-    text: Optional[str] = None
+    text: str | None = None
     fontSize: int = 16
     fontFamily: str = "Arial"
     textAlign: str = "left"
 
-    src: Optional[str] = None
+    src: str | None = None
     opacity: float = 1.0
 
     # For selection state, not persisted, but useful for client-side logic if sent back for debug
@@ -63,8 +64,8 @@ class CanvasElement(BaseModel):
 class IdeaSessionData(BaseModel):
     id: str = PydanticField(default_factory=lambda: str(uuid.uuid4()))
     name: str = "Untitled Canvas"
-    canvas_elements: List[CanvasElement] = []
-    canvas_app_state: Dict[str, Any] = {
+    canvas_elements: list[CanvasElement] = []
+    canvas_app_state: dict[str, Any] = {
         "viewBackgroundColor": "#ffffff",
         "currentTool": "pen",  # This might be 'select' tool in the new version
         "currentMode": "draw",  # New: 'draw' or 'select'
@@ -99,8 +100,8 @@ class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing
         self.tools_dict = {"name": MOD_NAME, "Version": self.show_version}
 
         # Canvas specific state
-        self.live_canvas_sessions: Dict[str, List[asyncio.Queue]] = defaultdict(list)
-        self.active_user_previews: Dict[str, Dict[str, Any]] = defaultdict(dict)
+        self.live_canvas_sessions: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        self.active_user_previews: dict[str, dict[str, Any]] = defaultdict(dict)
         self.previews_lock = asyncio.Lock()
 
         MainTool.__init__(self, load=on_start, v=self.version, tool=self.tools_dict, name=self.name,
@@ -114,8 +115,8 @@ class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing
             db.edit_cli("CB")
         return db
 
-    def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: Dict[str, Any],
-                                       originator_user_id: Optional[str] = None):
+    def _broadcast_to_canvas_listeners(self, canvas_id: str, event_type: str, data: dict[str, Any],
+                                       originator_user_id: str | None = None):
         """
         Creates a broadcast coroutine and submits it to the app's dedicated
         async manager to be run in the background.
@@ -155,7 +156,7 @@ class Tools(MainTool):  # Removed EventManager for simplicity, as it was causing
         self.app.logger.info(f"{self.name} Version: {self.version}")
         return self.version
 
-    async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> Optional[str]:
+    async def _get_user_specific_db_key(self, request: RequestData, base_key: str) -> str | None:
         # This logic is correct and can remain as is.
 
         user = await get_user_from_request(self.app, request)
@@ -275,7 +276,7 @@ async def get_main_ui(self, **kwargs) -> Result:
 
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="save_session", api_methods=['POST'], request_as_kwarg=True)
-async def save_session(app: App, request: RequestData, data: Union[Dict[str, Any], IdeaSessionData]) -> Result:
+async def save_session(app: App, request: RequestData, data: dict[str, Any] | IdeaSessionData) -> Result:
     """
     Saves the entire state of a canvas session to the database.
     This is typically triggered by a user's explicit "Save" action.
@@ -302,7 +303,7 @@ async def save_session(app: App, request: RequestData, data: Union[Dict[str, Any
 
     # Update timestamp and construct the main session key
     if session_data_obj:
-        session_data_obj.last_modified = datetime.now(timezone.utc).timestamp()
+        session_data_obj.last_modified = datetime.now(UTC).timestamp()
     session_db_key = f"{user_db_key_base}_{session_data_obj.id}"
 
     # Save the full session object to the database
@@ -417,7 +418,7 @@ async def load_session(self, request: RequestData, session_id: str) -> Result:
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="export_canvas_json", api_methods=['POST'],
         request_as_kwarg=True)
-async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -> Result:
+async def export_canvas_json(self, request: RequestData, data: dict[str, Any]) -> Result:
     # This function remains largely the same
     try:
         session_data_to_export = IdeaSessionData(**data)
@@ -431,7 +432,7 @@ async def export_canvas_json(self, request: RequestData, data: Dict[str, Any]) -
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="open_canvas_stream", api_methods=['GET'],
         request_as_kwarg=True)
 async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: str,
-                                    client_id: Optional[str] = None) -> Result:
+                                    client_id: str | None = None) -> Result:
     canvas_tool = app.get_mod(MOD_NAME)
     if not canvas_id:
         async def _error_gen(): yield {'event': 'error', 'data': json.dumps({'message': 'canvas_id is required'})}
@@ -446,7 +447,7 @@ async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: s
     app.logger.info(
         f"SSE: Client {session_client_id} connected to C:{canvas_id}. Listeners: {len(canvas_tool.live_canvas_sessions[canvas_id])}")
 
-    async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+    async def event_generator() -> AsyncGenerator[dict[str, Any], None]:
         # Send initial data right away
         try:
             # Send a connection confirmation event
@@ -477,10 +478,10 @@ async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: s
                     yield message
                     sse_client_queue.task_done()
                     print(p, session_client_id)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     p += 0.01
                     # MODIFICATION: If no message arrives, send a ping to keep the connection alive.
-                    yield {"event": "ping", "data": json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()})}
+                    yield {"event": "ping", "data": json.dumps({"timestamp": datetime.now(UTC).isoformat()})}
                     await asyncio.sleep(0.75)
         except asyncio.CancelledError:
             app.logger.info(f"SSE: Client {session_client_id} disconnected (stream cancelled).")
@@ -519,7 +520,7 @@ async def stream_canvas_updates_sse(app: App, request: RequestData, canvas_id: s
 
 @export(mod_name=MOD_NAME, api=True, version=VERSION, name="send_canvas_action", api_methods=['POST'],
         request_as_kwarg=True)
-async def handle_send_canvas_action(app: App, request: RequestData, data: Dict[str, Any]):
+async def handle_send_canvas_action(app: App, request: RequestData, data: dict[str, Any]):
     """
     Handles incremental, real-time actions from clients (e.g., adding an element).
     It persists the change to the database and then broadcasts it to all live listeners.
@@ -590,7 +591,7 @@ async def handle_send_canvas_action(app: App, request: RequestData, data: Dict[s
         session_data.canvas_elements = [el for el in session_data.canvas_elements if el.id not in ids_to_remove]
 
     # Save the modified object back to the database
-    session_data.last_modified = datetime.now(timezone.utc).timestamp()
+    session_data.last_modified = datetime.now(UTC).timestamp()
     canvas_tool.db_mod.set(session_db_key, session_data.model_dump_json(exclude_none=True))
 
     # Broadcast the successful, persisted action to all connected clients

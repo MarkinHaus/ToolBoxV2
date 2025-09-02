@@ -354,7 +354,7 @@ def initialize_admin_panel(app: App):
     app.run_any(("CloudM","add_ui"),
                 name="UserDashboard",
                 title=Name,
-                path=f"/api/CloudM.UI.widget/get_widget",
+                path="/api/CloudM.UI.widget/get_widget",
                 description="main",auth=True
                 )
     return Result.ok(info="Admin Panel Online").set_origin("CloudM.initialize_admin_panel")

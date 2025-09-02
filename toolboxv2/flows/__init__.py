@@ -60,7 +60,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
                     module = importlib.util.module_from_spec(spec)
                     try:
                         spec.loader.exec_module(module)
-                    except Exception as e:
+                    except Exception:
                         print("Error loading module ", name)
                         import traceback
                         traceback.print_exc()

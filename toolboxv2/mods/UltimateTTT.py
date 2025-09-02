@@ -1,15 +1,13 @@
 # --- START OF FILE ultimate_ttt_api.py ---
 import asyncio
-import json
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from enum import Enum
+from typing import Any
 
-import asyncio
-from typing import Any, Dict, List, Optional, Tuple, Union, AsyncGenerator
-
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from toolboxv2 import App, RequestData, Result, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request
@@ -85,7 +83,7 @@ class PlayerInfo(BaseModel):
     name: str
     is_connected: bool = True
     is_npc: bool = False  # New field
-    npc_difficulty: Optional[NPCDifficulty] = None
+    npc_difficulty: NPCDifficulty | None = None
 
 
 class Move(BaseModel):
@@ -94,7 +92,7 @@ class Move(BaseModel):
     global_col: int
     local_row: int
     local_col: int
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class GameState(BaseModel):
@@ -103,27 +101,27 @@ class GameState(BaseModel):
     mode: GameMode
     status: GameStatus
 
-    players: List[PlayerInfo] = []
-    current_player_id: Optional[str] = None
+    players: list[PlayerInfo] = []
+    current_player_id: str | None = None
 
-    global_board_winners: List[List[BoardWinner]]
-    local_boards_state: List[List[List[List[CellState]]]]
+    global_board_winners: list[list[BoardWinner]]
+    local_boards_state: list[list[list[list[CellState]]]]
 
-    last_made_move_coords: Optional[Tuple[int, int, int, int]] = None
-    next_forced_global_board: Optional[Tuple[int, int]] = None  # If set, player MUST play here
+    last_made_move_coords: tuple[int, int, int, int] | None = None
+    next_forced_global_board: tuple[int, int] | None = None  # If set, player MUST play here
 
-    overall_winner_symbol: Optional[PlayerSymbol] = None
+    overall_winner_symbol: PlayerSymbol | None = None
     is_draw: bool = False
 
-    moves_history: List[Move] = []
-    last_error_message: Optional[str] = None
+    moves_history: list[Move] = []
+    last_error_message: str | None = None
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    waiting_since: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    waiting_since: datetime | None = None
 
     @model_validator(mode='before')
-    def initialize_structures_for_gamestate(cls, values: Dict[str, Any]) -> Dict[str, Any]:  # Renamed validator
+    def initialize_structures_for_gamestate(cls, values: dict[str, Any]) -> dict[str, Any]:  # Renamed validator
         status = values.get('status')
         if status == 'waiting':
             values['status'] = 'waiting_for_opponent'
@@ -139,16 +137,16 @@ class GameState(BaseModel):
                            range(size)])
         return values
 
-    def get_player_info(self, player_id: str) -> Optional[PlayerInfo]:
+    def get_player_info(self, player_id: str) -> PlayerInfo | None:
         return next((p for p in self.players if p.id == player_id), None)
 
-    def get_opponent_info(self, player_id: str) -> Optional[PlayerInfo]:
+    def get_opponent_info(self, player_id: str) -> PlayerInfo | None:
         return next((p for p in self.players if p.id != player_id), None)
 
-    def get_current_player_info(self) -> Optional[PlayerInfo]:
+    def get_current_player_info(self) -> PlayerInfo | None:
         return self.get_player_info(self.current_player_id) if self.current_player_id else None
 
-    def model_dump_for_api(self) -> Dict[str, Any]:  # Renamed from your previous for clarity
+    def model_dump_for_api(self) -> dict[str, Any]:  # Renamed from your previous for clarity
         data = self.model_dump(mode='json', exclude_none=True)  # Use Pydantic's mode='json'
         # Pydantic v2 model_dump(mode='json') should handle datetime to ISO string conversion.
         # Explicit conversion is good for older Pydantic or for clarity if needed.
@@ -180,15 +178,14 @@ class UltimateTTTGameEngine:  # Renamed for clarity
         self.gs = game_state
         self.size = game_state.config.grid_size
 
-    def _check_line_for_win(self, line: List[Union[CellState, BoardWinner]],
-                            symbol_to_check: Union[CellState, BoardWinner]) -> bool:
+    def _check_line_for_win(self, line: list[CellState | BoardWinner],
+                            symbol_to_check: CellState | BoardWinner) -> bool:
         if not line or line[0] == CellState.EMPTY or line[0] == BoardWinner.NONE:
             return False
         return all(cell == symbol_to_check for cell in line)
 
-    def _get_board_winner_symbol(self, board: List[List[Union[CellState, BoardWinner]]],
-                                 symbol_class: Union[type[CellState], type[BoardWinner]]) -> Optional[
-        Union[CellState, BoardWinner]]:
+    def _get_board_winner_symbol(self, board: list[list[CellState | BoardWinner]],
+                                 symbol_class: type[CellState] | type[BoardWinner]) -> CellState | BoardWinner | None:
         symbols_to_try = [symbol_class.X, symbol_class.O]
         for symbol in symbols_to_try:
             # Rows
@@ -202,8 +199,8 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             if self._check_line_for_win([board[i][self.size - 1 - i] for i in range(self.size)], symbol): return symbol
         return None  # No winner
 
-    def _is_board_full(self, board: List[List[Union[CellState, BoardWinner]]],
-                       empty_value: Union[CellState, BoardWinner]) -> bool:
+    def _is_board_full(self, board: list[list[CellState | BoardWinner]],
+                       empty_value: CellState | BoardWinner) -> bool:
         return all(cell != empty_value for row in board for cell in row)
 
     def _determine_local_board_result(self, global_r: int, global_c: int) -> BoardWinner:
@@ -238,7 +235,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             self.gs.is_draw = True
             self.gs.status = GameStatus.FINISHED
 
-    def _determine_next_forced_board(self, last_move_local_r: int, last_move_local_c: int) -> Optional[Tuple[int, int]]:
+    def _determine_next_forced_board(self, last_move_local_r: int, last_move_local_c: int) -> tuple[int, int] | None:
         target_gr, target_gc = last_move_local_r, last_move_local_c
 
         if self.gs.global_board_winners[target_gr][target_gc] == BoardWinner.NONE and \
@@ -246,7 +243,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             return (target_gr, target_gc)
         return None  # Play anywhere valid
 
-    def _is_local_board_full(self, local_board_cells: List[List[CellState]], cell_type=CellState.EMPTY) -> bool:
+    def _is_local_board_full(self, local_board_cells: list[list[CellState]], cell_type=CellState.EMPTY) -> bool:
         """Checks if a specific local board (passed as a 2D list of CellState) is full."""
         for r in range(self.size):
             for c in range(self.size):
@@ -255,7 +252,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
         return True
 
     def add_player(self, player_id: str, player_name: str,
-                   is_npc: bool = False, npc_difficulty: Optional[NPCDifficulty] = None) -> bool:
+                   is_npc: bool = False, npc_difficulty: NPCDifficulty | None = None) -> bool:
         if len(self.gs.players) >= 2:
             self.gs.last_error_message = "Game is already full (2 players max)."
             return False
@@ -272,7 +269,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     existing_player.name = player_name  # Update name if it changed for NPC
 
                 self.gs.last_error_message = None
-                self.gs.updated_at = datetime.now(timezone.utc)
+                self.gs.updated_at = datetime.now(UTC)
 
                 if len(self.gs.players) == 2 and all(p.is_connected for p in self.gs.players) and \
                     self.gs.status == GameStatus.WAITING_FOR_OPPONENT:  # Should not be waiting if NPC is P2
@@ -307,7 +304,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             if self.gs.mode == GameMode.ONLINE:
                 self.gs.status = GameStatus.WAITING_FOR_OPPONENT
                 self.gs.current_player_id = player_id
-                self.gs.waiting_since = datetime.now(timezone.utc)
+                self.gs.waiting_since = datetime.now(UTC)
             # For local mode with P1, we wait for P2 (human or NPC) to be added
             # No status change yet, current_player_id not set until P2 joins
 
@@ -322,7 +319,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             # This specific logic is more for when make_move hands over to an NPC.
             # Here, we just set up the game. X (P1) will make the first move.
 
-        self.gs.updated_at = datetime.now(timezone.utc)
+        self.gs.updated_at = datetime.now(UTC)
         return True
 
     def make_move(self, move: Move) -> bool:
@@ -382,7 +379,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                         self.gs.is_draw = True
                         self.gs.status = GameStatus.FINISHED
 
-        self.gs.updated_at = datetime.now(timezone.utc)
+        self.gs.updated_at = datetime.now(UTC)
         self.gs.last_made_move_coords = (move.global_row, move.global_col, move.local_row, move.local_col)
 
         return True
@@ -396,7 +393,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                 return
 
             player.is_connected = False
-            self.gs.updated_at = datetime.now(timezone.utc)
+            self.gs.updated_at = datetime.now(UTC)
             app.logger.info(f"Player {player_id} disconnected from game {self.gs.game_id}. Name: {player.name}")
 
             if self.gs.mode == GameMode.ONLINE:
@@ -448,7 +445,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     self.gs.status = GameStatus.IN_PROGRESS
                     self.gs.last_error_message = f"Connection for {player.name} re-established. Game resumed."
                     self.gs.player_who_paused = None
-                    self.gs.updated_at = datetime.now(timezone.utc)
+                    self.gs.updated_at = datetime.now(UTC)
                     app.logger.info(
                         f"Game {self.gs.game_id} resumed as already-connected pauser {player.name} re-interacted.")
                 else:
@@ -456,7 +453,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             return True
 
         player.is_connected = True
-        self.gs.updated_at = datetime.now(timezone.utc)
+        self.gs.updated_at = datetime.now(UTC)
         app.logger.info(
             f"Player {player.name} ({player_id}) reconnected to game {self.gs.game_id}. Previous status: {self.gs.status}, Paused by: {self.gs.player_who_paused}")
 
@@ -476,7 +473,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                         self.gs.player_who_paused = None
                         self.gs.current_player_id = player_id
                         self.gs.last_error_message = f"Creator {player.name} reconnected. Waiting for opponent."
-                        self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
+                        self.gs.waiting_since = datetime.now(UTC)  # Reset waiting timer
                     elif opponent:  # Opponent was there but is now disconnected
                         self.gs.player_who_paused = opponent.id  # Now waiting for the other person
                         self.gs.last_error_message = f"Welcome back, {player.name}! Your opponent ({opponent.name}) is not connected. Game remains paused."
@@ -491,7 +488,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                 initial_pauser_info = self.gs.get_player_info(self.gs.player_who_paused)
                 if initial_pauser_info and initial_pauser_info.is_connected:  # This implies both are now connected.
                     self.gs.status = GameStatus.IN_PROGRESS
-                    self.gs.last_error_message = f"Both players are now connected. Game resumed!"
+                    self.gs.last_error_message = "Both players are now connected. Game resumed!"
                     self.gs.player_who_paused = None
                     app.logger.info(
                         f"Game {self.gs.game_id} RESUMED. Waiting player {player.name} reconnected, initial pauser {initial_pauser_info.name} also present.")
@@ -520,7 +517,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
                     self.gs.player_who_paused = None
                     self.gs.current_player_id = player_id
                     self.gs.last_error_message = f"Creator {player.name} reconnected. Waiting for opponent."
-                    self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
+                    self.gs.waiting_since = datetime.now(UTC)  # Reset waiting timer
                     app.logger.info(
                         f"Game {self.gs.game_id} (previously hard aborted while waiting) revived by creator {player.name}. Now WAITING_FOR_OPPONENT.")
                 else:
@@ -546,7 +543,7 @@ class UltimateTTTGameEngine:  # Renamed for clarity
             if len(self.gs.players) == 1 and self.gs.players[0].id == player_id:
                 self.gs.last_error_message = f"Creator {player.name} reconnected. Still waiting for opponent."
                 self.gs.current_player_id = player_id
-                self.gs.waiting_since = datetime.now(timezone.utc)  # Reset waiting timer
+                self.gs.waiting_since = datetime.now(UTC)  # Reset waiting timer
                 app.logger.info(
                     f"Creator {player.name} ({player_id}) reconnected to WAITING_FOR_OPPONENT game {self.gs.game_id}.")
             else:
@@ -558,10 +555,6 @@ class UltimateTTTGameEngine:  # Renamed for clarity
 
 # -- NPC Agents ---
 import random  # Add this import at the top of your file if not already there
-
-import random
-from typing import List, Optional, Dict, Tuple, Union  # Ensure these are imported
-
 
 # Assuming the following classes and enums are defined as in your provided code:
 # from pydantic import BaseModel, Field, model_validator
@@ -581,7 +574,7 @@ from typing import List, Optional, Dict, Tuple, Union  # Ensure these are import
 # class UltimateTTTGameEngine: ...
 
 
-def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Move | None:
     gs = game_state
     size = gs.config.grid_size
     npc_symbol = npc_player_info.symbol
@@ -589,7 +582,7 @@ def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Opt
 
     engine = UltimateTTTGameEngine(gs)
 
-    all_raw_possible_moves: List[Dict[str, int]] = []
+    all_raw_possible_moves: list[dict[str, int]] = []
 
     is_forced_to_play_specific_board = False
     forced_gr, forced_gc = -1, -1
@@ -620,7 +613,7 @@ def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Opt
         gs.last_error_message = "NPC Error (Easy): No possible moves found."
         return None
 
-    strategically_safer_moves: List[Dict[str, int]] = []
+    strategically_safer_moves: list[dict[str, int]] = []
     for move_dict in all_raw_possible_moves:
         opponent_target_gr, opponent_target_gc = move_dict['lr'], move_dict['lc']
 
@@ -659,7 +652,7 @@ def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Opt
         else:
             return None  # Truly no moves.
 
-    chosen_move_dict: Optional[Dict[str, int]] = None
+    chosen_move_dict: dict[str, int] | None = None
 
     if is_forced_to_play_specific_board:
         if not candidate_moves_for_decision:
@@ -762,15 +755,12 @@ def get_npc_move_easy(game_state: GameState, npc_player_info: PlayerInfo) -> Opt
     return None
 
 
-import random
-from typing import List, Optional, Dict, Tuple, Union
-
 
 # Assume your existing imports for GameState, PlayerInfo, Move, Enums, etc.
 # from ... import GameState, PlayerInfo, Move, PlayerSymbol, CellState, BoardWinner, UltimateTTTGameEngine
 # --- Helper functions for Zwickmühle detection (for 3x3 primarily) ---
 
-def _check_line_for_potential_win(line: List[CellState], player_symbol_cell: CellState, size: int) -> bool:
+def _check_line_for_potential_win(line: list[CellState], player_symbol_cell: CellState, size: int) -> bool:
     """Checks if a line has (size-1) of player's symbols and one empty cell."""
     if size <= 1: return False  # Not meaningful for 1x1 or smaller
     player_pieces = line.count(player_symbol_cell)
@@ -778,7 +768,7 @@ def _check_line_for_potential_win(line: List[CellState], player_symbol_cell: Cel
     return player_pieces == size - 1 and empty_cells == 1
 
 
-def _count_potential_wins_on_board(board: List[List[CellState]], player_symbol_cell: CellState, size: int) -> int:
+def _count_potential_wins_on_board(board: list[list[CellState]], player_symbol_cell: CellState, size: int) -> int:
     """Counts how many lines on the board are potential wins for the player."""
     if not board or len(board) != size or not board[0] or len(board[0]) != size:
         # Invalid board structure for counting
@@ -813,13 +803,13 @@ def _count_potential_wins_on_board(board: List[List[CellState]], player_symbol_c
 # --- New/Refined Helper functions for scoring/evaluation ---
 
 def _get_npc_move_outcome_on_board(
-    local_board_state: List[List[CellState]],
+    local_board_state: list[list[CellState]],
     move_lr: int, move_lc: int,
     npc_symbol_cell: CellState,
     opponent_symbol_cell: CellState,
     engine: UltimateTTTGameEngine,
     zwick_eval_size: int
-) -> Dict[str, Union[bool, int]]:
+) -> dict[str, bool | int]:
     """
     Evaluates what the NPC achieves by playing at (move_lr, move_lc) on local_board_state.
     Returns: {'wins': bool, 'creates_zwick': bool, 'blocks_opponent_win': bool, 'sets_up_line': bool}
@@ -852,12 +842,12 @@ def _get_npc_move_outcome_on_board(
 
 
 def _get_opponent_threat_on_sent_board(
-    target_local_board_state: List[List[CellState]],  # Board where opponent will be sent
+    target_local_board_state: list[list[CellState]],  # Board where opponent will be sent
     opponent_symbol_cell: CellState,
     engine: UltimateTTTGameEngine,
     zwick_eval_size: int,
     game_board_size: int
-) -> Dict[str, bool]:
+) -> dict[str, bool]:
     """
     Evaluates if the opponent, IF SENT TO target_local_board_state,
     can immediately win or create a Zwickmühle there.
@@ -886,7 +876,7 @@ def _get_opponent_threat_on_sent_board(
 
 # --- Main Medium NPC function with scoring ---
 
-def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> Move | None:
     gs = game_state
     game_board_size = gs.config.grid_size
     zwick_eval_size = 3  # Zwickmühle logic is primarily for 3x3 boards
@@ -899,11 +889,11 @@ def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> O
     engine = UltimateTTTGameEngine(gs)
 
     # 1. Determine all raw possible moves
-    all_raw_possible_moves: List[Dict[str, int]] = []
+    all_raw_possible_moves: list[dict[str, int]] = []
     # This flag indicates if the NPC *must* play on a specific board vs. having free choice.
     # Free choice arises if gs.next_forced_global_board is None, OR if it points to a completed board.
     npc_has_free_choice = True
-    forced_board_coords_for_npc: Optional[Tuple[int, int]] = None
+    forced_board_coords_for_npc: tuple[int, int] | None = None
 
     if gs.next_forced_global_board:
         fgr, fgc = gs.next_forced_global_board
@@ -934,7 +924,7 @@ def get_npc_move_medium(game_state: GameState, npc_player_info: PlayerInfo) -> O
         return None
 
     # 2. Score each possible move
-    scored_moves: List[Tuple[Dict[str, int], float]] = []
+    scored_moves: list[tuple[dict[str, int], float]] = []
 
     for move_dict in all_raw_possible_moves:
         npc_play_gr, npc_play_gc = move_dict['gr'], move_dict['gc']
@@ -1032,8 +1022,8 @@ def _simulate_and_evaluate_next_global_state(
     engine_class: type,  # Pass the UltimateTTTGameEngine class
     zwick_eval_size: int,
     game_board_size: int
-) -> Tuple[
-    Optional[GameState], Optional[BoardWinner], bool]:  # (new_gs, local_winner_of_npc_move, game_over_after_npc_move)
+) -> tuple[
+    GameState | None, BoardWinner | None, bool]:  # (new_gs, local_winner_of_npc_move, game_over_after_npc_move)
     """
     Simulates the NPC making a move and returns the new game state.
     This is a shallow simulation, doesn't play out opponent's turn.
@@ -1059,7 +1049,7 @@ def _simulate_and_evaluate_next_global_state(
     return sim_gs, local_winner_of_this_move, game_over
 
 
-def _count_global_potential_wins(global_board_winners: List[List[BoardWinner]], npc_board_winner_symbol: BoardWinner,
+def _count_global_potential_wins(global_board_winners: list[list[BoardWinner]], npc_board_winner_symbol: BoardWinner,
                                  size: int) -> int:
     """Counts potential global winning lines for the NPC."""
     potential_wins = 0
@@ -1085,7 +1075,6 @@ def _count_global_potential_wins(global_board_winners: List[List[BoardWinner]], 
 
 # --- Minimax with Alpha-Beta Pruning ---
 import math  # For infinity
-
 
 # We'll reuse the simulation and scoring logic from get_npc_move_hard
 # as the heuristic evaluation function. Let's rename/adapt it slightly.
@@ -1191,9 +1180,6 @@ def heuristic_evaluate_game_state(
     return score
 
 
-import math  # For infinity
-import random  # For shuffling
-from typing import List, Optional, Dict, Tuple, Union  # Ensure these are imported
 
 
 def minimax(
@@ -1208,7 +1194,7 @@ def minimax(
     zwick_eval_size: int,
     game_board_size: int,
     initial_call: bool = False  # Default to False for recursive calls
-) -> Union[float, Tuple[float, Optional[Dict[str, int]]]]:  # Return type depends on initial_call
+) -> float | tuple[float, dict[str, int] | None]:  # Return type depends on initial_call
 
     if depth == 0 or current_gs.status == GameStatus.FINISHED:
         eval_score = heuristic_evaluate_game_state(
@@ -1229,7 +1215,7 @@ def minimax(
         if initial_call: return worst_score, None
         return worst_score
 
-    possible_moves_dicts: List[Dict[str, int]] = []
+    possible_moves_dicts: list[dict[str, int]] = []
     current_engine_instance = engine_class(current_gs)
     forced_board = current_gs.next_forced_global_board
     can_play_anywhere_active_player = True
@@ -1263,7 +1249,7 @@ def minimax(
         if initial_call: return eval_score, None
         return eval_score
 
-    best_move_for_this_level: Optional[Dict[str, int]] = None  # Only used if initial_call is True
+    best_move_for_this_level: dict[str, int] | None = None  # Only used if initial_call is True
 
     # Determine which player object to use for simulating the move
     # based on who is the active_player_id_in_gs for the *current recursion level*
@@ -1358,8 +1344,8 @@ DRAW_INT = 3
 
 
 # Helper to get integer representations for players and the enum-to-int map
-def _get_int_symbol_maps(npc_player_info: PlayerInfo, opponent_player_info: PlayerInfo) -> Tuple[
-    int, int, Dict[Union[CellState, BoardWinner], int]]:
+def _get_int_symbol_maps(npc_player_info: PlayerInfo, opponent_player_info: PlayerInfo) -> tuple[
+    int, int, dict[CellState | BoardWinner, int]]:
     """
     Determines integer mapping for NPC (1), Opponent (2) and creates a full enum-to-int map.
     """
@@ -1436,7 +1422,7 @@ def _count_global_potential_wins_np(global_board_winners_np: np.ndarray, player_
                                     size: int) -> int:
     return _count_potential_wins_on_board_np(global_board_winners_np, player_int_board_winner_symbol, size)
 
-def get_npc_move_hard(game_state: GameState, npc_player_info: PlayerInfo) -> Optional[Move]:
+def get_npc_move_hard(game_state: GameState, npc_player_info: PlayerInfo) -> Move | None:
     gs = game_state
     game_board_size = gs.config.grid_size
     zwick_eval_size = 3
@@ -1535,7 +1521,7 @@ async def save_game_to_db_final(app: App, game_state: GameState):  # Renamed
     db.set(key, game_state.model_dump_json(exclude_none=True))  # Pydantic v2 handles json string
 
 
-async def load_game_from_db_final(app: App, game_id: str) -> Optional[GameState]:  # Renamed
+async def load_game_from_db_final(app: App, game_id: str) -> GameState | None:  # Renamed
     db = get_db(app, name="load_game_from_db_final")
     key = f"{DB_GAMES_PREFIX}_{game_id}"
     result = db.get(key)
@@ -1736,7 +1722,7 @@ async def api_join_game(app: App, request: RequestData, data=None):
                 return Result.default_user_error(
                     "Game was aborted before an opponent joined and cannot be joined by a new player now.", 403)
             else:  # A new player trying to join a game that was already started and then aborted
-                return Result.default_user_error(f"Game was aborted. Only original players can attempt to resume.", 403)
+                return Result.default_user_error("Game was aborted. Only original players can attempt to resume.", 403)
 
 
         elif game_state.status == GameStatus.IN_PROGRESS:
@@ -1797,10 +1783,10 @@ async def api_get_game_state(app: App, request: RequestData, game_id: str):  # g
 
         # Timeout logic
         if game_state.waiting_since and \
-           (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
+           (datetime.now(UTC) - game_state.waiting_since > timedelta(seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
             game_state.status = GameStatus.ABORTED
             game_state.last_error_message = "Game aborted: Opponent didn't join in time."
-            game_state.updated_at = datetime.now(timezone.utc)
+            game_state.updated_at = datetime.now(UTC)
             await save_game_to_db_final(app, game_state)
             # Update response_data with the new status etc.
             response_data = game_state.model_dump_for_api()
@@ -1816,7 +1802,7 @@ async def api_get_game_state(app: App, request: RequestData, game_id: str):  # g
 async def api_make_move(app: App, request: RequestData, data=None):
     move_payload = data or {}
     game_id: str = move_payload.get("game_id")
-    human_player_id_making_move: Optional[str] = move_payload.get("player_id")  # ID of human submitting the move
+    human_player_id_making_move: str | None = move_payload.get("player_id")  # ID of human submitting the move
     game_state = None
 
     try:
@@ -1932,7 +1918,7 @@ async def api_make_move(app: App, request: RequestData, data=None):
 
 
 @export(mod_name=GAME_NAME, name="get_session_stats", api=True, request_as_kwarg=True)
-async def api_get_session_stats(app: App, request: RequestData, session_id: Optional[str] = None):
+async def api_get_session_stats(app: App, request: RequestData, session_id: str | None = None):
     id_for_stats = session_id
     if not id_for_stats:  # Try to get from Toolbox user if no explicit session_id
         user = await get_user_from_request(app, request)
@@ -1950,7 +1936,7 @@ async def api_get_session_stats(app: App, request: RequestData, session_id: Opti
 # FILE: ultimate_ttt_api.py
 
 @export(mod_name=GAME_NAME, name="open_game_stream", api=True, request_as_kwarg=True, api_methods=['GET'])
-async def api_open_game_stream(app: App, request: RequestData, game_id: str, player_id: Optional[str] = None):
+async def api_open_game_stream(app: App, request: RequestData, game_id: str, player_id: str | None = None):
     if not game_id:
         async def error_gen_no_id():
             yield {'event': 'error', 'data': {'message': 'game_id is required for stream'}}
@@ -1959,11 +1945,11 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
 
     listening_player_id = player_id
 
-    async def game_event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+    async def game_event_generator() -> AsyncGenerator[dict[str, Any], None]:
         app.logger.info(f"SSE: Stream opened for game_id: {game_id} by player_id: {listening_player_id or 'Unknown'}")
         last_known_updated_at = None
         last_status_sent = None
-        last_players_connected_state: Optional[Dict[str, bool]] = None
+        last_players_connected_state: dict[str, bool] | None = None
 
         try:
             while True:
@@ -1978,13 +1964,13 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                 # Timeout for games WAITING_FOR_OPPONENT (initial join)
                 if game_state.status == GameStatus.WAITING_FOR_OPPONENT and \
                     game_state.waiting_since and \
-                    (datetime.now(timezone.utc) - game_state.waiting_since > timedelta(
+                    (datetime.now(UTC) - game_state.waiting_since > timedelta(
                         seconds=ONLINE_POLL_TIMEOUT_SECONDS)):
                     app.logger.info(f"SSE: Game {game_id} timed out waiting for opponent (initial join). Aborting.")
                     game_state.status = GameStatus.ABORTED
                     game_state.last_error_message = "Game aborted: Opponent didn't join in time."
                     game_state.player_who_paused = None
-                    game_state.updated_at = datetime.now(timezone.utc)
+                    game_state.updated_at = datetime.now(UTC)
                     await save_game_to_db_final(app, game_state)
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
                     yield {'event': 'stream_end', 'data': {'message': 'Game timed out waiting for opponent.'}}
@@ -1994,7 +1980,7 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                 if game_state.status == GameStatus.ABORTED and \
                     game_state.player_who_paused and \
                     game_state.updated_at and \
-                    (datetime.now(timezone.utc) - game_state.updated_at > timedelta(
+                    (datetime.now(UTC) - game_state.updated_at > timedelta(
                         seconds=PAUSED_GAME_RESUME_WINDOW_SECONDS)):
 
                     disconnected_player_name = "Player"
@@ -2005,7 +1991,7 @@ async def api_open_game_stream(app: App, request: RequestData, game_id: str, pla
                         f"SSE: Game {game_id} (paused) timed out after {PAUSED_GAME_RESUME_WINDOW_SECONDS // 3600} hours waiting for {disconnected_player_name} ({game_state.player_who_paused}) to reconnect. Fully aborting.")
                     game_state.last_error_message = f"Game aborted: {disconnected_player_name} did not reconnect within the extended timeframe."
                     game_state.player_who_paused = None
-                    game_state.updated_at = datetime.now(timezone.utc)
+                    game_state.updated_at = datetime.now(UTC)
                     await save_game_to_db_final(app, game_state)
                     yield {'event': 'game_update', 'data': game_state.model_dump_for_api()}
                     yield {'event': 'stream_end', 'data': {'message': 'Paused game timed out.'}}
@@ -2098,7 +2084,7 @@ def init_ultimate_ttt_module(app: App):
 # FILE: ultimate_ttt_api.py
 
 @export(mod_name=GAME_NAME, version=VERSION, level=0, api=True, name="ui", state=False)
-def ultimate_ttt_ui_page(app_ref: Optional[App] = None, **kwargs):
+def ultimate_ttt_ui_page(app_ref: App | None = None, **kwargs):
     app_instance = app_ref if app_ref else get_app(GAME_NAME)
     # Full HTML, CSS, and JS
     html_and_js_content = """<!DOCTYPE html>

@@ -34,12 +34,12 @@ __version__ = "1.0.0"
 __author__ = "Markin Hausmanns"
 __status__ = "Demo"
 
+import logging
 import os
 
 # Ensure AsyncIterator is imported correctly depending on Python version
 from collections.abc import AsyncIterator
 
-import logging
 if not hasattr(logging, 'NONE'):
     logging.NONE = 100
 

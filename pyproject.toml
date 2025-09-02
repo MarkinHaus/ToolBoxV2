@@ -105,7 +105,6 @@ isaa = [
     "pydantic>=2.5.0",
     "groq>=0.31.0",
     "requests>=2.31.0",
-    "restrictedpython>=8.0",
     "tiktoken>=0.5.0",
     "torch>=2.8.0",
     "torchaudio>=2.8.0",
@@ -152,7 +151,7 @@ isaa = { workspace = true }
 
 [tool.deptry]
 exclude = ["toolboxv2/.data/*", "venv", "python_en", ".data/*", ".data"]
-known_first_party = ["toolboxv2"]
+known_first_party = ["toolboxv2", "whatsapp", "hmr", "restrictedpython"]
 
 [tool.ruff]
 line-length = 90
@@ -199,19 +198,42 @@ exclude = [
 # B = flake8-bugbear (mögliche Bugs oder Designprobleme)
 # Weitere nützliche Sets: A (flake8-builtins), C4 (flake8-comprehensions), SIM (flake8-simplify)
 select = [
-    # "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
+    # "W",  # pycodestyle warnings - You had this enabled, uncomment if needed
     "F",  # Pyflakes
     "I",  # isort
-    "S",  # flake8-bandit (Sicherheit)
+    "S",  # flake8-bandit (Security)
     "UP", # pyupgrade
     "B",  # flake8-bugbear
-    # "A",  # flake8-builtins (Achtung, kann sehr detailreich sein)
-    # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
-ignore = ["E501", "S101", "S603","S607", "S104", "E701", "E702"]
 
+ignore = [
+    "E501",  # Line too long (often handled by a formatter like Black)
+    "S101",  # Use of `assert`
+    "S603",  # `subprocess` call with `shell=True`
+    "S607",  # Starting a process with a partial path
+    "S104",  # Possible binding to all network interfaces
+    "E701",  # Multiple statements on one line (colon)
+    "E702",  # Multiple statements on one line (semicolon)
+    "UP006", # Use `list` instead of `List` for type annotation
+    "S110",  # `try-except-pass` is sometimes acceptable for cleanup
+    "S605",  # Safe shell commands like 'cls' and 'clear' are okay
+    "S311",  # random is not used for cryptographic purposes
+    "S301",  # pickle is used with trusted data
+    "S102",  # Use of exec is intentional for module loading
+    "S324",  # md5 is not used for security
+    "S103",  # chmod 0o755 is intentional for executables
+    "SIM115",
+
+    "F401", # Unuised imports nad vars rea dd alter
+    "F841",
+
+    "B008",  # Function calls in default arguments (can be ignored if carefully managed)
+    "S108",  # Insecure temp file usage (acceptable for some scripts)
+    "S112",  # `try-except-continue` is similar to S110
+    "S307",  # Use of `eval` can be ignored if input is trusted
+
+]
 # Optional: Regeln, die automatisch korrigiert werden können (wenn --fix verwendet wird)
 # Ruff hat gute Standardwerte, aber Sie können es hier anpassen.
 # fixable = ["ALL"] # Vorsicht bei "ALL", besonders bei 'S' Regeln

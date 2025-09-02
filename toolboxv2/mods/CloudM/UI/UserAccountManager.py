@@ -1,11 +1,12 @@
 # toolboxv2/mods/CloudM/UI/user_account_manager.py
 
-import uuid
 from dataclasses import asdict
 
+from toolboxv2 import TBEF, App, RequestData, get_app
+from toolboxv2.mods.CloudM.AuthManager import (
+    db_helper_save_user,  # Assuming AuthManager functions are accessible
+)
 
-from toolboxv2 import TBEF, App, Result, get_app, RequestData
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user  # Assuming AuthManager functions are accessible
 from ..types import User  # From toolboxv2/mods/CloudM/types.py
 
 Name = 'CloudM.UI.UserAccountManager'
@@ -85,7 +86,7 @@ async def update_setting(app: App, request: RequestData, setting_key: str, setti
     if target_id_suffix:
         target_id_suffix = target_id_suffix.split("-")[-1]
     if not user:
-        return f"<div class='text-red-500'>Error: User not authenticated or found.</div>"
+        return "<div class='text-red-500'>Error: User not authenticated or found.</div>"
 
     if setting_key == "experimental_features":
         actual_value = setting_value.lower() == 'true'

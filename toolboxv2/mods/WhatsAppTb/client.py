@@ -8,6 +8,8 @@ from email.mime.text import MIMEText
 
 from dateutil import parser
 
+from toolboxv2.mods.isaa.base.AgentUtils import LLMMode
+
 try:
     from whatsapp import Message, WhatsApp
 except ImportError:
@@ -29,7 +31,6 @@ from google.oauth2.credentials import Credentials
 
 from toolboxv2 import TBEF, get_app
 from toolboxv2.mods.isaa import Tools
-from toolboxv2.mods.isaa.base.Agents import LLMMode
 from toolboxv2.mods.WhatsAppTb.server import AppManager
 from toolboxv2.mods.WhatsAppTb.utils import (
     ProgressMessenger,

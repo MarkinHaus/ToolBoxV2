@@ -1,16 +1,10 @@
 # example_local_agent.py
 import asyncio
-from toolboxv2 import get_app
 
+from toolboxv2 import get_app
 
 # example_registry_agent.py
-import asyncio
-from toolboxv2 import get_app
-
-
 # example_chain_live.py
-import asyncio
-from toolboxv2 import get_app
 from toolboxv2.mods.isaa.base.Agent.chain import CF
 
 
@@ -82,7 +76,7 @@ async def setup_chain_with_live_updates():
     )
 
     if result.get('public_url'):
-        app.print(f"🔗 Chain published successfully with Live Progress UI!")
+        app.print("🔗 Chain published successfully with Live Progress UI!")
         app.print(f"   Local UI: {result['ui_url']}")
         app.print(f"   WebSocket: {result.get('registry_server')}")
         app.print(f"   WebSocket: {result.get('websocket_url')}")
@@ -120,8 +114,6 @@ async def setup_chain_with_live_updates():
 
 
 # example_multi_agent_live.py
-import asyncio
-from toolboxv2 import get_app
 
 
 async def setup_multiple_live_agents():
@@ -217,8 +209,6 @@ async def setup_multiple_live_agents():
 
 
 # example_complete_integration.py
-import asyncio
-from toolboxv2 import get_app
 
 
 async def setup_complete_agent_system(local=True):
@@ -262,33 +252,33 @@ async def setup_complete_agent_system(local=True):
 
     if result.get('success'):
         app.print("🎉 AGENT SYSTEM FULLY DEPLOYED!")
-        app.print(f"")
-        app.print(f"🌐 Public Access:")
+        app.print("")
+        app.print("🌐 Public Access:")
         app.print(f"   URL: {result['public_url']}")
         app.print(f"   API Key: {result['public_api_key']}")
-        app.print(f"")
-        app.print(f"🖥️  Live UI:")
+        app.print("")
+        app.print("🖥️  Live UI:")
         app.print(f"   Registry UI: {result['ui_url']}")
         if result.get('local_ui'):
             app.print(f"   Local UI: {result['local_ui'].get('ui_url')}")
-        app.print(f"")
-        app.print(f"🔌 WebSocket:")
+        app.print("")
+        app.print("🔌 WebSocket:")
         app.print(f"   Live Updates: {result['websocket_url']}")
-        app.print(f"")
-        app.print(f"📋 cURL Test:")
+        app.print("")
+        app.print("📋 cURL Test:")
         app.print(f"""curl -X POST {result['public_url']} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer {result['public_api_key']}" \\
   -d '{{"query": "Create a detailed analysis of quantum computing with step-by-step progress", "session_id": "test-session"}}'""")
 
         # Lokaler Test des Agents
-        app.print(f"\n🧪 Testing agent locally...")
+        app.print("\n🧪 Testing agent locally...")
         #await asyncio.sleep(5)
         #test_result = await agent.a_run(
         #    "hey",
         #    session_id="local_test"
         #)
-        app.print(f"✅ Test completed successfully!")
+        app.print("✅ Test completed successfully!")
 
         # Service am Leben halten
         try:

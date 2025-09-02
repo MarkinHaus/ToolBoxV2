@@ -1,23 +1,23 @@
 # --- START OF FILE POA.py ---
 import asyncio
-from datetime import datetime, timedelta, date
-from enum import Enum
-from typing import Any, List, Optional, Dict, Literal, Union, Tuple
-import uuid
 import json
-import pytz  # Added for timezone handling
-from dateutil.rrule import rrulestr, rrule
-from dateutil.parser import isoparse
+import uuid
+from datetime import date, datetime, timedelta
+from enum import Enum
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+import pytz  # Added for timezone handling
 
 # Assuming toolboxv2, requests, icalendar are available
 import requests  # Added for iCal URL import
+from dateutil.parser import isoparse
+from dateutil.rrule import rrulestr
+from icalendar import Calendar as iCalCalendar  # Added for iCal
+from icalendar import Event as iCalEvent
+from icalendar import vDate, vDatetime, vRecur
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from icalendar import Calendar as iCalCalendar, Event as iCalEvent, vRecur, vDatetime, vDate  # Added for iCal
-from io import BytesIO  # Added for iCal file import
-
-from toolboxv2 import Code, Result, get_app, App, RequestData
+from toolboxv2 import App, RequestData, Result, get_app
 from toolboxv2.utils.extras.base_widget import get_user_from_request
 
 Name = "POA"
@@ -34,7 +34,7 @@ RECURRING_IMPORT_WINDOW_DAYS = 90  # Import recurring instances up to this many 
 class UserSettings(BaseModel):
     user_id: str  # To link settings to user, though manager handles this by instance
     timezone: str = "UTC"
-    location: Optional[str] = None
+    location: str | None = None
 
     @field_validator('timezone')
     def validate_timezone(cls, v):
@@ -46,7 +46,7 @@ class UserSettings(BaseModel):
         return self.model_dump(*args, **kwargs)
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Dict[str, Any]):
+    def model_validate_json_safe(cls, json_data: dict[str, Any]):
         return cls.model_validate(json_data)
 
 
@@ -74,25 +74,25 @@ class ActionItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     item_type: ItemType = ItemType.TASK
     title: str
-    description: Optional[str] = None
-    parent_id: Optional[str] = None
-    location: Optional[str] = None  # Added for iCal VLOCATION
+    description: str | None = None
+    parent_id: str | None = None
+    location: str | None = None  # Added for iCal VLOCATION
 
-    frequency: Optional[Frequency] = Frequency.ONE_TIME
+    frequency: Frequency | None = Frequency.ONE_TIME
     priority: int = Field(default=3, ge=1, le=5)  # 1 highest, 5 lowest
-    fixed_time: Optional[datetime] = None  # Due/start date/time, stored as UTC
+    fixed_time: datetime | None = None  # Due/start date/time, stored as UTC
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
     status: ActionStatus = ActionStatus.NOT_STARTED
-    last_completed: Optional[datetime] = None  # Stored as UTC
-    next_due: Optional[datetime] = None  # Stored as UTC
+    last_completed: datetime | None = None  # Stored as UTC
+    next_due: datetime | None = None  # Stored as UTC
 
     created_by_ai: bool = False
-    ical_uid: Optional[str] = None  # UID from imported iCalendar event
-    ical_rrule_original: Optional[str] = None  # Store original RRULE if it was complex
+    ical_uid: str | None = None  # UID from imported iCalendar event
+    ical_rrule_original: str | None = None  # Store original RRULE if it was complex
 
-    def _ensure_utc(cls, dt: Optional[datetime]) -> Optional[datetime]:
+    def _ensure_utc(cls, dt: datetime | None) -> datetime | None:
         if dt and dt.tzinfo is None:
             # This case should ideally not happen if inputs are handled correctly.
             # Assuming naive datetime is UTC if not specified otherwise by context.
@@ -104,7 +104,7 @@ class ActionItem(BaseModel):
         return dt
 
     @model_validator(mode='before')
-    def _convert_datetime_fields_to_utc(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_datetime_fields_to_utc(cls, values: dict[str, Any]) -> dict[str, Any]:
         datetime_fields = ['fixed_time', 'created_at', 'updated_at', 'last_completed', 'next_due']
         user_timezone_str = values.get('_user_timezone_str', 'UTC')  # Temp field for context during validation
 
@@ -153,7 +153,7 @@ class ActionItem(BaseModel):
         return data
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Dict[str, Any], user_timezone_str: str = "UTC"):
+    def model_validate_json_safe(cls, json_data: dict[str, Any], user_timezone_str: str = "UTC"):
         # Pass user_timezone_str for context if needed by model_validator
         json_data['_user_timezone_str'] = user_timezone_str
 
@@ -189,8 +189,8 @@ class HistoryEntry(BaseModel):
     item_type: ItemType
     timestamp: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
     status_changed_to: ActionStatus
-    parent_id: Optional[str] = None
-    notes: Optional[str] = None
+    parent_id: str | None = None
+    notes: str | None = None
 
     def model_dump_json_safe(self, *args, **kwargs):
         data = self.model_dump(*args, **kwargs)
@@ -201,7 +201,7 @@ class HistoryEntry(BaseModel):
         return data
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Dict[str, Any]):
+    def model_validate_json_safe(cls, json_data: dict[str, Any]):
         if 'timestamp' in json_data and isinstance(json_data['timestamp'], str):
             json_data['timestamp'] = isoparse(json_data['timestamp'])
         if 'item_type' in json_data and isinstance(json_data['item_type'], str):
@@ -213,9 +213,9 @@ class HistoryEntry(BaseModel):
 
 class UndoLogEntry(BaseModel):
     action_type: Literal["ai_create_item", "ai_modify_item", "ical_import"]
-    item_ids: List[str]  # Changed to list to support multiple items from iCal import
+    item_ids: list[str]  # Changed to list to support multiple items from iCal import
     timestamp: datetime = Field(default_factory=lambda: datetime.now(pytz.utc))
-    previous_data_json_map: Optional[Dict[str, str]] = None  # item_id -> json_string
+    previous_data_json_map: dict[str, str] | None = None  # item_id -> json_string
 
     def model_dump_json_safe(self, *args, **kwargs):
         data = self.model_dump(*args, **kwargs)
@@ -224,7 +224,7 @@ class UndoLogEntry(BaseModel):
         return data
 
     @classmethod
-    def model_validate_json_safe(cls, json_data: Dict[str, Any]):
+    def model_validate_json_safe(cls, json_data: dict[str, Any]):
         if 'timestamp' in json_data and isinstance(json_data['timestamp'], str):
             json_data['timestamp'] = isoparse(json_data['timestamp'])
         return cls.model_validate(json_data)
@@ -245,10 +245,10 @@ class ActionManagerEnhanced:
         self.isaa = app.get_mod("isaa")
 
         self.settings: UserSettings = UserSettings(user_id=user_id)  # Initialize with defaults
-        self.items: List[ActionItem] = []
-        self.history: List[HistoryEntry] = []
-        self.current_item: Optional[ActionItem] = None
-        self.undo_log: List[UndoLogEntry] = []
+        self.items: list[ActionItem] = []
+        self.history: list[HistoryEntry] = []
+        self.current_item: ActionItem | None = None
+        self.undo_log: list[UndoLogEntry] = []
 
         self._load_settings()  # Load settings first as they might affect item loading
         self._load_data()
@@ -284,7 +284,7 @@ class ActionManagerEnhanced:
         except Exception as e:
             self.app.logger.error(f"Error saving settings for user {self.user_id}: {e}")
 
-    def update_user_settings(self, settings_data: Dict[str, Any]) -> UserSettings:
+    def update_user_settings(self, settings_data: dict[str, Any]) -> UserSettings:
         # Ensure user_id is not changed by malicious input
         current_user_id = self.settings.user_id
         updated_settings = UserSettings.model_validate(
@@ -352,8 +352,8 @@ class ActionManagerEnhanced:
         except Exception as e:
             self.app.logger.error(f"Error saving data for user {self.user_id}: {e}")
 
-    def _add_history_entry(self, item: ActionItem, status_override: Optional[ActionStatus] = None,
-                           notes: Optional[str] = None):
+    def _add_history_entry(self, item: ActionItem, status_override: ActionStatus | None = None,
+                           notes: str | None = None):
         entry = HistoryEntry(
             item_id=item.id, item_title=item.title, item_type=item.item_type,
             status_changed_to=status_override or item.status,
@@ -361,12 +361,12 @@ class ActionManagerEnhanced:
         )
         self.history.append(entry)
 
-    def _datetime_to_user_tz(self, dt_utc: Optional[datetime]) -> Optional[datetime]:
+    def _datetime_to_user_tz(self, dt_utc: datetime | None) -> datetime | None:
         if not dt_utc: return None
         if dt_utc.tzinfo is None: dt_utc = pytz.utc.localize(dt_utc)  # Should already be UTC
         return dt_utc.astimezone(self.get_user_timezone())
 
-    def _datetime_from_user_input_str(self, dt_str: Optional[str]) -> Optional[datetime]:
+    def _datetime_from_user_input_str(self, dt_str: str | None) -> datetime | None:
         if not dt_str: return None
         try:
             dt = isoparse(dt_str)
@@ -478,7 +478,7 @@ class ActionManagerEnhanced:
         for item in self.items:
             self._recalculate_next_due(item)
 
-    def add_item(self, item_data: Dict[str, Any], by_ai: bool = False, imported: bool = False) -> ActionItem:
+    def add_item(self, item_data: dict[str, Any], by_ai: bool = False, imported: bool = False) -> ActionItem:
         item_data['_user_timezone_str'] = self.settings.timezone  # For validation context
         item = ActionItem.model_validate(
             item_data)  # Pydantic handles string->datetime, then model_validator converts to UTC
@@ -499,10 +499,10 @@ class ActionManagerEnhanced:
         self._save_data()
         return item
 
-    def get_item_by_id(self, item_id: str) -> Optional[ActionItem]:
+    def get_item_by_id(self, item_id: str) -> ActionItem | None:
         return next((item for item in self.items if item.id == item_id), None)
 
-    def update_item(self, item_id: str, update_data: Dict[str, Any], by_ai: bool = False) -> Optional[ActionItem]:
+    def update_item(self, item_id: str, update_data: dict[str, Any], by_ai: bool = False) -> ActionItem | None:
         item = self.get_item_by_id(item_id)
         if not item: return None
 
@@ -556,7 +556,7 @@ class ActionManagerEnhanced:
         self._save_data()
         return True
 
-    def set_current_item(self, item_id: str) -> Optional[ActionItem]:
+    def set_current_item(self, item_id: str) -> ActionItem | None:
         item = self.get_item_by_id(item_id)
         if not item: return None
         if item.status == ActionStatus.COMPLETED and item.item_type == ItemType.TASK and item.frequency == Frequency.ONE_TIME:
@@ -572,7 +572,7 @@ class ActionManagerEnhanced:
         self._save_data()
         return item
 
-    def complete_current_item(self) -> Optional[ActionItem]:
+    def complete_current_item(self) -> ActionItem | None:
         if not self.current_item: return None
 
         item_to_complete = self.current_item
@@ -587,7 +587,7 @@ class ActionManagerEnhanced:
         self._save_data()
         return item_to_complete
 
-    def get_suggestions(self, count: int = 2) -> List[ActionItem]:
+    def get_suggestions(self, count: int = 2) -> list[ActionItem]:
         # Prioritize AI suggestions if ISAA is available
         if self.isaa:
             active_items_for_ai = []
@@ -619,7 +619,7 @@ class ActionManagerEnhanced:
             )
 
             class SuggestedIds(BaseModel):
-                suggested_item_ids: List[str]
+                suggested_item_ids: list[str]
 
             try:
                 structured_response = asyncio.run(
@@ -635,7 +635,7 @@ class ActionManagerEnhanced:
         # Fallback to basic suggestions
         return self._get_basic_suggestions(count)
 
-    def _get_basic_suggestions(self, count: int = 2) -> List[ActionItem]:
+    def _get_basic_suggestions(self, count: int = 2) -> list[ActionItem]:
         now_utc = datetime.now(pytz.utc)
         available_items = [
             item for item in self.items
@@ -663,10 +663,10 @@ class ActionManagerEnhanced:
         available_items.sort(key=sort_key)
         return available_items[:count]
 
-    def get_history(self, limit: int = 50) -> List[HistoryEntry]:
+    def get_history(self, limit: int = 50) -> list[HistoryEntry]:
         return sorted(self.history, key=lambda x: x.timestamp, reverse=True)[:limit]
 
-    def get_all_items_hierarchy(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_all_items_hierarchy(self) -> dict[str, list[dict[str, Any]]]:
         # This method remains largely the same, just ensure model_dump_json_safe is used.
         # Datetimes will be ISO UTC strings. Client JS needs to handle display in user's local time.
         hierarchy = {"root": []}
@@ -699,7 +699,7 @@ class ActionManagerEnhanced:
         return hierarchy
 
     # --- AI Specific Methods ---
-    async def ai_create_item_from_text(self, text: str) -> Optional[ActionItem]:
+    async def ai_create_item_from_text(self, text: str) -> ActionItem | None:
         if not self.isaa:
             self.app.logger.warning("ISAA module not available for AI item creation.")
             return None
@@ -707,10 +707,10 @@ class ActionManagerEnhanced:
         class ParsedItemFromText(BaseModel):
             item_type: Literal["task", "note"] = "task"
             title: str
-            description: Optional[str] = None
-            priority: Optional[int] = Field(default=3, ge=1, le=5)
-            due_date_str: Optional[str] = None  # e.g., "tomorrow", "next monday at 5pm", "2024-12-25 17:00"
-            frequency_str: Optional[str] = Field(default="one_time",
+            description: str | None = None
+            priority: int | None = Field(default=3, ge=1, le=5)
+            due_date_str: str | None = None  # e.g., "tomorrow", "next monday at 5pm", "2024-12-25 17:00"
+            frequency_str: str | None = Field(default="one_time",
                                                  description="e.g. 'daily', 'weekly', 'one_time', 'every friday'")
 
         user_tz = self.get_user_timezone()
@@ -766,7 +766,7 @@ class ActionManagerEnhanced:
             return None
 
     def _log_ai_action(self, action_type: Literal["ai_create_item", "ai_modify_item", "ical_import"],
-                       item_ids: List[str], previous_data_map: Optional[Dict[str, str]] = None):
+                       item_ids: list[str], previous_data_map: dict[str, str] | None = None):
         entry = UndoLogEntry(action_type=action_type, item_ids=item_ids, previous_data_json_map=previous_data_map)
         self.undo_log.append(entry)
         if len(self.undo_log) > 20: self.undo_log = self.undo_log[-20:]
@@ -828,7 +828,7 @@ class ActionManagerEnhanced:
         return False
 
     # --- iCalendar Methods ---
-    def _parse_ical_dt(self, dt_ical: Union[vDatetime, vDate], user_tz: pytz.BaseTzInfo) -> Optional[datetime]:
+    def _parse_ical_dt(self, dt_ical: vDatetime | vDate, user_tz: pytz.BaseTzInfo) -> datetime | None:
         """Converts icalendar vDatetime or vDate to UTC datetime."""
         if not dt_ical: return None
         dt_val = dt_ical.dt
@@ -841,7 +841,7 @@ class ActionManagerEnhanced:
             return user_tz.localize(datetime.combine(dt_val, datetime.min.time())).astimezone(pytz.utc)
         return None
 
-    def _map_ical_priority_to_app(self, ical_priority: Optional[int]) -> int:
+    def _map_ical_priority_to_app(self, ical_priority: int | None) -> int:
         if ical_priority is None: return 3  # Default
         if 1 <= ical_priority <= 4: return 1  # High
         if ical_priority == 5: return 3  # Medium
@@ -856,7 +856,7 @@ class ActionManagerEnhanced:
         if app_priority == 5: return 9  # Low
         return 0  # No priority
 
-    def _map_rrule_to_frequency(self, rrule_prop: Optional[vRecur]) -> Tuple[Frequency, Optional[str]]:
+    def _map_rrule_to_frequency(self, rrule_prop: vRecur | None) -> tuple[Frequency, str | None]:
         if not rrule_prop:
             return Frequency.ONE_TIME, None
 
@@ -873,8 +873,8 @@ class ActionManagerEnhanced:
         # but store the original RRULE string for reference or future advanced handling.
         return Frequency.ONE_TIME, original_rrule_str
 
-    def import_ical_events(self, ical_string: str) -> List[ActionItem]:
-        imported_items: List[ActionItem] = []
+    def import_ical_events(self, ical_string: str) -> list[ActionItem]:
+        imported_items: list[ActionItem] = []
         try:
             cal = iCalCalendar.from_ical(ical_string)
             user_tz = self.get_user_timezone()
@@ -1027,7 +1027,7 @@ class ActionManagerEnhanced:
             # Potentially re-raise or return empty list with error status
         return imported_items
 
-    def import_ical_from_url(self, url: str) -> List[ActionItem]:
+    def import_ical_from_url(self, url: str) -> list[ActionItem]:
         try:
             headers = {'User-Agent': 'POA_App/1.0 (+https://yourdomain.com/poa_app_info)'}  # Be a good internet citizen
             response = requests.get(url, timeout=10, headers=headers)
@@ -1040,7 +1040,7 @@ class ActionManagerEnhanced:
             self.app.logger.error(f"Error processing iCalendar from URL {url}: {e}")
             return []
 
-    def import_ical_from_file_content(self, file_content: bytes) -> List[ActionItem]:
+    def import_ical_from_file_content(self, file_content: bytes) -> list[ActionItem]:
         try:
             # Try to decode as UTF-8, but iCal can have other encodings.
             # Standard is UTF-8. `icalendar` lib handles encoding detection mostly.
@@ -1125,7 +1125,7 @@ class ActionManagerEnhanced:
 
 
 # --- Manager Cache ---
-_managers: Dict[str, ActionManagerEnhanced] = {}
+_managers: dict[str, ActionManagerEnhanced] = {}
 
 
 async def get_manager(app: App, request: RequestData) -> ActionManagerEnhanced:
@@ -1202,7 +1202,7 @@ async def api_update_item(app: App, request: RequestData, item_id: str, data=Nam
 # These should largely work, but review datetime display on frontend. Backend sends UTC ISO.
 
 @export(mod_name=Name, name="set-current-item", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_set_current_item(app: App, request: RequestData, item_id: Optional[str] = None, data=None):
+async def api_set_current_item(app: App, request: RequestData, item_id: str | None = None, data=None):
     # ... (implementation as before)
     if not item_id and data: body = data; item_id = body.get('item_id')
     if not item_id: return Result.default_user_error("item_id is required.", 400)
@@ -1253,7 +1253,7 @@ async def api_get_history(app: App, request: RequestData):
 
 
 @export(mod_name=Name, name="remove-item", api=True, request_as_kwarg=True, api_methods=['POST'])
-async def api_remove_item(app: App, request: RequestData, item_id: Optional[str] = None, data=None):
+async def api_remove_item(app: App, request: RequestData, item_id: str | None = None, data=None):
     # ... (implementation as before)
     if not item_id and data: body = data; item_id = body.get('item_id')
     if not item_id: return Result.default_user_error("item_id is required for removal.", 400)
@@ -1365,7 +1365,7 @@ async def api_export_ical(app: App, request: RequestData):
 #    5. Ensure the hierarchical display (`renderItemCard`) handles notes and tasks correctly (it mostly should).
 
 @get_app().tb(mod_name=Name, version=version, level=0, api=True, name="main_page", row=True, state=False)
-def POAPage(app_ref: Optional[App] = None):
+def POAPage(app_ref: App | None = None):
     app_instance = app_ref if app_ref else get_app(Name)
     # LOAD YOUR FULL HTML TEMPLATE STRING HERE
     # For example, if your HTML is in a file named "poa_template.html":

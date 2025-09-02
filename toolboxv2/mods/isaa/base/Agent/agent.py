@@ -1,32 +1,29 @@
-import copy
-import os
-import random
-import re
-import types
-from enum import Enum
 import asyncio
-import yaml
 import json
 import logging
+import os
 import pickle
+import random
+import re
 import threading
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable, Union, Type, Tuple
-from dataclasses import dataclass, asdict, field
-from pydantic import BaseModel, Field, create_model, ValidationError
-from concurrent.futures import ThreadPoolExecutor
-from functools import wraps
-import uuid
 import time
+import types
+import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from datetime import datetime, timedelta
+from functools import wraps
+from typing import Any
+
+import yaml
 
 # PocketFlow imports
-from pocketflow import AsyncNode, AsyncFlow, BatchNode, Flow, Node
+from pocketflow import AsyncFlow, AsyncNode
+from pydantic import BaseModel, ValidationError
 
-from tenacity import retry, stop_after_attempt, wait_exponential, before_sleep_log
-
-from toolboxv2.mods.isaa.base.Agent.chain import Chain, ConditionalChain, ParallelChain, CF, IS
-from toolboxv2.utils.extras.Style import print_prompt, Spinner
+from toolboxv2.mods.isaa.base.Agent.chain import CF, IS, Chain, ConditionalChain
+from toolboxv2.utils.extras.Style import Spinner, print_prompt
 
 # Framework imports with graceful degradation
 try:
@@ -95,8 +92,6 @@ TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
 
 import functools
-import time
-
 
 # Annahme: Die folgenden Klassen sind bereits definiert
 # from your_project import AsyncNode, ProgressEvent, NodeStatus
@@ -165,7 +160,7 @@ def with_progress_tracking(cls):
                 ))
                 raise
 
-        setattr(cls, 'run_async', wrapped_run_async)
+        cls.run_async = wrapped_run_async
 
     # --- Wrapper für prep_async ---
     original_prep = getattr(cls, 'prep_async', None)
@@ -219,7 +214,7 @@ def with_progress_tracking(cls):
                 raise
 
 
-        setattr(cls, 'prep_async', wrapped_prep_async)
+        cls.prep_async = wrapped_prep_async
 
     # --- Wrapper für exec_async ---
     original_exec = getattr(cls, 'exec_async', None)
@@ -259,7 +254,7 @@ def with_progress_tracking(cls):
             ))
             return result
 
-        setattr(cls, 'exec_async', wrapped_exec_async)
+        cls.exec_async = wrapped_exec_async
 
     # --- Wrapper für post_async ---
     original_post = getattr(cls, 'post_async', None)
@@ -327,7 +322,7 @@ def with_progress_tracking(cls):
                 ))
                 raise
 
-        setattr(cls, 'post_async', wrapped_post_async)
+        cls.post_async = wrapped_post_async
 
     # --- Wrapper für exec_fallback_async ---
     original_fallback = getattr(cls, 'exec_fallback_async', None)
@@ -354,7 +349,7 @@ def with_progress_tracking(cls):
 
             return await original_fallback(self, prep_res, exc)
 
-        setattr(cls, 'exec_fallback_async', wrapped_fallback_async)
+        cls.exec_fallback_async = wrapped_fallback_async
 
     return cls
 
@@ -736,7 +731,7 @@ Generate the adaptive execution plan:
                 id=str(uuid.uuid4()),
                 name=plan_data.get("plan_name", "Generated Plan"),
                 description=plan_data.get("description",
-                                          f"Plan for goals-based execution" if planning_mode == "goals_based" else f"Plan for: {base_query}"),
+                                          "Plan for goals-based execution" if planning_mode == "goals_based" else f"Plan for: {base_query}"),
                 tasks=tasks,
                 execution_strategy=plan_data.get("execution_strategy", "sequential"),
                 metadata={
@@ -755,7 +750,7 @@ Generate the adaptive execution plan:
             print(traceback.format_exc())
             return await self._create_simple_plan(prep_res)
 
-    def _build_tool_intelligence(self, prep_res: Dict) -> str:
+    def _build_tool_intelligence(self, prep_res: dict) -> str:
         """Build detailed tool intelligence for planning"""
 
         agent_instance = prep_res.get("agent_instance")
@@ -792,7 +787,7 @@ Generate the adaptive execution plan:
 
         return "\n".join(context_parts)
 
-    def _calculate_tool_relevance(self, query: str, capabilities: Dict) -> float:
+    def _calculate_tool_relevance(self, query: str, capabilities: dict) -> float:
         """Calculate how relevant a tool is to the current query"""
 
         query_words = set(query.lower().split())
@@ -884,7 +879,7 @@ class TaskExecutorNode(AsyncNode):
             "progress_tracker": self.progress_tracker ,
         }
 
-    def _find_ready_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
+    def _find_ready_tasks(self, plan: TaskPlan, all_tasks: dict[str, Task]) -> list[Task]:
         """Finde Tasks die zur Ausführung bereit sind"""
         ready = []
         for task in plan.tasks:
@@ -892,7 +887,7 @@ class TaskExecutorNode(AsyncNode):
                 ready.append(task)
         return ready
 
-    def _find_blocked_tasks(self, plan: TaskPlan, all_tasks: Dict[str, Task]) -> List[Task]:
+    def _find_blocked_tasks(self, plan: TaskPlan, all_tasks: dict[str, Task]) -> list[Task]:
         """Finde blockierte Tasks für Analyse"""
         blocked = []
         for task in plan.tasks:
@@ -900,7 +895,7 @@ class TaskExecutorNode(AsyncNode):
                 blocked.append(task)
         return blocked
 
-    def _dependencies_satisfied(self, task: Task, all_tasks: Dict[str, Task]) -> bool:
+    def _dependencies_satisfied(self, task: Task, all_tasks: dict[str, Task]) -> bool:
         """Prüfe ob alle Dependencies erfüllt sind"""
         for dep_id in task.dependencies:
             if dep_id in all_tasks:
@@ -915,11 +910,11 @@ class TaskExecutorNode(AsyncNode):
 
     async def _create_intelligent_execution_plan(
         self,
-        ready_tasks: List[Task],
-        blocked_tasks: List[Task],
+        ready_tasks: list[Task],
+        blocked_tasks: list[Task],
         plan: TaskPlan,
-        shared: Dict
-    ) -> Dict[str, Any]:
+        shared: dict
+    ) -> dict[str, Any]:
         """LLM-unterstützte intelligente Ausführungsplanung"""
 
         if not ready_tasks:
@@ -937,7 +932,7 @@ class TaskExecutorNode(AsyncNode):
         # LLM-basierte intelligente Planung
         return await self._llm_execution_planning(ready_tasks, blocked_tasks, plan, shared)
 
-    def _create_simple_execution_plan(self, ready_tasks: List[Task], plan: TaskPlan) -> Dict[str, Any]:
+    def _create_simple_execution_plan(self, ready_tasks: list[Task], plan: TaskPlan) -> dict[str, Any]:
         """Einfache heuristische Ausführungsplanung"""
 
         # Prioritäts-basierte Sortierung
@@ -972,11 +967,11 @@ class TaskExecutorNode(AsyncNode):
 
     async def _llm_execution_planning(
         self,
-        ready_tasks: List[Task],
-        blocked_tasks: List[Task],
+        ready_tasks: list[Task],
+        blocked_tasks: list[Task],
         plan: TaskPlan,
-        shared: Dict
-    ) -> Dict[str, Any]:
+        shared: dict
+    ) -> dict[str, Any]:
         """Erweiterte LLM-basierte Ausführungsplanung"""
 
         try:
@@ -1068,7 +1063,7 @@ confidence: 0.85
             eprint(f"LLM execution planning failed: {e}")
             return self._create_simple_execution_plan(ready_tasks, plan)
 
-    def _analyze_tasks_for_llm(self, ready_tasks: List[Task], blocked_tasks: List[Task]) -> Dict[str, str]:
+    def _analyze_tasks_for_llm(self, ready_tasks: list[Task], blocked_tasks: list[Task]) -> dict[str, str]:
         """Analysiere Tasks für LLM-Prompt"""
 
         ready_summary = []
@@ -1095,7 +1090,7 @@ confidence: 0.85
             "blocked_tasks_summary": "\n".join(blocked_summary) or "No blocked tasks"
         }
 
-    def _build_execution_context(self, shared: Dict) -> str:
+    def _build_execution_context(self, shared: dict) -> str:
         """Baue Kontext für LLM-Planung"""
         context_parts = []
 
@@ -1117,7 +1112,7 @@ confidence: 0.85
 
         return "\n".join(context_parts) if context_parts else "No previous execution history"
 
-    def _validate_execution_plan(self, plan: Dict, ready_tasks: List[Task]) -> Dict:
+    def _validate_execution_plan(self, plan: dict, ready_tasks: list[Task]) -> dict:
         """Validiere und korrigiere LLM-generierten Ausführungsplan"""
 
         # Standard-Werte setzen
@@ -1158,7 +1153,7 @@ confidence: 0.85
 
         return validated
 
-    def _estimate_duration(self, tasks: List[Task]) -> int:
+    def _estimate_duration(self, tasks: list[Task]) -> int:
         """Schätze Ausführungsdauer in Sekunden"""
         duration = 0
         for task in tasks:
@@ -1229,7 +1224,7 @@ confidence: 0.85
                 "results": []
             }
 
-    async def _execute_parallel_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+    async def _execute_parallel_plan(self, plan: dict, prep_res: dict) -> list[dict]:
         """Führe Plan mit parallelen Gruppen aus"""
         all_results = []
 
@@ -1257,7 +1252,7 @@ confidence: 0.85
 
         return all_results
 
-    async def _execute_sequential_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+    async def _execute_sequential_plan(self, plan: dict, prep_res: dict) -> list[dict]:
         """Führe Plan sequenziell aus"""
         all_results = []
 
@@ -1277,7 +1272,7 @@ confidence: 0.85
 
         return all_results
 
-    async def _execute_hybrid_plan(self, plan: Dict, prep_res: Dict) -> List[Dict]:
+    async def _execute_hybrid_plan(self, plan: dict, prep_res: dict) -> list[dict]:
         """Hybride Ausführung - Groups parallel, innerhalb je nach Mode"""
 
         # Führe Gruppen parallel aus (wenn möglich)
@@ -1314,19 +1309,19 @@ confidence: 0.85
 
         return all_results
 
-    def _get_tasks_by_ids(self, task_ids: List[str], prep_res: Dict) -> List[Task]:
+    def _get_tasks_by_ids(self, task_ids: list[str], prep_res: dict) -> list[Task]:
         """Hole Task-Objekte basierend auf IDs"""
         all_tasks = prep_res["all_tasks"]
         return [all_tasks[tid] for tid in task_ids if tid in all_tasks]
 
-    def _is_critical_task(self, task_id: str, prep_res: Dict) -> bool:
+    def _is_critical_task(self, task_id: str, prep_res: dict) -> bool:
         """Prüfe ob Task kritisch ist"""
         task = prep_res["all_tasks"].get(task_id)
         if not task:
             return False
         return getattr(task, 'critical', False) or task.priority == 1
 
-    async def _execute_parallel_batch(self, tasks: List[Task]) -> List[Dict]:
+    async def _execute_parallel_batch(self, tasks: list[Task]) -> list[dict]:
         """Führe Tasks parallel aus"""
         if not tasks:
             return []
@@ -1359,7 +1354,7 @@ confidence: 0.85
 
         return all_results
 
-    async def _execute_sequential_batch(self, tasks: List[Task]) -> List[Dict]:
+    async def _execute_sequential_batch(self, tasks: list[Task]) -> list[dict]:
         """Führe Tasks sequenziell aus"""
         results = []
 
@@ -1386,7 +1381,7 @@ confidence: 0.85
 
         return results
 
-    async def _execute_single_task(self, task: Task) -> Dict:
+    async def _execute_single_task(self, task: Task) -> dict:
         """Enhanced task execution with unified LLMToolNode usage"""
         if self.progress_tracker:
             await self.progress_tracker.emit_event(ProgressEvent(
@@ -1513,7 +1508,7 @@ confidence: 0.85
                 "retry_count": task.retry_count
             }
 
-    async def _resolve_dynamic_arguments(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def _resolve_dynamic_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Enhanced dynamic argument resolution with full variable system"""
         resolved = {}
 
@@ -1532,7 +1527,7 @@ confidence: 0.85
 
         return resolved
 
-    async def _execute_tool_task_with_validation(self, task: ToolTask, resolved_args: Dict[str, Any]) -> Any:
+    async def _execute_tool_task_with_validation(self, task: ToolTask, resolved_args: dict[str, Any]) -> Any:
         """Tool execution with improved error detection and validation"""
 
         if not task.tool_name:
@@ -2025,7 +2020,7 @@ Your decision:"""
 
         return "execution_complete"
 
-    def get_execution_statistics(self) -> Dict[str, Any]:
+    def get_execution_statistics(self) -> dict[str, Any]:
         """Erhalte detaillierte Ausführungsstatistiken"""
         if not self.execution_history:
             return {"message": "No execution history available"}
@@ -2135,7 +2130,7 @@ Your decision:"""
         # Be conservative - only replan if really necessary
         return genuine_failures and not alternative_available
 
-    async def _execute_tool_with_retries(self, tool_name: str, args: Dict, agent, max_retries: int = 2) -> Any:
+    async def _execute_tool_with_retries(self, tool_name: str, args: dict, agent, max_retries: int = 2) -> Any:
         """Execute tool with retry logic"""
 
         last_exception = None
@@ -2246,7 +2241,7 @@ Your decision:"""
 
         return "; ".join(summaries)
 
-    def _identify_failed_approaches(self) -> List[str]:
+    def _identify_failed_approaches(self) -> list[str]:
         """Identify approaches that have consistently failed"""
 
         failed_approaches = []
@@ -2264,7 +2259,7 @@ Your decision:"""
 
         return list(set(failed_approaches))
 
-    def _identify_success_patterns(self) -> List[str]:
+    def _identify_success_patterns(self) -> list[str]:
         """Identify patterns that have led to success"""
 
         success_patterns = []
@@ -2487,7 +2482,7 @@ class LLMToolNode(AsyncNode):
             }
         }
 
-    def _build_tool_aware_system_message(self, prep_res: Dict) -> str:
+    def _build_tool_aware_system_message(self, prep_res: dict) -> str:
         """Build a unified intelligent, tool-aware system message with context and relevance analysis."""
 
         # Base system message
@@ -2577,7 +2572,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
         # Combine everything into a final message
         return base_message + "\n"+ "\n".join(analysis_parts)
 
-    def _calculate_tool_relevance(self, query: str, capabilities: Dict) -> float:
+    def _calculate_tool_relevance(self, query: str, capabilities: dict) -> float:
         """Calculate how relevant a tool is to the current query"""
 
         query_words = set(query.lower().split())
@@ -2603,9 +2598,8 @@ You can call multiple tools in one response. Use | for multi-line strings contai
         return min(1.0, trigger_score)
 
     @staticmethod
-    def _extract_tool_calls_custom(text: str) -> List[Dict]:
+    def _extract_tool_calls_custom(text: str) -> list[dict]:
         """Extract tool calls from LLM response"""
-        import re
 
         tool_calls = []
 
@@ -2626,11 +2620,11 @@ You can call multiple tools in one response. Use | for multi-line strings contai
         return tool_calls
 
     @staticmethod
-    def _extract_tool_calls(text: str) -> List[Dict]:
+    def _extract_tool_calls(text: str) -> list[dict]:
         """Extract tool calls from LLM response using YAML format"""
         import re
+
         import yaml
-        from typing import List, Dict
 
         tool_calls = []
 
@@ -2672,7 +2666,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         return tool_calls
 
-    def _select_optimal_model(self, task_description: str, prep_res: Dict) -> str:
+    def _select_optimal_model(self, task_description: str, prep_res: dict) -> str:
         """Select optimal model based on task complexity and available resources"""
         complexity_score = self._estimate_task_complexity(task_description, prep_res)
         if complexity_score > 0.7:
@@ -2680,7 +2674,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
         else:
             return prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku")
 
-    def _estimate_task_complexity(self, task_description: str, prep_res: Dict) -> float:
+    def _estimate_task_complexity(self, task_description: str, prep_res: dict) -> float:
         """Estimate task complexity based on description, length, and available tools"""
         # Simple heuristic: length + keyword matching + tool availability
         description_length_score = min(len(task_description) / 500, 1.0)  # cap at 1.0
@@ -2692,7 +2686,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
         complexity_score = (0.5 * description_length_score) + (0.3 * keyword_score) + (0.2 * tool_score)
         return round(complexity_score, 2)
 
-    async def _fallback_response(self, prep_res: Dict) -> Dict:
+    async def _fallback_response(self, prep_res: dict) -> dict:
         """Fallback response if LiteLLM is not available"""
         wprint("LiteLLM not available — using fallback response.")
         return {
@@ -2706,7 +2700,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
             "model_used": None
         }
 
-    async def _execute_tool_calls(self, tool_calls: List[Dict], prep_res: Dict) -> List[Dict]:
+    async def _execute_tool_calls(self, tool_calls: list[dict], prep_res: dict) -> list[dict]:
         """Execute tool calls via agent"""
         agent_instance = prep_res.get("agent_instance")
         variable_manager = prep_res.get("variable_manager")
@@ -2827,7 +2821,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         return results
 
-    def _format_tool_results(self, results: List[Dict]) -> str:
+    def _format_tool_results(self, results: list[dict]) -> str:
         """Format tool results for LLM"""
         formatted = []
 
@@ -2839,7 +2833,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         return "\n".join(formatted)
 
-    def _update_variables_with_results(self, results: List[Dict], variable_manager):
+    def _update_variables_with_results(self, results: list[dict], variable_manager):
         """Update variable manager with tool results"""
         if not variable_manager:
             return
@@ -2857,7 +2851,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 var_key = f"tool_result_{tool_name}_{i}"
                 variable_manager.set(var_key, result_data)
 
-    async def _build_context_aware_prompt(self, prep_res: Dict) -> str:
+    async def _build_context_aware_prompt(self, prep_res: dict) -> str:
         """Build context-aware prompt mit UnifiedContextManager Integration"""
         variable_manager = prep_res.get("variable_manager")
         agent_instance = prep_res.get("agent_instance")
@@ -2891,7 +2885,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                     active_tasks = execution_state.get('active_tasks', [])
                     recent_completions = execution_state.get('recent_completions', [])
 
-                    unified_context_parts.append(f"\n## Current System State")
+                    unified_context_parts.append("\n## Current System State")
                     unified_context_parts.append(f"Status: {system_status}")
                     if active_tasks:
                         unified_context_parts.append(f"Active Tasks: {len(active_tasks)}")
@@ -2902,7 +2896,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 variables_context = unified_context.get("variables", {})
                 recent_results = variables_context.get("recent_results", [])
                 if recent_results:
-                    unified_context_parts.append(f"\n## Available Results")
+                    unified_context_parts.append("\n## Available Results")
                     for result in recent_results[:3]:  # Top 3 results
                         task_id = result.get("task_id", "unknown")
                         preview = result.get("preview", "")[:100] + "..."
@@ -2912,7 +2906,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 # World model facts from unified context
                 relevant_facts = unified_context.get("relevant_facts", [])
                 if relevant_facts:
-                    unified_context_parts.append(f"\n## Relevant Known Facts")
+                    unified_context_parts.append("\n## Relevant Known Facts")
                     for key, value in relevant_facts[:3]:  # Top 3 facts
                         fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
                         unified_context_parts.append(f"- {key}: {fact_preview}")
@@ -3010,7 +3004,7 @@ class StateSyncNode(AsyncNode):
 
         return sync_result
 
-    def _extract_facts(self, text: str) -> Dict[str, Any]:
+    def _extract_facts(self, text: str) -> dict[str, Any]:
         """Extract learnable facts from text"""
         facts = {}
         lines = text.split('\n')
@@ -3265,7 +3259,7 @@ class ContextAggregatorNode(AsyncNode):
             eprint(f"UnifiedContextManager aggregation failed: {e}")
             return self._create_fallback_context(prep_res)
 
-    def _extract_successful_results(self, unified_context: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_successful_results(self, unified_context: dict[str, Any]) -> dict[str, Any]:
         """Extract successful results from unified context"""
         successful_results = {}
 
@@ -3309,7 +3303,7 @@ class ContextAggregatorNode(AsyncNode):
             eprint(f"Error extracting successful results: {e}")
             return {}
 
-    def _extract_failed_attempts(self, tasks: Dict) -> Dict[str, Any]:
+    def _extract_failed_attempts(self, tasks: dict) -> dict[str, Any]:
         """Extract failed attempts from tasks (existing functionality)"""
         failed_attempts = {}
 
@@ -3325,7 +3319,7 @@ class ContextAggregatorNode(AsyncNode):
         except:
             return {}
 
-    def _extract_key_discoveries(self, unified_context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_key_discoveries(self, unified_context: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract key discoveries from unified context"""
         discoveries = []
 
@@ -3357,7 +3351,7 @@ class ContextAggregatorNode(AsyncNode):
             eprint(f"Error extracting discoveries: {e}")
             return []
 
-    def _extract_adaptation_summary(self, prep_res: Dict) -> str:
+    def _extract_adaptation_summary(self, prep_res: dict) -> str:
         """Extract adaptation summary"""
         try:
             current_plan = prep_res.get("current_plan")
@@ -3369,7 +3363,7 @@ class ContextAggregatorNode(AsyncNode):
         except:
             return ""
 
-    def _calculate_confidence_scores(self, unified_context: Dict[str, Any]) -> Dict[str, float]:
+    def _calculate_confidence_scores(self, unified_context: dict[str, Any]) -> dict[str, float]:
         """Calculate confidence scores based on unified context"""
         try:
             scores = {"overall": 0.5}
@@ -3394,7 +3388,7 @@ class ContextAggregatorNode(AsyncNode):
         except:
             return {"overall": 0.3}
 
-    def _create_fallback_context(self, prep_res: Dict) -> Dict[str, Any]:
+    def _create_fallback_context(self, prep_res: dict) -> dict[str, Any]:
         """Create fallback context when UnifiedContextManager is unavailable"""
         return {
             "original_query": prep_res.get("original_query", ""),
@@ -3489,26 +3483,26 @@ Erstelle eine finale Antwort:"""
             eprint(f"LLM synthesis failed: {e}")
             return await self._fallback_synthesis(prep_res)
 
-    def _format_successful_results(self, results: Dict) -> str:
+    def _format_successful_results(self, results: dict) -> str:
         formatted = []
         for task_id, result_info in results.items():
             formatted.append(f"- {result_info['task_description']}: {str(result_info['result'])[:20000]}...")
         return "\n".join(formatted) if formatted else "No successful results to report."
 
-    def _format_key_discoveries(self, discoveries: List) -> str:
+    def _format_key_discoveries(self, discoveries: list) -> str:
         formatted = []
         for discovery in discoveries:
             confidence = discovery.get('confidence', 0.0)
             formatted.append(f"- {discovery['discovery']} (Confidence: {confidence:.2f})")
         return "\n".join(formatted) if formatted else "No key discoveries."
 
-    def _format_failed_attempts(self, failed: Dict) -> str:
+    def _format_failed_attempts(self, failed: dict) -> str:
         if not failed:
             return "No significant failures."
         formatted = [f"- {info['description']}: {info['error']}" for info in failed.values()]
         return "\n".join(formatted)
 
-    async def _fallback_synthesis(self, prep_res) -> Dict:
+    async def _fallback_synthesis(self, prep_res) -> dict:
         """Fallback synthesis ohne LLM"""
         context = prep_res["aggregated_context"]
 
@@ -3537,7 +3531,7 @@ Erstelle eine finale Antwort:"""
             "confidence": 0.3
         }
 
-    def _estimate_synthesis_confidence(self, context: Dict) -> float:
+    def _estimate_synthesis_confidence(self, context: dict) -> float:
         """Schätze Confidence der Synthese"""
         confidence = 0.5  # Base confidence
 
@@ -3623,7 +3617,7 @@ class ResponseQualityNode(AsyncNode):
             "agent_instance": shared.get("agent_instance"),
         }
 
-    def _get_format_config(self, shared) -> Optional[FormatConfig]:
+    def _get_format_config(self, shared) -> FormatConfig | None:
         """Extrahiere Format-Konfiguration"""
         persona = shared.get("persona_config")
         if persona and hasattr(persona, 'format_config'):
@@ -3678,7 +3672,7 @@ class ResponseQualityNode(AsyncNode):
             )
         }
 
-    async def _evaluate_format_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+    async def _evaluate_format_adherence(self, response: str, format_config: FormatConfig | None) -> float:
         """Bewerte Format-Einhaltung"""
         if not format_config:
             return 0.8  # Neutral wenn kein Format vorgegeben
@@ -3733,7 +3727,7 @@ class ResponseQualityNode(AsyncNode):
 
         return max(0.0, min(1.0, score))
 
-    def _evaluate_length_adherence(self, response: str, format_config: Optional[FormatConfig]) -> float:
+    def _evaluate_length_adherence(self, response: str, format_config: FormatConfig | None) -> float:
         """Bewerte Längen-Einhaltung"""
         if not format_config:
             return 0.8
@@ -3756,8 +3750,8 @@ class ResponseQualityNode(AsyncNode):
         self,
         response: str,
         query: str,
-        format_config: Optional[FormatConfig],
-        prep_res: Dict
+        format_config: FormatConfig | None,
+        prep_res: dict
     ) -> float:
         """LLM-basierte Format- und Qualitätsbewertung"""
         if not format_config:
@@ -3805,9 +3799,9 @@ Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
         self,
         score: float,
         response: str,
-        format_config: Optional[FormatConfig],
-        quality_details: Dict
-    ) -> List[str]:
+        format_config: FormatConfig | None,
+        quality_details: dict
+    ) -> list[str]:
         """Generiere Format-spezifische Verbesserungsvorschläge"""
         suggestions = []
 
@@ -3847,7 +3841,7 @@ Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
 
         return suggestions
 
-    async def _standard_llm_quality_check(self, response: str, query: str, prep_res: Dict) -> float:
+    async def _standard_llm_quality_check(self, response: str, query: str, prep_res: dict) -> float:
         """Standard LLM-Qualitätsprüfung ohne Format-Fokus"""
         # Bestehende Implementierung beibehalten
         return await self._llm_quality_check(response, query, prep_res)
@@ -3874,7 +3868,7 @@ Antworte nur mit einer Zahl zwischen 0.0 und 1.0:"""
 
         return max(0.0, min(1.0, score))
 
-    async def _llm_quality_check(self, response: str, query: str, prep_res: Dict) -> float:
+    async def _llm_quality_check(self, response: str, query: str, prep_res: dict) -> float:
         """LLM-basierte Qualitätsprüfung"""
         try:
             prompt = f"""
@@ -3960,7 +3954,7 @@ class ResponseFinalProcessorNode(AsyncNode):
             "status": "completed"
         }
 
-    async def _apply_persona_style(self, response: str, prep_res: Dict) -> str:
+    async def _apply_persona_style(self, response: str, prep_res: dict) -> str:
         """Optimized persona styling mit Konfiguration"""
         persona = prep_res["persona"]
 
@@ -4532,7 +4526,7 @@ Create the outline now:"""
             eprint(f"Failed to create initial outline: {e}")
             return False
 
-    def _parse_outline_from_response(self, response: str) -> Dict[str, Any]:
+    def _parse_outline_from_response(self, response: str) -> dict[str, Any]:
         """Parse structured outline from LLM response"""
         import re
 
@@ -4687,7 +4681,7 @@ Create the outline now:"""
                                      }
                                  ] + keep_recent
 
-    def _create_context_summary(self, entries: List[Dict], summary_type: str) -> str:
+    def _create_context_summary(self, entries: list[dict], summary_type: str) -> str:
         """Create intelligent context summary"""
         if not entries:
             return "No context to summarize"
@@ -4996,7 +4990,7 @@ must validate <immediate_context> output!
 
         return prompt
 
-    def _format_unified_context_for_reasoning(self, unified_context: Dict[str, Any]) -> str:
+    def _format_unified_context_for_reasoning(self, unified_context: dict[str, Any]) -> str:
         """Format unified context für reasoning prompt"""
         try:
             context_parts = []
@@ -5040,7 +5034,7 @@ must validate <immediate_context> output!
         except Exception as e:
             return f"Error formatting unified context: {str(e)}"
 
-    def _build_recent_results_from_unified_context(self, unified_context: Dict[str, Any]) -> str:
+    def _build_recent_results_from_unified_context(self, unified_context: dict[str, Any]) -> str:
         """Build recent results context from unified context"""
         try:
             variables = unified_context.get('variables', {})
@@ -5049,7 +5043,7 @@ must validate <immediate_context> output!
             if not recent_results:
                 return "**No recent results available from unified context**"
 
-            result_context = f"""**🔍 RECENT RESULTS FROM UNIFIED CONTEXT:**"""
+            result_context = """**🔍 RECENT RESULTS FROM UNIFIED CONTEXT:**"""
 
             for i, result in enumerate(recent_results[:3], 1):  # Top 3 results
                 task_id = result.get('task_id', f'result_{i}')
@@ -5059,9 +5053,9 @@ must validate <immediate_context> output!
 
                 result_context += f"\n{status_icon} {task_id}: {preview}"
 
-            result_context += f"\n\n**Quick Access Keys Available:**"
-            result_context += f"\n- Use read_from_variables(scope='results', key='task_id.data') for specific results"
-            result_context += f"\n- Check delegation.latest for most recent delegation results"
+            result_context += "\n\n**Quick Access Keys Available:**"
+            result_context += "\n- Use read_from_variables(scope='results', key='task_id.data') for specific results"
+            result_context += "\n- Check delegation.latest for most recent delegation results"
 
             return result_context
 
@@ -5083,7 +5077,7 @@ You are repeating similar actions. MUST change approach:
     """
         return ""
 
-    def _get_current_stack_task(self) -> Dict[str, Any]:
+    def _get_current_stack_task(self) -> dict[str, Any]:
         """Get current pending task from stack for direct visibility"""
         if not self.internal_task_stack:
             return {}
@@ -5102,7 +5096,7 @@ You are repeating similar actions. MUST change approach:
 
         return {}
 
-    def _analyze_current_task(self, current_task: Dict[str, Any]) -> str:
+    def _analyze_current_task(self, current_task: dict[str, Any]) -> str:
         """Analyze current task and provide guidance"""
         if not current_task:
             return "❌ NO CURRENT TASK - Add tasks from your outline immediately!"
@@ -5445,7 +5439,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
             self.performance_metrics["loop_times"] = self.performance_metrics["loop_times"][-10:]
 
     def _add_context_to_reasoning(self, context_addition: str, meta_tool_name: str,
-                                  execution_details: Dict = None) -> None:
+                                  execution_details: dict = None) -> None:
         """Add context addition to reasoning context for immediate visibility in next LLM prompt"""
         if not context_addition:
             return
@@ -5486,9 +5480,8 @@ You MUST use the specified method and achieve the expected outcome before advanc
                 "loop": self.current_loop_count
             }
 
-    async def _parse_and_execute_meta_tools(self, llm_response: str, prep_res: Dict) -> Dict[str, Any]:
+    async def _parse_and_execute_meta_tools(self, llm_response: str, prep_res: dict) -> dict[str, Any]:
         """Enhanced meta-tool parsing with comprehensive progress tracking"""
-        import re
 
         result = {
             "final_result": None,
@@ -5881,7 +5874,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
         return result
 
-    async def _execute_enhanced_internal_reasoning(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_enhanced_internal_reasoning(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Enhanced internal reasoning with outline step tracking"""
         # Standard internal reasoning execution
         result = await self._execute_internal_reasoning(args, prep_res)
@@ -5904,7 +5897,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
         return result
 
-    async def _execute_enhanced_task_stack(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_enhanced_task_stack(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Enhanced task stack management with outline step tracking"""
         # Get outline step reference
         outline_step_ref = args.get("outline_step_ref", f"step_{self.current_outline_step}")
@@ -5918,7 +5911,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
         return result
 
-    async def _execute_enhanced_delegate_llm_tool(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_enhanced_delegate_llm_tool(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Enhanced delegation with immediate result visibility and guaranteed storage"""
         task_description = args.get("task_description", "")
         tools_list = args.get("tools_list", [])
@@ -6035,7 +6028,7 @@ DELEGATION END
 
             return {"context_addition": error_msg}
 
-    async def _execute_enhanced_create_plan(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_enhanced_create_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Enhanced plan creation with outline step completion tracking"""
         # Check if this completes the outline step
         outline_step_completion = args.get("outline_step_completion", False)
@@ -6050,7 +6043,7 @@ DELEGATION END
 
         return result
 
-    async def _execute_advance_outline_step(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_advance_outline_step(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute outline step advancement"""
         step_completed = args.get("step_completed", False)
         completion_evidence = args.get("completion_evidence", "")
@@ -6101,7 +6094,7 @@ Advanced to Step {self.current_outline_step + 1}/{len(steps)}"""
 
         return {"context_addition": context_addition}
 
-    async def _execute_read_from_variables(self, args: Dict) -> Dict[str, Any]:
+    async def _execute_read_from_variables(self, args: dict) -> dict[str, Any]:
         """Enhanced variable reading with intelligent discovery and loop prevention"""
         if not self.variable_manager:
             return {"context_addition": "❌ Variable system not available"}
@@ -6205,11 +6198,11 @@ Access: Successfully retrieved from variable system"""
             discovery_msg = f"❌ Variable not found: {scope}.{key}\n\n✨ LATEST DELEGATION RESULTS AVAILABLE:"
             discovery_msg += f"\nTask: {latest.get('task_description', 'Unknown')[:100]}"
             discovery_msg += f"\nResults: {len(latest.get('results', {}))} items available"
-            discovery_msg += f"\nAccess with: delegation.latest"
+            discovery_msg += "\nAccess with: delegation.latest"
 
             # Show actual keys available
             if latest.get('results'):
-                discovery_msg += f"\n\n🔍 Available result keys:"
+                discovery_msg += "\n\n🔍 Available result keys:"
                 for result_id in latest['results'].keys():
                     discovery_msg += f"\n• results.{result_id}.data"
 
@@ -6230,7 +6223,7 @@ Access: Successfully retrieved from variable system"""
         return f"❌ Variable not found: {scope}.{key}\n\n📋 Available scopes: {', '.join(available_vars.keys())}"
 
 
-    async def _execute_write_to_variables(self, args: Dict) -> Dict[str, Any]:
+    async def _execute_write_to_variables(self, args: dict) -> dict[str, Any]:
         """Enhanced variable writing with automatic result storage"""
         if not self.variable_manager:
             return {"context_addition": "❌ Variable system not available"}
@@ -6285,7 +6278,7 @@ Access: Successfully retrieved from variable system"""
         except Exception as e:
             return {"context_addition": f"❌ Failed to write to variables: {str(e)}"}
 
-    def _auto_store_delegation_results(self, delegation_result: Dict, task_description: str) -> str:
+    def _auto_store_delegation_results(self, delegation_result: dict, task_description: str) -> str:
         """Automatically store delegation results with smart naming and comprehensive indexing"""
         if not self.variable_manager:
             return "\n❌ Variable system not available for auto-storage"
@@ -6367,7 +6360,7 @@ Access: Successfully retrieved from variable system"""
         except Exception as e:
             return f"\n❌ Auto-storage failed: {str(e)}"
 
-    def _generate_smart_key(self, task_description: str, result_id: str, result_data: Dict) -> str:
+    def _generate_smart_key(self, task_description: str, result_id: str, result_data: dict) -> str:
         """Generate intelligent storage keys based on task content and result type"""
         task_lower = task_description.lower()
 
@@ -6401,7 +6394,7 @@ Access: Successfully retrieved from variable system"""
         # Create unique key with loop and result ID
         return f"{prefix}.loop_{self.current_loop_count}_{result_id}"
 
-    async def _mark_step_completion(self, prep_res: Dict, method: str, evidence: str):
+    async def _mark_step_completion(self, prep_res: dict, method: str, evidence: str):
         """Mark current outline step as completed"""
         if not self.outline or not self.outline.get("steps"):
             return
@@ -6425,7 +6418,7 @@ Access: Successfully retrieved from variable system"""
                 }
                 self.variable_manager.set(f"reasoning.step_completions.{self.current_outline_step}", completion_data)
 
-    async def _store_successful_completion(self, prep_res: Dict, final_answer: str):
+    async def _store_successful_completion(self, prep_res: dict, final_answer: str):
         """Store successful completion data for future learning"""
         if not self.variable_manager:
             return
@@ -6469,7 +6462,7 @@ Access: Successfully retrieved from variable system"""
         # Store updated stats
         self.variable_manager.set("reasoning.performance.statistics", current_stats)
 
-    async def _create_outline_completion_response(self, prep_res: Dict) -> str:
+    async def _create_outline_completion_response(self, prep_res: dict) -> str:
         """Create response when outline is completed"""
         if not self.outline:
             return "Outline completion response requested but no outline available"
@@ -6505,7 +6498,7 @@ Access: Successfully retrieved from variable system"""
 
         return "\n".join(response_parts)
 
-    async def _create_enhanced_timeout_response(self, query: str, prep_res: Dict) -> str:
+    async def _create_enhanced_timeout_response(self, query: str, prep_res: dict) -> str:
         """Create enhanced timeout response with comprehensive progress summary"""
         response_parts = []
         response_parts.append(
@@ -6550,7 +6543,7 @@ Access: Successfully retrieved from variable system"""
 
         return "\n".join(response_parts)
 
-    async def _finalize_reasoning_session(self, prep_res: Dict, final_result: str):
+    async def _finalize_reasoning_session(self, prep_res: dict, final_result: str):
         """Finalize reasoning session with comprehensive data storage"""
         if not self.variable_manager:
             return
@@ -6602,7 +6595,7 @@ Access: Successfully retrieved from variable system"""
         else:
             return "general"
 
-    async def _handle_reasoning_error(self, error: Exception, prep_res: Dict, progress_tracker):
+    async def _handle_reasoning_error(self, error: Exception, prep_res: dict, progress_tracker):
         """Enhanced error handling with auto-recovery"""
         eprint(f"Reasoning loop {self.current_loop_count} failed: {error}")
 
@@ -6685,7 +6678,7 @@ Access: Successfully retrieved from variable system"""
 
         return "reasoner_complete"
 
-    def _update_global_performance_stats(self, exec_res: Dict):
+    def _update_global_performance_stats(self, exec_res: dict):
         """Update global performance statistics in variables"""
         if not self.variable_manager:
             return
@@ -6708,7 +6701,7 @@ Access: Successfully retrieved from variable system"""
 
         self.variable_manager.set("reasoning.global_performance", stats)
 
-    def _calculate_confidence(self, exec_res: Dict) -> float:
+    def _calculate_confidence(self, exec_res: dict) -> float:
         """Calculate confidence score based on execution results"""
         base_confidence = 0.5
 
@@ -6737,7 +6730,7 @@ Access: Successfully retrieved from variable system"""
 
         return min(1.0, max(0.0, base_confidence))
 
-    def _calculate_performance_score(self, exec_res: Dict) -> float:
+    def _calculate_performance_score(self, exec_res: dict) -> float:
         """Calculate overall performance score"""
         score = 0.5
 
@@ -6809,7 +6802,7 @@ Access: Successfully retrieved from variable system"""
         reasoning_entries = [entry for entry in self.reasoning_context if entry.get("type") == "reasoning"]
         return len(reasoning_entries)
 
-    def _assess_delegation_complexity(self, args: Dict) -> str:
+    def _assess_delegation_complexity(self, args: dict) -> str:
         """Assess complexity of delegation task"""
         task_desc = args.get("task_description", "")
         tools_count = len(args.get("tools_list", []))
@@ -6857,7 +6850,7 @@ Access: Successfully retrieved from variable system"""
 
         return f"Completed {len(reasoning_entries)} reasoning steps with {task_entries} tasks tracked"
 
-    def _calculate_batch_performance(self, matches: list) -> Dict[str, Any]:
+    def _calculate_batch_performance(self, matches: list) -> dict[str, Any]:
         """Calculate performance metrics for batch execution"""
         tool_types = [match[0] for match in matches]
         return {
@@ -6877,7 +6870,7 @@ Access: Successfully retrieved from variable system"""
         else:
             return "extensive"
 
-    def _get_error_context(self, error: Exception) -> Dict[str, Any]:
+    def _get_error_context(self, error: Exception) -> dict[str, Any]:
         """Get contextual information about an error"""
         return {
             "error_class": type(error).__name__,
@@ -6886,7 +6879,7 @@ Access: Successfully retrieved from variable system"""
             "stack_state": "populated" if self.internal_task_stack else "empty"
         }
 
-    async def _execute_internal_reasoning(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_internal_reasoning(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute internal reasoning meta-tool"""
         thought = args.get("thought", "")
         thought_number = args.get("thought_number", 1)
@@ -6926,7 +6919,7 @@ Next Thought Needed: {next_thought_needed}"""
 
         return {"context_addition": context_addition}
 
-    async def _execute_manage_task_stack(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_manage_task_stack(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute task stack management meta-tool"""
         action = args.get("action", "get_current").lower()
         task_description = args.get("task_description", "")
@@ -6964,7 +6957,7 @@ Next Thought Needed: {next_thought_needed}"""
                     status = task["status"]
                     desc = task["description"]
                     stack_summary.append(f"{i + 1}. [{status.upper()}] {desc}")
-                context_addition = f"Current task stack:\n" + "\n".join(stack_summary)
+                context_addition = "Current task stack:\n" + "\n".join(stack_summary)
             else:
                 context_addition = "Task stack is empty"
 
@@ -6973,7 +6966,7 @@ Next Thought Needed: {next_thought_needed}"""
 
         return {"context_addition": context_addition}
 
-    async def _execute_delegate_llm_tool(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_delegate_llm_tool(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute delegation to LLMToolNode"""
         task_description = args.get("task_description", "")
         tools_list = args.get("tools_list", [])
@@ -7019,7 +7012,7 @@ Result: {final_response}"""
             context_addition = f"Delegation failed for task '{task_description}': {str(e)}"
             return {"context_addition": context_addition}
 
-    async def _execute_create_plan(self, args: Dict, prep_res: Dict) -> Dict[str, Any]:
+    async def _execute_create_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute plan creation and execution"""
         goals = args.get("goals", [])
 
@@ -7061,9 +7054,7 @@ Result: {final_response}"""
                 result = await executor_node.run_async(executor_shared)
 
                 # Check completion status
-                if result == "plan_completed":
-                    break
-                elif result == "execution_error":
+                if result == "plan_completed" or result == "execution_error":
                     break
                 elif result in ["continue_execution", "waiting"]:
                     continue
@@ -7132,7 +7123,7 @@ Results Summary:
         """Create an error response"""
         return f"I encountered an error while processing your request: {error}. I was working on: {query}"
 
-    async def _fallback_direct_response(self, prep_res: Dict) -> Dict[str, Any]:
+    async def _fallback_direct_response(self, prep_res: dict) -> dict[str, Any]:
         """Fallback when LLM is not available"""
         query = prep_res["original_query"]
         fallback_response = f"I received your request: {query}. However, I'm currently unable to process complex requests due to limited capabilities."
@@ -7148,7 +7139,7 @@ Results Summary:
 class VariableManager:
     """Unified variable management system with advanced features"""
 
-    def __init__(self, world_model: Dict, shared_state: Dict = None):
+    def __init__(self, world_model: dict, shared_state: dict = None):
         self.world_model = world_model
         self.shared_state = shared_state or {}
         self.scopes = {
@@ -7161,17 +7152,17 @@ class VariableManager:
         }
         self._cache = {}
 
-    def register_scope(self, name: str, data: Dict):
+    def register_scope(self, name: str, data: dict):
         """Register a new variable scope"""
         self.scopes[name] = data
         self._cache.clear()
 
-    def set_results_store(self, results_store: Dict):
+    def set_results_store(self, results_store: dict):
         """Set the results store for task result references"""
         self.scopes['results'] = results_store
         self._cache.clear()
 
-    def set_tasks_store(self, tasks_store: Dict):
+    def set_tasks_store(self, tasks_store: dict):
         """Set tasks store for task metadata access"""
         self.scopes['tasks'] = tasks_store
         self._cache.clear()
@@ -7309,7 +7300,7 @@ class VariableManager:
 
         self._cache.clear()
 
-    def format_text(self, text: str, context: Dict = None) -> str:
+    def format_text(self, text: str, context: dict = None) -> str:
         """Enhanced text formatting with multiple syntaxes"""
         if not text or not isinstance(text, str):
             return str(text) if text is not None else ""
@@ -7391,7 +7382,7 @@ class VariableManager:
         else:
             return str(value)
 
-    def validate_references(self, text: str) -> Dict[str, bool]:
+    def validate_references(self, text: str) -> dict[str, bool]:
         """Validate all variable references in text"""
         import re
 
@@ -7415,7 +7406,7 @@ class VariableManager:
 
         return references
 
-    def get_scope_info(self) -> Dict[str, Any]:
+    def get_scope_info(self) -> dict[str, Any]:
         """Get information about all available scopes"""
         info = {}
         for scope_name, scope_data in self.scopes.items():
@@ -7432,7 +7423,7 @@ class VariableManager:
                 }
         return info
 
-    def _validate_task_references(self, task: Task) -> Dict[str, Any]:
+    def _validate_task_references(self, task: Task) -> dict[str, Any]:
         """Validate all variable references in a task"""
         validation_results = {
             'valid': True,
@@ -7459,7 +7450,7 @@ class VariableManager:
 
         return validation_results
 
-    def get_variable_suggestions(self, query: str) -> List[str]:
+    def get_variable_suggestions(self, query: str) -> list[str]:
         """Get variable suggestions based on query content"""
 
         query_lower = query.lower()
@@ -7484,7 +7475,7 @@ class VariableManager:
 
         return list(set(suggestions))[:10]
 
-    def _document_structure(self, data: Any, path_prefix: str, docs: Dict[str, Dict]):
+    def _document_structure(self, data: Any, path_prefix: str, docs: dict[str, dict]):
         """A recursive helper to document nested dictionaries and lists."""
         if isinstance(data, dict):
             for key, value in data.items():
@@ -7535,7 +7526,7 @@ class VariableManager:
                 if isinstance(item, (dict, list)):
                     self._document_structure(item, current_path, docs)
 
-    def get_available_variables(self) -> Dict[str, Dict]:
+    def get_available_variables(self) -> dict[str, dict]:
         """
         Recursively documents all available variables from world_model and scopes
         to provide a comprehensive overview for an LLM.
@@ -7623,10 +7614,10 @@ class UnifiedContextManager:
 
     def __init__(self, agent):
         self.agent = agent
-        self.session_managers: Dict[str, Any] = {}  # ChatSession objects
+        self.session_managers: dict[str, Any] = {}  # ChatSession objects
         self.variable_manager: VariableManager = None
         self.compression_threshold = 15  # Messages before compression
-        self._context_cache: Dict[str, Tuple[float, Any]] = {}  # (timestamp, data)
+        self._context_cache: dict[str, tuple[float, Any]] = {}  # (timestamp, data)
         self.cache_ttl = 300  # 5 minutes
         self._memory_instance = None
 
@@ -7674,7 +7665,7 @@ class UnifiedContextManager:
 
         return self.session_managers[session_id]
 
-    async def add_interaction(self, session_id: str, role: str, content: str, metadata: Dict = None) -> None:
+    async def add_interaction(self, session_id: str, role: str, content: str, metadata: dict = None) -> None:
         """Einheitlicher Weg um Interaktionen in ChatSession zu speichern"""
         session = await self.initialize_session(session_id)
 
@@ -7708,7 +7699,7 @@ class UnifiedContextManager:
         # Clear context cache for this session
         self._invalidate_cache(session_id)
 
-    async def get_contextual_history(self, session_id: str, query: str = "", max_entries: int = 10) -> List[Dict]:
+    async def get_contextual_history(self, session_id: str, query: str = "", max_entries: int = 10) -> list[dict]:
         """Intelligente Auswahl relevanter Geschichte aus ChatSession"""
         session = self.session_managers.get(session_id)
         if not session:
@@ -7747,7 +7738,7 @@ class UnifiedContextManager:
 
         return []
 
-    async def build_unified_context(self, session_id: str, query: str = None, context_type: str = "full") -> Dict[
+    async def build_unified_context(self, session_id: str, query: str = None, context_type: str = "full") -> dict[
         str, Any]:
         """ZENTRALE Methode für vollständigen Context-Aufbau aus allen Quellen"""
 
@@ -7811,7 +7802,7 @@ class UnifiedContextManager:
         self._cache_context(cache_key, context)
         return context
 
-    def get_formatted_context_for_llm(self, unified_context: Dict[str, Any]) -> str:
+    def get_formatted_context_for_llm(self, unified_context: dict[str, Any]) -> str:
         """Formatiere unified context für LLM consumption"""
         try:
             parts = []
@@ -7843,7 +7834,7 @@ class UnifiedContextManager:
             # Available Data
             variables = unified_context.get('variables', {})
             if variables and variables.get('recent_results'):
-                parts.append(f"\n## Available Results")
+                parts.append("\n## Available Results")
                 recent_results = variables['recent_results']
                 for result in recent_results[:3]:  # Top 3 results
                     parts.append(f"- {result.get('task_id', 'unknown')}: {str(result.get('preview', ''))[:100]}...")
@@ -7851,7 +7842,7 @@ class UnifiedContextManager:
             # World Model Facts
             relevant_facts = unified_context.get('relevant_facts', [])
             if relevant_facts:
-                parts.append(f"\n## Known Facts")
+                parts.append("\n## Known Facts")
                 for key, value in relevant_facts[:5]:  # Top 5 facts
                     fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
                     parts.append(f"- {key}: {fact_preview}")
@@ -7864,7 +7855,7 @@ class UnifiedContextManager:
             eprint(f"Error formatting context for LLM: {e}")
             return f"Context formatting error: {str(e)}"
 
-    def _merge_and_dedupe_history(self, recent_history: List[Dict], relevant_refs: List) -> List[Dict]:
+    def _merge_and_dedupe_history(self, recent_history: list[dict], relevant_refs: list) -> list[dict]:
         """Merge und dedupliziere History-Einträge"""
         try:
             merged = recent_history.copy()
@@ -7889,7 +7880,7 @@ class UnifiedContextManager:
         except:
             return recent_history
 
-    def _get_recent_results(self, limit: int = 5) -> List[Dict]:
+    def _get_recent_results(self, limit: int = 5) -> list[dict]:
         """Hole recent results aus dem shared state"""
         try:
             results_store = self.agent.shared.get("results", {})
@@ -7909,7 +7900,7 @@ class UnifiedContextManager:
         except:
             return []
 
-    def _extract_relevant_facts(self, world_model: Dict, query: str) -> List[Tuple[str, Any]]:
+    def _extract_relevant_facts(self, world_model: dict, query: str) -> list[tuple[str, Any]]:
         """Extrahiere relevante Facts basierend auf Query"""
         try:
             query_words = set(query.lower().split())
@@ -7934,7 +7925,7 @@ class UnifiedContextManager:
         except:
             return list(world_model.items())[:5]
 
-    def _get_active_tasks(self) -> List[Dict]:
+    def _get_active_tasks(self) -> list[dict]:
         """Hole aktive Tasks"""
         try:
             tasks = self.agent.shared.get("tasks", {})
@@ -7946,7 +7937,7 @@ class UnifiedContextManager:
         except:
             return []
 
-    def _get_recent_completions(self, limit: int = 3) -> List[Dict]:
+    def _get_recent_completions(self, limit: int = 3) -> list[dict]:
         """Hole recent completions"""
         try:
             tasks = self.agent.shared.get("tasks", {})
@@ -7961,7 +7952,7 @@ class UnifiedContextManager:
         except:
             return []
 
-    def _get_cached_context(self, cache_key: str) -> Optional[Dict[str, Any]]:
+    def _get_cached_context(self, cache_key: str) -> dict[str, Any] | None:
         """Hole Context aus Cache wenn noch gültig"""
         if cache_key in self._context_cache:
             timestamp, data = self._context_cache[cache_key]
@@ -7971,7 +7962,7 @@ class UnifiedContextManager:
                 del self._context_cache[cache_key]
         return None
 
-    def _cache_context(self, cache_key: str, context: Dict[str, Any]):
+    def _cache_context(self, cache_key: str, context: dict[str, Any]):
         """Speichere Context in Cache"""
         self._context_cache[cache_key] = (time.time(), context.copy())
 
@@ -7991,7 +7982,7 @@ class UnifiedContextManager:
         else:
             self._context_cache.clear()
 
-    def get_session_statistics(self) -> Dict[str, Any]:
+    def get_session_statistics(self) -> dict[str, Any]:
         """Hole Statistiken über alle Sessions"""
         stats = {
             "total_sessions": len(self.session_managers),
@@ -8078,12 +8069,12 @@ class FlowAgent:
     def __init__(
         self,
         amd: AgentModelData,
-        world_model: Dict[str, Any] = None,
+        world_model: dict[str, Any] = None,
         verbose: bool = False,
         enable_pause_resume: bool = True,
         checkpoint_interval: int = 300,  # 5 minutes
         max_parallel_tasks: int = 3,
-        progress_callback: Optional[callable] = None,
+        progress_callback: callable = None,
         **kwargs
     ):
         self.amd = amd
@@ -8130,8 +8121,8 @@ class FlowAgent:
         self._shutdown_event = threading.Event()
 
         # Server components
-        self.a2a_server: Optional[A2AServer] = None
-        self.mcp_server: Optional[FastMCP] = None
+        self.a2a_server: A2AServer = None
+        self.mcp_server: FastMCP = None
 
         # Enhanced tool registry
         self._tool_registry = {}
@@ -8158,7 +8149,7 @@ class FlowAgent:
     def progress_callback(self, value):
         self.progress_tracker.progress_callback = value
 
-    def set_progress_callback(self, progress_callback: Optional[callable] = None):
+    def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
     async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, **kwargs) -> str:
@@ -8275,7 +8266,7 @@ class FlowAgent:
         query: str,
         session_id: str = "default",
         user_id: str = None,
-        stream_callback: Optional[Callable] = None,
+        stream_callback: Callable = None,
         remember: bool = True,
         **kwargs
     ) -> str:
@@ -8508,7 +8499,7 @@ class FlowAgent:
         current_traits.update(new_traits)
         self.amd.persona.personality_traits = list(current_traits)
 
-    def get_available_formats(self) -> Dict[str, List[str]]:
+    def get_available_formats(self) -> dict[str, list[str]]:
         """Erhalte verfügbare Format- und Längen-Optionen"""
         return {
             "formats": [f.value for f in ResponseFormat],
@@ -8545,7 +8536,7 @@ class FlowAgent:
             self.amd.persona = original_persona
             self.shared["persona_config"] = original_persona
 
-    def get_format_quality_report(self) -> Dict[str, Any]:
+    def get_format_quality_report(self) -> dict[str, Any]:
         """Erhalte detaillierten Format-Qualitätsbericht"""
         quality_assessment = self.shared.get("quality_assessment", {})
 
@@ -8741,9 +8732,9 @@ class FlowAgent:
         }
 
 
-        rprint(f"Advanced context awareness initialized with session management")
+        rprint("Advanced context awareness initialized with session management")
 
-    async def get_context(self, session_id: str = None, format_for_llm: bool = True) -> Union[str, Dict[str, Any]]:
+    async def get_context(self, session_id: str = None, format_for_llm: bool = True) -> str | dict[str, Any]:
         """
         ÜBERARBEITET: Get context über UnifiedContextManager statt verteilte Quellen
         """
@@ -8775,7 +8766,7 @@ class FlowAgent:
                     "fallback_mode": True
                 }
 
-    def get_context_statistics(self) -> Dict[str, Any]:
+    def get_context_statistics(self) -> dict[str, Any]:
         """Get comprehensive context management statistics"""
         stats = {
             "context_system": "advanced_session_aware",
@@ -8817,7 +8808,7 @@ class FlowAgent:
         return stats
 
     def set_persona(self, name: str, style: str = "professional", tone: str = "friendly",
-                    personality_traits: List[str] = None, apply_method: str = "system_prompt",
+                    personality_traits: list[str] = None, apply_method: str = "system_prompt",
                     integration_level: str = "light", custom_instructions: str = ""):
         """Set agent persona mit erweiterten Konfigurationsmöglichkeiten"""
         if personality_traits is None:
@@ -8844,7 +8835,7 @@ class FlowAgent:
         else:
             wprint("No persona configured to update")
 
-    def get_available_variables(self) -> Dict[str, str]:
+    def get_available_variables(self) -> dict[str, str]:
         """Get available variables for dynamic formatting"""
         return self.variable_manager.get_available_variables()
 
@@ -8942,7 +8933,7 @@ class FlowAgent:
 
     # Neue Hilfsmethoden für erweiterte Funktionalität
 
-    async def get_task_execution_summary(self) -> Dict[str, Any]:
+    async def get_task_execution_summary(self) -> dict[str, Any]:
         """Erhalte detaillierte Zusammenfassung der Task-Ausführung"""
         tasks = self.shared.get("tasks", {})
         results_store = self.shared.get("results", {})
@@ -9030,7 +9021,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             print(traceback.format_exc())
             return f"Could not generate reasoning explanation: {e}"
 
-    def _format_tasks_for_explanation(self, tasks: List[Dict]) -> str:
+    def _format_tasks_for_explanation(self, tasks: list[dict]) -> str:
         formatted = []
         for task in tasks[:5]:  # Top 5 tasks
             duration_info = f" ({task['duration']:.1f}s)" if task['duration'] else ""
@@ -9213,7 +9204,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             print(checkpoint)
             return False
 
-    async def load_latest_checkpoint(self, auto_restore_history: bool = True, max_age_hours: int = 24) -> Dict[
+    async def load_latest_checkpoint(self, auto_restore_history: bool = True, max_age_hours: int = 24) -> dict[
         str, Any]:
         """Vereinfachtes Checkpoint-Laden mit automatischer History-Wiederherstellung"""
         try:
@@ -9275,7 +9266,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             return {"success": False, "error": str(e)}
 
     async def _restore_from_checkpoint_simplified(self, checkpoint: AgentCheckpoint, auto_restore_history: bool) -> \
-    Dict[
+    dict[
         str, Any]:
         """Vereinfachte Checkpoint-Wiederherstellung"""
         restore_stats = {
@@ -9394,7 +9385,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             restore_stats["errors"].append(f"Critical restore error: {e}")
             return restore_stats
 
-    async def _restore_sessions_and_conversation_simplified(self, checkpoint: AgentCheckpoint, restore_stats: Dict):
+    async def _restore_sessions_and_conversation_simplified(self, checkpoint: AgentCheckpoint, restore_stats: dict):
         """Vereinfachte Session- und Conversation-Wiederherstellung"""
         try:
             # Context Manager sicherstellen
@@ -9493,7 +9484,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             eprint(f"Failed to save context to session: {e}")
             return False
 
-    async def load_context_from_session(self, session_id: str, context_type: str = "full") -> Dict[str, Any]:
+    async def load_context_from_session(self, session_id: str, context_type: str = "full") -> dict[str, Any]:
         """Load context from ChatSession storage"""
         try:
             if not self.context_manager:
@@ -9539,7 +9530,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             return {"error": str(e)}
 
     async def cleanup_session_context(self, session_id: str = None, keep_count: int = 100,
-                                      remove_old_snapshots: bool = True) -> Dict[str, Any]:
+                                      remove_old_snapshots: bool = True) -> dict[str, Any]:
         """Cleanup session context by removing old snapshots and entries"""
         try:
             session_id = session_id or self.shared.get("session_id", "default")
@@ -9613,7 +9604,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             eprint(f"Failed to cleanup session context: {e}")
             return {"error": str(e)}
 
-    def get_session_storage_stats(self) -> Dict[str, Any]:
+    def get_session_storage_stats(self) -> dict[str, Any]:
         """Get comprehensive session storage statistics"""
         try:
             stats = {
@@ -9682,7 +9673,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             eprint(f"Failed to get session storage stats: {e}")
             return {"error": str(e)}
 
-    def list_available_checkpoints(self, max_age_hours: int = 168) -> List[Dict[str, Any]]:  # Default 1 week
+    def list_available_checkpoints(self, max_age_hours: int = 168) -> list[dict[str, Any]]:  # Default 1 week
         """List all available checkpoints with metadata"""
         try:
             from toolboxv2 import get_app
@@ -9757,7 +9748,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             eprint(f"Failed to list checkpoints: {e}")
             return []
 
-    async def delete_old_checkpoints(self, keep_count: int = 5, max_age_hours: int = 168) -> Dict[str, Any]:
+    async def delete_old_checkpoints(self, keep_count: int = 5, max_age_hours: int = 168) -> dict[str, Any]:
         """Delete old checkpoints, keeping the most recent ones"""
         try:
             checkpoints = self.list_available_checkpoints(
@@ -10019,11 +10010,11 @@ tool_complexity: low/medium/high
                     "tool_complexity": "medium"
                 }
 
-    def _load_tool_analysis(self) -> Dict[str, Any]:
+    def _load_tool_analysis(self) -> dict[str, Any]:
         """Load tool analysis from cache"""
         try:
             if os.path.exists(self.tool_analysis_file):
-                with open(self.tool_analysis_file, 'r') as f:
+                with open(self.tool_analysis_file) as f:
                     return json.load(f)
         except Exception as e:
             wprint(f"Could not load tool analysis: {e}")
@@ -10115,7 +10106,7 @@ tool_complexity: low/medium/high
     async def a_format_class(self,
                              pydantic_model: type[BaseModel],
                              prompt: str,
-                             message_context: list[dict] | None = None,
+                             message_context: list[dict] = None,
                              max_retries: int = 2, auto_context=True) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
@@ -10225,7 +10216,7 @@ Respond in YAML format only:
                         field_path = " -> ".join(str(x) for x in error['loc'])
                         detailed_errors.append(f"Field '{field_path}': {error['msg']}")
 
-                    error_msg = f"Validation failed:\n" + "\n".join(detailed_errors)
+                    error_msg = "Validation failed:\n" + "\n".join(detailed_errors)
                     raise ValueError(error_msg)
 
             except Exception as e:
@@ -10285,9 +10276,7 @@ Respond in YAML format only:
                 in_yaml = True
                 yaml_lines.append(line)
             elif in_yaml:
-                if stripped == '' or stripped.startswith(' ') or stripped.startswith('-'):
-                    yaml_lines.append(line)
-                elif ':' in stripped:
+                if stripped == '' or stripped.startswith(' ') or stripped.startswith('-') or ':' in stripped:
                     yaml_lines.append(line)
                 else:
                     # Potential end of YAML
@@ -10554,7 +10543,7 @@ Respond in YAML format only:
             return getattr(self.amd.budget_manager, 'total_cost', 0.0)
         return 0.0
 
-    def status(self, pretty_print: bool = False) -> Union[Dict[str, Any], str]:
+    def status(self, pretty_print: bool = False) -> dict[str, Any] | str:
         """Get comprehensive agent status with optional pretty printing"""
 
         # Core status information
@@ -10843,7 +10832,7 @@ Respond in YAML format only:
 
             return "Status printed above"
 
-        except Exception as e:
+        except Exception:
             # Fallback to JSON if pretty print fails
             import json
             return json.dumps(base_status, indent=2, default=str)
@@ -10866,7 +10855,7 @@ Respond in YAML format only:
         return ConditionalChain(self, other)
 
 
-def get_progress_summary(self) -> Dict[str, Any]:
+def get_progress_summary(self) -> dict[str, Any]:
     """Get comprehensive progress summary from the agent"""
     if hasattr(self, 'progress_tracker'):
         return self.progress_tracker.get_summary()
@@ -10874,7 +10863,9 @@ def get_progress_summary(self) -> Dict[str, Any]:
 
 import inspect
 import typing
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 
 def get_args_schema(func: Callable) -> str:
     """
@@ -10938,10 +10929,10 @@ def _annotation_to_str(annotation: Any) -> str:
     return repr(annotation)
 
 
-import re
-from typing import Any, Union, Dict, List
+from typing import Any
 
-def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> List[Tuple[str, str]]:
+
+def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> list[tuple[str, str]]:
     """Extract META_TOOL_CALL with proper bracket balance handling"""
     import re
 
@@ -10989,7 +10980,7 @@ def _extract_meta_tool_calls(text: str, prefix="META_TOOL_CALL:") -> List[Tuple[
     return matches
 
 
-def _parse_tool_args(args_str: str) -> Dict[str, Any]:
+def _parse_tool_args(args_str: str) -> dict[str, Any]:
     """Parse tool arguments from string format with enhanced error handling"""
     import ast
 
@@ -11544,10 +11535,10 @@ async def tchains():
 
     async def a_format_class(self, pydantic_model: type[BaseModel],
                              prompt: str,
-                             message_context: list[dict] | None = None,
+                             message_context: list[dict] = None,
                              max_retries: int = 2):
         print(f"FlowAgent {self.amd.name} formatting class: {pydantic_model.__name__}")
-        return {"value": 'yes' if 0.5 > random.random() else 'no'}
+        return {"value": 'yes' if random.random() < 0.5 else 'no'}
     agent_a.a_run = types.MethodType(a_run, agent_a)
     agent_a.a_format_class = types.MethodType(a_format_class, agent_a)
     agent_b.a_run = types.MethodType(a_run, agent_b)
@@ -11713,11 +11704,11 @@ async def run_new_custom_chain():
 
     async def a_format_class(self, pydantic_model: type[BaseModel],
                              prompt: str,
-                             message_context: list[dict] | None = None,
+                             message_context: list[dict] = None,
                              max_retries: int = 2):
         print(f"FlowAgent {self.amd.name} formatting class: {pydantic_model.__name__}")
         # Simuliert eine zufällige Entscheidung
-        decision = 'yes' if 0.5 > random.random() else 'no'
+        decision = 'yes' if random.random() < 0.5 else 'no'
         print(f"--> Decision made: {decision}")
         return {"value": decision}
 

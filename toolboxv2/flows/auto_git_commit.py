@@ -2,7 +2,6 @@ import locale
 import os
 import subprocess
 import sys
-from typing import Optional
 
 from toolboxv2 import Spinner, remove_styles
 from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
@@ -19,7 +18,7 @@ def safe_decode(data: bytes) -> str:
             continue
     return data.decode('utf-8', errors='replace')
 
-async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False, **kwargs):
+async def run(app, args_sto, tags: str | None = None, summarize: bool = False, **kwargs):
     """
     Automatically create a git commit message based on file changes.
 
@@ -70,7 +69,7 @@ async def run(app, args_sto, tags: Optional[str] = None, summarize: bool = False
                 files_to_stage.append(file_path)
 
                 try:
-                    with open(os.path.join(cwd, file_path), 'r', encoding='utf-8') as f:
+                    with open(os.path.join(cwd, file_path), encoding='utf-8') as f:
                         file_content = f.read()
                 except Exception as e:
                     file_content = f"(Could not read file: {e})"

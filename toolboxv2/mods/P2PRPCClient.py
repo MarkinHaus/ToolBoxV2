@@ -1,8 +1,9 @@
 import asyncio
 import json
-import uuid
 import os
-from toolboxv2 import App, get_app, Result
+import uuid
+
+from toolboxv2 import App, Result, get_app
 from toolboxv2.utils.security.cryp import Code
 
 # Define the module name and export function
@@ -122,7 +123,7 @@ class P2PRPCClient:
             else:
                 return Result.ok(response.get('result'))
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.futures.pop(call_id, None)
             return Result.default_internal_error("RPC call timed out.")
         except Exception as e:

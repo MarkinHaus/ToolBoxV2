@@ -3,8 +3,9 @@ import os
 import shutil
 import subprocess
 import time
-from contextlib import  contextmanager
-from typing import Any, Optional, Dict
+from contextlib import contextmanager
+from typing import Any
+
 from toolboxv2 import Spinner, Style
 
 
@@ -151,7 +152,7 @@ class DynamicVerboseFormatter:
 
         self.print(template.format(bar), end='', flush=True)
 
-    def print_state(self, state: str, details: Dict[str, Any] = None) -> str:
+    def print_state(self, state: str, details: dict[str, Any] = None) -> str:
         """Print current state with adaptive formatting"""
         self._terminal_width = self._get_terminal_width()
 
@@ -254,7 +255,7 @@ class DynamicVerboseFormatter:
     def _print_table_row(self, row: list[str], widths: list[int], is_header: bool = False):
         """Helper method to print a table row"""
         formatted_cells = []
-        for i, (cell, width) in enumerate(zip(row, widths)):
+        for i, (cell, width) in enumerate(zip(row, widths, strict=False)):
             cell_str = str(cell)
             if len(cell_str) > width:
                 cell_str = cell_str[:width - 3] + "..."
@@ -291,7 +292,7 @@ class DynamicVerboseFormatter:
         with Spinner(f"{self.style.CYAN('●')} {display_message}", symbols=spinner_symbols):
             return await coroutine
 
-    def print_git_info(self) -> Optional[str]:
+    def print_git_info(self) -> str | None:
         """Get current git branch with error handling"""
         try:
             result = subprocess.run(
@@ -390,7 +391,7 @@ class EnhancedVerboseOutput:
             self.print(f"{self.formatter.style.GREY('└─')} {content}")
         self.print()
 
-    async def log_process_result(self, result: Dict[str, Any]):
+    async def log_process_result(self, result: dict[str, Any]):
         """Log processing results with structured formatting"""
         if not self.verbose:
             return
@@ -427,7 +428,7 @@ class EnhancedVerboseOutput:
 
         self.formatter.print_header(f"{text}{timing}")
 
-    def log_state(self, state: str, user_ns: Dict = None, override: bool = False):
+    def log_state(self, state: str, user_ns: dict = None, override: bool = False):
         """Log state with optional override"""
         if not self.verbose and not override:
             return
@@ -444,7 +445,7 @@ class EnhancedVerboseOutput:
 
         return await self.formatter.process_with_spinner(message, coroutine)
 
-    def print_tool_call(self, tool_name: str, tool_args: Dict, result: Optional[str] = None):
+    def print_tool_call(self, tool_name: str, tool_args: dict, result: str | None = None):
         """
         Gibt Informationen zum Tool-Aufruf aus.
         Versucht, das Ergebnis als JSON zu formatieren, wenn möglich.
@@ -500,7 +501,7 @@ class EnhancedVerboseOutput:
         # Den gesamten Inhalt an den Formatter übergeben
         self.formatter.print_section("Tool Call", content)
 
-    def print_event(self, event: Dict):
+    def print_event(self, event: dict):
         """Print event information"""
         if not self.verbose:
             return

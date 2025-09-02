@@ -1,27 +1,28 @@
 import json
 import time
-from dataclasses import dataclass, asdict, field
-from typing import Optional, Dict, Any, List, Set
-from enum import Enum
+from dataclasses import asdict
 from datetime import datetime
-from collections import defaultdict, deque
+from enum import Enum
+from typing import Any
 
 try:
-    from rich.console import Console
-    from rich.text import Text
-    from rich.tree import Tree
-    from rich.panel import Panel
-    from rich.table import Table
     from rich import box
     from rich.columns import Columns
+    from rich.console import Console
+    from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.table import Table
+    from rich.text import Text
+    from rich.tree import Tree
 
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     print("Warning: Rich not available. Install with: pip install rich")
 
-from toolboxv2.mods.isaa.base.Agent.types import *
+from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent, NodeStatus, TaskPlan, LLMTask, ToolTask
+
+
 class VerbosityMode(Enum):
     MINIMAL = "minimal"  # Nur wichtigste Updates, kompakte Ansicht
     STANDARD = "standard"  # Standard-Detailgrad mit wichtigen Events
@@ -35,39 +36,39 @@ class ExecutionNode:
     def __init__(self, name: str, node_type: str = "unknown"):
         self.name = name
         self.node_type = node_type
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-        self.duration: Optional[float] = None
+        self.start_time: float | None = None
+        self.end_time: float | None = None
+        self.duration: float | None = None
         self.phase: str = "unknown"
 
         # Enhanced status management
         self.status: NodeStatus = NodeStatus.PENDING
-        self.previous_status: Optional[NodeStatus] = None
-        self.status_history: List[Dict[str, Any]] = []
+        self.previous_status: NodeStatus | None = None
+        self.status_history: list[dict[str, Any]] = []
 
         # Error handling
-        self.error: Optional[str] = None
-        self.error_details: Optional[Dict[str, Any]] = None
+        self.error: str | None = None
+        self.error_details: dict[str, Any] | None = None
         self.retry_count: int = 0
 
         # Child operations
-        self.llm_calls: List[ProgressEvent] = []
-        self.tool_calls: List[ProgressEvent] = []
-        self.sub_events: List[ProgressEvent] = []
+        self.llm_calls: list[ProgressEvent] = []
+        self.tool_calls: list[ProgressEvent] = []
+        self.sub_events: list[ProgressEvent] = []
 
         # Enhanced metadata
-        self.reasoning: Optional[str] = None
-        self.strategy: Optional[str] = None
-        self.routing_from: Optional[str] = None
-        self.routing_to: Optional[str] = None
-        self.completion_criteria: Optional[Dict[str, Any]] = None
+        self.reasoning: str | None = None
+        self.strategy: str | None = None
+        self.routing_from: str | None = None
+        self.routing_to: str | None = None
+        self.completion_criteria: dict[str, Any] | None = None
 
         # Stats
         self.total_cost: float = 0.0
         self.total_tokens: int = 0
-        self.performance_metrics: Dict[str, Any] = {}
+        self.performance_metrics: dict[str, Any] = {}
 
-    def update_status(self, new_status: NodeStatus, reason: str = "", error_details: Dict = None):
+    def update_status(self, new_status: NodeStatus, reason: str = "", error_details: dict = None):
         """Update node status with history tracking"""
         if new_status != self.status:
             self.previous_status = self.status
@@ -235,7 +236,7 @@ class ExecutionNode:
             return f"~{elapsed:.1f}s"
         return "..."
 
-    def get_performance_summary(self) -> Dict[str, Any]:
+    def get_performance_summary(self) -> dict[str, Any]:
         """Get comprehensive performance metrics"""
         return {
             "duration": self.duration,
@@ -278,24 +279,24 @@ class ExecutionTreeBuilder:
     """Enhanced execution tree builder with better error handling and metrics"""
 
     def __init__(self):
-        self.nodes: Dict[str, ExecutionNode] = {}
-        self.execution_flow: List[str] = []
-        self.current_node: Optional[str] = None
-        self.root_node: Optional[str] = None
-        self.routing_history: List[Dict[str, str]] = []
+        self.nodes: dict[str, ExecutionNode] = {}
+        self.execution_flow: list[str] = []
+        self.current_node: str | None = None
+        self.root_node: str | None = None
+        self.routing_history: list[dict[str, str]] = []
 
         # Enhanced tracking
-        self.error_log: List[Dict[str, Any]] = []
-        self.completion_order: List[str] = []
-        self.active_nodes: Set[str] = set()
+        self.error_log: list[dict[str, Any]] = []
+        self.completion_order: list[str] = []
+        self.active_nodes: set[str] = set()
 
         # Stats
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
+        self.start_time: float | None = None
+        self.end_time: float | None = None
         self.total_cost: float = 0.0
         self.total_tokens: int = 0
         self.total_events: int = 0
-        self.session_id: Optional[str] = None
+        self.session_id: str | None = None
 
     def add_event(self, event: ProgressEvent):
         """Enhanced event processing with better error handling"""
@@ -402,7 +403,7 @@ class ExecutionTreeBuilder:
                 "original_event": event.event_id if hasattr(event, 'event_id') else "unknown"
             })
 
-    def get_execution_summary(self) -> Dict[str, Any]:
+    def get_execution_summary(self) -> dict[str, Any]:
         """Enhanced execution summary with detailed metrics"""
         current_time = time.time()
 
@@ -441,7 +442,7 @@ class ExecutionTreeBuilder:
             }
         }
 
-    def _estimate_completion_time(self) -> Optional[float]:
+    def _estimate_completion_time(self) -> float | None:
         """Estimate when execution might complete"""
         if not self.active_nodes or not self.start_time:
             return None
@@ -513,7 +514,7 @@ class ProgressiveTreePrinter:
         self._layout_integration_attempted = False
 
         self.tree_builder = ExecutionTreeBuilder()
-        self.print_history: List[Dict[str, Any]] = []
+        self.print_history: list[dict[str, Any]] = []
 
         # Live display configuration
         self.realtime_minimal = realtime_minimal if realtime_minimal is not None else (mode == VerbosityMode.REALTIME)
@@ -530,7 +531,7 @@ class ProgressiveTreePrinter:
         self._min_display_interval = 0.5  # Minimum time between updates
 
         # External accumulation storage
-        self._accumulated_runs: List[Dict[str, Any]] = []
+        self._accumulated_runs: list[dict[str, Any]] = []
         self._current_run_id = 0
         self._global_start_time = time.time()
 
@@ -560,18 +561,18 @@ class ProgressiveTreePrinter:
 
     # In ProgressiveTreePrinter class - NEUE METHODEN HINZUFÜGEN
 
-    def _detect_and_integrate_prompt_toolkit(self) -> Optional[Dict[str, Any]]:
+    def _detect_and_integrate_prompt_toolkit(self) -> dict[str, Any] | None:
         """
         Safe prompt_toolkit detection and integration with proper error handling.
         ERSETZT: Die bestehende _detect_and_integrate_prompt_toolkit Methode
         """
         try:
             from prompt_toolkit.application import get_app
-            from prompt_toolkit.widgets import TextArea
-            from prompt_toolkit.layout.containers import Window, HSplit, VSplit
-            from prompt_toolkit.layout.controls import FormattedTextControl
             from prompt_toolkit.formatted_text import HTML
+            from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+            from prompt_toolkit.layout.controls import FormattedTextControl
             from prompt_toolkit.layout.dimension import D
+            from prompt_toolkit.widgets import TextArea
 
             app = self.prompt_app or get_app()
             if not app or not app.is_running:
@@ -636,7 +637,7 @@ class ProgressiveTreePrinter:
         except Exception:
             return "🤖 Agent Status"
 
-    def _integrate_with_application_layout(self, integration_info: Dict[str, Any]) -> bool:
+    def _integrate_with_application_layout(self, integration_info: dict[str, Any]) -> bool:
         """
         Safe layout integration with multiple fallback strategies.
         ERSETZT: Die bestehende _integrate_with_application_layout Methode
@@ -684,7 +685,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ All layout integration attempts failed: {e}")
             return False
 
-    def _update_prompt_toolkit_widget(self, integration_info: Dict[str, Any], content: str,
+    def _update_prompt_toolkit_widget(self, integration_info: dict[str, Any], content: str,
                                       is_status_line: bool = False):
         """
         Safe widget updates with proper error handling.
@@ -886,7 +887,7 @@ class ProgressiveTreePrinter:
             except:
                 pass  # If even fallback fails, silently continue
 
-    def _get_task_executor_progress(self) -> Dict[str, Any]:
+    def _get_task_executor_progress(self) -> dict[str, Any]:
         """
         Extract comprehensive task execution progress from TaskExecutorNode events.
         Tracks parallel execution, dependencies, and completion status.
@@ -1026,7 +1027,7 @@ class ProgressiveTreePrinter:
                 'performance_metrics': {}
             }
 
-    def _create_task_executor_display(self, summary: Dict[str, Any]) -> Optional[Panel]:
+    def _create_task_executor_display(self, summary: dict[str, Any]) -> Panel | None:
         """
         Create comprehensive task executor display showing parallel execution,
         dependencies, and real-time progress.
@@ -1318,7 +1319,7 @@ class ProgressiveTreePrinter:
             print(f"⚠️ Error printing final summary: {e}")
             self._print_final_summary_fallback()
 
-    def flush(self, run_name: str = None) -> Dict[str, Any]:
+    def flush(self, run_name: str = None) -> dict[str, Any]:
         """Enhanced flush with live display management"""
         try:
             # Stop live display before flushing
@@ -1480,7 +1481,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Live display error #{self._consecutive_errors}: {e}")
             self._print_fallback()
 
-    def _handle_terminal_display(self, summary: Dict[str, Any], show_outline: bool = True, show_tasks: bool = False):
+    def _handle_terminal_display(self, summary: dict[str, Any], show_outline: bool = True, show_tasks: bool = False):
         """
         Handles the rendering of the live display in the terminal.
         This unified method is configurable to optionally show outline and task progress panels.
@@ -1538,7 +1539,7 @@ class ProgressiveTreePrinter:
             print(f"⚠️ Enhanced terminal display error: {e}")
             self._print_fallback()
 
-    def _handle_prompt_toolkit_display(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+    def _handle_prompt_toolkit_display(self, integration_info: dict[str, Any], summary: dict[str, Any]):
         """
         Safe prompt_toolkit display handling with comprehensive error recovery.
         ERSETZT: Die bestehende _handle_prompt_toolkit_display Methode
@@ -1573,7 +1574,7 @@ class ProgressiveTreePrinter:
             # Complete fallback to terminal display
             self._handle_terminal_display(summary, show_outline=True, show_tasks=False)
 
-    def _update_prompt_toolkit_status_line(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+    def _update_prompt_toolkit_status_line(self, integration_info: dict[str, Any], summary: dict[str, Any]):
         """
         Safe status line update with error recovery.
         NEUE METHODE
@@ -1614,7 +1615,7 @@ class ProgressiveTreePrinter:
             # Ultimate fallback
             print(f"🤖 Agent running... {summary['timing']['elapsed']:.0f}s")
 
-    def _update_prompt_toolkit_console_fallback(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+    def _update_prompt_toolkit_console_fallback(self, integration_info: dict[str, Any], summary: dict[str, Any]):
         """
         Console fallback for prompt_toolkit environment (no ANSI codes).
         NEUE METHODE
@@ -1646,11 +1647,11 @@ class ProgressiveTreePrinter:
             if session_info["completed_nodes"] == session_info["total_nodes"] and session_info["total_nodes"] > 0:
                 self.console.print(f"✅ [{timestamp}] Execution completed!", style="green bold")
 
-        except Exception as e:
+        except Exception:
             # Ultimate fallback
             print(f"🤖 [{time.strftime('%H:%M:%S')}] Agent status update")
 
-    def _update_prompt_toolkit_full_display(self, integration_info: Dict[str, Any], summary: Dict[str, Any]):
+    def _update_prompt_toolkit_full_display(self, integration_info: dict[str, Any], summary: dict[str, Any]):
         """
         Updates the full display area in prompt_toolkit.
         NEUE METHODE
@@ -1658,7 +1659,6 @@ class ProgressiveTreePrinter:
         try:
             # Create rich content but render to string for prompt_toolkit
             import io
-            from contextlib import redirect_stdout
 
             # Capture rich output as string
             string_io = io.StringIO()
@@ -1817,7 +1817,7 @@ class ProgressiveTreePrinter:
             print(f"\r{error_msg:<100}", end="", flush=True)
             self._last_summary = error_msg
 
-    def _create_outline_display(self, summary: Dict[str, Any]) -> Optional[Panel]:
+    def _create_outline_display(self, summary: dict[str, Any]) -> Panel | None:
         """
         Enhanced outline display showing real agent progress through steps.
         Provides comprehensive view of execution state and progress.
@@ -1951,7 +1951,7 @@ class ProgressiveTreePrinter:
                 return Panel(f"Outline display error: {e}", title="⚠️ Outline Error", style="red")
             return None
 
-    def _get_current_outline_info(self) -> Dict[str, Any]:
+    def _get_current_outline_info(self) -> dict[str, Any]:
         """
         Extract real outline information from create_initial_outline task and meta-tool metadata.
         Tracks actual agent progress through dynamically created outline steps.
@@ -2108,7 +2108,7 @@ class ProgressiveTreePrinter:
                 'outline_created': False, 'actual_step_completions': []
             }
 
-    def _get_detailed_current_activity(self) -> Dict[str, Any]:
+    def _get_detailed_current_activity(self) -> dict[str, Any]:
         """
         Detailed detection of current system activity with precise location and action.
         Shows exactly what the agent is doing and where it is in the process.
@@ -2189,7 +2189,7 @@ class ProgressiveTreePrinter:
                             activity_info['expected_next_action'] = f'Execute task using {tools_count} available tools'
                         else:
                             activity_info['primary_activity'] = 'Processing Tool Results'
-                            activity_info['detailed_description'] = f"Analyzing results from tool delegation"
+                            activity_info['detailed_description'] = "Analyzing results from tool delegation"
                             activity_info['expected_next_action'] = 'Integrate results and continue'
 
                         activity_info[
@@ -2309,7 +2309,7 @@ class ProgressiveTreePrinter:
                 'confidence': 0.0
             }
 
-    def _infer_outline_from_nodes(self) -> Dict[str, Any]:
+    def _infer_outline_from_nodes(self) -> dict[str, Any]:
         """
         Fallback method to infer outline from node progression if no explicit outline found.
         ADD this method if missing:
@@ -2346,10 +2346,10 @@ class ProgressiveTreePrinter:
                 'total_steps': len(steps)
             }
 
-        except Exception as e:
+        except Exception:
             return {'steps': [], 'current_step': 1, 'completed_steps': [], 'total_steps': 0}
 
-    def _get_current_step_operation(self) -> Optional[str]:
+    def _get_current_step_operation(self) -> str | None:
         """
         Enhanced current step operation detection from recent meta-tool activity.
         Provides detailed, real-time insight into what the agent is actually doing.
@@ -2485,7 +2485,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Error detecting current step operation: {e}")
             return None
 
-    def _render_dynamic_tree(self, summary: Dict[str, Any]) -> Tree:
+    def _render_dynamic_tree(self, summary: dict[str, Any]) -> Tree:
         """
         Enhanced dynamic tree with combined agent outline and task executor progress.
         Shows both high-level agent progression and detailed task execution.
@@ -2555,8 +2555,8 @@ class ProgressiveTreePrinter:
             error_tree.add(f"Error: {str(e)}", style="red dim")
             return error_tree
 
-    def _add_combined_overview(self, tree: Tree, summary: Dict[str, Any], outline_info: Dict[str, Any],
-                               task_progress: Dict[str, Any]):
+    def _add_combined_overview(self, tree: Tree, summary: dict[str, Any], outline_info: dict[str, Any],
+                               task_progress: dict[str, Any]):
         """Add combined overview showing both agent and task progress"""
         try:
             session_info = summary["session_info"]
@@ -2619,7 +2619,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             tree.add(f"⚠️ Overview error: {e}", style="red dim")
 
-    def _add_outline_progress_to_tree(self, outline_branch: Tree, outline_info: Dict[str, Any]):
+    def _add_outline_progress_to_tree(self, outline_branch: Tree, outline_info: dict[str, Any]):
         """Add agent outline progress to tree branch"""
         try:
             steps = outline_info.get('steps', [])
@@ -2664,7 +2664,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             outline_branch.add(f"⚠️ Outline display error: {e}", style="red dim")
 
-    def _add_task_progress_to_tree(self, task_branch: Tree, task_progress: Dict[str, Any]):
+    def _add_task_progress_to_tree(self, task_branch: Tree, task_progress: dict[str, Any]):
         """Add detailed task execution progress to tree branch"""
         try:
             # Running tasks
@@ -2701,7 +2701,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             task_branch.add(f"⚠️ Task progress error: {e}", style="red dim")
 
-    def _add_system_flow_to_tree(self, flow_branch: Tree, summary: Dict[str, Any]):
+    def _add_system_flow_to_tree(self, flow_branch: Tree, summary: dict[str, Any]):
         """Add system-level execution flow (nodes)"""
         try:
             execution_flow = summary["execution_flow"]["flow"]
@@ -2727,7 +2727,7 @@ class ProgressiveTreePrinter:
             print(traceback.format_exc())
             flow_branch.add(f"⚠️ System flow error: {e}", style="red dim")
 
-    def _add_dynamic_overview(self, tree: Tree, summary: Dict[str, Any]) -> None:
+    def _add_dynamic_overview(self, tree: Tree, summary: dict[str, Any]) -> None:
         """
         Adds dynamic overview section with live metrics and progress indicators.
         """
@@ -2774,7 +2774,7 @@ class ProgressiveTreePrinter:
             tree.add(f"⚠️ Overview error: {e}", style="red dim")
 
 
-    def _get_node_current_operation(self, node: ExecutionNode) -> Optional[str]:
+    def _get_node_current_operation(self, node: ExecutionNode) -> str | None:
         """
         Determines the current operation being performed by a node for live display.
         """
@@ -2824,11 +2824,11 @@ class ProgressiveTreePrinter:
 
             return None
 
-        except Exception as e:
+        except Exception:
             return None
 
 
-    def _create_predictions_panel(self, summary: Dict[str, Any]) -> Optional[Panel]:
+    def _create_predictions_panel(self, summary: dict[str, Any]) -> Panel | None:
         """
         Enhanced predictions panel using real execution metrics and detailed activity analysis.
         """
@@ -2934,7 +2934,7 @@ class ProgressiveTreePrinter:
                 return Panel(f"Prediction error: {e}", title="⚠️ Prediction Error", style="red")
             return None
 
-    def _generate_execution_predictions(self, summary: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_execution_predictions(self, summary: dict[str, Any]) -> dict[str, Any]:
         """
         Generate predictions using real execution metrics and patterns.
         Uses actual meta-tool timing, outline progress, and system performance data.
@@ -3102,8 +3102,8 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Real metrics prediction error: {e}")
             return {'next_steps': [], 'estimated_completion': None, 'potential_issues': [], 'confidence_level': 0.0}
 
-    def _predict_additional_cost_real(self, summary: Dict[str, Any], time_remaining: float,
-                                      remaining_methods: List[str]) -> float:
+    def _predict_additional_cost_real(self, summary: dict[str, Any], time_remaining: float,
+                                      remaining_methods: list[str]) -> float:
         """Predict additional cost based on real method costs and remaining work"""
         try:
             # Calculate average cost per method from real data
@@ -3142,7 +3142,7 @@ class ProgressiveTreePrinter:
         except Exception:
             return 0.0
 
-    def _create_enhanced_header(self, summary: Dict[str, Any]) -> Panel:
+    def _create_enhanced_header(self, summary: dict[str, Any]) -> Panel:
         """
         Enhanced header using detailed activity detection and tool usage information.
         """
@@ -3311,7 +3311,7 @@ class ProgressiveTreePrinter:
                 style="red"
             )
 
-    def _infer_outline_from_execution_pattern(self, outline_info: Dict[str, Any]) -> Dict[str, Any]:
+    def _infer_outline_from_execution_pattern(self, outline_info: dict[str, Any]) -> dict[str, Any]:
         """
         Infer outline structure from execution patterns when no explicit outline is found.
         Creates a synthetic outline based on meta-tool usage and system activity.
@@ -3443,7 +3443,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Error inferring outline from execution pattern: {e}")
             return outline_info
 
-    def _create_live_status_bar(self, summary: Dict[str, Any]) -> Panel:
+    def _create_live_status_bar(self, summary: dict[str, Any]) -> Panel:
         """
         Enhanced live status bar with detailed activity information.
         """
@@ -3537,7 +3537,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             return Panel(f"Status: Active | ⚠️ {str(e)[:30]}...", style="red dim", box=box.MINIMAL, height=3)
 
-    def _get_current_operations_summary(self, summary: Dict[str, Any]) -> Optional[str]:
+    def _get_current_operations_summary(self, summary: dict[str, Any]) -> str | None:
         """
         Enhanced operations summary using detailed activity detection.
         """
@@ -3588,7 +3588,7 @@ class ProgressiveTreePrinter:
         """Reset global start time for new session"""
         self._global_start_time = time.time()
 
-    def print_strategy_selection(self, strategy: str, event: ProgressEvent = None, context: Dict[str, Any] = None):
+    def print_strategy_selection(self, strategy: str, event: ProgressEvent = None, context: dict[str, Any] = None):
         """Print strategy selection information with descriptions based on verbosity mode"""
 
         # Strategy descriptions mapping
@@ -3681,7 +3681,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Strategy print error: {e}")
             self._print_strategy_fallback(strategy, strategy_descriptions, strategy_icons)
 
-    def _print_strategy_fallback(self, strategy: str, descriptions: Dict[str, str], icons: Dict[str, str]):
+    def _print_strategy_fallback(self, strategy: str, descriptions: dict[str, str], icons: dict[str, str]):
         """Fallback strategy printing without Rich"""
         try:
             icon = icons.get(strategy, "🎯")
@@ -3698,7 +3698,7 @@ class ProgressiveTreePrinter:
 
             elif self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
                 print(f"\n{'=' * 60}")
-                print(f"🎯 STRATEGY SELECTION")
+                print("🎯 STRATEGY SELECTION")
                 print(f"{'=' * 60}")
                 print(f"{icon} Strategy: {strategy}")
                 print(f"📝 Description: {description}")
@@ -3707,7 +3707,7 @@ class ProgressiveTreePrinter:
             elif self.mode == VerbosityMode.REALTIME and not self.realtime_minimal:
                 print(f"{icon} Strategy: {strategy} - {description}")
 
-        except Exception as e:
+        except Exception:
             # Ultimate fallback
             print(f"Strategy selected: {strategy}")
 
@@ -3978,7 +3978,7 @@ class ProgressiveTreePrinter:
             if self.mode == VerbosityMode.DEBUG:
                 self.console.print(f"⚠️ Dependency analysis error: {e}", style="red dim")
 
-    def _analyze_dependencies(self, task_plan: Any) -> Dict[str, Any]:
+    def _analyze_dependencies(self, task_plan: Any) -> dict[str, Any]:
         """Analyze task dependencies for insights"""
         task_map = {task.id: task for task in task_plan.tasks}
 
@@ -4061,7 +4061,7 @@ class ProgressiveTreePrinter:
 
         print(f"{'=' * 80}")
 
-    def get_accumulated_summary(self) -> Dict[str, Any]:
+    def get_accumulated_summary(self) -> dict[str, Any]:
         """Get comprehensive summary of all accumulated runs"""
         try:
             if not self._accumulated_runs:
@@ -4145,7 +4145,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             return {"error": f"Error generating accumulated summary: {e}"}
 
-    def _generate_accumulated_insights(self, run_summaries: List[Dict[str, Any]]) -> List[str]:
+    def _generate_accumulated_insights(self, run_summaries: list[dict[str, Any]]) -> list[str]:
         """Generate insights from accumulated run data"""
         insights = []
 
@@ -4303,7 +4303,7 @@ class ProgressiveTreePrinter:
             else:
                 print(error_msg)
 
-    def export_accumulated_data(self, filepath: str = None, extra_data: Dict[str, Any] = None) -> str:
+    def export_accumulated_data(self, filepath: str = None, extra_data: dict[str, Any] = None) -> str:
         """Export all accumulated run data to file"""
         try:
             if filepath is None:
@@ -4346,7 +4346,7 @@ class ProgressiveTreePrinter:
                 print(error_msg)
             return ""
 
-    def _print_accumulated_summary_fallback(self, summary: Dict[str, Any]):
+    def _print_accumulated_summary_fallback(self, summary: dict[str, Any]):
         """Fallback accumulated summary without Rich"""
         try:
             print(f"\n{'=' * 80}")
@@ -4384,7 +4384,7 @@ class ProgressiveTreePrinter:
 
             # Insights
             if summary.get("performance_insights"):
-                print(f"\n🔍 PERFORMANCE INSIGHTS:")
+                print("\n🔍 PERFORMANCE INSIGHTS:")
                 print(f"{'-' * 40}")
                 for insight in summary["performance_insights"]:
                     print(f"• {insight}")
@@ -4398,14 +4398,12 @@ class ProgressiveTreePrinter:
         """Enhanced cost formatting"""
         if cost < 0.0001:
             return f"${cost * 1000000:.1f}μ"
-        elif cost < 0.001:
-            return f"${cost * 1000:.1f}m"
-        elif cost < 1:
+        elif cost < 0.001 or cost < 1:
             return f"${cost * 1000:.1f}m"
         else:
             return f"${cost:.4f}"
 
-    def _update_progress_display(self, summary: Dict[str, Any]):
+    def _update_progress_display(self, summary: dict[str, Any]):
         """Update progress display for realtime mode"""
         if not hasattr(self, 'progress'):
             return
@@ -4467,7 +4465,7 @@ class ProgressiveTreePrinter:
             # Show errors in verbose modes
             if (self.tree_builder.error_log and
                 self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]):
-                print(f"\n❌ Recent Errors:")
+                print("\n❌ Recent Errors:")
                 for error in self.tree_builder.error_log[-3:]:
                     timestamp = datetime.fromtimestamp(error["timestamp"]).strftime("%H:%M:%S")
                     print(f"  [{timestamp}] {error['node']}: {error['error']}")
@@ -4535,7 +4533,7 @@ class ProgressiveTreePrinter:
 
             elif self.mode in [VerbosityMode.VERBOSE, VerbosityMode.DEBUG]:
                 # Detailed batch summary
-                summary_text = f"🔧 Meta-Tool Batch Complete"
+                summary_text = "🔧 Meta-Tool Batch Complete"
                 details = []
                 details.append(f"🎯 Tools executed: {', '.join(meta_tools_executed)}")
                 details.append(f"🔄 Loop: {reasoning_loop}")
@@ -4777,7 +4775,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             print(f"⚠️ Error printing meta-tool update: {e}")
 
-    def _print_internal_reasoning_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_internal_reasoning_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print internal reasoning specific updates with insights and enhanced timestamp support"""
         if not event.success:
             return
@@ -4856,7 +4854,7 @@ class ProgressiveTreePrinter:
 
             # Show outline step progress if available
             if outline_step_progress and len(outline_step_progress) > 40:
-                debug_content.append(f"\n📍 Outline Progress:")
+                debug_content.append("\n📍 Outline Progress:")
                 debug_content.append(f"  {outline_step_progress}")
 
             reasoning_panel = Panel(
@@ -4872,7 +4870,7 @@ class ProgressiveTreePrinter:
                 reasoning_text += f"\n{', '.join(details)}"
             self.console.print(reasoning_text, style="white")
 
-    def _print_task_stack_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_task_stack_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print task stack management updates with enhanced timestamp and outline step tracking"""
         if not event.success:
             return
@@ -4939,7 +4937,7 @@ class ProgressiveTreePrinter:
 
         self.console.print(stack_text, style="yellow")
 
-    def _print_delegation_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_delegation_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Enhanced delegation updates with detailed task descriptions and tool usage"""
         delegated_task = metadata.get("delegated_task_description", "")
         tools_list = metadata.get("tools_list", [])
@@ -5037,7 +5035,7 @@ class ProgressiveTreePrinter:
                     tools_text += f" +{tools_used_now - len(used_tools)} more"
                 self.console.print(tools_text, style="green dim")
 
-    def _print_plan_execution_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_plan_execution_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print plan creation and execution updates with enhanced timeline and variable integration"""
         goals_list = metadata.get("goals_list", [])
         goals_count = metadata.get("goals_count", 0)
@@ -5138,7 +5136,7 @@ class ProgressiveTreePrinter:
 
             self.console.print(completion_text, style="magenta")
 
-    def _print_direct_response_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_direct_response_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print direct response (flow termination) updates with enhanced session completion info"""
         final_answer_length = metadata.get("final_answer_length", 0)
         reasoning_complete = metadata.get("reasoning_complete", False)
@@ -5210,7 +5208,7 @@ class ProgressiveTreePrinter:
                 )
                 self.console.print(response_panel)
 
-    def _print_generic_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_generic_meta_tool_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print generic meta-tool updates for unknown tools with enhanced variable system support"""
         meta_tool_name = metadata.get("meta_tool_name", "unknown")
         execution_phase = metadata.get("execution_phase", "")
@@ -5306,7 +5304,7 @@ class ProgressiveTreePrinter:
 
             self.console.print(error_text, style="red")
 
-    def _print_unified_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_unified_meta_tool_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Unified meta-tool update with enhanced timestamp display"""
         meta_tool_name = metadata.get("meta_tool_name", "unknown")
         execution_phase = metadata.get("execution_phase", "unknown")
@@ -5533,7 +5531,7 @@ class ProgressiveTreePrinter:
                         f"❌ [{time_str}] {meta_tool_name.replace('_', ' ').title()} failed{outline_info}: {error_message}",
                         style="red")
 
-    def _print_enhanced_meta_tool_update(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_enhanced_meta_tool_update(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Print updates for enhanced meta-tools (advance_outline_step, write_to_variables, read_from_variables)"""
         if not event.success:
             return
@@ -5603,7 +5601,7 @@ class ProgressiveTreePrinter:
             else:
                 self.console.print(var_text, style="blue")
 
-    def _print_meta_tool_fallback(self, event: ProgressEvent, metadata: Dict[str, Any], timestamp: datetime):
+    def _print_meta_tool_fallback(self, event: ProgressEvent, metadata: dict[str, Any], timestamp: datetime):
         """Fallback meta-tool printing without Rich for all modes with timestamps"""
         try:
             meta_tool_name = metadata.get("meta_tool_name", "unknown")
@@ -5719,7 +5717,7 @@ class ProgressiveTreePrinter:
             import traceback
             print(traceback.format_exc())
 
-    def _print_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any]):
+    def _print_task_update(self, event: ProgressEvent, task_dict: dict[str, Any]):
         """Print task update based on verbosity mode"""
         try:
             if self._fallback_mode or not self.use_rich:
@@ -5756,7 +5754,7 @@ class ProgressiveTreePrinter:
                 print(f"⚠️ Task update print error: {e}")
             self._print_task_update_fallback(event, task_dict)
 
-    def _print_minimal_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str):
+    def _print_minimal_task_update(self, event: ProgressEvent, task_dict: dict[str, Any], status_icon: str):
         """Minimal task update - only status changes"""
         if event.event_type in ['task_start', 'task_complete', 'task_error']:
             task_id = task_dict.get('id', 'unknown')
@@ -5767,7 +5765,7 @@ class ProgressiveTreePrinter:
 
             self.console.print(task_text, style=self._get_task_status_color_from_dict(task_dict))
 
-    def _print_standard_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str,
+    def _print_standard_task_update(self, event: ProgressEvent, task_dict: dict[str, Any], status_icon: str,
                                     status_color: str):
         """Standard task update with panels"""
         task_id = task_dict.get('id', 'unknown')
@@ -5825,7 +5823,7 @@ class ProgressiveTreePrinter:
         )
         self.console.print(panel)
 
-    def _print_detailed_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str,
+    def _print_detailed_task_update(self, event: ProgressEvent, task_dict: dict[str, Any], status_icon: str,
                                     status_color: str):
         """Detailed task update with full information"""
         task_id = task_dict.get('id', 'unknown')
@@ -5916,7 +5914,7 @@ class ProgressiveTreePrinter:
         )
         self.console.print(panel)
 
-    def _print_realtime_task_update(self, event: ProgressEvent, task_dict: Dict[str, Any], status_icon: str):
+    def _print_realtime_task_update(self, event: ProgressEvent, task_dict: dict[str, Any], status_icon: str):
         """Realtime task update - brief but informative"""
         if event.event_type in ['task_start', 'task_complete', 'task_error']:
             task_id = task_dict.get('id', 'unknown')
@@ -5930,7 +5928,7 @@ class ProgressiveTreePrinter:
 
             self.console.print(update_text, style=self._get_task_status_color_from_dict(task_dict))
 
-    def _print_task_update_fallback(self, event: ProgressEvent, task_dict: Dict[str, Any]):
+    def _print_task_update_fallback(self, event: ProgressEvent, task_dict: dict[str, Any]):
         """Fallback task update printing without Rich"""
         try:
             task_id = task_dict.get('id', 'unknown')
@@ -5983,7 +5981,7 @@ class ProgressiveTreePrinter:
         except Exception as e:
             print(f"⚠️ Error in fallback task print: {e}")
 
-    def _get_task_status_icon_from_dict(self, task_dict: Dict[str, Any]) -> str:
+    def _get_task_status_icon_from_dict(self, task_dict: dict[str, Any]) -> str:
         """Get status icon from task dict"""
         status = task_dict.get('status', 'unknown')
         status_icons = {
@@ -5995,7 +5993,7 @@ class ProgressiveTreePrinter:
         }
         return status_icons.get(status, "❓")
 
-    def _get_task_status_color_from_dict(self, task_dict: Dict[str, Any]) -> str:
+    def _get_task_status_color_from_dict(self, task_dict: dict[str, Any]) -> str:
         """Get status color from task dict"""
         status = task_dict.get('status', 'unknown')
         status_colors = {
@@ -6018,7 +6016,7 @@ class ProgressiveTreePrinter:
         except:
             return str(timestamp)
 
-    def _get_tool_usage_summary(self) -> Dict[str, Any]:
+    def _get_tool_usage_summary(self) -> dict[str, Any]:
         """
         Tracks real tool usage from delegation events and tool calls.
         Shows which tools were used, are being used, and are available.
@@ -6075,7 +6073,7 @@ class ProgressiveTreePrinter:
 
             return tool_usage
 
-        except Exception as e:
+        except Exception:
             return {
                 'tools_used': set(), 'tools_active': set(), 'tools_available': set(),
                 'current_tool_operation': None, 'tool_success_rate': {}, 'delegation_history': []
@@ -6098,7 +6096,7 @@ class ProgressiveTreePrinter:
         """No-op callback when printing is disabled"""
         pass
 
-    def _print_final_summary_table(self, summary: Dict[str, Any]):
+    def _print_final_summary_table(self, summary: dict[str, Any]):
         """Print detailed final summary table"""
         session_info = summary["session_info"]
         timing = summary["timing"]
@@ -6136,7 +6134,7 @@ class ProgressiveTreePrinter:
         self.console.print()
         self.console.print(table)
 
-    def _print_performance_analysis(self, summary: Dict[str, Any]):
+    def _print_performance_analysis(self, summary: dict[str, Any]):
         """Print detailed performance analysis"""
         analysis_panel = Panel(
             self._generate_performance_insights(summary),
@@ -6146,7 +6144,7 @@ class ProgressiveTreePrinter:
         self.console.print()
         self.console.print(analysis_panel)
 
-    def _generate_performance_insights(self, summary: Dict[str, Any]) -> str:
+    def _generate_performance_insights(self, summary: dict[str, Any]) -> str:
         """Generate performance insights"""
         insights = []
 
@@ -6223,11 +6221,11 @@ class ProgressiveTreePrinter:
 
         print(f"{'=' * 80}")
 
-    def get_execution_log(self) -> List[Dict[str, Any]]:
+    def get_execution_log(self) -> list[dict[str, Any]]:
         """Get complete execution log for analysis"""
         return self.print_history.copy()
 
-    def export_summary(self, filepath: str = None) -> Dict[str, Any]:
+    def export_summary(self, filepath: str = None) -> dict[str, Any]:
         """Export comprehensive execution summary"""
         summary = self.tree_builder.get_execution_summary()
 
@@ -6265,7 +6263,6 @@ class ProgressiveTreePrinter:
 # Demo and testing functions
 async def demo_enhanced_printer():
     """Comprehensive demo of the enhanced progress printer showcasing all modes"""
-    import asyncio
 
     print("🚀 Starting Enhanced Progress Printer Demo...")
     print("Choose demo type:")
@@ -6345,7 +6342,7 @@ async def demo_all_modes():
         printer.print_final_summary()
 
         if mode != modes[-1][0]:  # Not the last mode
-            input(f"\n⏸️  Press Enter to continue to next mode...")
+            input("\n⏸️  Press Enter to continue to next mode...")
 
 
 async def demo_interactive_mode():

@@ -1,7 +1,8 @@
 import re
-from packaging import version
-from toolboxv2 import tb_root_dir
 
+from packaging import version
+
+from toolboxv2 import tb_root_dir
 
 try:
     import psutil
@@ -186,7 +187,7 @@ def build_cargo_project(debug=False):
             exe_path = Path(exe_path)
             try:
                 shutil.copy(exe_path, bin_dir / exe_path.name)
-            except Exception as e:
+            except Exception:
                 bin_dir = tb_root_dir / "ubin"
                 bin_dir.mkdir(exist_ok=True)
                 (bin_dir / exe_path.name).unlink(missing_ok=True)
@@ -225,7 +226,7 @@ def run_with_hot_reload():
         print(f"Hot reload execution failed: {e}")
         return False
     except KeyboardInterrupt:
-        print(f"Exiting hot reload: KeyboardInterrupt")
+        print("Exiting hot reload: KeyboardInterrupt")
         return False
 
 
@@ -311,16 +312,15 @@ import socket
 import subprocess
 import sys
 import time
-import textwrap
 from pathlib import Path
 
 # --- Enhanced UI Imports ---
 try:
-    from ..extras.Style import Style, Spinner
+    from ..extras.Style import Spinner, Style
 except ImportError:
     # Fallback for different execution contexts
     try:
-        from toolboxv2.extras.Style import Style, Spinner
+        from toolboxv2.extras.Style import Spinner, Style
     except ImportError:
         print("FATAL: UI utilities not found. Ensure 'toolboxv2/extras/Style.py' exists.")
         sys.exit(1)

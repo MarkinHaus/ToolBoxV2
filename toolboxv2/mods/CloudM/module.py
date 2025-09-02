@@ -10,8 +10,6 @@ from toolboxv2 import FileHandler, MainTool, Style, get_app
 
 from ...utils.system.api import find_highest_zip_version
 from .UserInstances import UserInstances
-from .UI.widget import get_widget
-from .UserDashboard import Name as UserDashboardName
 
 Name = 'CloudM'
 version = "0.0.4"

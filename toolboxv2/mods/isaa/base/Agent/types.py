@@ -1,12 +1,13 @@
-import json
-from enum import Enum
 import asyncio
-from datetime import datetime
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, field, is_dataclass, asdict, fields
-from pydantic import BaseModel, Field
-import uuid
+import json
 import time
+import uuid
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
 
 
 class ResponseFormat(Enum):
@@ -56,43 +57,43 @@ class ProgressEvent:
     node_name: str = "system"
     timestamp: float = None
 
-    agent_name: Optional[str] = None
+    agent_name: str  = None
     # Status information
-    status: Optional[NodeStatus] = None
-    success: Optional[bool] = None
-    error_details: Optional[Dict[str, Any]] = None
+    status: NodeStatus  = None
+    success: bool  = None
+    error_details: dict[str, Any]  = None
 
     # LLM-specific data
-    llm_model: Optional[str] = None
-    llm_prompt_tokens: Optional[int] = None
-    llm_completion_tokens: Optional[int] = None
-    llm_total_tokens: Optional[int] = None
-    llm_cost: Optional[float] = None
-    llm_duration: Optional[float] = None
-    llm_temperature: Optional[float] = None
+    llm_model: str  = None
+    llm_prompt_tokens: int  = None
+    llm_completion_tokens: int  = None
+    llm_total_tokens: int  = None
+    llm_cost: float  = None
+    llm_duration: float  = None
+    llm_temperature: float  = None
 
     # Tool-specific data
-    tool_name: Optional[str] = None
-    tool_args: Optional[Dict[str, Any]] = None
-    tool_result: Optional[Any] = None
-    tool_duration: Optional[float] = None
-    tool_success: Optional[bool] = None
-    tool_error: Optional[str] = None
+    tool_name: str  = None
+    tool_args: dict[str, Any]  = None
+    tool_result: Any  = None
+    tool_duration: float  = None
+    tool_success: bool  = None
+    tool_error: str  = None
 
     # Node/Routing data
-    routing_decision: Optional[str] = None
-    routing_from: Optional[str] = None
-    routing_to: Optional[str] = None
-    node_phase: Optional[str] = None
-    node_duration: Optional[float] = None
+    routing_decision: str  = None
+    routing_from: str  = None
+    routing_to: str  = None
+    node_phase: str  = None
+    node_duration: float  = None
 
     # Context data
-    task_id: Optional[str] = None
-    session_id: Optional[str] = None
-    plan_id: Optional[str] = None
+    task_id: str  = None
+    session_id: str  = None
+    plan_id: str  = None
 
     # Additional metadata
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
 
     def __post_init__(self):
 
@@ -115,7 +116,7 @@ class ProgressEvent:
             self.success = True
 
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert ProgressEvent to dictionary with proper handling of all field types"""
         result = {}
 
@@ -129,10 +130,7 @@ class ProgressEvent:
                 continue
 
             # Handle NodeStatus enum
-            if isinstance(value, NodeStatus):
-                result[field.name] = value.value
-            # Handle other enums
-            elif isinstance(value, Enum):
+            if isinstance(value, NodeStatus) or isinstance(value, Enum):
                 result[field.name] = value.value
             # Handle dataclass objects
             elif is_dataclass(value):
@@ -149,7 +147,7 @@ class ProgressEvent:
 
         return result
 
-    def _process_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_dict(self, d: dict[str, Any]) -> dict[str, Any]:
         """Recursively process dictionary values"""
         result = {}
         for k, v in d.items():
@@ -165,7 +163,7 @@ class ProgressEvent:
                 result[k] = v
         return result
 
-    def _process_list(self, lst: List[Any]) -> List[Any]:
+    def _process_list(self, lst: list[Any]) -> list[Any]:
         """Recursively process list items"""
         result = []
         for item in lst:
@@ -182,7 +180,7 @@ class ProgressEvent:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ProgressEvent':
+    def from_dict(cls, data: dict[str, Any]) -> 'ProgressEvent':
         """Create ProgressEvent from dictionary"""
         # Create a copy to avoid modifying the original
         data_copy = dict(data)
@@ -209,10 +207,10 @@ class ProgressEvent:
 class ProgressTracker:
     """Advanced progress tracking with cost calculation"""
 
-    def __init__(self, progress_callback: Optional[callable] = None, agent_name="unknown"):
+    def __init__(self, progress_callback: callable  = None, agent_name="unknown"):
         self.progress_callback = progress_callback
-        self.events: List[ProgressEvent] = []
-        self.active_timers: Dict[str, float] = {}
+        self.events: list[ProgressEvent] = []
+        self.active_timers: dict[str, float] = {}
 
         # Cost tracking (simplified - would need actual provider pricing)
         self.token_costs = {
@@ -232,7 +230,7 @@ class ProgressTracker:
                     await self.progress_callback(event)
                 else:
                     self.progress_callback(event)
-            except Exception as e:
+            except Exception:
                 import traceback
                 print(traceback.format_exc())
 
@@ -258,7 +256,7 @@ class ProgressTracker:
         output_cost = (output_tokens / 1000) * self.token_costs["output"]
         return input_cost + output_cost
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get comprehensive progress summary"""
         summary = {
             "total_events": len(self.events),
@@ -319,7 +317,7 @@ class FormatConfig:
         instructions.append(self.get_length_instructions())
 
         if self.custom_instructions:
-            instructions.append(f"\n## Zusätzliche Anweisungen:")
+            instructions.append("\n## Zusätzliche Anweisungen:")
             instructions.append(self.custom_instructions)
 
         if self.strict_format_adherence:
@@ -345,14 +343,14 @@ class Task:
     description: str
     status: str = "pending"  # pending, running, completed, failed, paused
     priority: int = 1
-    dependencies: List[str] = field(default_factory=list)
-    subtasks: List[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    subtasks: list[str] = field(default_factory=list)
     result: Any = None
     error: str = None
     created_at: datetime = field(default_factory=datetime.now)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    started_at: datetime  = None
+    completed_at: datetime  = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     retry_count: int = 0
     max_retries: int = 3
     critical: bool = False
@@ -380,30 +378,30 @@ class TaskPlan:
     id: str
     name: str
     description: str
-    tasks: List[Task] = field(default_factory=list)
+    tasks: list[Task] = field(default_factory=list)
     status: str = "created"  # created, running, paused, completed, failed
     created_at: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     execution_strategy: str = "sequential"  # sequential, parallel, mixed
 
 @dataclass
 class LLMTask(Task):
     """Spezialisierter Task für LLM-Aufrufe"""
-    llm_config: Dict[str, Any] = field(default_factory=lambda: {
+    llm_config: dict[str, Any] = field(default_factory=lambda: {
         "model_preference": "fast",  # "fast" | "complex"
         "temperature": 0.7,
         "max_tokens": 1024
     })
     prompt_template: str = ""
-    context_keys: List[str] = field(default_factory=list)  # Keys aus shared state
-    output_schema: Optional[Dict] = None  # JSON Schema für Validierung
+    context_keys: list[str] = field(default_factory=list)  # Keys aus shared state
+    output_schema: dict  = None  # JSON Schema für Validierung
 
 
 @dataclass
 class ToolTask(Task):
     """Spezialisierter Task für Tool-Aufrufe"""
     tool_name: str = ""
-    arguments: Dict[str, Any] = field(default_factory=dict)  # Kann {{ }} Referenzen enthalten
+    arguments: dict[str, Any] = field(default_factory=dict)  # Kann {{ }} Referenzen enthalten
     hypothesis: str = ""  # Was erwarten wir von diesem Tool?
     validation_criteria: str = ""  # Wie validieren wir das Ergebnis?
     expectation: str = ""  # Wie sollte das Ergebnis aussehen?
@@ -413,7 +411,7 @@ class ToolTask(Task):
 class DecisionTask(Task):
     """Task für dynamisches Routing"""
     decision_prompt: str = ""  # Kurze Frage an LLM
-    routing_map: Dict[str, str] = field(default_factory=dict)  # Ergebnis -> nächster Task
+    routing_map: dict[str, str] = field(default_factory=dict)  # Ergebnis -> nächster Task
     decision_model: str = "fast"  # Welches LLM für Entscheidung
 
 
@@ -459,24 +457,24 @@ def create_task(task_type: str, **kwargs) -> Task:
 class AgentCheckpoint:
     """Enhanced AgentCheckpoint with UnifiedContextManager and ChatSession integration"""
     timestamp: datetime
-    agent_state: Dict[str, Any]
-    task_state: Dict[str, Any]
-    world_model: Dict[str, Any]
-    active_flows: List[str]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    agent_state: dict[str, Any]
+    task_state: dict[str, Any]
+    world_model: dict[str, Any]
+    active_flows: list[str]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # NEUE: Enhanced checkpoint data for UnifiedContextManager integration
-    session_data: Dict[str, Any] = field(default_factory=dict)
-    context_manager_state: Dict[str, Any] = field(default_factory=dict)
-    conversation_history: List[Dict[str, Any]] = field(default_factory=list)
-    variable_system_state: Dict[str, Any] = field(default_factory=dict)
-    results_store: Dict[str, Any] = field(default_factory=dict)
-    tool_capabilities: Dict[str, Any] = field(default_factory=dict)
-    variable_scopes: Dict[str, Any] = field(default_factory=dict)
+    session_data: dict[str, Any] = field(default_factory=dict)
+    context_manager_state: dict[str, Any] = field(default_factory=dict)
+    conversation_history: list[dict[str, Any]] = field(default_factory=list)
+    variable_system_state: dict[str, Any] = field(default_factory=dict)
+    results_store: dict[str, Any] = field(default_factory=dict)
+    tool_capabilities: dict[str, Any] = field(default_factory=dict)
+    variable_scopes: dict[str, Any] = field(default_factory=dict)
 
     # Optional: Additional system state
-    performance_metrics: Dict[str, Any] = field(default_factory=dict)
-    execution_history: List[Dict[str, Any]] = field(default_factory=list)
+    performance_metrics: dict[str, Any] = field(default_factory=dict)
+    execution_history: list[dict[str, Any]] = field(default_factory=list)
 
     def get_checkpoint_summary(self) -> str:
         """Get human-readable checkpoint summary"""
@@ -518,7 +516,7 @@ class AgentCheckpoint:
         except Exception as e:
             return f"Summary generation failed: {str(e)}"
 
-    def get_storage_size_estimate(self) -> Dict[str, int]:
+    def get_storage_size_estimate(self) -> dict[str, int]:
         """Estimate storage size of different checkpoint components"""
         try:
             sizes = {}
@@ -543,7 +541,7 @@ class AgentCheckpoint:
         except Exception as e:
             return {"error": str(e)}
 
-    def validate_checkpoint_integrity(self) -> Dict[str, Any]:
+    def validate_checkpoint_integrity(self) -> dict[str, Any]:
         """Validate checkpoint integrity and completeness"""
         validation = {
             "is_valid": True,
@@ -602,7 +600,7 @@ class AgentCheckpoint:
             validation["is_valid"] = False
             return validation
 
-    def get_version_info(self) -> Dict[str, str]:
+    def get_version_info(self) -> dict[str, str]:
         """Get checkpoint version information"""
         return {
             "checkpoint_version": self.metadata.get("checkpoint_version", "1.0"),
@@ -610,19 +608,19 @@ class AgentCheckpoint:
             "context_system": "unified" if self.context_manager_state else "legacy",
             "variable_system": "integrated" if self.variable_system_state else "basic",
             "session_management": "chatsession" if self.session_data else "memory_only",
-            "created_with": f"FlowAgent v2.0 Enhanced Context System"
+            "created_with": "FlowAgent v2.0 Enhanced Context System"
         }
 
 @dataclass
 class PersonaConfig:
     name: str
     style: str = "professional"
-    personality_traits: List[str] = field(default_factory=lambda: ["helpful", "concise"])
+    personality_traits: list[str] = field(default_factory=lambda: ["helpful", "concise"])
     tone: str = "friendly"
     response_format: str = "direct"
     custom_instructions: str = ""
 
-    format_config: Optional[FormatConfig] = None
+    format_config: FormatConfig  = None
 
     apply_method: str = "system_prompt"  # "system_prompt" | "post_process" | "both"
     integration_level: str = "light"  # "light" | "medium" | "heavy"
@@ -664,7 +662,7 @@ class PersonaConfig:
                 self.format_config.custom_instructions = custom_instructions
 
 
-        except ValueError as e:
+        except ValueError:
             raise ValueError(f"Invalid format '{response_format}' or length '{text_length}'")
 
     def should_post_process(self) -> bool:
@@ -679,11 +677,11 @@ class AgentModelData(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     max_input_tokens: int = 32768
-    api_key: Optional[str] = None
-    api_base: Optional[str] = None
-    budget_manager: Optional[Any] = None
+    api_key: Optional[str]  = None
+    api_base: Optional[str]  = None
+    budget_manager: Any  = None
     caching: bool = True
-    persona: Optional[PersonaConfig] = None
+    persona: Optional[PersonaConfig] = True
     use_fast_response: bool = True
 
     def get_system_message_with_persona(self) -> str:
@@ -701,11 +699,11 @@ class AgentModelData(BaseModel):
 class ToolAnalysis(BaseModel):
     """Defines the structure for a valid tool analysis."""
     primary_function: str = Field(..., description="The main purpose of the tool.")
-    use_cases: List[str] = Field(..., description="Specific use cases for the tool.")
-    trigger_phrases: List[str] = Field(..., description="Phrases that should trigger the tool.")
-    indirect_connections: List[str] = Field(..., description="Non-obvious connections or applications.")
-    complexity_scenarios: List[str] = Field(..., description="Complex scenarios where the tool can be applied.")
-    user_intent_categories: List[str] = Field(..., description="Categories of user intent the tool addresses.")
-    confidence_triggers: Dict[str, float] = Field(..., description="Phrases mapped to confidence scores.")
+    use_cases: list[str] = Field(..., description="Specific use cases for the tool.")
+    trigger_phrases: list[str] = Field(..., description="Phrases that should trigger the tool.")
+    indirect_connections: list[str] = Field(..., description="Non-obvious connections or applications.")
+    complexity_scenarios: list[str] = Field(..., description="Complex scenarios where the tool can be applied.")
+    user_intent_categories: list[str] = Field(..., description="Categories of user intent the tool addresses.")
+    confidence_triggers: dict[str, float] = Field(..., description="Phrases mapped to confidence scores.")
     tool_complexity: str = Field(..., description="The complexity of the tool, rated as low, medium, or high.")
-    args_schema: Optional[Dict[str, Any]] = Field(..., description="The schema for the tool's arguments.")
+    args_schema: dict[str, Any] | None = Field(..., description="The schema for the tool's arguments.")

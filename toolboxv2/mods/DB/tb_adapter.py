@@ -9,8 +9,8 @@ from toolboxv2 import FileHandler, MainTool, Result, get_app
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ToolBoxInterfaces
 
-from .local_instance import MiniDictDB
 from .blob_instance import BlobDB
+from .local_instance import MiniDictDB
 from .reddis_instance import MiniRedis
 from .types import AuthenticationTypes, DatabaseModes
 

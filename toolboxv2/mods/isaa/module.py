@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import os
 import secrets
@@ -6,22 +7,22 @@ import threading
 import time
 from collections.abc import Callable
 from enum import Enum
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
-import asyncio
-from pathlib import Path
-
 import requests
-import websockets
 from langchain_community.agent_toolkits.load_tools import (
     load_tools,
 )
 from pydantic import BaseModel
 
-from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
 from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
-from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode
+from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
+from toolboxv2.mods.isaa.extras.terminal_progress import (
+    ProgressiveTreePrinter,
+    VerbosityMode,
+)
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
@@ -35,41 +36,44 @@ except Exception:
     gpt4all.GPT4All = None
 
 import json
-import locale
-import platform
-
-import shutil
 import subprocess
 import sys
-from typing import Any, Optional, Awaitable, Dict
+from collections.abc import Awaitable
+from typing import Any
 
-from toolboxv2 import FileHandler, MainTool, Spinner, Style, get_app, get_logger, remove_styles, Result, RequestData
+from toolboxv2 import (
+    FileHandler,
+    MainTool,
+    RequestData,
+    Result,
+    Spinner,
+    Style,
+    get_app,
+    get_logger,
+    remove_styles,
+)
 
 # Updated imports for FlowAgent
 from .base.Agent.agent import (
     FlowAgent,
-    AgentModelData,  # For type hinting if needed
 )
 from .base.Agent.builder import (
-    FlowAgentBuilder,
     AgentConfig,
+    FlowAgentBuilder,
 )
-
-
 from .base.AgentUtils import (
     AISemanticMemory,
+    ControllerManager,
     Scripts,
-    ControllerManager, detect_shell, safe_decode
+    detect_shell,
+    safe_decode,
 )
 from .extras.modes import (
-    ISAA0CODE,  # Assuming this is a constant string
-    StrictFormatResponder,
     SummarizationMode,
     # crate_llm_function_from_langchain_tools,
 )
-
 from .extras.web_search import web_search
-from .ui import initialize_isaa_webui_module, get_agent_ui_html
+from .ui import get_agent_ui_html, initialize_isaa_webui_module
 
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
@@ -335,7 +339,7 @@ class EnhancedProgressTracker:
         self.last_outline_update = None
         self.last_activity_update = None
 
-    def extract_progress_data(self, event: ProgressEvent) -> Dict[str, Any]:
+    def extract_progress_data(self, event: ProgressEvent) -> dict[str, Any]:
         """Extract comprehensive progress data from event."""
         progress_data = {}
 
@@ -443,7 +447,7 @@ class Tools(MainTool, FileHandler):
             "get_memory": self.get_memory,
             "rget_mode": lambda mode: self.controller.rget(mode),
         }
-        self.tools_interfaces: Dict[str, ToolsInterface] = {}
+        self.tools_interfaces: dict[str, ToolsInterface] = {}
         self.working_directory = os.getenv('ISAA_WORKING_PATH', os.getcwd())
         self.print_stream = stram_print
         self.global_stream_override = False  # Handled by FlowAgentBuilder
@@ -582,7 +586,7 @@ class Tools(MainTool, FileHandler):
         # Data is a dict of {agent_name: builder_config_dict}
         self.agent_data.update(data)
         # Clear instances from self.config so they are rebuilt with new configs
-        for agent_name in data.keys():
+        for agent_name in data:
             self.config.pop(f'agent-instance-{agent_name}', None)
 
     async def init_isaa(self, name='self', build=False, **kwargs):
@@ -752,8 +756,8 @@ class Tools(MainTool, FileHandler):
 
         async def memory_search_tool(
             query: str,
-            search_mode: Optional[str] = "balanced",
-            context_name: Optional[str] = None
+            search_mode: str | None = "balanced",
+            context_name: str | None = None
         ) -> str:
             """Memory search with configurable precision"""
             mem_instance = self.get_memory()
@@ -904,7 +908,7 @@ class Tools(MainTool, FileHandler):
                 'session_dir': str(agent_dir / "tools_session")
             }
 
-            metadata_file = agent_dir / f"metadata.json"
+            metadata_file = agent_dir / "metadata.json"
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
 
@@ -914,7 +918,7 @@ class Tools(MainTool, FileHandler):
         return builder
 
 
-    def get_tools_interface(self, agent_name: str = "self") -> Optional[ToolsInterface]:
+    def get_tools_interface(self, agent_name: str = "self") -> ToolsInterface | None:
         """
         Get the ToolsInterface instance for a specific agent.
 
@@ -1209,7 +1213,7 @@ class Tools(MainTool, FileHandler):
     async def run_agent(self, name: str | FlowAgent,
                         text: str,
                         verbose: bool = False,  # Handled by agent's own config mostly
-                        session_id: Optional[str] = None,
+                        session_id: str | None = None,
                         progress_callback: Callable[[Any], None | Awaitable[None]] | None = None,
                         **kwargs):  # Other kwargs for a_run
         if text is None: return ""
@@ -1290,13 +1294,13 @@ class Tools(MainTool, FileHandler):
         self,
         agent,
         host: str = "0.0.0.0",
-        port: Optional[int] = None,
+        port: int | None = None,
         access: str = 'local',
-        registry_server: Optional[str] = None,
-        public_name: Optional[str] = None,
-        description: Optional[str] = None,
+        registry_server: str | None = None,
+        public_name: str | None = None,
+        description: str | None = None,
         use_builtin_server: bool = None
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Unified agent hosting with WebSocket-enabled UI and optional registry publishing.
 
@@ -1370,14 +1374,14 @@ class Tools(MainTool, FileHandler):
 
     # toolboxv2/mods/isaa/__init__.py - Missing Methods
 
-    import threading
-    import secrets
-    import time
-    import json
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    from urllib.parse import urlparse, parse_qs
     import asyncio
+    import json
+    import secrets
+    import threading
+    import time
     from concurrent.futures import ThreadPoolExecutor
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
 
 
     async def _handle_reset_context(self, agent_id: str, agent, conn_id: str):
@@ -1513,7 +1517,7 @@ class Tools(MainTool, FileHandler):
         self.app.print("Agent or port not found")
         return False
 
-    async def list_hosted_agents(self) -> Dict[str, Any]:
+    async def list_hosted_agents(self) -> dict[str, Any]:
         """List all currently hosted agents."""
 
         hosted_info = {
@@ -1619,9 +1623,9 @@ class Tools(MainTool, FileHandler):
         agent,
         public_name: str,
         registry_server: str,
-        description: Optional[str] = None,
-        agent_id: Optional[str] = None
-    ) -> Dict[str, str]:
+        description: str | None = None,
+        agent_id: str | None = None
+    ) -> dict[str, str]:
         """Publish agent to registry server."""
         try:
             # Import registry client dynamically to avoid circular imports
@@ -3216,9 +3220,9 @@ class Tools(MainTool, FileHandler):
         agent,
         public_name: str,
         registry_server: str = "ws://localhost:8080/ws/registry/connect",
-        description: Optional[str] = None,
+        description: str | None = None,
         access_level: str = "public"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """FIXED: Mit Debug-Ausgaben für Troubleshooting."""
 
         if hasattr(agent, 'name') and not hasattr(agent, 'amd') and hasattr(agent, 'a_run'):
@@ -3434,7 +3438,7 @@ class Tools(MainTool, FileHandler):
         return True
 
 
-    async def _setup_builtin_server_hosting(self, agent_id: str, agent, host, port) -> Dict[str, str]:
+    async def _setup_builtin_server_hosting(self, agent_id: str, agent, host, port) -> dict[str, str]:
         """Setup agent hosting using toolbox built-in server with enhanced WebSocket support."""
 
         # Register WebSocket handlers for this agent
@@ -3483,7 +3487,7 @@ class Tools(MainTool, FileHandler):
             'status': 'running'
         }
 
-    async def _setup_standalone_server_hosting(self, agent_id: str, agent, host: str, port: int) -> Dict[str, str]:
+    async def _setup_standalone_server_hosting(self, agent_id: str, agent, host: str, port: int) -> dict[str, str]:
         """Setup agent hosting using standalone Python HTTP server with enhanced UI support."""
 
         if not hasattr(self, '_standalone_servers'):

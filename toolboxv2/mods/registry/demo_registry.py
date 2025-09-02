@@ -2,19 +2,20 @@
 
 import asyncio
 import json
+from typing import Any
+
 import aiohttp
-from typing import Dict, Any
 
 # Wichtiger Hinweis: Stellen Sie sicher, dass Ihr PYTHONPATH so konfiguriert ist,
 # dass er Ihr toolboxv2-Verzeichnis findet.
-from toolboxv2 import get_app, App
+from toolboxv2 import get_app
 from toolboxv2.mods.isaa.module import Tools as ISAA_Tools
 
 # --- Globale Objekte zur Kommunikation zwischen den Tasks ---
 # Dient zur Synchronisation, damit der Endbenutzer-Test erst startet, wenn der Agent publiziert ist.
 published_event = asyncio.Event()
 # Speichert die öffentlichen Agenten-Infos, die der Client vom Server erhält.
-published_info: Dict[str, Any] = {}
+published_info: dict[str, Any] = {}
 
 
 # --------------------------------------------------------------------------
