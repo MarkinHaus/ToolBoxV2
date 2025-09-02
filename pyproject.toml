@@ -37,7 +37,6 @@ dependencies = [
     "langdetect>=1.0.9",
     "google-auth-oauthlib>=1.2.2",
     "google-api-python-client>=2.179.0",
-    "realtimetts>=0.5.7",
     "pyperclip>=1.9.0",
     "pynput>=1.8.1",
     "readchar>=4.2.1",

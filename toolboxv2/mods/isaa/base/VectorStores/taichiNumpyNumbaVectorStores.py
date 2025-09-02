@@ -1,7 +1,7 @@
 from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chunk
 
 try:
-    import numba
+    numba = __import__("numba")
 except ImportError:
     def numba():
         return None

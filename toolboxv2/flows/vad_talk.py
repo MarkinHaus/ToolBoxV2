@@ -2,7 +2,7 @@ import logging
 import os
 
 import numpy as np
-import pyaudio
+# import pyaudio
 
 from toolboxv2 import get_app, get_logger
 
@@ -31,12 +31,13 @@ from groq import Groq
 from langdetect import detect
 from pydantic import BaseModel, Field
 
+pyaudio = lambda :None
 
 # Configuration
 class Config:
     SAMPLE_RATE = 16000
     CHUNK_SIZE = 2048
-    FORMAT = pyaudio.paInt16
+    FORMAT = 0#pyaudio.paInt16
     CHANNELS = 1
     VAD_AGGRESSIVENESS = 3
     SILENCE_THRESHOLD = 2.2  # seconds
@@ -946,11 +947,11 @@ def get_game_email(credentials_path=r"C:\Users\Markin\Workspace\ToolBoxV2\client
 
 class TTSModule:
     def __init__(self, config, on_tts_start, on_tts_end, vad_name="ISAA0"):
-        from RealtimeTTS import (
-            KokoroEngine,
-            SystemEngine,
-            TextToAudioStream,
-        )
+        #from RealtimeTTS import (
+        #    KokoroEngine,
+        #    SystemEngine,
+        #    TextToAudioStream,
+        #)
         self.config = config
         self.on_tts_start = on_tts_start
         self.on_tts_end = on_tts_end
