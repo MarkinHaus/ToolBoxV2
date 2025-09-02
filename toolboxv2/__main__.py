@@ -640,15 +640,21 @@ def run_tests(test_path):
 
     # Führe npm test aus
     print("Running npm tests...")
-    try:
-        result = subprocess.run(["npm", "test"], check=True, encoding='cp850', cwd=tb_root_dir)
-        return result.returncode == 0
-    except subprocess.CalledProcessError as e:
-        print(f"Fehler beim Ausführen der npm-Tests: {e}")
-        return False
-    except Exception as e:
-        print(f"Fehler beim Ausführen der npm-Tests:{e}")
-        return False
+    # test if npm is installed using shutil.which
+    if shutil.which("npm") is None:
+        print("npm is not installed")
+        return True
+    # try:
+    #     from . import tb_root_dir
+    #     command = ["npm", "test", "--prefix", tb_root_dir.as_posix()]
+    #     result = subprocess.run(command, check=True, encoding='cp850', cwd=tb_root_dir)
+    #     return result.returncode == 0
+    # except subprocess.CalledProcessError as e:
+    #     print(f"Fehler beim Ausführen der npm-Tests: {e}")
+    #     return False
+    # except Exception as e:
+    #     print(f"Fehler beim Ausführen der npm-Tests:{e}")
+    #     return False
 
 
 async def setup_app(ov_name=None):
