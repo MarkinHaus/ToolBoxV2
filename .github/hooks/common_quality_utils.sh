@@ -16,7 +16,7 @@
 # For your tools:
 CHECKS_DEFINITIONS="
 ruff check .\toolboxv2\|Ruff|true
-safety check .\toolboxv2\ --full-report|Safety|true
+safety scan --full-report|Safety|true
 deptry .\toolboxv2\|Deptry|true
 " # Assuming both are critical for commit
 
