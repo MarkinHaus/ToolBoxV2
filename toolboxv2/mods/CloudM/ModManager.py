@@ -342,8 +342,6 @@ def uninstaller(app: App | None, module_name: str):
 
 @export(mod_name=Name, name="upload_mod", api=True, api_methods=['POST'])
 async def upload_mod(app: App, request: RequestData, form_data: dict[str, Any] | None = None):
-    if form_data or not form_data.get('files'):
-        return Result.default_user_error("No file provided.")
     # TODO: update file upload
     if not isinstance(form_data, dict):
         return Result.default_user_error("No file provided.")
