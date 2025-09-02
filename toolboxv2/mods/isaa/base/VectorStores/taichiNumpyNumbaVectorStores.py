@@ -26,7 +26,7 @@ try:
     use_gpu = False
     ti.init(arch=ti.gpu if use_gpu else ti.cpu)
 except ImportError:
-    ti = None
+    ti = lambda: None
 
 try:
 
@@ -51,7 +51,7 @@ try:
             # Normalize
             for j in range(dim):
                 output[i, j] = vectors[i, j] * inv_norm
-except ImportError:
+except AttributeError:
 
     import math
     def batch_normalize(
@@ -261,7 +261,7 @@ try:
                     continue
                 for k in range(j, ti.min(j + 16, dim)):
                     output[i, k] = vectors[i, k] * inv_norm
-except ImportError:
+except AttributeError:
     import math
 
     def batch_normalize(

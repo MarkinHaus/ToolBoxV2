@@ -27,6 +27,7 @@ class TestSession(unittest.TestCase):
         # Stop the app patcher
         self.app_patcher.stop()
 
+    @async_test
     async def test_session_initialization(self):
         """Test basic session initialization"""
         session = Session('test_user')
@@ -73,19 +74,34 @@ class TestSession(unittest.TestCase):
 
     @async_test
     async def test_logout(self):
-        """Test logout functionality"""
-        session = Session('test_user')
+        """Test logout functionality with correct async mocking."""
+        session_instance = Session('test_user')
 
-        # Mock the ClientSession
-        session.session = AsyncMock()
-        session.session.post.return_value.__aenter__.return_value.status = 200
+        # 1. Erstellen Sie einen Mock für das Response-Objekt
+        mock_response = MagicMock()
+        mock_response.status = 200
+        # Da die Response im `async with`-Block verwendet wird, müssen wir das magische `__aenter__` mocken.
+        mock_response.__aenter__.return_value = mock_response
 
-        # Perform logout
-        result = await session.logout()
+        # 2. Konfigurieren Sie den `AsyncMock` für die `post`-Methode
+        # Er soll eine Coroutine zurückgeben, die beim `await` den `mock_response` liefert.
+        mock_session = AsyncMock()
+        mock_session.post.return_value = mock_response
+        mock_session.closed = False  # Die Session ist anfangs offen
 
-        # Verify logout was successful
-        self.assertTrue(result)
-        self.assertIsNone(session.session)
+        # 3. Weisen Sie den Mock der Session-Instanz zu
+        session_instance.session = mock_session
+
+        # Führen Sie den Logout durch
+        result = await session_instance.logout()
+
+        # Überprüfen Sie die Ergebnisse
+        self.assertTrue(result, "Logout should return True on success")
+        self.assertIsNone(session_instance.session, "Session object should be set to None after logout")
+
+        # Überprüfen Sie, ob die Methoden des Mocks aufgerufen wurden
+        mock_session.post.assert_awaited_once_with(f'{session_instance.base}/web/logoutS')
+        mock_session.close.assert_awaited_once()
 
     @async_test
     async def test_init_log_in_mk_link_invalid(self):

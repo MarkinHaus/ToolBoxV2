@@ -753,6 +753,10 @@ class AISemanticMemory(metaclass=Singleton):
             if file.endswith(".pkl"):
                 try:
                     self.memories[file[:-4]] = KnowledgeBase.load(os.path.join(path, file))
+                except EOFError as e:
+                    return False
+                except FileNotFoundError as e:
+                    return False
                 except Exception as e:
                     print(f"Error loading memory: {str(e)}")
                     return False

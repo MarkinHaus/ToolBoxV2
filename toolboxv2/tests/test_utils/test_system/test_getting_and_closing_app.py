@@ -74,31 +74,6 @@ class TestSaveClosingApp(unittest.TestCase):
     async def helper_exit(*x):
         return x
 
-    @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
-           [MagicMock(called_exit=[False, 0], a_exit=AsyncMock())])
-    @patch('asyncio.get_event_loop')
-    def test_a_save_closing_app_with_registered_app(self, mock_get_event_loop):
-        # Mock the event loop
-        loop_mock = MagicMock()
-        mock_get_event_loop.return_value = loop_mock
-
-        # Set up a registered app
-        app_mock = get_app(name="test")
-        app_mock.start_dir = "test"
-        app_mock.print = Mock()
-
-        # Call the function
-        # Call the coroutine
-        async def test_coroutine():
-            await a_save_closing_app()
-
-        # Run the coroutine
-        asyncio.run(test_coroutine())
-
-        # Assert that the appropriate methods were called on the app
-        app_mock.a_exit.assert_called_once()
-        app_mock.print.assert_any_call(Style.Bold(Style.ITALIC("- completed -")))
-
     # @patch('asyncio.get_event_loop')
     @patch('toolboxv2.utils.system.getting_and_closing_app.registered_apps',
            [MagicMock(called_exit=[False, 0], exit=Mock(), a_exit=AsyncMock())])

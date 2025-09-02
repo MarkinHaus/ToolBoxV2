@@ -1703,6 +1703,12 @@ print(f"Successfully imported {package_name}")
 
         return tools
 
+    def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exe):
+        await asyncio.sleep(0.01)
+
 ### -- extra -- ###
 
 @dataclass

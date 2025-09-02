@@ -448,8 +448,11 @@ class App(AppType, metaclass=Singleton):
                 self.functions[modular_id][f"{spec}_instance"] = instance
                 self.functions[modular_id][f"{spec}_instance_type"] = instance_type
             else:
-                self.print("ERROR OVERRIDE")
-                raise ImportError(f"Module already known {modular_id}")
+                self.print("Firest instance stays use new spec to get new instance")
+                if modular_id in self.functions and self.functions[modular_id].get(f"{spec}_instance", None) is not None:
+                    return self.functions[modular_id][f"{spec}_instance"]
+                else:
+                    raise ImportError(f"Module already known {modular_id} and not avalabel reload using other spec then {spec}")
 
         elif tools_class is not None:
             if modular_id not in self.functions:

@@ -8283,7 +8283,7 @@ class FlowAgent:
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
-
+        result = None
         await self.progress_tracker.emit_event(ProgressEvent(
             event_type="execution_start",
             timestamp=time.time(),
@@ -8383,6 +8383,7 @@ class FlowAgent:
         except Exception as e:
             eprint(f"Agent execution failed: {e}", exc_info=True)
             error_response = f"I encountered an error: {str(e)}"
+            result = error_response
             import traceback
             print(traceback.format_exc())
 
@@ -10115,7 +10116,7 @@ tool_complexity: low/medium/high
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] | None = None,
-                             max_retries: int = 2) -> dict[str, Any]:
+                             max_retries: int = 2, auto_context=True) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
 
@@ -10186,7 +10187,7 @@ Respond in YAML format only:
                 response = await self.a_run_llm_completion(
                     model=self.amd.complex_llm_model,
                     messages=messages,
-                    with_context=False,
+                    with_context=auto_context,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     task_id=f"format_{model_name.lower()}_{attempt}"
@@ -10852,16 +10853,13 @@ Respond in YAML format only:
         return self._tool_registry
 
     def __rshift__(self, other):
-        """Implements >> operator for chaining"""
-        return Chain._create_chain([self, other])
+        return Chain(self) >> other
 
     def __add__(self, other):
-        """Implements + operator for parallel execution"""
-        return ParallelChain([self, other])
+        return Chain(self) + other
 
     def __and__(self, other):
-        """Implements & operator for parallel execution"""
-        return ParallelChain([self, other])
+        return Chain(self) & other
 
     def __mod__(self, other):
         """Implements % operator for conditional branching"""
@@ -11695,9 +11693,57 @@ async def tchains():
 
     print("=== Testing Done ===")
 
+
+async def run_new_custom_chain():
+    # --- Agenten-Setup ---
+
+    class CustomFormat(BaseModel):
+        value: str
+    # (Wir gehen davon aus, dass die Agenten wie im Beispiel-Code definiert sind)
+    supervisor_agent = FlowAgent(AgentModelData(name="Supervisor"))
+    writer_agent = FlowAgent(AgentModelData(name="Writer"))
+    reviewer_agent = FlowAgent(AgentModelData(name="Reviewer"))
+    notifier_agent = FlowAgent(AgentModelData(name="Notifier"))
+
+    # Weisen Sie den Agenten die beispielhaften a_run und a_format_class Methoden zu
+    # (Dieser Code ist der gleiche wie in Ihrem Beispiel)
+    async def a_run(self, query: str):
+        print(f"FlowAgent {self.amd.name} running query: {query}")
+        return f"Answer from {self.amd.name}"
+
+    async def a_format_class(self, pydantic_model: type[BaseModel],
+                             prompt: str,
+                             message_context: list[dict] | None = None,
+                             max_retries: int = 2):
+        print(f"FlowAgent {self.amd.name} formatting class: {pydantic_model.__name__}")
+        # Simuliert eine zufällige Entscheidung
+        decision = 'yes' if 0.5 > random.random() else 'no'
+        print(f"--> Decision made: {decision}")
+        return {"value": decision}
+
+    for agent in [supervisor_agent, writer_agent, reviewer_agent, notifier_agent]:
+        agent.a_run = types.MethodType(a_run, agent)
+        agent.a_format_class = types.MethodType(a_format_class, agent)
+
+    # --- Die neue übersichtliche Test-Chain ---
+    # Logik: Supervisor -> Entscheidung -> (Writer + Reviewer) ODER nichts -> Notifier
+    conditional_parallel_chain = (writer_agent + reviewer_agent)
+
+    # Erstellen der vollständigen Kette
+    # Wenn der Wert 'yes' ist, führe die conditional_parallel_chain aus.
+    # % notifier_agent bedeutet: Wenn die Bedingung nicht erfüllt ist, gehe direkt zu diesem Agenten.
+    # Der letzte >> notifier_agent stellt sicher, dass der Notifier immer am Ende läuft (sowohl für den 'yes'- als auch für den 'no'-Pfad).
+    c: Chain = supervisor_agent >> CF(CustomFormat) - IS('value', 'yes') >> conditional_parallel_chain % notifier_agent >> notifier_agent
+
+    print("--- Start: Neue Test-Chain ---")
+    result = await c.a_run("Start the content creation process")
+    print(f"\nFinal Result of the Chain: {result}\n")
+    c.print_graph()
+    print("--- Ende: Neue Test-Chain ---")
+
 if __name__ == "__main__":
     # Run the tests
-    asyncio.run(tchains())
+    asyncio.run(run_new_custom_chain())
 
 if __name__ == "__main__2":
 

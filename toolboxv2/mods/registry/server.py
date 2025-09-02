@@ -78,7 +78,10 @@ async def handle_registration(app: App, conn_id: str, session: dict, message: Ws
         if base_url == "localhost":
             base_url = "localhost:8080"
             app.print(f"APP_BASE_URL is localhost. Using default port 8080.")
-        public_url = f"http://{base_url}/api/registry/run?public_agent_id={agent_id}"
+        public_url = f"{base_url}/api/registry/run?public_agent_id={agent_id}"
+
+        if not public_url.startswith('http'):
+            public_url = f"http://{public_url}"
 
         response = AgentRegistered(
             public_name=reg_data.public_name,
@@ -352,6 +355,11 @@ def register_ui_ws_handlers(app: App):
 @export(mod_name=Name, api=True, version="1", request_as_kwarg=True, api_methods=['POST'])
 async def run(app: App, public_agent_id: str, request: RequestData):
     """Public API endpoint to run agents."""
+    if request is None:
+        return Result.default_user_error(info=f"Failed to run agent: No request provided.")
+    if not request.headers:
+        return Result.default_user_error(info=f"Failed to run agent: No request headers provided.")
+
     auth_header = request.headers.authorization or request.headers.to_dict().get('authorization')
 
     if not auth_header or not auth_header.startswith('Bearer '):

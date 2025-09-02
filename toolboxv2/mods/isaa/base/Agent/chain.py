@@ -3,7 +3,7 @@ import types
 import asyncio
 import random
 from enum import Enum
-from typing import Any, Union, List, Dict, Tuple, Optional
+from typing import Any, Union, List, Dict, Tuple, Optional, Type
 from pydantic import BaseModel
 import copy
 
@@ -15,436 +15,265 @@ class ChainRunType(Enum):
     a_run = "a_run"
     format_class = "format_class"
 
+
 class CF:
-    """Chain Format - handles formatting between agents"""
+    """Chain Format - handles formatting and data extraction between tasks."""
 
-    def __init__(self, format_class: type[BaseModel]):
+    def __init__(self, format_class: Type[BaseModel]):
         self.format_class = format_class
-        self.extract_key = None
-        self.extract_multiple = False
-        self.parallel_count = None
+        self.extract_key: Union[str, tuple, None] = None
+        self.is_parallel_extraction = False
 
-    def __sub__(self, key):
-        """Implements - operator for key extraction"""
+    def __sub__(self, key: Union[str, tuple]):
+        """Implements the - operator for data extraction keys."""
         new_cf = copy.copy(self)
         if isinstance(key, str):
-            if key == '*':
-                new_cf.extract_key = '*'  # Extract all fields
-            elif key.startswith('*'):
-                new_cf.extract_key = key[1:]  # Remove * prefix
-            elif '[n]' in key:
+            if '[n]' in key:
                 new_cf.extract_key = key.replace('[n]', '')
-                new_cf.parallel_count = 'n'  # Will be determined at runtime
+                new_cf.is_parallel_extraction = True
             else:
                 new_cf.extract_key = key
         elif isinstance(key, tuple):
             new_cf.extract_key = key
         return new_cf
 
-    def __rshift__(self, other):
-        """Implements >> operator after CF"""
-        return Chain._create_chain([self, other])
-
 
 class IS:
-    """Conditional check"""
+    """Conditional check for branching logic."""
 
     def __init__(self, key: str, expected_value: Any):
         self.key = key
         self.expected_value = expected_value
 
-    def __rshift__(self, other):
-        """Implements >> operator after IS"""
-        return ConditionalChain(self, other)
+
+# --- Kernarchitektur der Chains ---
+
+class ChainBase:
+    """Abstract base class for all chain types, providing common operators."""
+
+    def __rshift__(self, other: Any) -> 'Chain':
+        """Implements the >> operator to chain tasks sequentially."""
+        if isinstance(self, Chain):
+            new_tasks = self.tasks + [other]
+            return Chain._create_chain(new_tasks)
+        return Chain._create_chain([self, other])
+
+    def __add__(self, other: Any) -> 'ParallelChain':
+        """Implements the + operator for parallel execution."""
+        return ParallelChain([self, other])
+
+    def __and__(self, other: Any) -> 'ParallelChain':
+        """Implements the & operator, an alias for parallel execution."""
+        return ParallelChain([self, other])
+
+    def __or__(self, other: Any) -> 'ErrorHandlingChain':
+        """Implements the | operator for defining a fallback/error handling path."""
+        return ErrorHandlingChain(self, other)
+
+    def __mod__(self, other: Any) -> 'ConditionalChain':
+        """Implements the % operator for defining a false/else branch in a condition."""
+        # This is typically used after a conditional chain.
+        if isinstance(self, ConditionalChain):
+            self.false_branch = other
+            return self
+        # Allows creating a conditional chain directly
+        return ConditionalChain(None, self, other)
+
+    def set_progress_callback(self, progress_tracker: 'ProgressTracker'):
+        """Recursively sets the progress callback for all tasks in the chain."""
+        tasks_to_process = []
+        if hasattr(self, 'tasks'): tasks_to_process.extend(self.tasks)  # Chain
+        if hasattr(self, 'agents'): tasks_to_process.extend(self.agents)  # ParallelChain
+        if hasattr(self, 'true_branch'): tasks_to_process.append(self.true_branch)  # ConditionalChain
+        if hasattr(self, 'false_branch') and self.false_branch: tasks_to_process.append(
+            self.false_branch)  # ConditionalChain
+        if hasattr(self, 'primary'): tasks_to_process.append(self.primary)  # ErrorHandlingChain
+        if hasattr(self, 'fallback'): tasks_to_process.append(self.fallback)  # ErrorHandlingChain
+
+        for task in tasks_to_process:
+            if hasattr(task, 'set_progress_callback'):
+                task.set_progress_callback(progress_tracker)
+
+    def __call__(self, *args, **kwargs):
+        """Allows the chain to be called like a function, returning an awaitable runner."""
+        return self._Runner(self, args, kwargs)
+
+    class _Runner:
+        def __init__(self, parent, args, kwargs):
+            self.parent = parent
+            self.args = args
+            self.kwargs = kwargs
+
+        def __call__(self):
+            """Synchronous execution."""
+            return asyncio.run(self.parent.a_run(*self.args, **self.kwargs))
+
+        def __await__(self):
+            """Asynchronous execution."""
+            return self.parent.a_run(*self.args, **self.kwargs).__await__()
 
 
-class ParallelChain:
-    """Handles parallel execution of agents"""
+class ParallelChain(ChainBase):
+    """Handles parallel execution of multiple agents or chains."""
 
-    def __init__(self, agents: List[Union['FlowAgent', 'Chain']]):
+    def __init__(self, agents: List[Union['FlowAgent', ChainBase]]):
         self.agents = agents
 
-    async def a_run(self, query, **kwargs):
-        """Run all agents in parallel"""
-        tasks = []
-
-        for agent in self.agents:
-            if hasattr(agent, 'a_run'):
-                tasks.append(agent.a_run(query, **kwargs))
-            else:
-                tasks.append(agent.run(query))  # For other chain types
-
+    async def a_run(self, query: Any, **kwargs):
+        """Runs all agents/chains in parallel."""
+        tasks = [agent.a_run(query, **kwargs) for agent in self.agents]
         results = await asyncio.gather(*tasks)
         return self._combine_results(results)
 
-    def _combine_results(self, results):
-        """Intelligently combine parallel results"""
-        if len(results) == 1:
-            return results[0]
-
-        # Simple combination - could be made more sophisticated
+    def _combine_results(self, results: List[Any]) -> Any:
+        """Intelligently combines parallel results."""
         if all(isinstance(r, str) for r in results):
             return " | ".join(results)
-        elif all(isinstance(r, dict) for r in results):
-            combined = {}
-            for i, result in enumerate(results):
-                combined[f"agent_{i}"] = result
-            return combined
-        else:
-            return results
-
-    def __rshift__(self, other):
-        """Implements >> operator"""
-        return Chain._create_chain([self, other])
-
-    def __or__(self, other):
-        """Implements | operator for error handling"""
-        return ErrorHandlingChain(self, other)
+        return results
 
 
-    def __call__(self, *args, **kwargs):
-        return self._Runner(self, args, kwargs)
+class ConditionalChain(ChainBase):
+    """Handles conditional execution based on a condition."""
 
-    class _Runner:
-        def __init__(self, parent, args, kwargs):
-            self.parent = parent
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self):
-            # Normaler Aufruf → run
-            return self.parent.run(*self.args, **self.kwargs)
-
-        def __await__(self):
-            # Await → arun
-            return self.parent.a_run(*self.args, **self.kwargs).__await__()
-
-
-
-class ConditionalChain:
-    """Handles conditional execution"""
-
-    def __init__(self, condition, true_branch, false_branch=None):
+    def __init__(self, condition: IS, true_branch: Any, false_branch: Any = None):
         self.condition = condition
         self.true_branch = true_branch
         self.false_branch = false_branch
-        self.kwargs_for_agent = {}
 
-    def __mod__(self, other):
-        """Implements % operator for false branch"""
-        return ConditionalChain(self.condition, self.true_branch, other)
+    async def a_run(self, data: Any, **kwargs):
+        """Executes the true or false branch based on the condition."""
+        condition_met = False
+        if isinstance(self.condition, IS) and isinstance(data, dict):
+            if data.get(self.condition.key) == self.condition.expected_value:
+                condition_met = True
 
-    async def a_run(self, query_or_data, **kwargs):
-        """Execute based on condition"""
-        self.kwargs_for_agent = kwargs
-        if isinstance(self.condition, IS):
-            # Check condition
-            if isinstance(query_or_data, dict) and self.condition.key in query_or_data:
-                condition_met = query_or_data[self.condition.key] == self.condition.expected_value
-            else:
-                condition_met = False
-
-            if condition_met:
-                return await self._run_branch(self.true_branch, query_or_data)
-            elif self.false_branch:
-                return await self._run_branch(self.false_branch, query_or_data)
-            else:
-                return query_or_data
-        else:
-            # Direct conditional execution
-            return await self._run_branch(self.true_branch, query_or_data)
-
-    async def _run_branch(self, branch, data):
-        if hasattr(branch, 'a_run'):
-            return await branch.a_run(data, **self.kwargs_for_agent)
-        elif hasattr(branch, 'run'):
-            return await branch.run(data, **self.kwargs_for_agent)
-        else:
-            return data
+        if condition_met:
+            return await self.true_branch.a_run(data, **kwargs)
+        elif self.false_branch:
+            return await self.false_branch.a_run(data, **kwargs)
+        return data  # Return original data if condition not met and no false branch
 
 
-    def __call__(self, *args, **kwargs):
-        return self._Runner(self, args, kwargs)
+class ErrorHandlingChain(ChainBase):
+    """Handles exceptions in a primary chain by executing a fallback chain."""
 
-    class _Runner:
-        def __init__(self, parent, args, kwargs):
-            self.parent = parent
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self):
-            # Normaler Aufruf → run
-            return self.parent.run(*self.args, **self.kwargs)
-
-        def __await__(self):
-            # Await → arun
-            return self.parent.a_run(*self.args, **self.kwargs).__await__()
-
-
-
-class ErrorHandlingChain:
-    """Handles error cases with fallback"""
-
-    def __init__(self, primary, fallback):
+    def __init__(self, primary: Any, fallback: Any):
         self.primary = primary
         self.fallback = fallback
 
-    async def a_run(self, query, **kwargs):
+    async def a_run(self, query: Any, **kwargs):
+        """Tries the primary chain and executes the fallback on failure."""
         try:
             return await self.primary.a_run(query, **kwargs)
         except Exception as e:
-            print(f"Primary chain failed with {e}, trying fallback")
-            if hasattr(self.fallback, 'a_run'):
-                return await self.fallback.a_run(query, **kwargs)
-            else:
-                return await self.fallback.run(query, **kwargs)
+            print(f"Primary chain failed with error: {e}. Running fallback.")
+            return await self.fallback.a_run(query, **kwargs)
 
 
-    def __call__(self, *args, **kwargs):
-        return self._Runner(self, args, kwargs)
+class Chain(ChainBase):
+    """The main class for creating and executing sequential chains of tasks."""
 
-    class _Runner:
-        def __init__(self, parent, args, kwargs):
-            self.parent = parent
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self):
-            # Normaler Aufruf → run
-            return self.parent.run(*self.args, **self.kwargs)
-
-        def __await__(self):
-            # Await → arun
-            return self.parent.a_run(*self.args, **self.kwargs).__await__()
-
-
-
-class Chain:
     def __init__(self, agent: 'FlowAgent' = None):
-        if agent:
-            self.agent = agent
-            self.tasks = [agent]
-        else:
-            self.tasks = []
-        self._name = "chain"
-        self.progress_tracker = None
-        self.description = "A chain of tasks"
-        self.return_key = "chain"
-        self.use = "chain"
-
-        self.amd = lambda: None
-        self.amd.name = "chain"
-
-    @property
-    def name(self):
-        return self._name
-    @name.setter
-    def name(self, value):
-        self._name = value
-        self.amd.name = value
+        self.tasks: List[Any] = [agent] if agent else []
+        self.progress_tracker: Union['ProgressTracker', None] = None
 
     @classmethod
-    def _create_chain(cls, components):
-        """Create a chain from a list of components"""
+    def _create_chain(cls, components: List[Any]) -> 'Chain':
         chain = cls()
         chain.tasks = components
         return chain
 
-    def _extract_data(self, data, cf: CF):
-        """Extract data based on CF configuration with parallel support"""
+    def _extract_data(self, data: Dict, cf: CF) -> Any:
+        """Extracts data from a dictionary based on the CF configuration."""
         if not isinstance(data, dict):
             return data
 
-        if cf.extract_key == '*':
-            return data  # Return all
-        elif isinstance(cf.extract_key, tuple):
-            return {k: data.get(k) for k in cf.extract_key if k in data}
-        elif cf.extract_key in data:
-            extracted = data[cf.extract_key]
-
-            # Handle parallel extraction
-            if cf.parallel_count == 'n' and isinstance(extracted, (list, tuple)):
-                return extracted  # Return list for parallel processing
-            else:
-                return extracted
-        else:
+        key = cf.extract_key
+        if key == '*':
             return data
+        if isinstance(key, tuple):
+            return {k: data.get(k) for k in key if k in data}
+        if isinstance(key, str) and key in data:
+            return data[key]
+        return data  # Return original data if key not found
 
-    async def a_run(self, query: Union[str, BaseModel], task_id=None, **kwargs):
-        """Execute the chain asynchronously with auto-parallel support"""
-        import time
-
-        self.kwargs_for_agent = kwargs
+    async def a_run(self, query: Any, **kwargs):
+        """
+        Executes the chain of tasks asynchronously with dynamic method selection,
+        data extraction, and auto-parallelization.
+        """
         current_data = query
-        node_name = self.name or "Unnamed Chain"
 
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="chain_start",
-                timestamp=time.time(),
-                status=NodeStatus.RUNNING,
-                node_name=node_name,
-                task_id=task_id,
-                metadata={"input": str(query)}
-            ))
+        # We need to iterate with an index to look ahead
+        i = 0
+        while i < len(self.tasks):
+            task = self.tasks[i]
 
-        for i, task in enumerate(self.tasks):
-            task_name = getattr(task, 'name', type(task).__name__)
+            # --- Auto-Erkennung und Ausführung ---
+            if hasattr(task, 'a_run') and hasattr(task, 'a_format_class'):
+                next_task = self.tasks[i + 1] if (i + 1) < len(self.tasks) else None
+                task.active_session = kwargs.get("session_id", "default")
+                # Dynamische Entscheidung: a_format_class oder a_run aufrufen?
+                if isinstance(next_task, CF):
+                    # Nächste Aufgabe ist Formatierung, also a_format_class aufrufen
+                    current_data = await task.a_format_class(
+                        next_task.format_class, str(current_data), **kwargs
+                    )
+                else:
+                    # Standardausführung
+                    current_data = await task.a_run(str(current_data), **kwargs)
+                task.active_session = None
 
-            if self.progress_tracker:
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="task_start",
-                    timestamp=time.time(),
-                    status=NodeStatus.RUNNING,
-                    node_name=task_name,
-                    task_id=task_id,
-                ))
-
-            try:
-                # Handle CF with parallel extraction
-                if hasattr(task, 'format_class') and hasattr(task, 'parallel_count') and task.parallel_count == 'n':
+            elif isinstance(task, CF):
+                # --- Auto-Extraktion und Parallelisierung ---
+                if task.extract_key:
                     extracted_data = self._extract_data(current_data, task)
 
-                    # If we have a list and there's a next task, run it in parallel
-                    if isinstance(extracted_data, (list, tuple)) and i + 1 < len(self.tasks):
-                        next_task = self.tasks[i + 1]
+                    if task.is_parallel_extraction and isinstance(extracted_data, list):
+                        next_task_for_parallel = self.tasks[i + 1] if (i + 1) < len(self.tasks) else None
+                        if next_task_for_parallel:
+                            # Erstelle eine temporäre Parallel-Kette und führe sie aus
+                            parallel_runner = ParallelChain([next_task_for_parallel] * len(extracted_data))
 
-                        if hasattr(next_task, 'a_run') or hasattr(next_task, 'run'):
-                            # Create parallel execution
-                            parallel_tasks = []
-                            for item in extracted_data:
-                                if hasattr(next_task, 'a_run'):
-                                    parallel_tasks.append(next_task.a_run(str(item), **self.kwargs_for_agent))
-                                else:
-                                    parallel_tasks.append(next_task.run(str(item)))
+                            # Führe jeden Task mit dem entsprechenden Datenelement aus
+                            parallel_tasks = [
+                                next_task_for_parallel.a_run(item, **kwargs) for item in extracted_data
+                            ]
+                            current_data = await asyncio.gather(*parallel_tasks)
 
-                            # Execute in parallel
-                            parallel_results = await asyncio.gather(*parallel_tasks)
-                            current_data = parallel_results
-
-                            # Skip the next task since we already executed it
-                            continue
+                            # Überspringe die nächste Aufgabe, da sie bereits parallel ausgeführt wurde
+                            i += 1
                         else:
                             current_data = extracted_data
                     else:
                         current_data = extracted_data
+                else:
+                    # Keine Extraktion, Daten bleiben unverändert (CF dient nur als Marker)
+                    pass
 
-                elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
-                    current_data = await task.a_run(current_data, **self.kwargs_for_agent)
-                elif hasattr(task, 'format_class'):
-                    # Regular CF processing
-                    current_data = self._extract_data(current_data, task)
-                elif hasattr(task, 'a_run'):
-                    if isinstance(current_data, BaseModel):
-                        current_data = await task.a_run(str(current_data.model_dump()), **self.kwargs_for_agent)
-                    else:
-                        current_data = await task.a_run(str(current_data), **self.kwargs_for_agent)
+            elif isinstance(task, (ParallelChain, ConditionalChain, ErrorHandlingChain)):
+                current_data = await task.a_run(current_data, **kwargs)
 
-                if self.progress_tracker:
-                    await self.progress_tracker.emit_event(ProgressEvent(
-                        event_type="task_end",
-                        timestamp=time.time(),
-                        status=NodeStatus.COMPLETED,
-                        node_name=task_name,
-                        task_id=task_id,
-                    ))
-            except Exception as e:
-                if self.progress_tracker:
-                    await self.progress_tracker.emit_event(ProgressEvent(
-                        event_type="task_error",
-                        timestamp=time.time(),
-                        status=NodeStatus.FAILED,
-                        node_name=task_name,
-                        task_id=task_id,
-                        metadata={"error": str(e)}
-                    ))
-                raise e
+            elif isinstance(task, IS):
+                # IS needs to be paired with >> to form a ConditionalChain
+                next_task_for_cond = self.tasks[i + 1] if (i + 1) < len(self.tasks) else None
+                if next_task_for_cond:
+                    # Form a conditional chain on the fly
+                    conditional_task = ConditionalChain(task, next_task_for_cond)
+                    # Check for a false branch defined with %
+                    next_next_task = self.tasks[i + 2] if (i + 2) < len(self.tasks) else None
+                    if isinstance(next_next_task, ConditionalChain) and next_next_task.false_branch:
+                        conditional_task.false_branch = next_next_task.false_branch
+                        i += 1  # also skip the false branch marker
 
-        if self.progress_tracker:
-            await self.progress_tracker.emit_event(ProgressEvent(
-                event_type="chain_end",
-                timestamp=time.time(),
-                status=NodeStatus.COMPLETED,
-                node_name=node_name,
-                task_id=task_id,
-                metadata={"output": str(current_data)}
-            ))
+                    current_data = await conditional_task.a_run(current_data, **kwargs)
+                    i += 1  # Skip the next task as it's part of the conditional
+                else:
+                    raise ValueError("IS condition must be followed by a task to execute.")
+
+            i += 1  # Gehe zur nächsten Aufgabe
 
         return current_data
-
-    def run(self, query: Union[str, BaseModel], use="auto", **kwargs):
-        """Synchronous wrapper"""
-        return asyncio.run(self.a_run(query, use, **kwargs))
-
-    def __rshift__(self, other):
-        """Implements >> operator for extending chains"""
-        new_tasks = self.tasks + [other]
-        return Chain._create_chain(new_tasks)
-
-    def __add__(self, other):
-        """Implements + operator for parallel execution"""
-        return ParallelChain([self, other])
-
-    def __and__(self, other):
-        """Implements & operator for parallel execution"""
-        return ParallelChain([self, other])
-
-    def __mod__(self, other):
-        """Implements % operator for conditional branching"""
-        return ConditionalChain(None, self, other)
-
-    def __or__(self, other):
-        """Implements | operator for error handling"""
-        return ErrorHandlingChain(self, other)
-
-
-    def set_progress_callback(self, progress_tracker):
-        """
-        Sets the progress callback for every agent in the chain.
-        """
-        for task in self.tasks:
-            if hasattr(task, 'set_progress_callback'):
-                task.set_progress_callback(progress_tracker)
-            else:
-                ok = False
-                for typ in (ParallelChain, ConditionalChain, ErrorHandlingChain):
-                    if isinstance(task, typ):
-                        ok = True
-                if not ok:
-                    continue
-                if hasattr(task, 'agents'): # ParallelChain
-                    for agent in task.agents:
-                         if hasattr(agent, 'set_progress_callback'):
-                            agent.set_progress_callback(progress_tracker)
-                if hasattr(task, 'true_branch'): # ConditionalChain
-                    if hasattr(task.true_branch, 'set_progress_callback'):
-                        task.true_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'false_branch') and task.false_branch: # ConditionalChain
-                    if hasattr(task.false_branch, 'set_progress_callback'):
-                        task.false_branch.set_progress_callback(progress_tracker)
-                if hasattr(task, 'primary'): # ErrorHandlingChain
-                     if hasattr(task.primary, 'set_progress_callback'):
-                        task.primary.set_progress_callback(progress_tracker)
-                if hasattr(task, 'fallback'): # ErrorHandlingChain
-                     if hasattr(task.fallback, 'set_progress_callback'):
-                        task.fallback.set_progress_callback(progress_tracker)
-
-    def __call__(self, *args, **kwargs):
-        return self._Runner(self, args, kwargs)
-
-    class _Runner:
-        def __init__(self, parent, args, kwargs):
-            self.parent = parent
-            self.args = args
-            self.kwargs = kwargs
-
-        def __call__(self):
-            # Normaler Aufruf → run
-            return self.parent.run(*self.args, **self.kwargs)
-
-        def __await__(self):
-            # Await → arun
-            return self.parent.a_run(*self.args, **self.kwargs).__await__()
 
 
 def chain_to_graph(self) -> Dict[str, Any]:

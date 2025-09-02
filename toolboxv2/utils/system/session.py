@@ -222,24 +222,34 @@ class Session(metaclass=Singleton):
         return False
 
     async def logout(self) -> bool:
-        if self.session:
+        if self.session and not self.session.closed:  # Sicherstellen, dass die Session offen ist
             try:
-                async with self.session.post(f'{self.base}/web/logoutS') as response:
+                # Der `post`-Aufruf gibt eine Coroutine zurück, die wir awaiten müssen,
+                # um das Response-Objekt zu erhalten.
+                response = await self.session.post(f'{self.base}/web/logoutS')
+
+                # Wir verwenden `async with` für die Response, um sicherzustellen, dass sie richtig behandelt wird.
+                async with response:
+                    is_successful = response.status == 200
+
+                # Die Session erst NACH der Anfrage schließen.
+                await self.session.close()
+                self.session = None
+
+                return is_successful
+            except (ClientConnectorError, socket.gaierror, ClientError) as e:
+                # Zusammengefasste Fehlerbehandlung für Verbindungsfehler
+                print(f"Fehler bei der Verbindung während des Logouts: {e}")
+                if self.session:
                     await self.session.close()
-                    self.session = None
-                    return response.status == 200
-            except ClientConnectorError as e:
-                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-                return False
-            except socket.gaierror as e:
-                print(f"DNS-Auflösung fehlgeschlagen: {e}")
-                return False
-            except ClientError as e:
-                print(f"Allgemeiner Client-Fehler: {e}")
+                self.session = None
                 return False
             except Exception as e:
-                print("Error session logout:", e, self.username)
-        return False
+                print(f"Allgemeiner Fehler während des Logouts: {e}, user: {self.username}")
+                if self.session:
+                    await self.session.close()
+                self.session = None
+        return False  # Gibt False zurück, wenn keine Session vorhanden war
 
     async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse or Response:
         if isinstance(url, str):

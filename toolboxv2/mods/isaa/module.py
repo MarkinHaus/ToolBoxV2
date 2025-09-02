@@ -1156,7 +1156,7 @@ class Tools(MainTool, FileHandler):
 
     async def mini_task_completion_format(self, mini_task, format_schema: type[BaseModel],
                                           max_tokens_override: int | None = None, agent_name="TaskCompletion",
-                                          task_from="system", mode_overload: Any = None, user_task: str | None = None):
+                                          task_from="system", mode_overload: Any = None, user_task: str | None = None, auto_context=False):
         if mini_task is None: return None
         self.print(f"Running formatted mini task, volume {len(mini_task)}")
 
@@ -1181,6 +1181,7 @@ class Tools(MainTool, FileHandler):
                 pydantic_model=format_schema,
                 prompt=current_prompt,
                 message_context=message_context,
+                auto_context=auto_context
                 # max_tokens can be part of agent's model config or passed if a_format_class supports it
             )
             if format_schema == bool:  # Special handling for boolean schema
@@ -1192,7 +1193,7 @@ class Tools(MainTool, FileHandler):
             self.print(f"Error in mini_task_completion_format: {e}")
             return None  # Or raise
 
-    async def format_class(self, format_schema: type[BaseModel], task: str, agent_name="TaskCompletion"):
+    async def format_class(self, format_schema: type[BaseModel], task: str, agent_name="TaskCompletion", auto_context=False):
         if format_schema is None or not task: return None
 
         agent = None
@@ -1203,7 +1204,7 @@ class Tools(MainTool, FileHandler):
         else:
             raise TypeError("agent_name must be str or FlowAgent instance")
 
-        return await agent.a_format_class(format_schema, task)
+        return await agent.a_format_class(format_schema, task, auto_context=auto_context)
 
     async def run_agent(self, name: str | FlowAgent,
                         text: str,
@@ -3219,6 +3220,10 @@ class Tools(MainTool, FileHandler):
         access_level: str = "public"
     ) -> Dict[str, Any]:
         """FIXED: Mit Debug-Ausgaben für Troubleshooting."""
+
+        if hasattr(agent, 'name') and not hasattr(agent, 'amd') and hasattr(agent, 'a_run'):
+            agent.amd = lambda :None
+            agent.amd.name = agent.name
 
         try:
             # Registry Client initialisieren
