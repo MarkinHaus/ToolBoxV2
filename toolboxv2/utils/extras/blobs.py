@@ -274,6 +274,8 @@ class BlobFile(io.IOBase):
     def __enter__(self):
         try:
             raw_blob_data = self.storage.read_blob(self.blob_id)
+            if raw_blob_data != b'' and (not raw_blob_data or raw_blob_data is None):
+                raw_blob_data = b""
             blob_content = pickle.loads(raw_blob_data)
         except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError) as e:
             if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
