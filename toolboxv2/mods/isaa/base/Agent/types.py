@@ -50,50 +50,53 @@ class CustomEncoder(json.JSONEncoder):
 
 @dataclass
 class ProgressEvent:
+
     """Enhanced progress event with better error handling"""
+
+    # === 1. Kern-Attribute (Für jedes Event) ===
     event_type: str
-    event_id: str = ""
+    node_name: str
+    timestamp: float = field(default_factory=time.time)
+    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: Optional[str] = None
 
-    node_name: str = "system"
-    timestamp: float = None
+    # === 2. Status und Ergebnis-Attribute ===
+    status: Optional[NodeStatus] = None
+    success: Optional[bool] = None
+    duration: Optional[float] = None
+    error_details: dict[str, Any] = field(default_factory=dict)  # Strukturiert: message, type, traceback
 
-    agent_name: str  = None
-    # Status information
-    status: NodeStatus  = None
-    success: bool  = None
-    error_details: dict[str, Any]  = None
+    # === 3. LLM-spezifische Attribute ===
+    llm_model: Optional[str] = None
+    llm_prompt_tokens: Optional[int] = None
+    llm_completion_tokens: Optional[int] = None
+    llm_total_tokens: Optional[int] = None
+    llm_cost: Optional[float] = None
+    llm_input: Optional[Any] = None  # Optional für Debugging, kann groß sein
+    llm_output: Optional[str] = None # Optional für Debugging, kann groß sein
 
-    # LLM-specific data
-    llm_model: str  = None
-    llm_prompt_tokens: int  = None
-    llm_completion_tokens: int  = None
-    llm_total_tokens: int  = None
-    llm_cost: float  = None
-    llm_duration: float  = None
-    llm_temperature: float  = None
+    # === 4. Tool-spezifische Attribute ===
+    tool_name: Optional[str] = None
+    is_meta_tool: Optional[bool] = None
+    tool_args: Optional[dict[str, Any]] = None
+    tool_result: Optional[Any] = None
+    tool_error: Optional[str] = None
+    llm_temperature: Optional[float]  = None
 
-    # Tool-specific data
-    tool_name: str  = None
-    tool_args: dict[str, Any]  = None
-    tool_result: Any  = None
-    tool_duration: float  = None
-    tool_success: bool  = None
-    tool_error: str  = None
+    # === 5. Strategie- und Kontext-Attribute ===
+    agent_name: Optional[str] = None
+    task_id: Optional[str] = None
+    plan_id: Optional[str] = None
+
 
     # Node/Routing data
-    routing_decision: str  = None
-    routing_from: str  = None
-    routing_to: str  = None
-    node_phase: str  = None
-    node_duration: float  = None
+    routing_decision: Optional[str] = None
+    node_phase: Optional[str] = None
+    node_duration: Optional[float] = None
 
-    # Context data
-    task_id: str  = None
-    session_id: str  = None
-    plan_id: str  = None
+    # === 6. Metadaten (Für alles andere) ===
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    # Additional metadata
-    metadata: dict[str, Any] = None
 
     def __post_init__(self):
 
@@ -115,8 +118,7 @@ class ProgressEvent:
         if self.status == NodeStatus.COMPLETED:
             self.success = True
 
-
-    def to_dict(self) -> dict[str, Any]:
+    def _to_dict(self) -> dict[str, Any]:
         """Convert ProgressEvent to dictionary with proper handling of all field types"""
         result = {}
 
@@ -204,6 +206,81 @@ class ProgressEvent:
 
         return cls(**filtered_data)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return event data with None values removed for compact display"""
+        data = self._to_dict()
+
+        def clean_dict(d):
+            if isinstance(d, dict):
+                return {k: clean_dict(v) for k, v in d.items()
+                        if v is not None and v != {} and v != [] and v != ''}
+            elif isinstance(d, list):
+                cleaned_list = [clean_dict(item) for item in d if item is not None]
+                return [item for item in cleaned_list if item != {} and item != []]
+            return d
+
+        return clean_dict(data)
+
+    def get_chat_display_data(self) -> dict[str, Any]:
+        """Get data optimized for chat view display"""
+        filtered = self.filter_none_values()
+
+        # Core fields always shown
+        core_data = {
+            'event_type': filtered.get('event_type'),
+            'node_name': filtered.get('node_name'),
+            'timestamp': filtered.get('timestamp'),
+            'event_id': filtered.get('event_id'),
+            'status': filtered.get('status')
+        }
+
+        # Add specific fields based on event type
+        if self.event_type == 'outline_created':
+            if 'metadata' in filtered:
+                core_data['outline_steps'] = len(filtered['metadata'].get('outline', []))
+        elif self.event_type == 'reasoning_loop':
+            if 'metadata' in filtered:
+                core_data.update({
+                    'loop_number': filtered['metadata'].get('loop_number'),
+                    'outline_step': filtered['metadata'].get('outline_step'),
+                    'context_size': filtered['metadata'].get('context_size')
+                })
+        elif self.event_type == 'tool_call':
+            core_data.update({
+                'tool_name': filtered.get('tool_name'),
+                'is_meta_tool': filtered.get('is_meta_tool')
+            })
+        elif self.event_type == 'llm_call':
+            core_data.update({
+                'llm_model': filtered.get('llm_model'),
+                'llm_total_tokens': filtered.get('llm_total_tokens'),
+                'llm_cost': filtered.get('llm_cost')
+            })
+
+        # Remove None values from core_data
+        return {k: v for k, v in core_data.items() if v is not None}
+
+    def get_detailed_display_data(self) -> dict[str, Any]:
+        """Get complete filtered data for detailed popup view"""
+        return self.filter_none_values()
+
+    def get_progress_summary(self) -> str:
+        """Get a brief summary for progress sidebar"""
+        if self.event_type == 'reasoning_loop' and 'metadata' in self.filter_none_values():
+            metadata = self.filter_none_values()['metadata']
+            loop_num = metadata.get('loop_number', '?')
+            step = metadata.get('outline_step', '?')
+            return f"Loop {loop_num}, Step {step}"
+        elif self.event_type == 'tool_call':
+            tool_name = self.tool_name or 'Unknown Tool'
+            return f"{'Meta ' if self.is_meta_tool else ''}{tool_name}"
+        elif self.event_type == 'llm_call':
+            model = self.llm_model or 'Unknown Model'
+            tokens = self.llm_total_tokens
+            return f"{model} ({tokens} tokens)" if tokens else model
+        else:
+            return self.event_type.replace('_', ' ').title()
+
 class ProgressTracker:
     """Advanced progress tracking with cost calculation"""
 
@@ -249,8 +326,14 @@ class ProgressTracker:
         del self.active_timers[key]
         return duration
 
-    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
+    def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int,completion_response:Any=None) -> float:
         """Calculate approximate LLM cost"""
+        try:
+            import litellm
+            cost = litellm.completion_cost(model=model, completion_response=completion_response)
+            return cost
+        except ImportError:
+            cost = 0.0
         # Simplified cost calculation - would need actual provider pricing
         input_cost = (input_tokens / 1000) * self.token_costs["input"]
         output_cost = (output_tokens / 1000) * self.token_costs["output"]
@@ -707,3 +790,20 @@ class ToolAnalysis(BaseModel):
     confidence_triggers: dict[str, float] = Field(..., description="Phrases mapped to confidence scores.")
     tool_complexity: str = Field(..., description="The complexity of the tool, rated as low, medium, or high.")
     args_schema: dict[str, Any] | None = Field(..., description="The schema for the tool's arguments.")
+
+
+@dataclass
+class ChainMetadata:
+    """Metadata for stored chains"""
+    name: str
+    description: str = ""
+    created_at: datetime = field(default_factory=datetime.now)
+    modified_at: datetime = field(default_factory=datetime.now)
+    version: str = "1.0.0"
+    tags: list[str] = field(default_factory=list)
+    author: str = ""
+    complexity: str = "simple"  # simple, medium, complex
+    agent_count: int = 0
+    has_conditionals: bool = False
+    has_parallels: bool = False
+    has_error_handling: bool = False

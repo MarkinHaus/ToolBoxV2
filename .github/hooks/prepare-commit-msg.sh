@@ -72,13 +72,13 @@ else
             echo "[DEBUG prepare-commit-msg] Check Ran: '$NAME_STR_TRIMMED', Exit: $check_exit_code"
             if [ "$check_exit_code" -ne 0 ]; then
               ALL_CHECKS_OK=false
-              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED❌"
+              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }${NAME_STR_TRIMMED}❌"
               if [ "$IS_CRITICAL_TRIMMED" = "true" ]; then
                 ANY_CRITICAL_FAILED=true # Still track this for <sum> logic and console message
                 echo "[prepare-commit-msg] WARNING: CRITICAL CHECK FAILED: $NAME_STR_TRIMMED (Exit: $check_exit_code)" >&2
               fi
             else
-              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }$NAME_STR_TRIMMED✅"
+              SUMMARY_LOG_MSG="${SUMMARY_LOG_MSG}${SUMMARY_LOG_MSG:+, }${NAME_STR_TRIMMED}✅"
             fi
           fi
           echo "[DEBUG prepare-commit-msg] Intermediate SUMMARY_LOG_MSG (in loop): [$SUMMARY_LOG_MSG]"

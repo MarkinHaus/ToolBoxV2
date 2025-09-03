@@ -207,6 +207,8 @@ class BlobStorage:
         return os.path.join(self.storage_directory, blob_id + '.blobcache')
 
     def _save_blob_to_cache(self, blob_id: str, data: bytes):
+        if not data or data is None:
+            return
         if blob_id not in self.blob_ids:
             self.blob_ids.append(blob_id)
         with open(self._get_blob_cache_filename(blob_id), 'wb') as f:

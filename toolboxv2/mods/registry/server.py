@@ -228,17 +228,79 @@ async def broadcast_to_ui_clients(app: App, data: dict[str, Any]):
 
 
 async def on_disconnect(app: App, conn_id: str, session: dict = None):
+    """Enhanced disconnect handler with comprehensive cleanup and UI notifications."""
     app.print(f"Registry client disconnected: {conn_id}")
+
+    # Check if this is a UI client
+    if conn_id in STATE.ui_clients:
+        STATE.ui_clients.discard(conn_id)
+        app.print(f"UI client {conn_id} removed from active clients")
+        return
+
+    # Handle agent client disconnection
     if conn_id in STATE.client_agents:
-        for agent_id in STATE.client_agents[conn_id]:
-            STATE.agent_to_client.pop(agent_id, None)
-            details = STATE.agent_details.pop(agent_id, None)
-            if details:
+        agent_ids_to_cleanup = STATE.client_agents[conn_id].copy()
+
+        for agent_id in agent_ids_to_cleanup:
+            try:
+                # Get agent details before removal for notification
+                agent_details = STATE.agent_details.get(agent_id, {})
+                agent_name = agent_details.get('public_name', 'Unknown')
+
+                # Remove from all state dictionaries
+                STATE.agent_to_client.pop(agent_id, None)
+                STATE.agent_details.pop(agent_id, None)
+
+                # Remove API key mapping
                 key_to_remove = next((k for k, v in STATE.key_to_agent.items() if v == agent_id), None)
                 if key_to_remove:
                     STATE.key_to_agent.pop(key_to_remove, None)
+
+                # Clean up progress data
+                STATE.recent_progress.pop(agent_id, None)
+
+                # Clean up any pending requests for this agent by checking if queue exists and clearing it
+                requests_to_cleanup = []
+                for req_id in list(STATE.pending_requests.keys()):
+                    try:
+                        # Put error in queue to unblock any waiting requests
+                        error_result = ExecutionError(
+                            request_id=req_id,
+                            error="Agent disconnected unexpectedly",
+                            public_agent_id=agent_id
+                        )
+                        await STATE.pending_requests[req_id].put(error_result)
+                        requests_to_cleanup.append(req_id)
+                    except Exception as e:
+                        app.print(f"Error cleaning up pending request {req_id}: {e}")
+
+                # Remove cleaned up requests
+                for req_id in requests_to_cleanup:
+                    STATE.pending_requests.pop(req_id, None)
+
+                # Notify UI clients about agent going offline (non-blocking)
+                if agent_details:
+                    asyncio.create_task(broadcast_to_ui_clients(app, {
+                        "event": "agent_offline",
+                        "data": {
+                            "public_agent_id": agent_id,
+                            "public_name": agent_name,
+                            "status": "offline",
+                            "timestamp": asyncio.get_event_loop().time()
+                        }
+                    }))
+
+                app.print(f"Agent '{agent_name}' (ID: {agent_id}) unregistered and cleaned up")
+
+            except Exception as e:
+                app.print(f"Error during agent cleanup for {agent_id}: {e}", error=True)
+
+        # Remove the client connection entry
         STATE.client_agents.pop(conn_id, None)
 
+        app.print(f"Client {conn_id} fully disconnected and cleaned up ({len(agent_ids_to_cleanup)} agents removed)")
+    else:
+        app.print(f"Unknown client {conn_id} disconnected (no agents to clean up)")
 
 # UI WebSocket handlers
 async def ui_on_connect(app: App, conn_id: str, session: dict):

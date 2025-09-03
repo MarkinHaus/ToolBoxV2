@@ -2168,11 +2168,11 @@ Your purpose is to function reliably for extended periods with minimal oversight
             tool_stats["calls_by_name"].setdefault(event.tool_name, {"success": 0, "fail": 0})
 
             # Zähle nur, wenn der Aufruf abgeschlossen ist (erfolgreich oder nicht)
-            if event.tool_success is not None:
+            if event.success is not None:
                 tool_stats["total_calls"] += 1
                 agent_stats["tool_calls"] += 1
 
-                if event.tool_success:
+                if event.success:
                     tool_stats["calls_by_name"][event.tool_name]["success"] += 1
                 else:
                     tool_stats["failed_calls"] += 1
@@ -2180,13 +2180,6 @@ Your purpose is to function reliably for extended periods with minimal oversight
 
     async def progress_callback(self, event: ProgressEvent):
         """The main progress callback for the interactive CLI, handles printing."""
-        if event.event_type == "plan_created":
-            self.printer.pretty_print_task_plan(event.metadata['full_plan'])
-            self.task_name = event.metadata['full_plan'].name
-
-        if event.event_type == "strategy_selected":
-            self.printer.print_strategy_selection(event.metadata['strategy'], event)
-
         await self._update_stats_from_event(event)
         await self.printer.progress_callback(event)
 

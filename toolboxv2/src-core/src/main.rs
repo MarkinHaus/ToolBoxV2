@@ -217,13 +217,13 @@ impl WebSocketActor {
     }
 
     fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
-        ctx.run_interval(Duration::from_secs(5), |act, ctx| {
-            if Instant::now().duration_since(act.hb) > Duration::from_secs(10) {
+        ctx.run_interval(Duration::from_secs(45), |act, ctx| {
+            if Instant::now().duration_since(act.hb) > Duration::from_secs(120) {
                 warn!("WebSocket Client heartbeat failed, disconnecting!");
-                ctx.stop();
+                ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Away, "Heartbeat timeout"))));
                 return;
             }
-            ctx.ping(b"");
+            ctx.ping(b"heartbeat");
         });
     }
 }
@@ -338,6 +338,8 @@ impl Handler<WsMessage> for WebSocketActor {
 /// Handler für eingehende WebSocket-Nachrichten vom Client
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        self.hb = Instant::now();
+
         match msg {
             Ok(ws::Message::Ping(msg)) => {
                 self.hb = Instant::now();
@@ -378,11 +380,24 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
                 });
             }
             Ok(ws::Message::Binary(_bin)) => warn!("Binary WebSocket messages are not supported."),
+            Err(e) => {
+                error!("WebSocket error: {:?}", e);
+                match e {
+                    ws::ProtocolError::Io(_) => {
+                        // Network errors - close gracefully
+                        ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Abnormal, "IO error"))));
+                    }
+                    _ => {
+                        // Other protocol errors - maybe recoverable, just log
+                        warn!("Non-fatal protocol error, continuing...");
+                    }
+                }
+            }
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
                 ctx.stop();
             }
-            _ => ctx.stop(),
+            _ => error!("Unexpected WebSocket condition, but keeping connection alive"), //ctx.stop(),
         }
     }
 }
@@ -413,11 +428,13 @@ async fn websocket_handler(
         actix_web::error::ErrorInternalServerError("Backend service unavailable")
     })?;
 
-    ws::start(
+    ws::WsResponseBuilder::new(
         WebSocketActor::new(client, session, &module_name, &function_name),
         &req,
         stream,
     )
+    .frame_size(16 * 1024 * 1024)
+    .start()
 }
 
 // --- NEU: Die Rust-zu-Python Bridge-Klasse ---

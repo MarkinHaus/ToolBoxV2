@@ -295,7 +295,7 @@ async def setup_complete_agent_system(local=True):
 
 
 if __name__ == "__main__":
-    asyncio.run(setup_complete_agent_system(local=False))
+    asyncio.run(setup_complete_agent_system(local=True))
 if __name__ == "__main__d":
     asyncio.run(setup_multiple_live_agents())
 if __name__ == "__main__d":

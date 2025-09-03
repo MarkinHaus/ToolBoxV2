@@ -23,6 +23,7 @@ from pocketflow import AsyncFlow, AsyncNode
 from pydantic import BaseModel, ValidationError
 
 from toolboxv2.mods.isaa.base.Agent.chain import CF, IS, Chain, ConditionalChain
+from toolboxv2.mods.isaa.extras.session import ChatSession
 from toolboxv2.utils.extras.Style import Spinner, print_prompt
 
 # Framework imports with graceful degradation
@@ -417,17 +418,19 @@ class TaskPlannerNode(AsyncNode):
 
             progress_tracker = shared.get("progress_tracker")
             if progress_tracker:
-                e = ProgressEvent(
+                await progress_tracker.emit_event(ProgressEvent(
                     event_type="plan_created",
-                    timestamp=time.time(),
-                    status=NodeStatus.COMPLETING,
                     node_name="TaskPlannerNode",
-                    node_phase="plan_created",
                     session_id=shared.get("session_id"),
-                    metadata={"plan_name": exec_res.name, "task_count": len(exec_res.tasks),
-                              "strategy": exec_res.execution_strategy, "full_plan": exec_res}
-                )
-                await progress_tracker.emit_event(e)
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    plan_id=exec_res.id,
+                    metadata={
+                        "plan_name": exec_res.name,
+                        "task_count": len(exec_res.tasks),
+                        "strategy": exec_res.execution_strategy
+                    }
+                ))
                 await asyncio.sleep(0.1)
 
             # Erfolgreicher Plan
@@ -1386,16 +1389,15 @@ confidence: 0.85
         if self.progress_tracker:
             await self.progress_tracker.emit_event(ProgressEvent(
                 event_type="task_start",
-                timestamp=time.time(),
                 node_name="TaskExecutorNode",
                 status=NodeStatus.RUNNING,
                 task_id=task.id,
+                plan_id=self.variable_manager.get("shared.current_plan.id"),
                 metadata={
-                    "task_type": task.type,
-                    "task_description": task.description,
+                    "description": task.description,
+                    "type": task.type,
                     "priority": task.priority,
-                    "dependencies": task.dependencies,
-                    "task": asdict(task),
+                    "dependencies": task.dependencies
                 }
             ))
 
@@ -1434,17 +1436,15 @@ confidence: 0.85
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="task_complete",
-                    timestamp=time.time(),
                     node_name="TaskExecutorNode",
                     task_id=task.id,
+                    plan_id=self.variable_manager.get("shared.current_plan.id"),
                     status=NodeStatus.COMPLETED,
                     success=True,
-                    node_duration=task_duration,
+                    duration=task_duration,
                     metadata={
-                        "success": True,
                         "result_type": type(result).__name__,
-                        "task_type": task.type,
-                        "task": asdict(task),
+                        "description": task.description
                     }
                 ))
 
@@ -1465,38 +1465,20 @@ confidence: 0.85
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="task_error",
-                    timestamp=time.time(),
+                    event_type="task_error",  # Klarer Event-Typ
                     node_name="TaskExecutorNode",
                     task_id=task.id,
+                    plan_id=self.variable_manager.get("shared.current_plan.id"),
                     status=NodeStatus.FAILED,
                     success=False,
-                    node_duration=task_duration,
+                    duration=task_duration,
+                    error_details={
+                        "message": str(e),
+                        "type": type(e).__name__
+                    },
                     metadata={
-                        "error": str(e),
-                        "error_message": str(e),
-                        "error_type": type(e).__name__,
-                        "task_type": task.type,
                         "retry_count": task.retry_count,
-                        "task": asdict(task),
-                    }
-                ))
-
-                await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="error",
-                    timestamp=time.time(),
-                    node_name="TaskExecutorNode",
-                    task_id=task.id,
-                    status=NodeStatus.FAILED,
-                    success=False,
-                    node_duration=task_duration,
-                    metadata={
-                        "error": str(e),
-                        "error_message": str(e),
-                        "error_type": type(e).__name__,
-                        "source": "task_execution",
-                        "task_id": task.id,
-                        "task_type": task.type
+                        "description": task.description
                     }
                 ))
 
@@ -1581,8 +1563,8 @@ confidence: 0.85
                     tool_name=task.tool_name,
                     tool_args=resolved_args,
                     tool_result=result,
-                    tool_duration=tool_duration,
-                    tool_success=True,
+                    duration=tool_duration,
+                    success=True,
                     metadata={
                         "task_type": "ToolTask",
                         "result_type": type(result).__name__,
@@ -1613,8 +1595,8 @@ confidence: 0.85
                     status=NodeStatus.FAILED,
                     tool_name=task.tool_name,
                     tool_args=resolved_args,
-                    tool_duration=tool_duration,
-                    tool_success=False,
+                    duration=tool_duration,
+                    success=False,
                     tool_error=str(e),
                     metadata={
                         "task_type": "ToolTask",
@@ -1744,17 +1726,16 @@ confidence: 0.85
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="error",
-                    timestamp=time.time(),
-                    status=NodeStatus.FAILED,
+                    event_type="llm_call",
                     node_name="TaskExecutorNode",
                     task_id=task.id,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    duration=llm_duration,
                     llm_model=model_to_use,
-                    llm_duration=llm_duration,
-                    metadata={
-                        "error": str(e),
-                        "task_type": "LLMTask",
-                        "error_type": type(e).__name__
+                    error_details={
+                        "message": str(e),
+                        "type": type(e).__name__
                     }
                 ))
 
@@ -2337,16 +2318,6 @@ class LLMToolNode(AsyncNode):
         variable_manager = shared.get("variable_manager")
         agent_instance = shared.get("agent_instance")
 
-        if shared.get("progress_tracker"):
-            await shared.get("progress_tracker").emit_event(ProgressEvent(
-                event_type="llm_call",
-                timestamp=time.time(),
-                node_name="LLMToolNode",
-                status=NodeStatus.STARTING,
-                llm_model="auto",
-                session_id=shared.get("session_id"),
-            ))
-
         return {
             "task_description": task_description,
             "context": context,
@@ -2377,6 +2348,7 @@ class LLMToolNode(AsyncNode):
         conversation_history = []
         tool_call_count = 0
         final_response = None
+        model_to_use = "auto"
         total_llm_calls = 0
         total_cost = 0.0
         total_tokens = 0
@@ -2442,14 +2414,18 @@ class LLMToolNode(AsyncNode):
 
                 if progress_tracker:
                     await progress_tracker.emit_event(ProgressEvent(
-                        event_type="error",
-                        timestamp=time.time(),
+                        event_type="llm_call",  # Konsistenter Event-Typ
                         node_name="LLMToolNode",
-                        status=NodeStatus.FAILED,
-                        llm_model=model_to_use,
-                        llm_duration=llm_duration,
                         session_id=prep_res.get("session_id"),
-                        metadata={"error": str(e), "call_number": total_llm_calls + 1}
+                        status=NodeStatus.FAILED,
+                        success=False,
+                        duration=llm_duration,
+                        llm_model=model_to_use,
+                        error_details={
+                            "message": str(e),
+                            "type": type(e).__name__
+                        },
+                        metadata={"call_number": total_llm_calls + 1}
                     ))
                 eprint(f"LLM tool execution failed: {e}")
                 final_response = f"I encountered an error while processing: {str(e)}"
@@ -2458,17 +2434,6 @@ class LLMToolNode(AsyncNode):
                 break
 
 
-        # Apply persona if needed
-        if progress_tracker:
-            await progress_tracker.emit_event(ProgressEvent(
-                event_type="success",
-                timestamp=time.time(),
-                node_name="LLMToolNode",
-                status=NodeStatus.COMPLETED,
-                success=True,
-                llm_model="auto",
-                session_id=prep_res.get("session_id"),
-            ))
         return {
             "success": True,
             "final_response": final_response or "I was unable to complete the request.",
@@ -2752,8 +2717,8 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                         tool_name=tool_name,
                         tool_args=resolved_args,
                         tool_result=result,
-                        tool_duration=tool_duration,
-                        tool_success=True,
+                        duration=tool_duration,
+                        success=True,
                         session_id=prep_res.get("session_id"),
                         metadata={
                             "result_type": type(result).__name__,
@@ -2783,8 +2748,8 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                         status=NodeStatus.FAILED,
                         tool_name=tool_name,
                         tool_args=arguments,
-                        tool_duration=tool_duration,
-                        tool_success=False,
+                        duration=tool_duration,
+                        success=False,
                         tool_error=error_message,
                         session_id=prep_res.get("session_id"),
                         metadata={
@@ -4494,7 +4459,7 @@ Create the outline now:"""
 
             if self.agent_instance and self.agent_instance.progress_tracker:
                 await self.agent_instance.progress_tracker.emit_event(ProgressEvent(
-                    event_type="llm_call",
+                    event_type="outline_created",
                     timestamp=time.time(),
                     node_name="LLMReasonerNode",
                     status=NodeStatus.COMPLETED,
@@ -5501,17 +5466,15 @@ You MUST use the specified method and achieve the expected outcome before advanc
             # No meta-tools found in response
             await progress_tracker.emit_event(ProgressEvent(
                 event_type="meta_tool_analysis",
-                timestamp=time.time(),
                 node_name="LLMReasonerNode",
-                status=NodeStatus.COMPLETED,
                 session_id=session_id,
+                status=NodeStatus.COMPLETED,
+                success=True,  # Die Analyse selbst war erfolgreich
+                node_phase="analysis_complete",  # Verwendung des dedizierten Feldes
+                llm_output=llm_response,  # Speichert die vollständige analysierte Antwort
                 metadata={
-                    "meta_tools_found": 0,
-                    "llm_response_length": len(llm_response),
-                    "reasoning_loop": self.current_loop_count,
                     "analysis_result": "no_meta_tools_detected",
-                    "llm_response_preview": llm_response[:2000] + "..." if len(llm_response) > 2000 else llm_response,
-                    "execution_phase": "analysis_complete",
+                    "reasoning_loop": self.current_loop_count,
                     "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
                     "context_size": len(self.reasoning_context),
                     "performance_warning": len(self.reasoning_context) > 10 and self.current_loop_count > 5
@@ -5531,41 +5494,24 @@ You MUST use the specified method and achieve the expected outcome before advanc
             if len(self.last_action_signatures) > 10:
                 self.last_action_signatures = self.last_action_signatures[-10:]
 
-            if progress_tracker:
-                await progress_tracker.emit_event(ProgressEvent(
-                    event_type="meta_tool_call",
-                    timestamp=time.time(),
-                    node_name="LLMReasonerNode",
-                    status=NodeStatus.STARTING,
-                    session_id=session_id,
-                    task_id=f"meta_tool_{tool_name}_{i + 1}",
-                    metadata={
-                        "meta_tool_name": tool_name,
-                        "meta_tool_index": i + 1,
-                        "total_meta_tools": len(matches),
-                        "reasoning_loop": self.current_loop_count,
-                        "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                        "raw_args_string": args_str,
-                        "internal_task_stack_size": len(self.internal_task_stack),
-                        "reasoning_context_size": len(self.reasoning_context),
-                        "execution_phase": "meta_tool_start",
-                        "tool_category": self._get_tool_category(tool_name),
-                        "action_signature": action_signature,
-                        "loop_detection_memory": len(self.last_action_signatures),
-                        "performance_metrics": self.performance_metrics.copy() if hasattr(self,
-                                                                                          'performance_metrics') else {},
-                        "auto_recovery_attempts": getattr(self, 'auto_recovery_attempts', 0),
-                        "context_management": {
-                            "current_size": len(self.reasoning_context),
-                            "threshold": getattr(self, 'context_summary_threshold', 15),
-                            "max_size": getattr(self, 'max_context_size', 30)
-                        }
-                    }
-                ))
-
             try:
                 # Parse arguments with enhanced error handling
                 args = _parse_tool_args(args_str)
+                if progress_tracker:
+                    await progress_tracker.emit_event(ProgressEvent(
+                        event_type="tool_call",  # Vereinheitlicht auf "tool_call"
+                        node_name="LLMReasonerNode",
+                        session_id=session_id,
+                        status=NodeStatus.RUNNING,
+                        tool_name=tool_name,
+                        is_meta_tool=True,  # Klares Flag für Meta-Tools
+                        tool_args=args,
+                        task_id=f"meta_tool_{tool_name}_{i + 1}",
+                        metadata={
+                            "reasoning_loop": self.current_loop_count,
+                            "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0
+                        }
+                    ))
                 rprint(f"Parsed args: {args}")
 
                 # Execute meta-tool with detailed tracking
@@ -7539,6 +7485,8 @@ class VariableManager:
         # 2. Document each scope
         for scope_name, scope_data in self.scopes.items():
             # Add documentation for the scope root itself
+            if scope_name == "shared":
+                continue
             if isinstance(scope_data, dict):
                 preview = f"Object with keys: {list(scope_data.keys())[:3]}" + (
                     "..." if len(scope_data.keys()) > 3 else "")
@@ -7588,7 +7536,7 @@ class VariableManager:
             return "\n".join(context_parts)
 
         if "shared" in variables:
-            del variables["shared"]
+            variables["shared"] = {'preview': "Shared state variables", 'type': "dict"}
 
         # yaml dump preview
         context_parts.append("```yaml")
@@ -7614,7 +7562,7 @@ class UnifiedContextManager:
 
     def __init__(self, agent):
         self.agent = agent
-        self.session_managers: dict[str, Any] = {}  # ChatSession objects
+        self.session_managers: dict[str, ChatSession | dict] = {}  # ChatSession objects
         self.variable_manager: VariableManager = None
         self.compression_threshold = 15  # Messages before compression
         self._context_cache: dict[str, tuple[float, Any]] = {}  # (timestamp, data)
@@ -7629,9 +7577,6 @@ class UnifiedContextManager:
                 if not self._memory_instance:
                     from toolboxv2 import get_app
                     self._memory_instance = get_app().get_mod("isaa").get_memory()
-
-                # Import ChatSession
-                from toolboxv2.mods.isaa.extras.session import ChatSession
 
                 # Create ChatSession as PRIMARY memory source
                 session = ChatSession(
@@ -7708,17 +7653,8 @@ class UnifiedContextManager:
         try:
             # ChatSession mode
             if hasattr(session, 'get_past_x'):
-                recent_history = session.get_past_x(max_entries * 2, last_u=True)
-
-                # Erweiterte semantische Suche wenn Query vorhanden
-                if query and hasattr(session, 'get_reference'):
-                    try:
-                        relevant_refs = await session.get_reference(query, limit=5)
-                        # Kombiniere mit recent history
-                        combined = self._merge_and_dedupe_history(recent_history, relevant_refs)
-                        return combined[:max_entries]
-                    except:
-                        pass
+                recent_history = session.get_past_x(max_entries * 2, last_u=False)
+                # await session.get_reference(query, limit=5)
 
                 return recent_history[:max_entries]
 
@@ -8161,16 +8097,15 @@ class FlowAgent:
         if self.progress_tracker:
             await self.progress_tracker.emit_event(ProgressEvent(
                 event_type="llm_call",
-                timestamp=time.time(),
-                status=NodeStatus.RUNNING,
                 node_name=node_name,
+                session_id=self.active_session,
                 task_id=task_id,
+                status=NodeStatus.RUNNING,
                 llm_model=kwargs["model"],
                 llm_temperature=kwargs.get("temperature", 0.7),
+                llm_input=kwargs.get("messages", [{}])[-1].get("content", ""),  # Prompt direkt erfassen
                 metadata={
-                    "task_type": "LLMCall",
-                    "model_preference": kwargs.get("model_preference", "fast"),
-                    "prompt_length": len(kwargs.get("messages", [{}])[-1].get("content", ""))
+                    "model_preference": kwargs.get("model_preference", "fast")
                 }
             ))
 
@@ -8195,6 +8130,19 @@ class FlowAgent:
             # Add context to fist messages as system message
             context_ = await self.get_context(self.active_session)
             kwargs["messages"] = [{"role": "system", "content": self.amd.get_system_message_with_persona()+'\n\nContext:\n\n'+context_}] + kwargs.get("messages", [])
+
+        # build fallback dict using FALLBACKS_MODELS/PREM and _KEYS
+
+        if 'fallbacks' not in kwargs:
+            fallbacks_dict_list = []
+            fallbacks = os.getenv("FALLBACKS_MODELS", '').split(',') if model_preference == "fast" else os.getenv(
+                "FALLBACKS_MODELS_PREM", '').split(',')
+            fallbacks_keys = os.getenv("FALLBACKS_MODELS_KEYS", '').split(
+                ',') if model_preference == "fast" else os.getenv(
+                "FALLBACKS_MODELS_KEYS_PREM", '').split(',')
+            for model, key in zip(fallbacks, fallbacks_keys):
+                fallbacks_dict_list.append({"model": model, "api_key": key})
+            kwargs['fallbacks'] = fallbacks_dict_list
         try:
 
             response = await litellm.acompletion(**kwargs)
@@ -8215,26 +8163,25 @@ class FlowAgent:
             total_tokens = usage.total_tokens if usage else 0
 
             call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
-                                                            output_tokens) if self.progress_tracker else 0.0
+                                                            output_tokens, response) if self.progress_tracker else 0.0
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="llm_call",
-                    timestamp=time.time(),
                     node_name=node_name,
                     task_id=task_id,
+                    session_id=self.active_session,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    duration=llm_duration,
                     llm_model=kwargs["model"],
                     llm_prompt_tokens=input_tokens,
                     llm_completion_tokens=output_tokens,
                     llm_total_tokens=total_tokens,
                     llm_cost=call_cost,
-                    llm_duration=llm_duration,
                     llm_temperature=kwargs.get("temperature", 0.7),
-                    metadata={
-                        "success": True,
-                        "result_length": len(result),
-                        "task_type": "LLMCall"
-                    }
+                    llm_output=result,
+                    llm_input="",
                 ))
 
             return result
@@ -8245,17 +8192,17 @@ class FlowAgent:
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="error",
-                    timestamp=time.time(),
-                    status=NodeStatus.FAILED,
+                    event_type="llm_call",  # Event-Typ bleibt konsistent
                     node_name=node_name,
                     task_id=task_id,
+                    session_id=self.active_session,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    duration=llm_duration,
                     llm_model=kwargs["model"],
-                    llm_duration=llm_duration,
-                    metadata={
-                        "error": str(e),
-                        "task_type": "LLMCall",
-                        "error_type": type(e).__name__
+                    error_details={
+                        "message": str(e),
+                        "type": type(e).__name__
                     }
                 ))
 
@@ -10080,15 +10027,15 @@ tool_complexity: low/medium/high
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
-                    event_type="function_call",
-                    timestamp=time.time(),
+                    event_type="tool_call",  # Vereinheitlicht zu tool_call
                     node_name="FlowAgent",
                     status=NodeStatus.COMPLETED,
+                    success=True,
+                    duration=time.perf_counter() - start_time,
                     tool_name=function_name,
                     tool_args=kwargs,
                     tool_result=result,
-                    tool_duration=time.perf_counter() - start_time,
-                    tool_success=True,
+                    is_meta_tool=False,  # Klarstellen, dass es kein Meta-Tool ist
                     metadata={
                         "result_type": type(result).__name__,
                         "result_length": len(str(result))

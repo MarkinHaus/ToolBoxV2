@@ -1017,15 +1017,15 @@ class Result:
         return cls(error=error, info=info, result=result)
 
     def print(self, show=True, show_data=True, prifix=""):
-        data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
+        data = '\n' + f"{((prifix + f'Data_{self.result.data_type}: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec code: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
                 f" {self.info.help_text} {'<|> ' + str(self.result.data_info) if self.result.data_info is not None else ''}"
-                f"{origin}{data if not data.endswith('NO Data') else ''}")
+                f"{origin}{(data[:100]+'...') if not data.endswith('NO Data') else ''}\n")
         if not show:
             return text
-        print("\n======== Result ========\n" + text + "\n------- EndOfD -------")
+        print("\n======== Result ========\n" + text + "------- EndOfD -------")
         return self
 
     def log(self, show_data=True, prifix=""):

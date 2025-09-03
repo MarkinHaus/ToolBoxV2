@@ -599,22 +599,628 @@ def get_agent_ui_html() -> str:
             --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
             --sidebar-width: 300px;
-            --progress-width: 400px;
+            --progress-width: 660px;
             --sidebar-collapsed: 60px;
             --progress-collapsed: 60px;
+        }
+        /* Enhanced Progress Panel Styles */
+        .progress-section {
+            margin-bottom: 16px;
+        }
+
+        /* ADD to existing CSS */
+        .event-status-badge {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .event-status-badge.completed {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .event-status-badge.running {
+            background: var(--accent-orange);
+            color: white;
+        }
+
+        .event-status-badge.failed, .event-status-badge.error {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .event-status-badge.starting {
+            background: var(--accent-cyan);
+            color: white;
+        }
+
+        .progress-item.expandable[data-event-id*="tool_call"] {
+            border-left-color: var(--accent-orange);
+        }
+
+        .progress-item.expandable[data-event-id*="llm_call"] {
+            border-left-color: var(--accent-purple);
+        }
+
+        .progress-item.expandable[data-event-id*="meta_tool"] {
+            border-left-color: var(--accent-cyan);
+        }
+
+        .progress-item.expandable[data-event-id*="error"] {
+            border-left-color: var(--accent-red);
+            background: rgba(248, 81, 73, 0.02);
+        }
+
+        .section-title.expandable-section {
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .section-title.expandable-section:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .section-toggle {
+            transition: transform 0.2s;
+            font-size: 12px;
+        }
+
+        .section-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            background: var(--bg-primary);
+            border-radius: 0 0 6px 6px;
+        }
+
+        .section-content.expanded {
+            max-height: 900px;
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            overflow-y: auto;
+        }
+
+        .no-data {
+            color: var(--text-muted);
+            font-size: 12px;
+            text-align: center;
+            padding: 12px;
+            font-style: italic;
+        }
+
+        /* Expandable Progress Items */
+        .progress-item.expandable {
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 8px;
+        }
+
+        .progress-item.expandable:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .progress-item.expandable.expanded {
+            border-color: var(--accent-blue);
+        }
+
+        .progress-item.expandable.latest {
+            border-left: 3px solid var(--accent-green);
+            background: rgba(63, 185, 80, 0.05);
+        }
+
+        .progress-item-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+        }
+
+        .progress-meta {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .expand-indicator {
+            transition: transform 0.2s;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .progress-item.expanded .expand-indicator {
+            transform: rotate(180deg);
+        }
+
+        .progress-summary {
+            padding: 0 12px 8px 36px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .progress-item-expanded {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .progress-item-expanded.active {
+            max-height: 400px;
+            padding: 12px;
+            overflow-y: auto;
+        }
+
+        .expanded-section {
+            margin-bottom: 12px;
+        }
+
+        .expanded-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .event-field {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 4px 0;
+            font-size: 11px;
+        }
+
+        .event-field-label {
+            font-weight: 500;
+            color: var(--text-secondary);
+            min-width: 80px;
+        }
+
+        .event-field-value {
+            color: var(--text-primary);
+            text-align: right;
+            flex: 1;
+        }
+
+        .event-field-value.json {
+            background: var(--bg-primary);
+            border-radius: 4px;
+            padding: 6px;
+            font-family: monospace;
+            font-size: 10px;
+            text-align: left;
+            white-space: pre-wrap;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        /* ADD to existing CSS */
+.thinking-step.outline-step {
+    border-color: var(--accent-cyan);
+    background: rgba(57, 208, 216, 0.05);
+}
+
+.thinking-step.outline-step.completed {
+    border-color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.05);
+}
+
+.thinking-step.outline-step.running {
+    border-color: var(--accent-orange);
+    background: rgba(210, 153, 34, 0.05);
+}
+
+.outline-progress {
+    margin: 8px 0;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.progress-text {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.progress-percentage {
+    font-size: 11px;
+    color: var(--accent-blue);
+    font-weight: 600;
+}
+
+.progress-bar-container {
+    margin-bottom: 8px;
+}
+
+.progress-bar {
+    height: 6px;
+    background: var(--bg-primary);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+    transition: width 0.5s ease-out;
+    position: relative;
+}
+
+.progress-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.step-completed {
+    color: var(--accent-green);
+    font-size: 10px;
+    text-align: center;
+    font-weight: 500;
+}
+
+.step-working {
+    color: var(--accent-orange);
+    font-size: 10px;
+    text-align: center;
+    font-style: italic;
+}
+
+.context-info {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+}
+
+.context-item {
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border-color);
+}
+
+.thinking-step.plan-created {
+    border-color: var(--accent-blue);
+    background: rgba(88, 166, 255, 0.05);
+}
+
+.plan-details {
+    text-align: center;
+}
+
+.plan-info {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.plan-item {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.plan-ready, .outline-ready {
+    margin-top: 8px;
+    color: var(--accent-green);
+    font-size: 10px;
+    text-align: center;
+}
+
+.step-status {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-left: auto;
+}
+
+.step-status.completed {
+    background: var(--accent-green);
+    color: white;
+}
+
+.step-status.running {
+    background: var(--accent-orange);
+    color: white;
+}
+
+.step-status.ready {
+    background: var(--accent-blue);
+    color: white;
+}
+
+        /* Enhanced Chat Integration Styles */
+        .thinking-step {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin: 8px 0;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .thinking-step:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .thinking-step.reasoning-loop {
+            border-color: var(--accent-purple);
+            background: rgba(165, 165, 245, 0.05);
+        }
+
+        .thinking-step.outline-created {
+            border-color: var(--accent-cyan);
+            background: rgba(57, 208, 216, 0.05);
+        }
+
+        .thinking-step.task-progress.starting {
+            border-color: var(--accent-orange);
+            background: rgba(210, 153, 34, 0.05);
+        }
+
+        .thinking-step.task-progress.completed {
+            border-color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.05);
+        }
+
+        .thinking-step.task-progress.error {
+            border-color: var(--accent-red);
+            background: rgba(248, 81, 73, 0.05);
+        }
+
+        .thinking-step-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .step-progress, .step-info, .step-status {
+            margin-left: auto;
+            font-size: 10px;
+            font-weight: normal;
+            color: var(--text-muted);
+            background: var(--bg-primary);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .priority-badge {
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .priority-badge.high {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .priority-badge.normal {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .priority-badge.low {
+            background: var(--text-muted);
+            color: white;
+        }
+
+        /* Performance Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 8px;
+        }
+
+        .metric-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 8px;
+            text-align: center;
+        }
+
+        .metric-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        .reasoning-metrics .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .metric-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+        }
+
+        .metric-label {
+            color: var(--text-muted);
+        }
+
+        .metric-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Progress Bar */
+        .progress-bar-container {
+            margin: 8px 0;
+        }
+
+        .progress-bar-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: var(--bg-primary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent-blue);
+            transition: width 0.5s ease-out;
+        }
+
+        /* Outline Display */
+        .outline-steps {
+            margin: 8px 0;
+        }
+
+        .outline-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 4px;
+            font-size: 11px;
+        }
+
+        .step-number {
+            color: var(--accent-blue);
+            font-weight: 600;
+            min-width: 20px;
+        }
+
+        .step-text {
+            color: var(--text-primary);
+            line-height: 1.3;
+        }
+
+        .context-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .context-metric {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-size: 10px;
+            padding: 6px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        .context-label {
+            color: var(--text-muted);
+            margin-bottom: 2px;
+        }
+
+        .context-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .task-description {
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .task-timing {
+            font-size: 10px;
+            color: var(--accent-green);
+        }
+
+        .task-error {
+            font-size: 10px;
+            color: var(--accent-red);
+            background: rgba(248, 81, 73, 0.1);
+            padding: 4px;
+            border-radius: 3px;
+            margin-top: 4px;
+        }
+
+        .reasoning-insight {
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--accent-purple);
+            text-align: center;
+            font-style: italic;
+        }
+
+        .idle-status {
+            border-color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.02);
         }
 
         @media (max-width: 1200px) {
             :root {
                 --sidebar-width: 250px;
-                --progress-width: 350px;
+                --progress-width: 580px;
             }
         }
 
         @media (max-width: 1024px) {
             :root {
                 --sidebar-width: 220px;
-                --progress-width: 300px;
+                --progress-width: 460px;
             }
         }
 
@@ -948,6 +1554,52 @@ def get_agent_ui_html() -> str:
             font-weight: 600;
             font-size: 14px;
             min-height: 48px;
+        }
+
+        /* ADD to existing CSS */
+        .progress-item.llm_call {
+            border-left: 3px solid var(--accent-purple);
+        }
+
+        .progress-item.llm_call.latest {
+            border-left: 3px solid var(--accent-purple);
+            background: rgba(165, 165, 245, 0.03);
+        }
+
+        .progress-item.llm_call .progress-icon {
+            color: var(--accent-purple);
+        }
+
+        .progress-summary {
+            padding: 0 12px 8px 36px;
+            font-size: 10px;
+            color: var(--text-secondary);
+            line-height: 1.3;
+        }
+
+        .event-field-value.json {
+            background: var(--bg-primary);
+            border-radius: 4px;
+            padding: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 10px;
+            text-align: left;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            word-break: break-all;
+        }
+
+        .expanded-section {
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+            padding-bottom: 8px;
+        }
+
+        .expanded-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
         }
 
         /* FIXED: Hide mobile tabs on desktop by default */
@@ -1430,1255 +2082,1831 @@ def get_agent_ui_html() -> str:
             z-index: 2000;
             max-width: 300px;
         }
+
+        .event-detail-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            padding: 20px;
+        }
+
+        .event-detail-modal.active {
+            display: flex;
+        }
+
+        .event-detail-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            max-width: 800px;
+            max-height: 80vh;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+        }
+
+        .event-detail-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .event-detail-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .event-detail-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 20px;
+            transition: all 0.2s;
+        }
+
+        .event-detail-close:hover {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .event-detail-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            min-height: 0;
+        }
+
+        .event-section {
+            margin-bottom: 24px;
+        }
+
+        .event-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .event-field {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(48, 54, 61, 0.5);
+            font-size: 14px;
+        }
+
+        .event-field:last-child {
+            border-bottom: none;
+        }
+
+        .event-field-label {
+            font-weight: 500;
+            color: var(--text-secondary);
+            min-width: 140px;
+            flex-shrink: 0;
+        }
+
+        .event-field-value {
+            color: var(--text-primary);
+            flex: 1;
+            text-align: right;
+            word-break: break-word;
+        }
+
+        .event-field-value.json {
+            background: var(--bg-primary);
+            border-radius: 6px;
+            padding: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            text-align: left;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .event-status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .event-status-badge.completed {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .event-status-badge.running {
+            background: var(--accent-orange);
+            color: white;
+        }
+
+        .event-status-badge.failed {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .progress-item {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .progress-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .thinking-step {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .thinking-step:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
     </style>
 </head>
 <body>
 
 <div class="api-key-modal" id="api-key-modal">
-        <div class="api-key-content">
-            <div class="api-key-title">🔐 Enter API Key</div>
-            <div class="api-key-description">
-                Please enter your API key to access the agent. You can find this key in your agent registration details.
+    <div class="api-key-content">
+        <div class="api-key-title">🔐 Enter API Key</div>
+        <div class="api-key-description">
+            Please enter your API key to access the agent. You can find this key in your agent registration details.
+        </div>
+        <input type="text" class="api-key-input" id="api-key-input"
+               placeholder="tbk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+        <button class="api-key-button" id="api-key-submit">Connect</button>
+    </div>
+</div>
+
+<div class="header">
+    <div class="logo">
+        <span>🤖</span>
+        <span>Agent Registry</span>
+    </div>
+    <div class="header-controls">
+        <button class="panel-toggle active" id="sidebar-toggle">📋 Agents</button>
+        <button class="panel-toggle active" id="progress-toggle">📊 Progress</button>
+        <div class="status-indicator disconnected" id="connection-status">
+            <div class="status-dot"></div>
+            <span>Connecting...</span>
+        </div>
+    </div>
+</div>
+
+<div class="mobile-tabs">
+    <div class="mobile-tab active" data-tab="chat">💬 Chat</div>
+    <div class="mobile-tab" data-tab="agents">📋 Agents</div>
+    <div class="mobile-tab" data-tab="progress">📊 Progress</div>
+</div>
+
+<div class="main-container">
+    <!-- Agents Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-title">Available Agents</div>
+            <button class="collapse-btn" id="sidebar-collapse">◀</button>
+        </div>
+        <div class="agents-list">
+            <div id="agents-container">
+                <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
+                    Loading agents...
+                </div>
             </div>
-            <input type="text" class="api-key-input" id="api-key-input"
-                   placeholder="tbk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-            <button class="api-key-button" id="api-key-submit">Connect</button>
+        </div>
+        <div class="system-info">
+            <div>Registry Server</div>
+            <div id="server-info">ws://localhost:8080</div>
         </div>
     </div>
 
-     <div class="header">
-        <div class="logo">
-            <span>🤖</span>
-            <span>Agent Registry</span>
+    <!-- Chat Area -->
+    <div class="chat-area">
+        <div class="chat-header">
+            <div class="chat-title" id="chat-title">Select an Agent</div>
+            <div class="chat-subtitle" id="chat-subtitle">Choose an agent from the sidebar to start chatting</div>
         </div>
-        <div class="header-controls">
-            <button class="panel-toggle active" id="sidebar-toggle">📋 Agents</button>
-            <button class="panel-toggle active" id="progress-toggle">📊 Progress</button>
-            <div class="status-indicator disconnected" id="connection-status">
-                <div class="status-dot"></div>
-                <span>Connecting...</span>
+
+        <div class="messages-container" id="messages-container">
+            <div class="no-agent-selected">
+                <div class="icon">💬</div>
+                <div>Select an agent to start a conversation</div>
             </div>
         </div>
-    </div>
 
-    <div class="mobile-tabs">
-        <div class="mobile-tab active" data-tab="chat">💬 Chat</div>
-        <div class="mobile-tab" data-tab="agents">📋 Agents</div>
-        <div class="mobile-tab" data-tab="progress">📊 Progress</div>
-    </div>
-
-    <div class="main-container">
-        <!-- Agents Sidebar -->
-        <div class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="sidebar-title">Available Agents</div>
-                <button class="collapse-btn" id="sidebar-collapse">◀</button>
+        <div class="typing-indicator" id="typing-indicator">
+            <span>Agent is thinking</span>
+            <div class="typing-dots">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
             </div>
-            <div class="agents-list">
-                <div id="agents-container">
+        </div>
+
+        <div class="message-input">
+            <input type="text" class="input-field" id="message-input"
+                   placeholder="Type your message..." disabled>
+            <button class="send-button" id="send-button" disabled>Send</button>
+        </div>
+    </div>
+    <!-- Progress Panel -->
+    <div class="progress-panel" id="progress-panel">
+        <div class="progress-header">
+            <span>Live Progress</span>
+            <button class="collapse-btn" id="progress-collapse">▶</button>
+        </div>
+        <div class="panel-content" id="progress-content">
+            <div class="progress-section">
+                <div class="section-title">Current Status</div>
+                <div id="current-status">
                     <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                        Loading agents...
+                        No active execution
                     </div>
                 </div>
             </div>
-            <div class="system-info">
-                <div>Registry Server</div>
-                <div id="server-info">ws://localhost:8080</div>
-            </div>
-        </div>
 
-        <!-- Chat Area -->
-        <div class="chat-area">
-            <div class="chat-header">
-                <div class="chat-title" id="chat-title">Select an Agent</div>
-                <div class="chat-subtitle" id="chat-subtitle">Choose an agent from the sidebar to start chatting</div>
-            </div>
-
-            <div class="messages-container" id="messages-container">
-                <div class="no-agent-selected">
-                    <div class="icon">💬</div>
-                    <div>Select an agent to start a conversation</div>
-                </div>
-            </div>
-
-            <div class="typing-indicator" id="typing-indicator">
-                <span>Agent is thinking</span>
-                <div class="typing-dots">
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
-                </div>
-            </div>
-
-            <div class="message-input">
-                <input type="text" class="input-field" id="message-input"
-                       placeholder="Type your message..." disabled>
-                <button class="send-button" id="send-button" disabled>Send</button>
-            </div>
-        </div>
-        <!-- Progress Panel -->
-        <div class="progress-panel" id="progress-panel">
-            <div class="progress-header">
-                <span>Live Progress</span>
-                <button class="collapse-btn" id="progress-collapse">▶</button>
-            </div>
-            <div class="panel-content" id="progress-content">
-                <div class="progress-section">
-                    <div class="section-title">Current Status</div>
-                    <div id="current-status">
-                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                             No active execution
-                        </div>
+            <div class="progress-section">
+                <div class="section-title">Performance Metrics</div>
+                <div id="performance-metrics">
+                    <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                        No metrics available
                     </div>
                 </div>
+            </div>
 
-                <div class="progress-section">
-                    <div class="section-title">Performance Metrics</div>
-                    <div id="performance-metrics">
-                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
-                            No metrics available
-                        </div>
+            <div class="progress-section">
+                <div class="section-title">Meta Tools History</div>
+                <div id="meta-tools-history">
+                    <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                        No meta-tool activity
                     </div>
                 </div>
+            </div>
 
-                <div class="progress-section">
-                    <div class="section-title">Meta Tools History</div>
-                    <div id="meta-tools-history">
-                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
-                            No meta-tool activity
-                        </div>
-                    </div>
-                </div>
-
-                <div class="progress-section">
-                    <div class="section-title">System Events</div>
-                    <div id="system-events">
-                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
-                            System idle
-                        </div>
+            <div class="progress-section">
+                <div class="section-title">System Events</div>
+                <div id="system-events">
+                    <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">
+                        System idle
                     </div>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <script unSave="true">
-        class AgentRegistryUI {
-            constructor() {
-                this.ws = null;
-                this.currentAgent = null;
-                this.sessionId = 'ui_session_' + Math.random().toString(36).substr(2, 9);
-                this.isConnected = false;
-                this.reconnectAttempts = 0;
-                this.apiKey = null;
-                this.maxReconnectAttempts = 10;
-                this.reconnectDelay = 1000;
+<script unSave="true">
 
-                this.panelStates = {
-                    sidebar: true,
-                    progress: true,
-                    mobile: 'chat'
-                };
 
-                this.agents = new Map();
-                this.progressData = new Map();
-                this.currentExecution = null;
 
-                this.elements = {
-                    connectionStatus: document.getElementById('connection-status'),
-                    agentsContainer: document.getElementById('agents-container'),
-                    chatTitle: document.getElementById('chat-title'),
-                    chatSubtitle: document.getElementById('chat-subtitle'),
-                    messagesContainer: document.getElementById('messages-container'),
-                    messageInput: document.getElementById('message-input'),
-                    sendButton: document.getElementById('send-button'),
-                    typingIndicator: document.getElementById('typing-indicator'),
-                    currentStatus: document.getElementById('current-status'),
-                    performanceMetrics: document.getElementById('performance-metrics'),
-                    metaToolsHistory: document.getElementById('meta-tools-history'),
-                    systemEvents: document.getElementById('system-events'),
-                    serverInfo: document.getElementById('server-info'),
+    class AgentRegistryUI {
+        constructor() {
+            this.ws = null;
+            this.currentAgent = null;
+            this.sessionId = 'ui_session_' + Math.random().toString(36).substr(2, 9);
+            this.isConnected = false;
+            this.reconnectAttempts = 0;
+            this.apiKey = null;
+            this.maxReconnectAttempts = 10;
+            this.reconnectDelay = 1000;
 
-                    // API Key elements
-                    apiKeyModal: document.getElementById('api-key-modal'),
-                    apiKeyInput: document.getElementById('api-key-input'),
-                    apiKeySubmit: document.getElementById('api-key-submit'),
+            this.panelStates = {
+                sidebar: true,
+                progress: true,
+                mobile: 'chat'
+            };
 
-                    // Panel control elements with fallbacks
-                    sidebarToggle: document.getElementById('sidebar-toggle'),
-                    progressToggle: document.getElementById('progress-toggle'),
-                    sidebarCollapse: document.getElementById('sidebar-collapse'),
-                    progressCollapse: document.getElementById('progress-collapse'),
-                    mainContainer: document.querySelector('.main-container'),
-                    sidebar: document.getElementById('sidebar'),
-                    progressPanel: document.getElementById('progress-panel')
-                };
+            this.agents = new Map();
+            this.currentExecution = null;
 
-                setInterval(() => {
-                    if (this.isTyping && this.currentExecution) {
-                        const timeSinceLastUpdate = Date.now() - this.currentExecution.lastUpdate;
-                        // If no updates for 30 seconds, hide typing indicator
-                        if (timeSinceLastUpdate > 30000) {
-                            console.log('🧹 Cleanup: Hiding stuck typing indicator');
-                            this.showTypingIndicator(false);
-                            this.currentExecution = null;
-                            this.updateCurrentStatusToIdle();
-                        }
-                    }
-                }, 5000);
+            // NEW: Enhanced progress tracking
+            this.progressHistory = [];
+            this.maxProgressHistory = 200;
+            this.expandedProgressItem = null;
+            this.currentPerformanceMetrics = null;
+            this.currentOutline = null;
 
-                this.init();
-            }
+            this.elements = {
+                connectionStatus: document.getElementById('connection-status'),
+                agentsContainer: document.getElementById('agents-container'),
+                chatTitle: document.getElementById('chat-title'),
+                chatSubtitle: document.getElementById('chat-subtitle'),
+                messagesContainer: document.getElementById('messages-container'),
+                messageInput: document.getElementById('message-input'),
+                sendButton: document.getElementById('send-button'),
+                typingIndicator: document.getElementById('typing-indicator'),
+                serverInfo: document.getElementById('server-info'),
 
-            init() {
-                this.setupEventListeners();
-                this.setupPanelControls();
-                this.showApiKeyModal();
-            }
+                // API Key elements
+                apiKeyModal: document.getElementById('api-key-modal'),
+                apiKeyInput: document.getElementById('api-key-input'),
+                apiKeySubmit: document.getElementById('api-key-submit'),
 
-            showApiKeyModal() {
-                // Check if API key is stored
-                const storedKey = localStorage.getItem('agent_registry_api_key');
-                if (storedKey) {
-                    this.apiKey = storedKey;
-                    this.elements.apiKeyModal.style.display = 'none';
-                    this.connect();
-                } else {
-                    this.elements.apiKeyModal.style.display = 'flex';
-                }
-            }
+                // Panel control elements
+                sidebarToggle: document.getElementById('sidebar-toggle'),
+                progressToggle: document.getElementById('progress-toggle'),
+                sidebarCollapse: document.getElementById('sidebar-collapse'),
+                progressCollapse: document.getElementById('progress-collapse'),
+                mainContainer: document.querySelector('.main-container'),
+                sidebar: document.getElementById('sidebar'),
+                progressPanel: document.getElementById('progress-panel'),
+                progressContent: document.getElementById('progress-content')
+            };
 
-            async validateAndStoreApiKey() {
-                const apiKey = this.elements.apiKeyInput.value.trim();
-                if (!apiKey) {
-                    this.showError('Please enter an API key');
-                    return;
-                }
-
-                if (!apiKey.startsWith('tbk_')) {
-                    this.showError('Invalid API key format (should start with tbk_)');
-                    return;
-                }
-
-                this.apiKey = apiKey;
-                // localStorage.setItem('agent_registry_api_key', apiKey);
-                this.elements.apiKeyModal.style.display = 'none';
-                this.connect();
-            }
-
-            // Panel Controls Setup
-            setupPanelControls() {
-                this.elements.sidebarToggle?.addEventListener('click', () => {
-                    this.togglePanel('sidebar');
-                });
-
-                this.elements.progressToggle?.addEventListener('click', () => {
-                    this.togglePanel('progress');
-                });
-
-                this.elements.sidebarCollapse?.addEventListener('click', () => {
-                    this.togglePanel('sidebar');
-                });
-
-                this.elements.progressCollapse?.addEventListener('click', () => {
-                    this.togglePanel('progress');
-                });
-
-                const mobileTabs = document.querySelectorAll('.mobile-tab');
-                if (mobileTabs.length > 0) {
-                    mobileTabs.forEach(tab => {
-                        tab.addEventListener('click', () => {
-                            this.switchMobileTab(tab.dataset.tab);
-                        });
-                    });
-                }
-
-                this.setupResponsiveHandlers();
-            }
-
-            togglePanel(panel) {
-                this.panelStates[panel] = !this.panelStates[panel];
-                this.updatePanelStates();
-            }
-
-            updatePanelStates() {
-                const { sidebar, progress } = this.panelStates;
-
-                if (this.elements.mainContainer) {
-                    this.elements.mainContainer.classList.remove(
-                        'sidebar-collapsed',
-                        'progress-collapsed',
-                        'both-collapsed'
-                    );
-
-                    if (!sidebar && !progress) {
-                        this.elements.mainContainer.classList.add('both-collapsed');
-                    } else if (!sidebar) {
-                        this.elements.mainContainer.classList.add('sidebar-collapsed');
-                    } else if (!progress) {
-                        this.elements.mainContainer.classList.add('progress-collapsed');
+            // Enhanced cleanup timer
+            setInterval(() => {
+                if (this.isTyping && this.currentExecution) {
+                    const timeSinceLastUpdate = Date.now() - this.currentExecution.lastUpdate;
+                    if (timeSinceLastUpdate > 30000) {
+                        console.log('🧹 Cleanup: Hiding stuck typing indicator');
+                        this.showTypingIndicator(false);
+                        this.currentExecution = null;
+                        this.updateCurrentStatusToIdle();
                     }
                 }
+            }, 5000);
 
-                if (this.elements.sidebar) {
-                    this.elements.sidebar.classList.toggle('collapsed', !sidebar);
-                }
-
-                if (this.elements.progressPanel) {
-                    this.elements.progressPanel.classList.toggle('collapsed', !progress);
-                }
-
-                // Update toggle button states
-                if (this.elements.sidebarToggle) {
-                    this.elements.sidebarToggle.classList.toggle('active', sidebar);
-                    this.elements.sidebarToggle.textContent = sidebar ? '📋 Agents' : '📋';
-                }
-
-                if (this.elements.progressToggle) {
-                    this.elements.progressToggle.classList.toggle('active', progress);
-                    this.elements.progressToggle.textContent = progress ? '📊 Progress' : '📊';
-                }
-
-                if (this.elements.sidebarCollapse) {
-                    this.elements.sidebarCollapse.textContent = sidebar ? '◀' : '▶';
-                }
-                if (this.elements.progressCollapse) {
-                    this.elements.progressCollapse.textContent = progress ? '▶' : '◀';
-                }
-
-                // Force layout recalculation
-                if (this.elements.mainContainer) {
-                    this.elements.mainContainer.offsetHeight; // Trigger reflow
-                }
-            }
-
-            handleWindowResize() {
-                const chatArea = document.querySelector('.chat-area');
-                const mainContainer = this.elements.mainContainer;
-
-                if (chatArea && mainContainer) {
-                    const currentDisplay = mainContainer.style.display;
-                    mainContainer.style.display = 'none';
-                    mainContainer.offsetHeight;
-                    mainContainer.style.display = currentDisplay || '';
-                }
-            }
-
-            switchMobileTab(tab) {
-                this.panelStates.mobile = tab;
-
-                const mobileTabs = document.querySelectorAll('.mobile-tab');
-                if (mobileTabs.length > 0) {
-                    mobileTabs.forEach(t => {
-                        t.classList.toggle('active', t.dataset.tab === tab);
-                    });
-                }
-
-                const sidebarEl = document.querySelector('.sidebar');
-                const chatAreaEl = document.querySelector('.chat-area');
-                const progressPanelEl = document.querySelector('.progress-panel');
-
-                if (sidebarEl) {
-                    sidebarEl.style.display = tab === 'agents' ? 'flex' : 'none';
-                }
-                if (chatAreaEl) {
-                    chatAreaEl.style.display = tab === 'chat' ? 'flex' : 'none';
-                }
-                if (progressPanelEl) {
-                    progressPanelEl.style.display = tab === 'progress' ? 'flex' : 'none';
-                }
-            }
-
-            setupResponsiveHandlers() {
-                const mediaQuery = window.matchMedia('(max-width: 768px)');
-
-                const handleResponsive = (e) => {
-                    if (e.matches) {
-                        this.switchMobileTab(this.panelStates.mobile);
-                    } else {
-                        const panels = document.querySelectorAll('.sidebar, .chat-area, .progress-panel');
-                        panels.forEach(panel => {
-                            if (panel) {
-                                panel.style.display = '';
-                            }
-                        });
-                    }
-                };
-
-                if (mediaQuery.addEventListener) {
-                    mediaQuery.addEventListener('change', handleResponsive);
-                } else {
-                    mediaQuery.addListener(handleResponsive);
-                }
-
-                handleResponsive(mediaQuery);
-            }
-
-            setupEventListeners() {
-                this.elements.apiKeySubmit?.addEventListener('click', () => {
-                    this.validateAndStoreApiKey();
-                });
-
-                window.addEventListener('resize', () => {
-                    this.handleWindowResize();
-                });
-
-                this.elements.apiKeyInput?.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        this.validateAndStoreApiKey();
-                    }
-                });
-                this.elements.sendButton.addEventListener('click', () => this.sendMessage());
-                this.elements.messageInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && this.currentAgent) {
-                        e.preventDefault();
-                        this.sendMessage();
-                    }
-                });
-
-                document.addEventListener('visibilitychange', () => {
-                    if (!document.hidden && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
-                        this.connect();
-                    }
-                });
-            }
-
-            connect() {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
-
-                this.updateConnectionStatus('connecting', 'Connecting...');
-
-                try {
-                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-                    const wsProtocol = isLocal ? 'ws' : 'wss';
-                    const wsUrl = `${wsProtocol}://${window.location.host}/ws/registry/ui_connect`;
-                    this.ws = new WebSocket(wsUrl);
-
-                    this.ws.onopen = () => {
-                        this.isConnected = true;
-                        this.reconnectAttempts = 0;
-                        this.updateConnectionStatus('connected', 'Connected');
-                        console.log('Connected to Registry Server');
-                    };
-
-                    this.ws.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
-                            this.handleWebSocketMessage(data);
-                        } catch (error) {
-                            console.error('Message parse error:', error);
-                        }
-                    };
-
-                    this.ws.onclose = () => {
-                        this.isConnected = false;
-                        this.updateConnectionStatus('disconnected', 'Disconnected');
-                        this.scheduleReconnection();
-                    };
-
-                    this.ws.onerror = (error) => {
-                        console.error('WebSocket error:', error);
-                        this.updateConnectionStatus('error', 'Connection Error');
-                    };
-
-                } catch (error) {
-                    console.error('Connection error:', error);
-                    this.updateConnectionStatus('error', 'Connection Failed');
-                    this.scheduleReconnection();
-                }
-            }
-
-            scheduleReconnection() {
-                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                    this.updateConnectionStatus('error', 'Connection Failed (Max attempts reached)');
-                    return;
-                }
-
-                this.reconnectAttempts++;
-                const delay = Math.min(this.reconnectDelay * this.reconnectAttempts, 30000);
-
-                this.updateConnectionStatus('connecting', `Reconnecting in ${delay/1000}s (attempt ${this.reconnectAttempts})`);
-
-                setTimeout(() => {
-                    if (!this.isConnected) {
-                        this.connect();
-                    }
-                }, delay);
-            }
-
-            updateConnectionStatus(status, text) {
-                this.elements.connectionStatus.className = `status-indicator ${status}`;
-                this.elements.connectionStatus.querySelector('span').textContent = text;
-            }
-
-            // Replace the entire handleWebSocketMessage method and related handlers
-handleWebSocketMessage(data) {
-    console.log('WebSocket message received:', data);
-
-    // FIXED: Handle execution_progress events properly
-    if (data.event === 'execution_progress') {
-        // Extract the nested execution data
-        const executionData = data.data;
-        if (executionData && executionData.payload) {
-            this.handleAgentExecutionEvent(executionData);
-        }
-        return;
-    }
-
-    // Handle direct execution events (when data has request_id and payload directly)
-    if (data.request_id && data.payload) {
-        this.handleAgentExecutionEvent(data);
-        return;
-    }
-
-    // Handle other registry events
-    if (data.event) {
-        this.handleRegistryEvent(data);
-        return;
-    }
-
-    console.log('Unhandled message format:', data);
-}
-
-handleAgentExecutionEvent(eventData) {
-    const payload = eventData.payload;
-    const eventType = payload.event_type;
-    const isFinal = eventData.is_final;
-    const requestId = eventData.request_id;
-
-    console.log(`🎯 Processing Event: ${eventType}`, payload);
-
-    // FIXED: Handle final execution or completion events
-    if (isFinal || eventType === 'execution_complete' || payload.status === 'completed') {
-        // Hide typing indicator immediately for any final event
-        this.showTypingIndicator(false);
-
-        // Extract result from metadata or other possible locations
-        const result = payload.metadata?.result ||
-                      payload.result ||
-                      payload.response ||
-                      payload.output;
-
-        if (result && typeof result === 'string' && result.trim()) {
-            this.addMessage('agent', result);
+            this.init();
         }
 
-        this.currentExecution = null;
-        this.updateCurrentStatusToIdle();
-        return;
-    }
+        init() {
+            this.setupEventListeners();
+            this.setupPanelControls();
+            this.initializeProgressPanel();
+            this.showApiKeyModal();
+        }
 
-    // Start execution tracking
-    if (!this.currentExecution) {
-        this.currentExecution = {
-            requestId,
-            startTime: Date.now(),
-            events: [],
-            lastUpdate: Date.now()
-        };
-        this.showTypingIndicator(true);
-    }
+        // NEW: Initialize the refactored progress panel
+        initializeProgressPanel() {
+            if (this.elements.progressContent) {
+                this.elements.progressContent.innerHTML = `
+                <div class="progress-section metrics-section">
+                    <div class="section-title expandable-section" onclick="window.agentUI.toggleSection('metrics')">
+                        <span>📊 Performance Metrics</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content" id="performance-metrics">
+                        <div class="no-data">No metrics available</div>
+                    </div>
+                </div>
 
-    // Store event if we have active execution
-    if (this.currentExecution) {
-        this.currentExecution.events.push({
-            ...payload,
-            timestamp: Date.now()
-        });
-        this.currentExecution.lastUpdate = Date.now();
-    }
+                <div class="progress-section outline-section">
+                    <div class="section-title expandable-section" onclick="window.agentUI.toggleSection('outline')">
+                        <span>🗺️ Execution Outline & Context</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content" id="execution-outline">
+                        <div class="no-data">No outline available</div>
+                    </div>
+                </div>
 
-    // FIXED: Route events to specific handlers with better error handling
-    try {
-        switch (eventType) {
-            case 'reasoning_loop':
-                this.handleReasoningLoop(payload);
-                this.updateCurrentStatus(payload, '🧠 Reasoning');
-                break;
-            case 'meta_tool_call':
-                this.handleMetaToolCall(payload);
-                this.updateCurrentStatus(payload, '⚙️ Using Tool');
-                break;
-            case 'llm_call':
-                this.handleLLMCall(payload);
-                this.updateCurrentStatus(payload, '💭 AI Thinking');
-                break;
-            case 'node_phase':
-                this.handleNodeEvent(payload);
-                this.updateCurrentStatus(payload, '🔧 Processing Phase');
-                break;
-            case 'node_exit':
-                this.handleNodeEvent(payload);
-                this.updateCurrentStatus(payload, '✅ Completed Phase');
-                // FIXED: Hide typing indicator on successful node exit
-                if (payload.status === 'completed' || payload.success === true) {
-                    setTimeout(() => this.showTypingIndicator(false), 500);
+                <div class="progress-section status-history-section">
+                    <div class="section-title expandable-section" onclick="window.agentUI.toggleSection('status')">
+                        <span>⚡ Status & History</span>
+                        <span class="section-toggle">▼</span>
+                    </div>
+                    <div class="section-content expanded" id="status-history">
+                        <div class="no-data">No active execution</div>
+                    </div>
+                </div>
+            `;
+            }
+        }
+
+        // NEW: Toggle progress panel sections
+        toggleSection(sectionName) {
+            const section = document.querySelector(`.${sectionName}-section .section-content`);
+            const toggle = document.querySelector(`.${sectionName}-section .section-toggle`);
+
+            if (!section || !toggle) return;
+
+            const isExpanded = section.classList.contains('expanded');
+
+            if (isExpanded) {
+                section.classList.remove('expanded');
+                toggle.textContent = '▼';
+            } else {
+                section.classList.add('expanded');
+                toggle.textContent = '▲';
+            }
+        }
+
+        // REFACTORED: Main message handler with unified progress system
+        handleWebSocketMessage(data) {
+            console.log('WebSocket message received:', data);
+
+            if (data.event === 'execution_progress') {
+                const executionData = data.data;
+                if (executionData && executionData.payload) {
+                    this.handleUnifiedProgressEvent(executionData);
                 }
-                break;
-            case 'execution_start':
-                this.updateCurrentStatus(payload, '🚀 Starting');
-                break;
-            case 'execution_complete':
-                // FIXED: Always hide typing indicator on execution complete
+                return;
+            }
+
+            if (data.request_id && data.payload) {
+                this.handleUnifiedProgressEvent(data);
+                return;
+            }
+
+            if (data.event) {
+                this.handleRegistryEvent(data);
+                return;
+            }
+
+            console.log('Unhandled message format:', data);
+        }
+
+        // NEW: Unified progress event handler
+        // REPLACE the existing handleUnifiedProgressEvent method
+        handleUnifiedProgressEvent(eventData) {
+            const payload = eventData.payload;
+            const eventType = payload.event_type;
+            const isFinal = eventData.is_final;
+            const requestId = eventData.request_id;
+
+            console.log(`🎯 Processing Event: ${eventType}`, payload);
+
+            // Handle final events
+            if (isFinal || eventType === 'execution_complete' || payload.status === 'completed') {
                 this.showTypingIndicator(false);
-                this.updateCurrentStatus(payload, '✅ Complete');
+
+                const result = payload.metadata?.result || payload.result || payload.response || payload.output;
+                if (result && typeof result === 'string' && result.trim()) {
+                    this.addMessage('agent', result);
+                }
+
                 this.currentExecution = null;
                 this.updateCurrentStatusToIdle();
-                break;
-            default:
-                // Still update status for unknown events
-                this.updateCurrentStatus(payload, `⚡ ${eventType.replace(/_/g, ' ')}`);
-                console.log('📝 Unhandled event type:', eventType, payload);
+                return;
+            }
+
+            // Initialize execution tracking
+            if (!this.currentExecution) {
+                this.currentExecution = {
+                    requestId,
+                    startTime: Date.now(),
+                    events: [],
+                    lastUpdate: Date.now()
+                };
+                this.showTypingIndicator(true);
+            }
+
+            // ADD: Store ALL events in progress history
+            this.addToProgressHistory(payload);
+
+            // Handle chat integration for important events
+            this.handleChatIntegration(payload);
+
+            // Update performance metrics
+            this.updatePerformanceMetricsFromEvent(payload);
+
+            // Update execution outline
+            this.updateExecutionOutlineFromEvent(payload);
+
+            // Refresh status history (shows all events)
+            this.refreshStatusHistory();
+
+            // Update current execution
+            if (this.currentExecution) {
+                this.currentExecution.events.push({...payload, timestamp: Date.now()});
+                this.currentExecution.lastUpdate = Date.now();
+            }
         }
-    } catch (error) {
-        console.error('❌ Error handling event:', error, payload);
-        this.showError(`Event processing error: ${error.message}`);
-        // FIXED: Hide typing indicator on error
-        this.showTypingIndicator(false);
+
+        // NEW: Add event to progress history
+        // UPDATE the addToProgressHistory method to ensure all events are captured
+        addToProgressHistory(payload) {
+        const irrelevantEventTypes = ['node_phase', 'node_enter']; // Fügen Sie hier weitere Typen hinzu, falls nötig
+
+    // Prüfen, ob der Event-Typ in der Liste der irrelevanten Typen ist
+    if (irrelevantEventTypes.includes(payload.event_type)) {
+        // Optional: Hier könnte man das Event kurz an anderer Stelle anzeigen,
+        // aber wir speichern es nicht im langfristigen Verlauf.
+        console.log(`📝 Skipping storage for irrelevant event: ${payload.event_type}`);
+        return; // Die Funktion hier beenden, um das Speichern zu verhindern
     }
-}
 
-handleRegistryEvent(data) {
-    const event = data.event;
-    const payload = data.data || data;
+            // Generate consistent ID for events
+            const eventId = payload.event_id || `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    console.log(`📋 Registry Event: ${event}`, payload);
+            const historyItem = {
+                ...payload,
+                timestamp: payload.timestamp || Date.now(),
+                id: eventId
+            };
 
-    switch (event) {
-        case 'api_key_validation':
-            if (payload.valid) {
-                console.log('✅ API key validated successfully');
+            // Remove any existing event with same ID to avoid duplicates
+            this.progressHistory = this.progressHistory.filter(item => item.id !== eventId);
+
+            this.progressHistory.unshift(historyItem);
+
+            if (this.progressHistory.length - 10 > this.maxProgressHistory) {
+                this.progressHistory = this.progressHistory.slice(0, this.maxProgressHistory-50);
+            }
+
+            console.log(`📝 Added to progress history: ${payload.event_type}`, historyItem);
+        }
+
+        // NEW: Refresh unified status history display
+        refreshStatusHistory() {
+            const container = document.getElementById('status-history');
+            if (!container) return;
+
+            if (this.progressHistory.length === 0) {
+                container.innerHTML = '<div class="no-data">No events recorded</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+
+            this.progressHistory.forEach((event, index) => {
+                const eventElement = this.createExpandableProgressItem(event, index === 0);
+                container.appendChild(eventElement);
+            });
+        }
+
+        // NEW: Create expandable progress item (only one expandable at a time)
+// UPDATE the createExpandableProgressItem method to show more LLM details
+        createExpandableProgressItem(event, isLatest = false) {
+            const div = document.createElement('div');
+            div.className = `progress-item expandable ${isLatest ? 'latest' : ''} ${event.event_type}`;
+            div.setAttribute('data-event-id', event.id);
+
+            const icon = this.getEventIcon(event.event_type, event.status);
+            const title = this.getDisplayAction(event.event_type, event);
+            const timestamp = new Date((event.timestamp || Date.now()) * (event.timestamp > 10000000000 ? 1 : 1000)).toLocaleTimeString();
+            const status = event.status || 'unknown';
+
+            // ADD: Special summary for LLM calls
+            let summaryDetails = '';
+            if (event.node_name) summaryDetails += `${event.node_name} • `;
+            summaryDetails += timestamp;
+
+            if (event.event_type === 'llm_call') {
+                if (event.llm_temperature !== undefined) summaryDetails += ` • Temp: ${event.llm_temperature}`;
+                if (event.llm_total_tokens) summaryDetails += ` • ${event.llm_total_tokens} tokens`;
+                if (event.llm_cost) summaryDetails += ` • $${event.llm_cost.toFixed(4)}`;
+                if (event.duration) summaryDetails += ` • ${event.duration.toFixed(2)}s`;
             } else {
-                this.showError('❌ Invalid API key for this agent');
-                this.currentAgent = null;
-                this.elements.messageInput.disabled = true;
-                this.elements.sendButton.disabled = true;
+                if (event.duration) summaryDetails += ` • ${event.duration.toFixed(2)}s`;
             }
-            break;
-        case 'agents_list':
-            console.log('📝 Updating agents list:', payload.agents);
-            this.updateAgentsList(payload.agents);
-            break;
-        case 'agent_registered':
-            console.log('🆕 Agent registered:', payload);
-            this.addAgent(payload);
-            break;
-        case 'error':
-            console.error('❌ WebSocket error:', payload);
-            this.showError(payload.error || payload.message || 'Unknown error');
-            break;
-        case 'execution_progress':
-            // This shouldn't happen anymore with the fixed routing above
-            console.log('🔄 Legacy execution progress event:', payload);
-            if (payload.payload) {
-                this.handleAgentExecutionEvent(payload);
-            }
-            break;
-        default:
-            console.log('❓ Unhandled registry event:', event, payload);
-    }
-}
 
-// FIXED: Enhanced reasoning loop handler
-handleReasoningLoop(payload) {
-    const metadata = payload.metadata || {};
-    const loopNumber = metadata.loop_number || 0;
-    const outlineStep = metadata.outline_step || 0;
-    const outlineTotal = metadata.outline_total || 0;
-    const performance = metadata.performance_metrics || {};
-    const status = payload.status || 'running';
-
-    console.log(`🧠 Reasoning Loop ${loopNumber}:`, metadata);
-
-    // Show outline progress in chat
-    if (outlineStep > 0 && status === 'running') {
-        const stepDiv = document.createElement('div');
-        stepDiv.className = 'thinking-step outline-step';
-        stepDiv.innerHTML = `
-            <div class="thinking-step-header">
-                <span>🗺️</span>
-                <span>Planning Step ${outlineStep} of ${outlineTotal}</span>
-            </div>
-            <div class="thinking-step-content">
-                <span>Loop ${loopNumber}</span>
-            </div>
-        `;
-        this.elements.messagesContainer.appendChild(stepDiv);
-        this.scrollToBottom();
-    }
-
-    // Update performance metrics in progress panel
-    if (performance && Object.keys(performance).length > 0) {
-        this.updatePerformanceMetrics(performance);
-    }
-}
-
-// FIXED: Enhanced meta tool handler
-handleMetaToolCall(payload) {
-    const metadata = payload.metadata || {};
-    const metaToolName = metadata.meta_tool_name || 'unknown_tool';
-    const status = payload.status || 'running';
-    const phase = metadata.execution_phase || 'unknown';
-
-    console.log(`⚙️ Meta Tool: ${metaToolName} (${status})`, metadata);
-
-    // FIXED: Show internal reasoning in chat with better formatting
-    if (metaToolName === 'internal_reasoning' && status === 'completed') {
-        const args = metadata.parsed_args || {};
-        const thought = args.thought;
-        const thoughtNumber = args.thought_number;
-        const confidence = args.confidence_level || 0;
-
-        if (thought) {
-            const thinkingDiv = document.createElement('div');
-            thinkingDiv.className = 'thinking-step';
-            thinkingDiv.innerHTML = `
-                <div class="thinking-step-header">
-                    <span>🧠</span>
-                    <span>Internal Reasoning ${thoughtNumber ? `#${thoughtNumber}` : ''}</span>
-                    <span style="font-size: 10px; color: var(--text-muted);">${Math.round(confidence * 100)}% confidence</span>
-                </div>
-                <div class="thinking-step-content">
-                    ${this.formatThinkingContent(thought)}
-                </div>
-            `;
-            this.elements.messagesContainer.appendChild(thinkingDiv);
-            this.scrollToBottom();
-        }
-    }
-
-    // FIXED: Always update meta tools history
-    this.updateMetaToolsHistory(payload);
-}
-
-// NEW: Format thinking content nicely
-formatThinkingContent(thought) {
-    if (!thought) return '';
-
-    // Simple formatting for better readability
-    return thought
-        .replace(/\\n/g, '<br>')
-        .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
-        .replace(/\\*(.*?)\\*/g, '<em>$1</em>');
-}
-
-// FIXED: Enhanced LLM call handler
-handleLLMCall(payload) {
-    const model = payload.llm_model || 'Unknown Model';
-    const tokens = payload.llm_total_tokens || 0;
-    const cost = payload.llm_cost || 0;
-    const duration = payload.llm_duration || 0;
-    const status = payload.status || 'running';
-
-    console.log(`💭 LLM Call: ${model} (${status})`, { tokens, cost, duration });
-
-    this.updateSystemEvents({
-        type: 'llm_call',
-        model,
-        tokens,
-        cost,
-        duration,
-        status,
-        timestamp: Date.now()
-    });
-}
-
-// FIXED: Enhanced node event handler
-handleNodeEvent(payload) {
-    const nodeName = payload.node_name || 'Unknown Node';
-    const phase = payload.node_phase || 'processing';
-    const status = payload.status || 'running';
-    const duration = payload.node_duration || 0;
-    const routingDecision = payload.routing_decision;
-
-    console.log(`🔧 Node Event: ${nodeName}`, { phase, status, duration, routingDecision });
-
-    this.updateSystemEvents({
-        type: 'node_event',
-        nodeName,
-        phase,
-        status,
-        duration,
-        routingDecision,
-        timestamp: Date.now()
-    });
-}
-
-// FIXED: Enhanced current status updates
-updateCurrentStatus(payload, userFriendlyAction = null) {
-    const eventType = payload.event_type || 'unknown';
-    const status = payload.status || 'processing';
-    const nodeName = payload.node_name || '';
-    const timestamp = new Date().toLocaleTimeString();
-    const agentName = payload.agent_name || 'Agent';
-
-    // FIXED: Use user-friendly action or derive from event type
-    const displayAction = userFriendlyAction || this.getDisplayAction(eventType, payload);
-    const icon = this.getEventIcon(eventType, status);
-
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'progress-item';
-    statusDiv.innerHTML = `
-        <div class="progress-item-header">
-            <div class="progress-icon">${icon}</div>
-            <div class="progress-title">${displayAction}</div>
-            <div class="progress-status ${status}">${status}</div>
-        </div>
-        <div class="progress-details">
-            ${agentName} • ${timestamp}
-            ${nodeName ? ` • ${nodeName}` : ''}
-            ${payload.routing_decision ? ` • Route: ${payload.routing_decision}` : ''}
-        </div>
-        ${this.createProgressBar(payload)}
-    `;
-
-    // FIXED: Clear and update status
-    this.elements.currentStatus.innerHTML = '';
-    this.elements.currentStatus.appendChild(statusDiv);
-}
-
-// NEW: Create progress bars for certain events
-createProgressBar(payload) {
-    const metadata = payload.metadata || {};
-
-    // For reasoning loops, show progress
-    if (payload.event_type === 'reasoning_loop') {
-        const outlineStep = metadata.outline_step || 0;
-        const outlineTotal = metadata.outline_total || 0;
-
-        if (outlineTotal > 0) {
-            const percentage = Math.round((outlineStep / outlineTotal) * 100);
-            return `
-                <div style="margin-top: 8px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-bottom: 2px;">
-                        <span>Progress</span>
-                        <span>${percentage}%</span>
-                    </div>
-                    <div style="background: var(--bg-primary); border-radius: 4px; overflow: hidden; height: 4px;">
-                        <div style="background: var(--accent-blue); height: 100%; width: ${percentage}%; transition: width 0.3s;"></div>
-                    </div>
-                </div>
-            `;
-        }
-    }
-
-    return '';
-}
-
-// FIXED: Enhanced performance metrics
-updatePerformanceMetrics(performance) {
-    console.log('📊 Updating Performance Metrics:', performance);
-
-    const metricsDiv = document.createElement('div');
-    metricsDiv.className = 'progress-item';
-
-    const metrics = {
-        'Action Efficiency': `${Math.round((performance.action_efficiency || 0) * 100)}%`,
-        'Avg Loop Time': `${(performance.avg_loop_time || 0).toFixed(1)}s`,
-        'Progress Rate': `${Math.round((performance.progress_rate || 0) * 100)}%`,
-        'Total Loops': performance.total_loops || 0,
-        'Progress Loops': performance.progress_loops || 0
-    };
-
-    const metricsHtml = Object.entries(metrics)
-        .map(([key, value]) => `
-            <div class="metric">
-                <span>${key}:</span>
-                <span style="font-weight: 600;">${value}</span>
-            </div>
-        `).join('');
-
-    metricsDiv.innerHTML = `
-        <div class="progress-item-header">
-            <div class="progress-icon">📊</div>
-            <div class="progress-title">Performance Metrics</div>
-            <div class="progress-status running">live</div>
-        </div>
-        <div class="performance-metrics">
-            ${metricsHtml}
-        </div>
-    `;
-
-    this.elements.performanceMetrics.innerHTML = '';
-    this.elements.performanceMetrics.appendChild(metricsDiv);
-}
-
-// FIXED: Enhanced meta tools history
-updateMetaToolsHistory(payload) {
-    const metadata = payload.metadata || {};
-    const toolName = metadata.meta_tool_name || 'unknown_tool';
-    const status = payload.status || 'running';
-    const phase = metadata.execution_phase || 'unknown';
-    const timestamp = new Date().toLocaleTimeString();
-
-    console.log('🛠️ Updating Meta Tools History:', { toolName, status, phase });
-
-    let icon = '⚙️';
-    if (toolName.includes('reasoning')) icon = '🧠';
-    else if (toolName.includes('delegate')) icon = '🎯';
-    else if (toolName.includes('plan')) icon = '📋';
-    else if (toolName.includes('variables')) icon = '💾';
-    else if (toolName.includes('internal')) icon = '🔍';
-    else if (status === 'completed') icon = '✅';
-    else if (status === 'error') icon = '❌';
-
-    const toolDiv = document.createElement('div');
-    toolDiv.className = 'progress-item';
-
-    // Add different styling based on tool type
-    if (status === 'error') {
-        toolDiv.style.borderColor = 'var(--accent-red)';
-        toolDiv.style.backgroundColor = 'rgba(248, 81, 73, 0.05)';
-    } else if (status === 'completed') {
-        toolDiv.style.borderColor = 'var(--accent-green)';
-    }
-
-    toolDiv.innerHTML = `
-        <div class="progress-item-header">
-            <div class="progress-icon">${icon}</div>
-            <div class="progress-title">${toolName.replace(/_/g, ' ')}</div>
-            <div class="progress-status ${status}">${status}</div>
-        </div>
-        <div class="progress-details">
-            Phase: ${phase} • ${timestamp}
-            ${metadata.reasoning_loop ? ` • Loop: ${metadata.reasoning_loop}` : ''}
-            ${metadata.parsed_args?.confidence_level ? ` • ${Math.round(metadata.parsed_args.confidence_level * 100)}% confidence` : ''}
-        </div>
-    `;
-
-    this.elements.metaToolsHistory.insertBefore(toolDiv, this.elements.metaToolsHistory.firstChild);
-
-    // Keep only last 10 items
-    const items = this.elements.metaToolsHistory.children;
-    while (items.length > 10) {
-        this.elements.metaToolsHistory.removeChild(items[items.length - 1]);
-    }
-}
-
-// FIXED: Enhanced system events
-updateSystemEvents(eventData) {
-    const timestamp = new Date(eventData.timestamp).toLocaleTimeString();
-
-    console.log('🔔 Updating System Events:', eventData);
-
-    let icon = '🔧';
-    let title = 'System Event';
-    let details = '';
-    let statusClass = 'running';
-
-    if (eventData.type === 'llm_call') {
-        icon = '💬';
-        title = `LLM: ${eventData.model}`;
-        details = `${eventData.tokens} tokens`;
-        if (eventData.cost > 0) {
-            details += ` • $${eventData.cost.toFixed(4)}`;
-        }
-        if (eventData.duration > 0) {
-            details += ` • ${eventData.duration.toFixed(2)}s`;
-        }
-        statusClass = eventData.status || 'running';
-    } else if (eventData.type === 'node_event') {
-        icon = eventData.status === 'completed' ? '✅' : '🔧';
-        title = `${eventData.nodeName}`;
-        details = eventData.phase;
-        if (eventData.duration > 0) {
-            details += ` • ${eventData.duration.toFixed(2)}s`;
-        }
-        if (eventData.routingDecision) {
-            details += ` • → ${eventData.routingDecision}`;
-        }
-        statusClass = eventData.status || 'running';
-    }
-
-    const eventDiv = document.createElement('div');
-    eventDiv.className = 'progress-item';
-    eventDiv.innerHTML = `
-        <div class="progress-item-header">
+            div.innerHTML = `
+        <div class="progress-item-header" onclick="window.agentUI.toggleProgressItem('${event.id}')">
             <div class="progress-icon">${icon}</div>
             <div class="progress-title">${title}</div>
-            <div class="progress-status ${statusClass}">${statusClass}</div>
+            <div class="progress-meta">
+                <span class="progress-status ${status}">${status}</span>
+                <span class="expand-indicator">▼</span>
+            </div>
         </div>
-        <div class="progress-details">
-            ${details}<br>
-            ${timestamp}
+        <div class="progress-summary">
+            ${summaryDetails}
+        </div>
+        <div class="progress-item-expanded" id="expanded-${event.id}">
+            ${this.createExpandedEventContent(event)}
         </div>
     `;
 
-    this.elements.systemEvents.insertBefore(eventDiv, this.elements.systemEvents.firstChild);
+            return div;
+        }
+        // NEW: Toggle progress item (only one at a time)
+        toggleProgressItem(eventId) {
+            if (this.expandedProgressItem && this.expandedProgressItem !== eventId) {
+                this.closeProgressItem(this.expandedProgressItem);
+            }
 
-    // Keep only last 8 events
-    const items = this.elements.systemEvents.children;
-    while (items.length > 8) {
-        this.elements.systemEvents.removeChild(items[items.length - 1]);
-    }
-}
+            const expandedContent = document.getElementById(`expanded-${eventId}`);
+            const progressItem = document.querySelector(`[data-event-id="${eventId}"]`);
+            const indicator = progressItem?.querySelector('.expand-indicator');
 
-// NEW: Helper method to scroll messages to bottom
-scrollToBottom() {
-    if (this.elements.messagesContainer) {
-        this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
-    }
-}
+            if (!expandedContent || !progressItem) return;
 
-// FIXED: Better display action generation
-getDisplayAction(eventType, payload) {
-    const metadata = payload.metadata || {};
+            const isExpanded = expandedContent.classList.contains('active');
 
-    switch (eventType) {
-        case 'reasoning_loop':
-            const step = metadata.outline_step || 0;
-            const total = metadata.outline_total || 0;
-            return step > 0 ? `Planning Step ${step}/${total}` : 'Deep Reasoning';
-        case 'meta_tool_call':
-            const toolName = metadata.meta_tool_name || 'tool';
-            return `${toolName.replace(/_/g, ' ').replace(/\b\\w/g, l => l.toUpperCase())}`;
-        case 'llm_call':
-            const model = payload.llm_model || 'AI';
-            return `${model} Thinking`;
-        case 'node_phase':
-            return `${payload.node_name || 'Processing'} • ${payload.node_phase || 'Phase'}`;
-        case 'node_exit':
-            return `${payload.node_name || 'Processing'} • Complete`;
-        case 'execution_start':
-            return 'Starting Execution';
-        case 'execution_complete':
-            return 'Execution Complete';
-        default:
-            return eventType.replace(/_/g, ' ').replace(/\b\\w/g, l => l.toUpperCase());
-    }
-}
+            if (isExpanded) {
+                expandedContent.classList.remove('active');
+                progressItem.classList.remove('expanded');
+                if (indicator) indicator.textContent = '▼';
+                this.expandedProgressItem = null;
+            } else {
+                expandedContent.classList.add('active');
+                progressItem.classList.add('expanded');
+                if (indicator) indicator.textContent = '▲';
+                this.expandedProgressItem = eventId;
+            }
+        }
 
-// Enhanced idle status
-updateCurrentStatusToIdle() {
-    const timestamp = new Date().toLocaleTimeString();
-    this.elements.currentStatus.innerHTML = `
-        <div class="progress-item">
-            <div class="progress-item-header">
-                <div class="progress-icon">💤</div>
-                <div class="progress-title">Ready & Waiting</div>
-                <div class="progress-status completed">idle</div>
-            </div>
-            <div class="progress-details">
-                Agent is ready for your next message • ${timestamp}
-            </div>
-        </div>
-    `;
-}
+        // NEW: Close progress item
+        closeProgressItem(eventId) {
+            const expandedContent = document.getElementById(`expanded-${eventId}`);
+            const progressItem = document.querySelector(`[data-event-id="${eventId}"]`);
+            const indicator = progressItem?.querySelector('.expand-indicator');
 
-getEventIcon(eventType, status) {
-    if (status === 'error') return '❌';
-    if (status === 'completed') return '✅';
+            if (expandedContent) expandedContent.classList.remove('active');
+            if (progressItem) progressItem.classList.remove('expanded');
+            if (indicator) indicator.textContent = '▼';
+        }
 
-    switch (eventType) {
-        case 'reasoning_loop': return '🧠';
-        case 'meta_tool_call': return '⚙️';
-        case 'llm_call': return '💭';
-        case 'node_phase':
-        case 'node_exit': return '🔧';
-        case 'execution_complete': return '✅';
-        default: return '⚡';
-    }
-}
+        // NEW: Create detailed expanded content
+// ADD this method to create comprehensive event details
+        createExpandedEventContent(event) {
+            const sections = [];
 
+            // Core Information
+            const coreInfo = this.extractCoreFields(event);
+            if (Object.keys(coreInfo).length > 0) {
+                sections.push(this.createEventSection('Core Information', coreInfo));
+            }
 
-            updateAgentsList(agents) {
-                this.elements.agentsContainer.innerHTML = '';
+            // Timing Information
+            const timingInfo = this.extractTimingFields(event);
+            if (Object.keys(timingInfo).length > 0) {
+                sections.push(this.createEventSection('Timing & Status', timingInfo));
+            }
 
-                if (!agents || agents.length === 0) {
-                    this.elements.agentsContainer.innerHTML = `
-                        <div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">
-                            No agents available
+            // LLM Information
+            const llmInfo = this.extractLLMFields(event);
+            if (Object.keys(llmInfo).length > 0) {
+                sections.push(this.createEventSection('LLM Details', llmInfo));
+            }
+
+            // Tool Information
+            const toolInfo = this.extractToolFields(event);
+            if (Object.keys(toolInfo).length > 0) {
+                sections.push(this.createEventSection('Tool Details', toolInfo));
+            }
+
+            // Performance Information
+            const perfInfo = this.extractPerformanceFields(event);
+            if (Object.keys(perfInfo).length > 0) {
+                sections.push(this.createEventSection('Performance', perfInfo));
+            }
+
+            // Reasoning Context
+            const reasoningInfo = this.extractReasoningFields(event);
+            if (Object.keys(reasoningInfo).length > 0) {
+                sections.push(this.createEventSection('Reasoning Context', reasoningInfo));
+            }
+
+            // Error Information
+            const errorInfo = this.extractErrorFields(event);
+            if (Object.keys(errorInfo).length > 0) {
+                sections.push(this.createEventSection('Error Details', errorInfo));
+            }
+
+            // Raw Data
+            const rawData = this.extractRawDataFields(event);
+            if (Object.keys(rawData).length > 0) {
+                sections.push(this.createEventSection('Raw Data', rawData));
+            }
+
+            return sections.join('') || '<div class="no-expanded-data">No detailed information available</div>';
+        }
+
+        // NEW: Create event section for expanded view
+        createEventSection(title, fields) {
+            const fieldsHtml = Object.entries(fields)
+                .map(([key, value]) => {
+                    if (typeof value === 'object' && value.type === 'json') {
+                        return `
+                        <div class="event-field">
+                            <div class="event-field-label">${key}:</div>
+                            <div class="event-field-value json">${value.value}</div>
                         </div>
                     `;
-                    return;
-                }
+                    } else {
+                        return `
+                        <div class="event-field">
+                            <div class="event-field-label">${key}:</div>
+                            <div class="event-field-value">${value}</div>
+                        </div>
+                    `;
+                    }
+                })
+                .join('');
 
-                agents.forEach(agent => {
-                    this.agents.set(agent.public_agent_id, agent);
-                    const agentEl = this.createAgentElement(agent);
-                    this.elements.agentsContainer.appendChild(agentEl);
-                });
+            return `
+            <div class="expanded-section">
+                <div class="expanded-section-title">${title}</div>
+                ${fieldsHtml}
+            </div>
+        `;
+        }
+
+        // ENHANCED: Chat integration for reasoning loops and task execution
+        handleChatIntegration(payload) {
+            const eventType = payload.event_type;
+            const metadata = payload.metadata || {};
+            switch (eventType) {
+                case 'reasoning_loop':
+                    if (metadata.outline_step && metadata.outline_total) {
+                        this.handleOutlineStepInChat(payload);
+                    }
+                    break;
+                case 'outline_created':
+                    this.handleOutlineCreatedInChat(payload);
+                    break;
+                case 'task_start':
+                case 'task_complete':
+                case 'task_error':
+                    this.handleTaskProgressInChat(payload);
+                    break;
+                case 'plan_created':
+                    this.handlePlanCreatedInChat(payload);
+                    break;
+                case 'tool_call':
+                    // Only show important tool calls in chat
+                    if (payload.tool_name && !payload.tool_name.includes('internal')) {
+                        this.handleToolCallInChat(payload);
+                    }
+                    break;
             }
+        }
 
-            createAgentElement(agent) {
-                const div = document.createElement('div');
-                div.className = 'agent-item';
-                div.dataset.agentId = agent.public_agent_id;
+        // ADD this method for plan creation
+handlePlanCreatedInChat(payload) {
+    const metadata = payload.metadata || {};
+    const planName = metadata.plan_name || 'Execution Plan';
+    const taskCount = metadata.task_count || 0;
+    const strategy = metadata.strategy || 'sequential';
 
-                div.innerHTML = `
-                    <div class="agent-name">${agent.public_name}</div>
-                    <div class="agent-description">${agent.description || 'No description'}</div>
-                    <div class="agent-status ${agent.status}">
-                        <div class="status-dot"></div>
-                        <span>${agent.status.toUpperCase()}</span>
+    const planDiv = document.createElement('div');
+    planDiv.className = 'thinking-step plan-created';
+    planDiv.innerHTML = `
+        <div class="thinking-step-header">
+            <span>📋</span>
+            <span>${planName} Created</span>
+            <span class="step-status completed">Ready</span>
+        </div>
+        <div class="thinking-step-content">
+            <div class="plan-details">
+                <div class="plan-info">
+                    <span class="plan-item">Tasks: ${taskCount}</span>
+                    <span class="plan-item">Strategy: ${strategy}</span>
+                </div>
+                <div class="plan-ready">
+                    <em>🚀 Plan ready for execution</em>
+                </div>
+            </div>
+        </div>
+    `;
+
+    this.elements.messagesContainer.appendChild(planDiv);
+    this.scrollToBottom();
+}
+
+        // ADD this new method for outline step progress
+handleOutlineStepInChat(payload) {
+    const metadata = payload.metadata || {};
+    const outlineStep = metadata.outline_step || 0;
+    const outlineTotal = metadata.outline_total || 0;
+    const loopNumber = metadata.loop_number || 0;
+    const status = payload.status || 'running';
+
+    if (outlineStep === 0 || outlineTotal === 0) return;
+
+    const progressPercentage = Math.round((outlineStep / outlineTotal) * 100);
+    const isCompleted = status === 'completed';
+
+    const stepDiv = document.createElement('div');
+    stepDiv.className = `thinking-step outline-step ${isCompleted ? 'completed' : 'running'}`;
+
+    let stepTitle = `Outline Step ${outlineStep} of ${outlineTotal}`;
+    let stepIcon = isCompleted ? '✅' : '🗺️';
+    let stepStatus = isCompleted ? 'Completed' : 'In Progress';
+
+    stepDiv.innerHTML = `
+        <div class="thinking-step-header">
+            <span>${stepIcon}</span>
+            <span>${stepTitle}</span>
+            <span class="step-status ${status}">${stepStatus}</span>
+        </div>
+        <div class="thinking-step-content">
+            <div class="outline-progress">
+                <div class="progress-info">
+                    <span class="progress-text">Execution Progress</span>
+                    <span class="progress-percentage">${progressPercentage}%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar">
+                        <div class="progress-bar-fill" style="width: ${progressPercentage}%"></div>
                     </div>
-                `;
+                </div>
+                ${isCompleted ?
+                    '<div class="step-completed">This execution step is now complete</div>' :
+                    '<div class="step-working">Working on this step...</div>'
+                }
+            </div>
 
-                div.addEventListener('click', () => this.selectAgent(agent));
+            ${metadata.context_size || metadata.task_stack_size ? `
+                <div class="context-info">
+                    ${metadata.context_size ? `<span class="context-item">Context: ${metadata.context_size}</span>` : ''}
+                    ${metadata.task_stack_size ? `<span class="context-item">Tasks: ${metadata.task_stack_size}</span>` : ''}
+                </div>
+            ` : ''}
+        </div>
+    `;
 
-                return div;
+    this.elements.messagesContainer.appendChild(stepDiv);
+    this.scrollToBottom();
+}
+
+
+        // NEW: Handle outline creation with detailed information
+// REPLACE the existing handleOutlineCreatedInChat method
+handleOutlineCreatedInChat(payload) {
+    const metadata = payload.metadata || {};
+    const outline = metadata.outline;
+
+    if (!outline) return;
+
+    const outlineDiv = document.createElement('div');
+    outlineDiv.className = 'thinking-step outline-created';
+    outlineDiv.innerHTML = `
+        <div class="thinking-step-header">
+            <span>📋</span>
+            <span>Execution Plan Created</span>
+            <span class="step-status completed">Ready</span>
+        </div>
+        <div class="thinking-step-content">
+            <div class="outline-content">
+                ${this.formatOutlineForChat(outline)}
+            </div>
+            <div class="outline-ready">
+                <em>✨ Ready to execute plan step by step</em>
+            </div>
+        </div>
+    `;
+
+    this.elements.messagesContainer.appendChild(outlineDiv);
+    this.scrollToBottom();
+}
+
+        // NEW: Handle task execution progress cleanly
+        handleTaskProgressInChat(payload) {
+            const eventType = payload.event_type;
+            const taskId = payload.task_id;
+            const metadata = payload.metadata || {};
+            const description = metadata.description || 'Task execution';
+            const taskType = metadata.type || 'Task';
+            const priority = metadata.priority || 'normal';
+
+            let icon = '📋';
+            let status = '';
+            let statusClass = 'running';
+
+            if (eventType === 'task_start') {
+                icon = '▶️';
+                status = 'Starting';
+                statusClass = 'starting';
+            } else if (eventType === 'task_complete') {
+                icon = '✅';
+                status = 'Completed';
+                statusClass = 'completed';
+            } else if (eventType === 'task_error') {
+                icon = '❌';
+                status = 'Failed';
+                statusClass = 'error';
             }
 
-            selectAgent(agent) {
-                if (!this.apiKey) {
-                    this.showError('Please set your API key first');
-                    return;
+            const taskDiv = document.createElement('div');
+            taskDiv.className = `thinking-step task-progress ${statusClass}`;
+            taskDiv.innerHTML = `
+            <div class="thinking-step-header">
+                <span>${icon}</span>
+                <span>${taskType} ${status}</span>
+                <span class="priority-badge ${priority}">${priority}</span>
+            </div>
+            <div class="thinking-step-content">
+                <div class="task-description">${description}</div>
+                ${payload.duration ? `<div class="task-timing">Duration: ${payload.duration.toFixed(2)}s</div>` : ''}
+                ${eventType === 'task_error' && payload.error_details?.message ?
+                `<div class="task-error">Error: ${payload.error_details.message}</div>` : ''}
+            </div>
+        `;
+
+            this.elements.messagesContainer.appendChild(taskDiv);
+            this.scrollToBottom();
+        }
+
+        // NEW: Handle tool calls in chat
+        handleToolCallInChat(payload) {
+            const toolName = payload.tool_name;
+            const status = payload.status;
+
+            if (status === 'running') return; // Only show completed tool calls
+
+            const toolDiv = document.createElement('div');
+            toolDiv.className = `thinking-step tool-call ${status}`;
+            toolDiv.innerHTML = `
+            <div class="thinking-step-header">
+                <span>🔧</span>
+                <span>Used ${toolName}</span>
+                <span class="tool-status ${status}">${status}</span>
+            </div>
+            <div class="thinking-step-content">
+                <div class="tool-result">
+                    ${status === 'completed' ? 'Tool executed successfully' : 'Tool execution failed'}
+                    ${payload.duration ? ` in ${payload.duration.toFixed(2)}s` : ''}
+                </div>
+            </div>
+        `;
+
+            this.elements.messagesContainer.appendChild(toolDiv);
+            this.scrollToBottom();
+        }
+
+        // NEW: Format outline for chat display
+        formatOutlineForChat(outline) {
+            if (typeof outline === 'string') {
+                return `<div class="outline-text">${outline}</div>`;
+            }
+
+            if (Array.isArray(outline)) {
+                return `
+                <div class="outline-steps">
+                    ${outline.map((step, index) =>
+                    `<div class="outline-step">
+                            <span class="step-number">${index + 1}.</span>
+                            <span class="step-text">${step}</span>
+                        </div>`
+                ).join('')}
+                </div>
+            `;
+            }
+
+            return '<div class="outline-text">Execution plan created</div>';
+        }
+
+        // NEW: Create progress bar
+        createProgressBar(current, total) {
+            if (!total || total === 0) return '';
+
+            const percentage = Math.round((current / total) * 100);
+
+            return `
+            <div class="progress-bar-container">
+                <div class="progress-bar-info">
+                    <span>Progress</span>
+                    <span>${percentage}%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-bar-fill" style="width: ${percentage}%"></div>
+                </div>
+            </div>
+        `;
+        }
+
+        // ENHANCED: Update performance metrics
+        updatePerformanceMetricsFromEvent(payload) {
+            const metadata = payload.metadata || {};
+            const performance = metadata.performance_metrics;
+
+            if (performance && Object.keys(performance).length > 0) {
+                this.currentPerformanceMetrics = performance;
+                this.refreshPerformanceMetrics();
+            }
+        }
+
+        // NEW: Refresh performance metrics display
+        refreshPerformanceMetrics() {
+            const container = document.getElementById('performance-metrics');
+            if (!container || !this.currentPerformanceMetrics) return;
+
+            const metrics = {
+                'Action Efficiency': `${Math.round((this.currentPerformanceMetrics.action_efficiency || 0) * 100)}%`,
+                'Avg Loop Time': `${(this.currentPerformanceMetrics.avg_loop_time || 0).toFixed(1)}s`,
+                'Progress Rate': `${Math.round((this.currentPerformanceMetrics.progress_rate || 0) * 100)}%`,
+                'Total Loops': this.currentPerformanceMetrics.total_loops || 0,
+                'Progress Loops': this.currentPerformanceMetrics.progress_loops || 0
+            };
+
+            container.innerHTML = `
+            <div class="metrics-grid">
+                ${Object.entries(metrics).map(([key, value]) => `
+                    <div class="metric-card">
+                        <div class="metric-label">${key}</div>
+                        <div class="metric-value">${value}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+        }
+
+        // NEW: Update execution outline
+        updateExecutionOutlineFromEvent(payload) {
+            const eventType = payload.event_type;
+            const metadata = payload.metadata || {};
+
+            if (eventType === 'outline_created' || eventType === 'reasoning_loop') {
+                const outlineContainer = document.getElementById('execution-outline');
+                if (!outlineContainer) return;
+
+                const outline = metadata.outline;
+                const outlineStep = metadata.outline_step || 0;
+                const outlineTotal = metadata.outline_total || 0;
+                const contextSize = metadata.context_size || 0;
+                const taskStackSize = metadata.task_stack_size || 0;
+
+                outlineContainer.innerHTML = `
+                <div class="outline-info">
+                    <div class="context-metrics">
+                        <div class="context-metric">
+                            <span class="context-label">Context Size:</span>
+                            <span class="context-value">${contextSize}</span>
+                        </div>
+                        <div class="context-metric">
+                            <span class="context-label">Task Stack:</span>
+                            <span class="context-value">${taskStackSize}</span>
+                        </div>
+                        <div class="context-metric">
+                            <span class="context-label">Progress:</span>
+                            <span class="context-value">${outlineStep}/${outlineTotal}</span>
+                        </div>
+                    </div>
+
+                    ${outlineTotal > 0 ? this.createProgressBar(outlineStep, outlineTotal) : ''}
+                </div>
+
+                ${outline ? `
+                    <div class="outline-details">
+                        <div class="outline-title">Current Plan</div>
+                        ${this.formatOutlineForChat(outline)}
+                    </div>
+                ` : ''}
+            `;
+            }
+        }
+
+        // Helper methods for field extraction (using existing implementations)
+        extractCoreFields(event) {
+            const fields = {};
+            if (event.event_type) fields['Event Type'] = event.event_type.replace(/_/g, ' ').toUpperCase();
+            if (event.node_name) fields['Node'] = event.node_name;
+            if (event.agent_name) fields['Agent'] = event.agent_name;
+            if (event.task_id) fields['Task ID'] = event.task_id;
+            if (event.plan_id) fields['Plan ID'] = event.plan_id;
+            if (event.timestamp) fields['Timestamp'] = new Date((event.timestamp > 10000000000 ? event.timestamp : event.timestamp * 1000)).toLocaleString();
+            return fields;
+        }
+
+// REPLACE the existing extractLLMFields method
+        extractLLMFields(event) {
+            const fields = {};
+            const metadata = event.metadata || {};
+
+            if (event.llm_model) fields['Model'] = event.llm_model;
+            if (event.llm_temperature !== undefined) fields['Temperature'] = event.llm_temperature;
+            if (event.llm_prompt_tokens) fields['Prompt Tokens'] = event.llm_prompt_tokens.toLocaleString();
+            if (event.llm_completion_tokens) fields['Completion Tokens'] = event.llm_completion_tokens.toLocaleString();
+            if (event.llm_total_tokens) fields['Total Tokens'] = event.llm_total_tokens.toLocaleString();
+            if (event.llm_cost) fields['Cost'] = `$${event.llm_cost.toFixed(4)}`;
+
+            // ADD: Model preferences and metadata
+            if (metadata.model_preference) fields['Model Preference'] = metadata.model_preference;
+
+            return fields;
+        }
+
+        extractToolFields(event) {
+            const fields = {};
+            const metadata = event.metadata || {};
+
+            if (event.tool_name) fields['Tool Name'] = event.tool_name;
+            if (metadata.meta_tool_name) fields['Meta Tool Name'] = metadata.meta_tool_name;
+
+            if (event.is_meta_tool !== null && event.is_meta_tool !== undefined) {
+                fields['Is Meta Tool'] = event.is_meta_tool ? '✅ Yes' : '❌ No';
+            }
+
+            // ADD: Tool execution details
+            if (metadata.execution_phase) fields['Execution Phase'] = metadata.execution_phase;
+            if (metadata.reasoning_loop) fields['Reasoning Loop'] = metadata.reasoning_loop;
+            if (metadata.parsed_args && metadata.parsed_args.confidence_level) {
+                fields['Confidence Level'] = `${Math.round(metadata.parsed_args.confidence_level * 100)}%`;
+            }
+
+            return fields;
+        }
+
+// ADD these helper methods for comprehensive data extraction
+        extractTimingFields(event) {
+            const fields = {};
+
+            if (event.status) {
+                fields['Status'] = `<span class="event-status-badge ${event.status}">${event.status.toUpperCase()}</span>`;
+            }
+            if (event.success !== null && event.success !== undefined) {
+                fields['Success'] = event.success ? '✅ Yes' : '❌ No';
+            }
+            if (event.timestamp) {
+                fields['Timestamp'] = new Date((event.timestamp > 10000000000 ? event.timestamp : event.timestamp * 1000)).toLocaleString();
+            }
+            if (event.duration) {
+                fields['Duration'] = `${event.duration.toFixed(3)}s`;
+            }
+            if (event.node_duration) {
+                fields['Node Duration'] = `${event.node_duration.toFixed(3)}s`;
+            }
+            if (event.routing_decision) {
+                fields['Next Step'] = event.routing_decision;
+            }
+
+            return fields;
+        }
+
+        extractErrorFields(event) {
+            const fields = {};
+
+            if (event.error_details) {
+                const errorDetails = event.error_details;
+                if (errorDetails.message) fields['Error Message'] = errorDetails.message;
+                if (errorDetails.type) fields['Error Type'] = errorDetails.type;
+                if (errorDetails.traceback) {
+                    fields['Traceback'] = {
+                        type: 'json',
+                        value: errorDetails.traceback
+                    };
+                }
+            }
+
+            if (event.tool_error) {
+                fields['Tool Error'] = event.tool_error;
+            }
+
+            return fields;
+        }
+// REPLACE the existing extractRawDataFields method
+        extractRawDataFields(event) {
+            const fields = {};
+
+            // ADD: Full LLM Input/Output for LLM calls
+            if (event.event_type === 'llm_call') {
+                if (event.llm_input) {
+                    fields['LLM Input (Full Prompt)'] = {
+                        type: 'json',
+                        value: event.llm_input
+                    };
                 }
 
-                this.sendWebSocketMessage({
-                    event: 'validate_api_key',
-                    data: {
-                        public_agent_id: agent.public_agent_id,
-                        api_key: this.apiKey
+                if (event.llm_output) {
+                    fields['LLM Output (Response)'] = {
+                        type: 'json',
+                        value: event.llm_output
+                    };
+                }
+            }
+
+            // Show other raw data for tool calls
+            if (event.tool_args && typeof event.tool_args === 'object') {
+                fields['Tool Arguments'] = {
+                    type: 'json',
+                    value: JSON.stringify(event.tool_args, null, 2)
+                };
+            }
+
+            if (event.tool_result) {
+                const resultStr = typeof event.tool_result === 'string' ?
+                    event.tool_result :
+                    JSON.stringify(event.tool_result, null, 2);
+
+                fields['Tool Result'] = {
+                    type: 'json',
+                    value: resultStr.length > 1000 ?
+                        resultStr.substring(0, 1000) + '\\n\\n... [truncated]' :
+                        resultStr
+                };
+            }
+
+            return fields;
+        }
+
+        extractPerformanceFields(event) {
+            const fields = {};
+            const metadata = event.metadata || {};
+            const performance = metadata.performance_metrics || {};
+
+            if (performance.action_efficiency) fields['Action Efficiency'] = `${Math.round(performance.action_efficiency * 100)}%`;
+            if (performance.avg_loop_time) fields['Avg Loop Time'] = `${performance.avg_loop_time.toFixed(2)}s`;
+            if (performance.progress_rate) fields['Progress Rate'] = `${Math.round(performance.progress_rate * 100)}%`;
+
+            return fields;
+        }
+
+        extractReasoningFields(event) {
+            const fields = {};
+            const metadata = event.metadata || {};
+
+            if (metadata.outline_step && metadata.outline_total) {
+                fields['Outline Progress'] = `${metadata.outline_step}/${metadata.outline_total}`;
+            }
+            if (metadata.loop_number) fields['Loop Number'] = metadata.loop_number;
+            if (metadata.context_size) fields['Context Size'] = metadata.context_size.toLocaleString();
+            if (metadata.task_stack_size) fields['Task Stack Size'] = metadata.task_stack_size;
+
+            return fields;
+        }
+
+        extractMetadata(event) {
+            const fields = {};
+            const metadata = event.metadata || {};
+
+            // Show complex data as JSON
+            const complexFields = ['tool_args', 'tool_result', 'llm_input', 'llm_output', 'error_details'];
+
+            for (const field of complexFields) {
+                if (event[field] && typeof event[field] === 'object') {
+                    fields[field.replace(/_/g, ' ').toUpperCase()] = {
+                        type: 'json',
+                        value: JSON.stringify(event[field], null, 2)
+                    };
+                }
+            }
+
+            return fields;
+        }
+
+        // Enhanced helper methods
+        // REPLACE the existing getDisplayAction method
+        getDisplayAction(eventType, payload) {
+            const metadata = payload.metadata || {};
+            switch (eventType) {
+                case 'reasoning_loop':
+                    const step = metadata.outline_step || 0;
+                    const total = metadata.outline_total || 0;
+                    return step > 0 ? `Reasoning Step ${step}/${total}` : 'Deep Reasoning';
+                case 'task_start':
+                    return `Starting: ${metadata.description || 'Task'}`;
+                case 'task_complete':
+                    return `Completed: ${metadata.description || 'Task'}`;
+                case 'task_error':
+                    return `Failed: ${metadata.description || 'Task'}`;
+                case 'tool_call':
+                    const status = payload.status || 'running';
+                    const toolName = payload.tool_name || 'Unknown Tool';
+                    return `${status === 'running' ? 'Calling' : 'Called'} ${toolName}`;
+
+                case 'llm_call':
+                    const llmStatus = payload.status || 'running';
+                    const model = payload.llm_model || 'LLM';
+                    const taskId = payload.task_id || '';
+
+                    // Show more context for LLM calls
+                    let displayText = `${llmStatus === 'running' ? '🔄 Calling' : '✅ Called'} ${model}`;
+                    if (taskId && taskId !== 'unknown') {
+                        displayText += ` (${taskId})`;
                     }
-                });
+                    return displayText;
+                case 'plan_created':
+                    return `Plan: ${metadata.plan_name || 'Execution Plan'}`;
+                case 'outline_created':
+                    return 'Execution Outline Created';
+                case 'node_enter':
+                    return `Started: ${payload.node_name || 'Processing'}`;
+                case 'node_exit':
+                    return `Finished: ${payload.node_name || 'Processing'}`;
+                case 'node_phase':
+                    return `${payload.node_name || 'Node'}: ${payload.node_phase || 'Processing'}`;
+                case 'execution_start':
+                    return 'Execution Started';
+                case 'execution_complete':
+                    return 'Execution Complete';
+                // ADD: Meta tool events
+                case 'meta_tool_call':
+                    const metaToolName = metadata.meta_tool_name || payload.tool_name || 'Meta Tool';
+                    const metaStatus = payload.status || 'running';
+                    return `${metaStatus === 'running' ? 'Using' : 'Used'} ${metaToolName.replace(/_/g, ' ')}`;
+                // ADD: Error events
+                case 'error':
+                    return `Error in ${payload.node_name || 'System'}`;
+                default:
+                    return eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            }
+        }
 
-                document.querySelectorAll('.agent-item').forEach(el => el.classList.remove('active'));
-                document.querySelector(`[data-agent-id="${agent.public_agent_id}"]`)?.classList.add('active');
+        // REPLACE the existing getEventIcon method
+        getEventIcon(eventType, status) {
+            if (status === 'error' || status === 'failed') return '❌';
+            if (status === 'completed') return '✅';
 
-                this.currentAgent = agent;
-                this.elements.chatTitle.textContent = agent.public_name;
-                this.elements.chatSubtitle.textContent = agent.description || 'Ready for conversation';
+            switch (eventType) {
+                case 'reasoning_loop': return '🧠';
+                case 'task_start': return '▶️';
+                case 'task_complete': return '✅';
+                case 'task_error': return '❌';
+                case 'tool_call': return '🔧';
+                case 'llm_call': return '💭';
+                case 'plan_created': return '📋';
+                case 'outline_created': return '🗺️';
+                case 'node_enter': return '🚀';
+                case 'node_exit': return '🏁';
+                case 'node_phase': return '⚙️';
+                case 'execution_start': return '🎬';
+                case 'execution_complete': return '🎉';
+                case 'meta_tool_call': return '🛠️';
+                case 'error': return '🚨';
+                default: return '⚡';
+            }
+        }
 
-                this.elements.messageInput.disabled = false;
-                this.elements.sendButton.disabled = false;
+        updateCurrentStatusToIdle() {
+            const container = document.getElementById('status-history');
+            if (container && container.children.length === 0) {
+                container.innerHTML = `
+                <div class="progress-item idle-status">
+                    <div class="progress-item-header">
+                        <div class="progress-icon">💤</div>
+                        <div class="progress-title">Ready & Waiting</div>
+                        <div class="progress-meta">
+                            <span class="progress-status idle">idle</span>
+                        </div>
+                    </div>
+                    <div class="progress-summary">
+                        Agent ready for next message • ${new Date().toLocaleTimeString()}
+                    </div>
+                </div>
+            `;
+            }
+        }
 
-                this.elements.messagesContainer.innerHTML = '';
-                this.addMessage('agent', `Hello! I'm ${agent.public_name}. How can I help you?`);
+        showTypingIndicator(show) {
+            console.log(`💭 ${show ? 'Showing' : 'Hiding'} typing indicator`);
+            this.elements.typingIndicator.classList.toggle('active', show);
+            if (show) {
+                this.elements.typingIndicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }
+            this.isTyping = show;
+        }
 
-                this.sendWebSocketMessage({
-                    event: 'subscribe_agent',
-                    data: { public_agent_id: agent.public_agent_id }
-                });
+        scrollToBottom() {
+            if (this.elements.messagesContainer) {
+                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+            }
+        }
 
-                this.sendWebSocketMessage({
-                    event: 'get_agent_status',
-                    data: { public_agent_id: agent.public_agent_id }
+        showApiKeyModal() {
+            const storedKey = localStorage.getItem('agent_registry_api_key');
+            if (storedKey) {
+                this.apiKey = storedKey;
+                this.elements.apiKeyModal.style.display = 'none';
+                this.connect();
+            } else {
+                this.elements.apiKeyModal.style.display = 'flex';
+            }
+        }
+
+        async validateAndStoreApiKey() {
+            const apiKey = this.elements.apiKeyInput.value.trim();
+            if (!apiKey) {
+                this.showError('Please enter an API key');
+                return;
+            }
+
+            if (!apiKey.startsWith('tbk_')) {
+                this.showError('Invalid API key format (should start with tbk_)');
+                return;
+            }
+
+            this.apiKey = apiKey;
+            this.elements.apiKeyModal.style.display = 'none';
+            this.connect();
+        }
+
+        setupPanelControls() {
+            this.elements.sidebarToggle?.addEventListener('click', () => this.togglePanel('sidebar'));
+            this.elements.progressToggle?.addEventListener('click', () => this.togglePanel('progress'));
+            this.elements.sidebarCollapse?.addEventListener('click', () => this.togglePanel('sidebar'));
+            this.elements.progressCollapse?.addEventListener('click', () => this.togglePanel('progress'));
+
+            const mobileTabs = document.querySelectorAll('.mobile-tab');
+            if (mobileTabs.length > 0) {
+                mobileTabs.forEach(tab => {
+                    tab.addEventListener('click', () => this.switchMobileTab(tab.dataset.tab));
                 });
             }
 
-sendMessage() {
-    if (!this.currentAgent || !this.elements.messageInput.value.trim()) return;
-
-    const message = this.elements.messageInput.value.trim();
-    this.addMessage('user', message);
-
-    this.sendWebSocketMessage({
-        event: 'chat_message',
-        data: {
-            public_agent_id: this.currentAgent.public_agent_id,
-            message: message,
-            session_id: this.sessionId,
-            api_key: this.apiKey
+            this.setupResponsiveHandlers();
         }
-    });
 
-    this.elements.messageInput.value = '';
-
-    // Reset progress panels
-    this.elements.currentStatus.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">Processing...</div>';
-    this.elements.performanceMetrics.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 10px;">Waiting for metrics...</div>';
-
-    // FIXED: Failsafe timeout to hide typing indicator if no response in 60 seconds
-    setTimeout(() => {
-        if (this.currentExecution) {
-            console.log('⏰ Timeout: Hiding typing indicator and resetting execution state');
-            this.showTypingIndicator(false);
-            this.currentExecution = null;
-            this.updateCurrentStatusToIdle();
-            this.showError('Agent response timeout - please try again');
+        togglePanel(panel) {
+            this.panelStates[panel] = !this.panelStates[panel];
+            this.updatePanelStates();
         }
-    }, 60000); // 60 seconds timeout
-}
 
-// FIXED: Enhanced showTypingIndicator method with state tracking
-showTypingIndicator(show) {
-    console.log(`💭 ${show ? 'Showing' : 'Hiding'} typing indicator`);
+        updatePanelStates() {
+            const { sidebar, progress } = this.panelStates;
 
-    this.elements.typingIndicator.classList.toggle('active', show);
-
-    if (show) {
-        this.elements.typingIndicator.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }
-
-    // Store the state for debugging
-    this.isTyping = show;
-}
-
-addMessage(sender, content) {
-    const messageDiv = document.createElement('div');
-    messageDiv.classList.add('message', sender);
-
-    const avatar = document.createElement('div');
-    avatar.classList.add('message-avatar');
-    avatar.textContent = sender === 'user' ? 'U' : 'AI';
-
-    const contentDiv = document.createElement('div');
-    contentDiv.classList.add('message-content');
-
-    if (sender === 'agent' && window.marked) {
-        try {
-            contentDiv.innerHTML = marked.parse(content);
-        } catch (error) {
-            contentDiv.textContent = content;
-        }
-    } else {
-        contentDiv.textContent = content;
-    }
-
-    messageDiv.appendChild(avatar);
-    messageDiv.appendChild(contentDiv);
-
-    this.elements.messagesContainer.appendChild(messageDiv);
-    this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
-
-    // FIXED: Hide typing indicator when agent sends a message
-    if (sender === 'agent') {
-        this.showTypingIndicator(false);
-
-        // Clear current execution after a brief delay to allow for any final events
-        setTimeout(() => {
-            if (this.currentExecution) {
-                this.currentExecution = null;
-                this.updateCurrentStatusToIdle();
-            }
-        }, 1000);
-    }
-}
-
-            showError(message) {
-                const errorDiv = document.createElement('div');
-                errorDiv.className = 'error-message';
-                errorDiv.textContent = message;
-
-                document.body.appendChild(errorDiv);
-                setTimeout(() => {
-                    if (errorDiv.parentNode) {
-                        errorDiv.parentNode.removeChild(errorDiv);
-                    }
-                }, 5000);
+            if (this.elements.mainContainer) {
+                this.elements.mainContainer.classList.remove('sidebar-collapsed', 'progress-collapsed', 'both-collapsed');
+                if (!sidebar && !progress) {
+                    this.elements.mainContainer.classList.add('both-collapsed');
+                } else if (!sidebar) {
+                    this.elements.mainContainer.classList.add('sidebar-collapsed');
+                } else if (!progress) {
+                    this.elements.mainContainer.classList.add('progress-collapsed');
+                }
             }
 
-            sendWebSocketMessage(data) {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify(data));
+            if (this.elements.sidebar) this.elements.sidebar.classList.toggle('collapsed', !sidebar);
+            if (this.elements.progressPanel) this.elements.progressPanel.classList.toggle('collapsed', !progress);
+
+            if (this.elements.sidebarToggle) {
+                this.elements.sidebarToggle.classList.toggle('active', sidebar);
+                this.elements.sidebarToggle.textContent = sidebar ? '📋 Agents' : '📋';
+            }
+
+            if (this.elements.progressToggle) {
+                this.elements.progressToggle.classList.toggle('active', progress);
+                this.elements.progressToggle.textContent = progress ? '📊 Progress' : '📊';
+            }
+
+            if (this.elements.sidebarCollapse) this.elements.sidebarCollapse.textContent = sidebar ? '◀' : '▶';
+            if (this.elements.progressCollapse) this.elements.progressCollapse.textContent = progress ? '▶' : '◀';
+
+            if (this.elements.mainContainer) this.elements.mainContainer.offsetHeight;
+        }
+
+        handleWindowResize() {
+            const chatArea = document.querySelector('.chat-area');
+            const mainContainer = this.elements.mainContainer;
+
+            if (chatArea && mainContainer) {
+                const currentDisplay = mainContainer.style.display;
+                mainContainer.style.display = 'none';
+                mainContainer.offsetHeight;
+                mainContainer.style.display = currentDisplay || '';
+            }
+        }
+
+        switchMobileTab(tab) {
+            this.panelStates.mobile = tab;
+
+            const mobileTabs = document.querySelectorAll('.mobile-tab');
+            if (mobileTabs.length > 0) {
+                mobileTabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+            }
+
+            const sidebarEl = document.querySelector('.sidebar');
+            const chatAreaEl = document.querySelector('.chat-area');
+            const progressPanelEl = document.querySelector('.progress-panel');
+
+            if (sidebarEl) sidebarEl.style.display = tab === 'agents' ? 'flex' : 'none';
+            if (chatAreaEl) chatAreaEl.style.display = tab === 'chat' ? 'flex' : 'none';
+            if (progressPanelEl) progressPanelEl.style.display = tab === 'progress' ? 'flex' : 'none';
+        }
+
+        setupResponsiveHandlers() {
+            const mediaQuery = window.matchMedia('(max-width: 768px)');
+            const handleResponsive = (e) => {
+                if (e.matches) {
+                    this.switchMobileTab(this.panelStates.mobile);
                 } else {
-                    console.warn('WebSocket not connected, cannot send message');
+                    const panels = document.querySelectorAll('.sidebar, .chat-area, .progress-panel');
+                    panels.forEach(panel => { if (panel) panel.style.display = ''; });
                 }
+            };
+
+            if (mediaQuery.addEventListener) {
+                mediaQuery.addEventListener('change', handleResponsive);
+            } else {
+                mediaQuery.addListener(handleResponsive);
+            }
+            handleResponsive(mediaQuery);
+        }
+
+        setupEventListeners() {
+            this.elements.apiKeySubmit?.addEventListener('click', () => this.validateAndStoreApiKey());
+            window.addEventListener('resize', () => this.handleWindowResize());
+            this.elements.apiKeyInput?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.validateAndStoreApiKey();
+            });
+            this.elements.sendButton.addEventListener('click', () => this.sendMessage());
+            this.elements.messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey && this.currentAgent) {
+                    e.preventDefault();
+                    this.sendMessage();
+                }
+            });
+
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && (!this.ws || this.ws.readyState === WebSocket.CLOSED)) {
+                    this.connect();
+                }
+            });
+        }
+
+        connect() {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+
+            this.updateConnectionStatus('connecting', 'Connecting...');
+
+            try {
+                const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                const wsProtocol = isLocal ? 'ws' : 'wss';
+                const wsUrl = `${wsProtocol}://${window.location.host}/ws/registry/ui_connect`;
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onopen = () => {
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    this.updateConnectionStatus('connected', 'Connected');
+                    console.log('Connected to Registry Server');
+                };
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        this.handleWebSocketMessage(data);
+                    } catch (error) {
+                        console.error('Message parse error:', error);
+                    }
+                };
+
+                this.ws.onclose = () => {
+                    this.isConnected = false;
+                    this.updateConnectionStatus('disconnected', 'Disconnected');
+                    this.scheduleReconnection();
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateConnectionStatus('error', 'Connection Error');
+                };
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                this.updateConnectionStatus('error', 'Connection Failed');
+                this.scheduleReconnection();
             }
         }
 
-        // Initialize UI when DOM is ready
-        if (!window.TB) {
-            document.addEventListener('DOMContentLoaded', () => {
-                window.agentUI = new AgentRegistryUI();
-            });
-        } else {
-            TB.once(() => {
-                window.agentUI = new AgentRegistryUI();
+        scheduleReconnection() {
+            if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                this.updateConnectionStatus('error', 'Connection Failed (Max attempts reached)');
+                return;
+            }
+
+            this.reconnectAttempts++;
+            const delay = Math.min(this.reconnectDelay * this.reconnectAttempts, 30000);
+
+            this.updateConnectionStatus('connecting', `Reconnecting in ${delay/1000}s (attempt ${this.reconnectAttempts})`);
+
+            setTimeout(() => {
+                if (!this.isConnected) this.connect();
+            }, delay);
+        }
+
+        updateConnectionStatus(status, text) {
+            this.elements.connectionStatus.className = `status-indicator ${status}`;
+            this.elements.connectionStatus.querySelector('span').textContent = text;
+        }
+
+        handleRegistryEvent(data) {
+            const event = data.event;
+            const payload = data.data || data;
+
+            console.log(`📋 Registry Event: ${event}`, payload);
+
+            switch (event) {
+                case 'api_key_validation':
+                    if (payload.valid) {
+                        console.log('✅ API key validated successfully');
+                    } else {
+                        this.showError('❌ Invalid API key for this agent');
+                        this.currentAgent = null;
+                        this.elements.messageInput.disabled = true;
+                        this.elements.sendButton.disabled = true;
+                    }
+                    break;
+                case 'agents_list':
+                    console.log('📝 Updating agents list:', payload.agents);
+                    this.updateAgentsList(payload.agents);
+                    break;
+                case 'agent_registered':
+                    console.log('🆕 Agent registered:', payload);
+                    this.addAgent(payload);
+                    break;
+                case 'error':
+                    console.error('❌ WebSocket error:', payload);
+                    this.showError(payload.error || payload.message || 'Unknown error');
+                    break;
+                default:
+                    console.log('❓ Unhandled registry event:', event, payload);
+            }
+        }
+
+        updateAgentsList(agents) {
+            this.elements.agentsContainer.innerHTML = '';
+
+            if (!agents || agents.length === 0) {
+                this.elements.agentsContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; text-align: center; padding: 20px;">No agents available</div>';
+                return;
+            }
+
+            agents.forEach(agent => {
+                this.agents.set(agent.public_agent_id, agent);
+                const agentEl = this.createAgentElement(agent);
+                this.elements.agentsContainer.appendChild(agentEl);
             });
         }
-    </script>
+
+        createAgentElement(agent) {
+            const div = document.createElement('div');
+            div.className = 'agent-item';
+            div.dataset.agentId = agent.public_agent_id;
+
+            div.innerHTML = `
+            <div class="agent-name">${agent.public_name}</div>
+            <div class="agent-description">${agent.description || 'No description'}</div>
+            <div class="agent-status ${agent.status}">
+                <div class="status-dot"></div>
+                <span>${agent.status.toUpperCase()}</span>
+            </div>
+        `;
+
+            div.addEventListener('click', () => this.selectAgent(agent));
+            return div;
+        }
+
+        selectAgent(agent) {
+            if (!this.apiKey) {
+                this.showError('Please set your API key first');
+                return;
+            }
+
+            this.sendWebSocketMessage({
+                event: 'validate_api_key',
+                data: { public_agent_id: agent.public_agent_id, api_key: this.apiKey }
+            });
+
+            document.querySelectorAll('.agent-item').forEach(el => el.classList.remove('active'));
+            document.querySelector(`[data-agent-id="${agent.public_agent_id}"]`)?.classList.add('active');
+
+            this.currentAgent = agent;
+            this.elements.chatTitle.textContent = agent.public_name;
+            this.elements.chatSubtitle.textContent = agent.description || 'Ready for conversation';
+
+            this.elements.messageInput.disabled = false;
+            this.elements.sendButton.disabled = false;
+
+            this.elements.messagesContainer.innerHTML = '';
+            this.addMessage('agent', `Hello! I'm ${agent.public_name}. How can I help you?`);
+
+            this.sendWebSocketMessage({
+                event: 'subscribe_agent',
+                data: { public_agent_id: agent.public_agent_id }
+            });
+
+            this.sendWebSocketMessage({
+                event: 'get_agent_status',
+                data: { public_agent_id: agent.public_agent_id }
+            });
+
+            // Reset progress panels
+            this.progressHistory = [];
+            this.refreshStatusHistory();
+            const metricsContainer = document.getElementById('performance-metrics');
+            if (metricsContainer) metricsContainer.innerHTML = '<div class="no-data">No metrics available</div>';
+            const outlineContainer = document.getElementById('execution-outline');
+            if (outlineContainer) outlineContainer.innerHTML = '<div class="no-data">No outline available</div>';
+        }
+
+        sendMessage() {
+            if (!this.currentAgent || !this.elements.messageInput.value.trim()) return;
+
+            const message = this.elements.messageInput.value.trim();
+            this.addMessage('user', message);
+
+            this.sendWebSocketMessage({
+                event: 'chat_message',
+                data: {
+                    public_agent_id: this.currentAgent.public_agent_id,
+                    message: message,
+                    session_id: this.sessionId,
+                    api_key: this.apiKey
+                }
+            });
+
+            this.elements.messageInput.value = '';
+
+            // Reset progress state
+            this.progressHistory = [];
+            this.expandedProgressItem = null;
+            this.refreshStatusHistory();
+
+            // Failsafe timeout
+            setTimeout(() => {
+                if (this.currentExecution) {
+                    console.log('⏰ Timeout: Hiding typing indicator and resetting execution state');
+                    this.showTypingIndicator(false);
+                    this.currentExecution = null;
+                    this.updateCurrentStatusToIdle();
+                    this.showError('Agent response timeout - please try again');
+                }
+            }, 60000);
+        }
+
+        addMessage(sender, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender);
+
+            const avatar = document.createElement('div');
+            avatar.classList.add('message-avatar');
+            avatar.textContent = sender === 'user' ? 'U' : 'AI';
+
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('message-content');
+
+            if (sender === 'agent' && window.marked) {
+                try {
+                    contentDiv.innerHTML = marked.parse(content);
+                } catch (error) {
+                    contentDiv.textContent = content;
+                }
+            } else {
+                contentDiv.textContent = content;
+            }
+
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+
+            this.elements.messagesContainer.appendChild(messageDiv);
+            this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+
+            if (sender === 'agent') {
+                this.showTypingIndicator(false);
+                setTimeout(() => {
+                    if (this.currentExecution) {
+                        this.currentExecution = null;
+                        this.updateCurrentStatusToIdle();
+                    }
+                }, 1000);
+            }
+        }
+
+        showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+
+            document.body.appendChild(errorDiv);
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    errorDiv.parentNode.removeChild(errorDiv);
+                }
+            }, 5000);
+        }
+
+        sendWebSocketMessage(data) {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify(data));
+            } else {
+                console.warn('WebSocket not connected, cannot send message');
+            }
+        }
+
+    }
+
+    // Initialize UI when DOM is ready
+    if (!window.TB) {
+        document.addEventListener('DOMContentLoaded', () => {
+            window.agentUI = new AgentRegistryUI();
+        });
+    } else {
+        TB.once(() => {
+            window.agentUI = new AgentRegistryUI();
+        });
+    }
+</script>
 </body>
 </html>"""
 
