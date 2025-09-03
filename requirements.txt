@@ -48,3 +48,4 @@ pillow>=11.3.0
 psutil>=7.0.0
 dill>=0.3.8
 icalendar>=6.3.1
+pocketflow>=0.0.3

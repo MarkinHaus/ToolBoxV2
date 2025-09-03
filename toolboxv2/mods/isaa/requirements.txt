@@ -56,6 +56,7 @@ uvicorn>=0.25.0 # For running FastAPI based servers (A2A/FastMCP)
 httpx>=0.25.0 # HTTP client, often by other libs like python-a2a or litellm
 fastapi>=0.108.0 # If building FastAPI apps directly
 
+pocketflow
 # OpenTelemetry (optional, add if used)
 # opentelemetry-api>=1.22.0
 # opentelemetry-sdk>=1.22.0
