@@ -13,7 +13,6 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toolboxv2 import Spinner
-from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
 
 # Import agent components
 from .agent import (
@@ -199,6 +198,8 @@ class FlowAgentBuilder:
         # Runtime components
         self._custom_tools: dict[str, tuple[Callable, str]] = {}
         self._mcp_tools: dict[str, dict] = {}
+        from toolboxv2.mods.isaa.extras.mcp_session_manager import MCPSessionManager
+
         self._mcp_session_manager = MCPSessionManager()
 
         self._budget_manager: BudgetManager = None
