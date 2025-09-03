@@ -109,7 +109,6 @@ def web_search_bing(query: str, max_results: int = 5, api_key: str = None) -> li
 
 
 
-import chardet
 
 
 def is_content_parseable(content: str) -> bool:
@@ -209,12 +208,15 @@ def url_to_markdown_robust(url: str) -> str | None:
         # Strategy 2: Detect encoding from content
         if not decoded_content:
             try:
+                import chardet
                 detected = chardet.detect(raw_content)
                 if detected and detected.get('confidence', 0) > 0.8:
                     decoded_content = raw_content.decode(detected['encoding'])
                     used_encoding = detected['encoding']
                     if '�' in decoded_content or not is_mostly_readable(decoded_content[:1000]):
                         decoded_content = None
+            except ImportError and ModuleNotFoundError:
+                print("chardet not installed")
             except:
                 pass
 
@@ -377,6 +379,8 @@ def convert_to_markdown(element):
         markdown = h.handle(str(element))
         if markdown and len(markdown.strip()) > 100:
             return markdown
+    except ImportError:
+        print("html2text not installed")
     except:
         pass
 

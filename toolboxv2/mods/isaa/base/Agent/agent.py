@@ -23,7 +23,7 @@ from toolboxv2.mods.isaa.base.tbpocketflow import AsyncFlow, AsyncNode
 from pydantic import BaseModel, ValidationError
 
 from toolboxv2.mods.isaa.base.Agent.chain import CF, IS, Chain, ConditionalChain
-from toolboxv2.mods.isaa.extras.session import ChatSession
+
 from toolboxv2.utils.extras.Style import Spinner, print_prompt
 
 # Framework imports with graceful degradation
@@ -7562,7 +7562,7 @@ class UnifiedContextManager:
 
     def __init__(self, agent):
         self.agent = agent
-        self.session_managers: dict[str, ChatSession | dict] = {}  # ChatSession objects
+        self.session_managers: dict[str, Any] = {}  # ChatSession objects
         self.variable_manager: VariableManager = None
         self.compression_threshold = 15  # Messages before compression
         self._context_cache: dict[str, tuple[float, Any]] = {}  # (timestamp, data)
@@ -7577,7 +7577,7 @@ class UnifiedContextManager:
                 if not self._memory_instance:
                     from toolboxv2 import get_app
                     self._memory_instance = get_app().get_mod("isaa").get_memory()
-
+                from toolboxv2.mods.isaa.extras.session import ChatSession
                 # Create ChatSession as PRIMARY memory source
                 session = ChatSession(
                     self._memory_instance,
