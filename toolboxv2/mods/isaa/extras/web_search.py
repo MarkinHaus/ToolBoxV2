@@ -3,7 +3,7 @@ import os
 import re
 from urllib.parse import quote_plus
 
-import html2text
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -364,6 +364,7 @@ def convert_to_markdown(element):
 
     # Strategy 1: Use html2text
     try:
+        import html2text
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
