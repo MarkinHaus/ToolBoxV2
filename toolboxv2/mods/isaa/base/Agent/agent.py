@@ -18,8 +18,8 @@ from typing import Any
 
 import yaml
 
-# PocketFlow imports
-from pocketflow import AsyncFlow, AsyncNode
+from toolboxv2.mods.isaa.base.tbpocketflow import AsyncFlow, AsyncNode
+
 from pydantic import BaseModel, ValidationError
 
 from toolboxv2.mods.isaa.base.Agent.chain import CF, IS, Chain, ConditionalChain

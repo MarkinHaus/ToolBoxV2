@@ -134,7 +134,6 @@ isaa = [
     "icalendar>=6.3.1",
     "playwright>=1.55.0",
     "markdown2>=2.5.3",
-    "pocketflow>=0.0.3",
     "beautifulsoup4>=4.13.3",
     "html2text>=2025.4.15",
     "chardet>=5.2.0",
