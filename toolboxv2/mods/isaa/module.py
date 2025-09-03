@@ -19,10 +19,7 @@ from pydantic import BaseModel
 
 from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent
 from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
-from toolboxv2.mods.isaa.extras.terminal_progress import (
-    ProgressiveTreePrinter,
-    VerbosityMode,
-)
+
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
@@ -3018,7 +3015,10 @@ class Tools(MainTool, FileHandler):
             return
 
         # Create ProgressiveTreePrinter for real-time UI updates
-
+        from toolboxv2.mods.isaa.extras.terminal_progress import (
+            ProgressiveTreePrinter,
+            VerbosityMode,
+        )
         progress_printer = ProgressiveTreePrinter(
             mode=VerbosityMode.STANDARD,
             use_rich=False,
