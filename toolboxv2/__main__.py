@@ -638,12 +638,8 @@ def run_tests(test_path):
         print(f"Fehler beim Ausführen der Unittests:{e}")
         return False
 
-    # Führe npm test aus
-    print("Running npm tests...")
-    # test if npm is installed using shutil.which
-    if shutil.which("npm") is None:
-        print("npm is not installed")
-        return True
+    return True
+
     # try:
     #     from . import tb_root_dir
     #     command = ["npm", "test", "--prefix", tb_root_dir.as_posix()]
