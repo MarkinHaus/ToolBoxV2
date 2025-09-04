@@ -10054,7 +10054,7 @@ tool_complexity: low/medium/high
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] = None,
-                             max_retries: int = 2, auto_context=True) -> dict[str, Any]:
+                             max_retries: int = 2, auto_context=True, session_id: str = None, **kwargs) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
 
@@ -10075,6 +10075,8 @@ tool_complexity: low/medium/high
         if not LITELLM_AVAILABLE:
             raise RuntimeError("LiteLLM is required for structured formatting but not available")
 
+        if session_id and self.active_session != session_id:
+            self.active_session = session_id
         # Generate schema documentation
         schema = pydantic_model.model_json_schema()
         model_name = pydantic_model.__name__

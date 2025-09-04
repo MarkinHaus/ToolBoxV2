@@ -1,8 +1,6 @@
 import json
 import os
 
-from fastapi import Request
-
 from toolboxv2 import TBEF, App, Result, get_app
 
 from ...utils.extras.base_widget import get_user_from_request
@@ -119,7 +117,7 @@ def get_version():
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_names")
-async def get_names(app: App = None, request: Request or None = None):
+async def get_names(app: App = None, request = None):
     if app is None:
         app = get_app(from_=f"{Name}.controller")
 
@@ -139,7 +137,7 @@ async def get_names(app: App = None, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_sto")
-async def get_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
+async def get_sto_by_name(app: App = None, sto_name: str | None = None, request: RequestSession or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -174,7 +172,7 @@ async def set_sto_by_name(app: App = None, sto_name: str | None = None, request:
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="add_sto")
-async def add_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
+async def add_sto_by_name(app: App = None, sto_name: str | None = None, request: RequestSession or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:
@@ -194,7 +192,7 @@ async def add_sto_by_name(app: App = None, sto_name: str | None = None, request:
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="delete_sto")
-async def remove_sto_by_name(app: App = None, sto_name: str | None = None, request: Request or None = None):
+async def remove_sto_by_name(app: App = None, sto_name: str | None = None, request: RequestSession or None = None):
     if sto_name is None or len(sto_name) <= 1:
         return Result.default_user_error(info="No name specified")
     if app is None:

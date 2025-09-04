@@ -719,6 +719,7 @@ async def setup_app(ov_name=None):
         # tb_app.print_functions()
         if _min_info:
             print(_min_info)
+        print(await tb_app.load_external_mods())
 
     if args.update:
         if args.update == "main":
@@ -1178,8 +1179,7 @@ def main_runner():
             shutil.copy(gui_exe, bin_dir / Path(gui_exe).name)
             print(f"Copied executable to '{bin_dir.resolve()}'")
         run_executable_in_background(gui_exe)
-    def py_gui_helper():
-        run_executable_in_background(sys.executable, ["-m", "toolboxv2.__gui__.start"])
+
     def status_helper():
         os.system(f"{sys.executable} -m toolboxv2 db status")
         os.system(f"{sys.executable} -m toolboxv2 api status")

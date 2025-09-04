@@ -14,7 +14,7 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
     with Spinner("Loading flows"):
         # Erhalte den Pfad zum aktuellen Verzeichnis
         if dir_path is None:
-            for ex_path in os.getenv("EXTERNAL_PATH_RUNNABELS", '').split(','):
+            for ex_path in os.getenv("EXTERNAL_PATH_RUNNABLE", '').split(','):
                 if not ex_path or len(ex_path) == 0:
                     continue
                 flows_dict(s,remote,ex_path,flows_dict_)

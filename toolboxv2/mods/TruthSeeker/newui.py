@@ -3,19 +3,14 @@ import json
 import os
 import uuid
 
-import stripe
 
 from toolboxv2 import App, Result, get_app
-from toolboxv2.mods.TruthSeeker import ArXivPDFProcessor
+from .arXivCrawler import ArXivPDFProcessor
 
 # Initialize module
 MOD_NAME = "TruthSeeker"
 version = "1.0"
 export = get_app(MOD_NAME).tb
-
-# Set up Stripe for donations
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY', 'sk_test_YourSecretKey')
-
 
 @export(mod_name=MOD_NAME, version=version, initial=True)
 def initialize_module(app: App):
@@ -1391,6 +1386,8 @@ async def create_payment(app: App, data):
         base_url = f"https://{os.getenv('HOSTNAME', 'localhost:5000')}"
         success_url = f"{base_url}/api/{MOD_NAME}/payment_success?session_id={session_id}"
         cancel_url = f"{base_url}/api/{MOD_NAME}/payment_cancel?session_id={session_id}"
+        stripe = __import__('stripe')
+        stripe.api_key = os.getenv('STRIPE_SECRET_KEY', 'sk_test_YourSecretKey')
 
         stripe_session = stripe.checkout.Session.create(
             payment_method_types=['card', 'link'],
@@ -1446,6 +1443,9 @@ async def payment_success(app: App, session_id: str, request_as_kwarg=True, requ
 
     try:
         # Verify the payment with Stripe
+        stripe = __import__('stripe')
+        stripe.api_key = os.getenv('STRIPE_SECRET_KEY', 'sk_test_YourSecretKey')
+
         stripe_session = stripe.checkout.Session.retrieve(payment_info['payment_id'])
 
         if stripe_session.payment_status == 'paid':

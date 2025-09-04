@@ -43,14 +43,14 @@ test_requirements = []
 setup(
     author="Markin Hausmanns",
     author_email='Markinhausmanns@gmail.com',
-    python_requires='>=3.11',
+    python_requires='>=3.10',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
         # 'Programming Language :: Python :: 3.9',
-        # 'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
     ],

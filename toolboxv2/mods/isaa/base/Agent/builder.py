@@ -707,35 +707,44 @@ class FlowAgentBuilder:
 
         return prompt_wrapper
 
-    def load_mcp_tools_from_config(self, config_path: str) -> 'FlowAgentBuilder':
+    def load_mcp_tools_from_config(self, config_path: str | dict) -> 'FlowAgentBuilder':
         """Enhanced MCP config loading with automatic session management and full capability extraction"""
         if not MCP_AVAILABLE:
             wprint("MCP not available, skipping tool loading")
             return self
 
-        config_path = Path(config_path)
-        if not config_path.exists():
-            raise FileNotFoundError(f"MCP config not found: {config_path}")
+        if isinstance(config_path, dict):
+            mcp_config = config_path
+            from toolboxv2 import get_app
+            name = self.config.name or "inline_config"
+            path = Path(get_app().appdata) / "isaa" / "MPCConfig" / f"{name}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(mcp_config, indent=2))
+            config_path = path
+        else:
+            config_path = Path(config_path)
+            if not config_path.exists():
+                raise FileNotFoundError(f"MCP config not found: {config_path}")
 
-        try:
-            with open(config_path, encoding='utf-8') as f:
-                if config_path.suffix.lower() in ['.yaml', '.yml']:
-                    mcp_config = yaml.safe_load(f)
-                else:
-                    mcp_config = json.load(f)
+            try:
+                with open(config_path, encoding='utf-8') as f:
+                    if config_path.suffix.lower() in ['.yaml', '.yml']:
+                        mcp_config = yaml.safe_load(f)
+                    else:
+                        mcp_config = json.load(f)
 
-            # Store config for async processing
-            self._mcp_config_data = mcp_config
-            self.config.mcp.config_path = str(config_path)
+            except Exception as e:
+                eprint(f"Failed to load MCP config from {config_path}: {e}")
+                raise
 
-            # Mark for processing during build
-            self._mcp_needs_loading = True
+        # Store config for async processing
+        self._mcp_config_data = mcp_config
+        self.config.mcp.config_path = str(config_path)
 
-            iprint(f"MCP config loaded from {config_path}, will process during build")
+        # Mark for processing during build
+        self._mcp_needs_loading = True
 
-        except Exception as e:
-            eprint(f"Failed to load MCP config from {config_path}: {e}")
-            raise
+        iprint(f"MCP config loaded from {config_path}, will process during build")
 
         return self
 

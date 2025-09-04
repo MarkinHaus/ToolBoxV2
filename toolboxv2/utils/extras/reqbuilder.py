@@ -7,7 +7,8 @@ import sys
 def generate_requirements(folder: str, output_file: str):
     """Generates requirements.txt for the specified folder using pipreqs."""
     print(folder, output_file, os.path.abspath(os.curdir))
-    try:
+    print("Not Implemented ")
+    """try:
         from pipreqs.pipreqs import get_all_imports
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "pipreqs"], check=True)
@@ -15,7 +16,7 @@ def generate_requirements(folder: str, output_file: str):
     imports = set(get_all_imports(os.path.abspath(folder)))
     imports.remove('toolboxv2') if 'toolboxv2' in imports else None
     with open(os.path.abspath(output_file), "w") as f:
-        f.write("\n".join(imports))
+        f.write("\n".join(imports))"""
 
 
 def run_pipeline(base_dir: str):

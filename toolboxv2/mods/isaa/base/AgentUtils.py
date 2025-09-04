@@ -1184,9 +1184,8 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
 
         if not is_default:
             try:
-
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                transformers = __import__("transformers")
+                tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
 
                 def hugging_tokenize(x):
                     return tokenizer.tokenize(x)
@@ -1194,6 +1193,9 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
                 encode = hugging_tokenize
 
             except ValueError:
+                pass
+            except ImportError:
+                encode = lambda x: round(len(x)*0.4)
                 pass
 
     else:

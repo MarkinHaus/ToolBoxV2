@@ -3,11 +3,6 @@ import atexit
 import os
 import socket
 
-try:
-    from fastapi import Response
-except ImportError:
-    class Response:
-        pass
 
 import requests
 from aiohttp import ClientResponse, ClientSession, MultipartWriter
@@ -20,7 +15,7 @@ from .getting_and_closing_app import get_app, get_logger
 from .types import Result
 
 
-class RequestSession(Response):
+class RequestSession:
 
     def __init__(self, session, body, json, row):
         super().__init__()
@@ -251,7 +246,7 @@ class Session(metaclass=Singleton):
                 self.session = None
         return False  # Gibt False zurück, wenn keine Session vorhanden war
 
-    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse or Response:
+    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse:
         if isinstance(url, str):
             url = self.base + url
         if self.session:

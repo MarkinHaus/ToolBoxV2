@@ -36,18 +36,6 @@ def ensure_web_server_online():
         time.sleep(10)
 
 
-def ensure_moc_session(session: Session):
-    pass
-    from fastapi.testclient import TestClient
-
-    from toolboxv2.mods.FastApi.fast_api_main import app
-    tc = TestClient(app)
-    session.init()
-    session.session.request = tc.request
-    session.session.get = tc.get
-    session.session.post = tc.post
-
-
 async def test_run_valid_session_tests(headless=True):
     if not get_app(name="test").local_test:
         return

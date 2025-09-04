@@ -15,7 +15,7 @@ from typing import Any, NamedTuple
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
-from sklearn.cluster import HDBSCAN
+
 
 from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
@@ -1019,6 +1019,11 @@ class KnowledgeBase:
         best_score = float('-inf')
 
         epsilon_range = [0.2, 0.3, 0.4]
+        try:
+            HDBSCAN = __import__('sklearn.cluster').HDBSCAN
+        except:
+            print("install scikit-learn pip install scikit-learn for better results")
+            return self._fallback_clustering(chunks, query_embedding)
 
         for epsilon in epsilon_range:
             clusterer = HDBSCAN(
@@ -1103,18 +1108,18 @@ class KnowledgeBase:
             return float('-inf')
 
         # Calculate silhouette score for cluster cohesion
-        from sklearn.metrics import silhouette_score
         try:
-            sil_score = silhouette_score(embeddings, labels, metric='cosine')
+            sil_score = __import__('sklearn.metrics').silhouette_score(embeddings, labels, metric='cosine')
         except:
-            sil_score = -1
+            print("install scikit-learn pip install scikit-learn for better results")
+            sil_score = 0
 
         # Calculate Davies-Bouldin score for cluster separation
-        from sklearn.metrics import davies_bouldin_score
         try:
-            db_score = -davies_bouldin_score(embeddings, labels)  # Negated as lower is better
+            db_score = -__import__('sklearn.metrics').davies_bouldin_score(embeddings, labels)  # Negated as lower is better
         except:
-            db_score = -1
+            print("install scikit-learn pip install scikit-learn for better results")
+            db_score = 0
 
         # Calculate query relevance if provided
         query_score = 0

@@ -211,7 +211,7 @@ async def setup_multiple_live_agents():
 # example_complete_integration.py
 
 
-async def setup_complete_agent_system(local=True):
+async def setup_complete_agent_system(local=False):
     """Vollständiges Beispiel für Agent-System mit Live-Progress."""
 
     app = get_app("CompleteAgentSystem")

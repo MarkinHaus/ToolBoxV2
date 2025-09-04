@@ -1382,6 +1382,9 @@ class AppType:
     async def init_module(self, modular):
         return await self.load_mod(modular)
 
+    async def load_external_mods(self):
+        """proxi attr"""
+
     async def load_all_mods_in_file(self, working_dir="mods"):
         """proxi attr"""
 
@@ -1795,38 +1798,6 @@ class AppType:
             f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
         d = analyze_data(all_data)
         return Result.ok(data=all_data, data_info=d)
-
-    @staticmethod
-    def calculate_complexity(filename_or_code):
-        from radon.complexity import cc_rank, cc_visit
-        if os.path.exists(filename_or_code):
-            with open(filename_or_code) as file:
-                code = file.read()
-        else:
-            code = filename_or_code
-
-        # Calculate and print Cyclomatic Complexity
-        complexity_results = cc_visit(code)
-        i = -1
-        avg_complexity = 0
-        for block in complexity_results:
-            complexity = block.complexity
-            i += 1
-            print(f"block: {block.name} {i} Class/Fuction/Methode : {block.letter}")
-            print(f"    fullname: {block.fullname}")
-            print(f"    Cyclomatic Complexity: {complexity}")
-            # Optional: Get complexity rank
-            avg_complexity += complexity
-            rank = cc_rank(complexity)
-            print(f"    Complexity Rank: {rank}")
-            # print(f"    lineno: {block.lineno}")
-            print(f"    endline: {block.endline}")
-            print(f"    col_offset: {block.col_offset}\n")
-        if i <= 0:
-            i += 2
-        avg_complexity = avg_complexity / i
-        print(f"\nAVG Complexity: {avg_complexity:.2f}")
-        print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
 
     async def execute_function_test(self, module_name: str, function_name: str,
                                     function_data: dict, test_kwargs: dict,

@@ -15,15 +15,16 @@ import threading
 from dataclasses import dataclass
 
 import numpy as np
-import torch
+
 
 try:
-    import taichi as ti
+    ti = __import__("taichi")
 
     use_gpu = False
     ti.init(arch=ti.gpu if use_gpu else ti.cpu)
 except ImportError:
     ti = lambda: None
+    print("taichi not found, using fallback")
 
 try:
 
@@ -464,6 +465,7 @@ def _partition_vectors_helper(vectors, centroids):
 
 class FastVectorStore(AbstractVectorStore):
     def __init__(self):
+        torch = __import__('torch')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.chunks = []
         self.embeddings = None
@@ -661,6 +663,7 @@ class FastVectorStore(AbstractVectorStore):
 
 class FastVectorStoreO(AbstractVectorStore):
     def __init__(self, embedding_size=768, initial_buffer_size=1000):
+        torch = __import__('torch')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedding_size = embedding_size
         self.initial_buffer_size = initial_buffer_size

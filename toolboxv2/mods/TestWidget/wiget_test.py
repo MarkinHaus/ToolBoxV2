@@ -1,6 +1,5 @@
 import uuid
 
-from fastapi import Request
 
 from toolboxv2 import TBEF, App, Result, get_app
 
@@ -62,7 +61,7 @@ def Version():
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True, name="add", state=False)
-def add(request: Request or None = None):
+def add(request = None):
     sid = get_s_id(request)
     if sid.is_error():
         return f"<h1>Error {sid.print(show=False)}</h1>"
@@ -72,7 +71,7 @@ def add(request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True, name="addM", state=False)
-def addM(value: int = 1, request: Request or None = None):
+def addM(value: int = 1, request = None):
     sid = get_s_id(request)
     if sid.is_error():
         return f"<h1>Error {sid.print(show=False)}</h1>"
@@ -82,7 +81,7 @@ def addM(value: int = 1, request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, row=True, name="reset", state=False)
-def reset(request: Request or None = None):
+def reset(request = None):
     sid = get_s_id(request)
     if sid.is_error():
         return f"<h1>Error {sid.print(show=False)}</h1>"
@@ -92,7 +91,7 @@ def reset(request: Request or None = None):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="sync", state=False)
-def sync(request: Request or None = None, counter=0, id="MainWidget"):
+def sync(request = None, counter=0, id="MainWidget"):
     pass
     # cumming soon withe Tauri and events
     # sid = get_s_id(request)
@@ -105,7 +104,7 @@ def sync(request: Request or None = None, counter=0, id="MainWidget"):
 
 # get_wgiet
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget")
-def get_widget(app: App = None, request: Request or None = None, **kwargs):
+def get_widget(app: App = None, request = None, **kwargs):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 
@@ -131,7 +130,7 @@ def get_widget(app: App = None, request: Request or None = None, **kwargs):
 
 
 @export(mod_name=Name, version=version, request_as_kwarg=True, level=1, api=True, name="get_widget_r")
-def get_widget_r(app: App = None, request: Request or None = None):
+def get_widget_r(app: App = None, request = None):
     if app is None:
         app = get_app(from_=f"{Name}.get_widget")
 

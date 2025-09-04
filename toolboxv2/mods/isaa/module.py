@@ -23,14 +23,6 @@ from toolboxv2.mods.isaa.CodingAgent.live import ToolsInterface
 from toolboxv2.utils.system import FileCache
 from toolboxv2.utils.toolbox import stram_print
 
-try:
-    import gpt4all
-except Exception:
-    def gpt4all():
-        return None
-
-
-    gpt4all.GPT4All = None
 
 import json
 import subprocess

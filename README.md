@@ -213,7 +213,7 @@ for details run
 This setup includes the Python backend, Rust server, and Tauri/Web frontend.
 
 **Prerequisites:**
-*   Python 3.11 or higher
+*   Python 3.10 or higher
 *   [Rust and Cargo](https://www.rust-lang.org/tools/install)
 *   [Node.js](https://nodejs.org/) (which includes npm)
 *   Tauri CLI: `cargo install tauri-cli`
