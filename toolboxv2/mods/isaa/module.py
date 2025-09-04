@@ -66,7 +66,6 @@ from .base.AgentUtils import (
     safe_decode,
 )
 
-from .extras.web_search import web_search
 from .ui import get_agent_ui_html, initialize_isaa_webui_module
 
 PIPLINE = None  # This seems unused or related to old pipeline
@@ -460,6 +459,8 @@ class Tools(MainTool, FileHandler):
         FileHandler.__init__(self, f"isaa{extra_path.replace('/', '-')}.config", app.id if app else __name__)
         MainTool.__init__(self, load=self.on_start, v=self.version, tool=self.tools,
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
+
+        from .extras.web_search import web_search
         self.web_search = web_search
         self.shell_tool_function = shell_tool_function
         self.tools["shell"] = shell_tool_function
