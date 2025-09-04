@@ -20,7 +20,7 @@ from sklearn.cluster import HDBSCAN
 from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
 from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
-from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+
 from toolboxv2.mods.isaa.extras.filter import after_format
 
 i__ = [0, 0, 0]
@@ -322,6 +322,7 @@ class ConceptExtractor:
         async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: dict[str, Any]):
             """Process a single request with rate limiting"""
             try:
+                from toolboxv2.mods.isaa.extras.adapter import litellm_complete
                 # Wait for rate limit
                 await rate_limiter.acquire()
                 i__[1] += 1
@@ -471,6 +472,7 @@ class ConceptExtractor:
         """
 
         try:
+            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
             response = await litellm_complete(
                 model_name=self.kb.model_name,
                 prompt=prompt,
@@ -1581,6 +1583,7 @@ class KnowledgeBase:
         """
 
         try:
+            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
             await asyncio.sleep(0.25)
             llm_response = await litellm_complete(
                 model_name=self.model_name,
