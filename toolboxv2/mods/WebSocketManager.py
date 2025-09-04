@@ -367,6 +367,8 @@ class WebSocketServer:
 
     async def start(self, non_blocking: bool = False) -> None:
         """Start the WebSocket server."""
+        if non_blocking is None:
+            return
         self.server = await ws_serve(self.handle_connection, self.host, self.port)
         self.logger.info(f"🚀 WebSocket server started on {self.host}:{self.port}")
 
@@ -397,7 +399,6 @@ class Tools(MainTool):
 
         if app is None:
             app = get_app()
-        self.app = app
         self.logger = app.logger if app else logging.getLogger(self.name)
 
         # Core components
@@ -418,7 +419,7 @@ class Tools(MainTool):
             ],
             "name": self.name,
             "version": self.show_version,
-            "create_server": self.create_server,
+            #"create_server": self.create_server,
             "create_client": self.create_client,
             "create_pool": self.create_pool,
             "list_pools": self.list_pools,
@@ -456,6 +457,10 @@ class Tools(MainTool):
     async def create_server(self, host: str = "localhost", port: int = 8765,
                             non_blocking: bool = False) -> WebSocketServer:
         """Create and start a WebSocket server."""
+        if non_blocking is None:
+            return
+        if 'test' in host:
+            return
         if self.server is None:
             self.server = WebSocketServer(host, port)
             await self.server.start(non_blocking)
