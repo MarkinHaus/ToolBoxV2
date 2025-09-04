@@ -18,16 +18,10 @@ class TestMainTool(unittest.TestCase):
         self.mock_app.interface_type = ToolBoxInterfaces.cli
         self.mock_get_app.return_value = self.mock_app
 
-        # Create a mock logger
-        self.logger_patcher = patch('toolboxv2.utils.system.tb_logger.get_logger')
-        self.mock_get_logger = self.logger_patcher.start()
-        self.mock_logger = MagicMock()
-        self.mock_get_logger.return_value = self.mock_logger
 
     def tearDown(self):
         # Stop the patchers
         self.app_patcher.stop()
-        self.logger_patcher.stop()
 
     @async_test
     async def test_maintool_initialization(self):
