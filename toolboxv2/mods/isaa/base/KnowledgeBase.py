@@ -21,7 +21,6 @@ from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
 from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
 
-from toolboxv2.mods.isaa.extras.filter import after_format
 
 i__ = [0, 0, 0]
 
@@ -406,6 +405,7 @@ class ConceptExtractor:
                 print(f"Unexpected response type: {type(response)}")
                 return []
 
+            from toolboxv2.mods.isaa.extras.filter import after_format
             # Parse JSON and create concepts
             concept_data = after_format(content)
             concepts = []
