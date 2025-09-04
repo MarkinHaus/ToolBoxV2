@@ -3,7 +3,12 @@ import asyncio
 import os
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime, timedelta
+# py > 3.11
+try:
+    from datetime import UTC, datetime, timedelta
+except ImportError:
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 from enum import Enum
 from typing import Any
 
