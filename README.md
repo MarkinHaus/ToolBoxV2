@@ -255,7 +255,6 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 ## 📄 License
 
 This project is distributed under a custom license. Please refer to the [LICENSE](./LICENSE) file in the repository for detailed terms and conditions.
-
 ---
 
 © 2022–2025 Markin Hausmanns – All rights reserved.
