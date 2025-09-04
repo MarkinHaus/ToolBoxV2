@@ -65,10 +65,7 @@ from .base.AgentUtils import (
     detect_shell,
     safe_decode,
 )
-from .extras.modes import (
-    SummarizationMode,
-    # crate_llm_function_from_langchain_tools,
-)
+
 from .extras.web_search import web_search
 from .ui import get_agent_ui_html, initialize_isaa_webui_module
 
@@ -1261,6 +1258,10 @@ class Tools(MainTool, FileHandler):
 
         # This part needs to become async due to format_class
         # Simplified version:
+        from .extras.modes import (
+            SummarizationMode,
+            # crate_llm_function_from_langchain_tools,
+        )
         summary = await self.mini_task_completion(
             mini_task=f"Summarize this text, focusing on aspects related to '{ref if ref else 'key details'}'. The text is: {text}",
             mode=self.controller.rget(SummarizationMode))
