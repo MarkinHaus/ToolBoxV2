@@ -6,7 +6,11 @@ import json
 import uuid
 from collections import defaultdict
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+try:
+    from datetime import UTC, datetime, timedelta
+except ImportError:
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 from typing import Any
 
 import markdown2
