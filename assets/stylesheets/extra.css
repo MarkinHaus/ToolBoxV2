@@ -1,0 +1,27 @@
+/* Hintergrund sehr schlicht */
+:root {
+  --md-default-bg-color: #111;   /* tief dunkel */
+  --md-code-bg-color:    #1b1b1b;
+  --md-text-color:       #ddd;
+}
+
+/* Links dezenter */
+.md-typeset a {
+  color: #66b2ff;
+  text-decoration: none;
+}
+.md-typeset a:hover {
+  text-decoration: underline;
+}
+
+/* Navigation zurückhaltender */
+.md-sidebar, .md-header {
+  box-shadow: none !important;
+  background-color: #111 !important;
+}
+
+/* Code minimalistisch */
+.highlight pre, code {
+  border-radius: 4px;
+  padding: 0.5em;
+}

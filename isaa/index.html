@@ -11,6 +11,10 @@
         <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/isaa/">
       
       
+        <link rel="prev" href="../utils/">
+      
+      
+        <link rel="next" href="../agent/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -18,7 +22,7 @@
     
     
       
-        <title>ISAA (Intelligent System Agent Architecture) Documentation - ToolBoxV2 Docs</title>
+        <title>isaa - ToolBoxV2 Docs</title>
       
     
     
@@ -61,7 +65,7 @@
     
     
     
-    <body dir="ltr" data-md-color-scheme="preference" data-md-color-primary="indigo" data-md-color-accent="indigo">
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -82,9 +86,7 @@
     
       
 
-  
-
-<header class="md-header md-header--shadow" data-md-component="header">
+<header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
       
@@ -106,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ISAA (Intelligent System Agent Architecture) Documentation
+              isaa
             
           </span>
         </div>
@@ -180,6 +182,209 @@
       
         
           
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../module_creation_guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tbjs/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  TBjs
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../clis/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CLIS
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Report Issues
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../toolboxv2/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../account_management/" class="md-tabs__link">
+          
+  
+  
+  etc
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
         
       
       <main class="md-main" data-md-component="main">
@@ -193,8 +398,10 @@
                     
 
 
+  
 
-<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
       
@@ -314,7 +521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../faq/" class="md-nav__link">
+      <a href="../module_creation_guide/" class="md-nav__link">
         
   
   
@@ -399,21 +606,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
         
           
-          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
             
   
   
@@ -426,7 +641,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_9">
             <span class="md-nav__icon md-icon"></span>
             API Reference
@@ -469,6 +684,813 @@
   
   <span class="md-ellipsis">
     utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    isaa
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    isaa
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Core Concepts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-flowagent" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.1. FlowAgent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-flowagentbuilder" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.2. FlowAgentBuilder
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-toolsinterface" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.3. ToolsInterface
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-aisemanticmemory" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.4. AISemanticMemory
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-initialization-and-configuration-tools-class" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Initialization and Configuration (Tools Class)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Initialization and Configuration (Tools Class)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#isaaon_exit" class="md-nav__link">
+    <span class="md-ellipsis">
+      isaa.on_exit()
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-agent-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Agent Management
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Agent Management">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-getting-an-agent-builder-get_agent_builder" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1. Getting an Agent Builder (get_agent_builder)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-registering-an-agent-async-register_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2. Registering an Agent (async register_agent)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-retrieving-an-agent-instance-async-get_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3. Retrieving an Agent Instance (async get_agent)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-running-agents-and-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Running Agents and Tasks
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Running Agents and Tasks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-running-an-agent-async-run_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.1. Running an Agent (async run_agent)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-structured-output-async-format_class" class="md-nav__link">
+    <span class="md-ellipsis">
+      5.2. Structured Output (async format_class)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-code-execution-with-toolsinterface" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Code Execution with ToolsInterface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-semantic-memory-aisemanticmemory" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Semantic Memory (AISemanticMemory)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-tool-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Tool Integration
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Tool Integration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#default-isaa-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Default ISAA Tools
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adding-your-own-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Adding Your Own Tools
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-example-usage-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Example Usage Flow
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-important-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Important Notes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overview
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Concepts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-basic-chain-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Basic Chain Operations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-chain-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Chain Components
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Chain Components">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cf-chain-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      CF (Chain Format)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is-conditional-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      IS (Conditional Check)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Basic Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Basic Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-setting-up-agents-for-chaining" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Setting Up Agents for Chaining
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-simple-sequential-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Simple Sequential Chain
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-chain-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Advanced Chain Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced Chain Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-data-formatting-with-cf" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Data Formatting with CF
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-data-extraction-with-key-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Data Extraction with Key Selection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-parallel-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Parallel Processing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-auto-parallel-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Auto-Parallel Processing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-conditional-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Conditional Chains
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-error-handling-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Error Handling Chains
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#complex-workflow-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Complex Workflow Examples
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Complex Workflow Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-multi-stage-document-processing" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Multi-Stage Document Processing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-customer-service-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Customer Service Chain
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chain-visualization-and-debugging" class="md-nav__link">
+    <span class="md-ellipsis">
+      Chain Visualization and Debugging
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chain Visualization and Debugging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-visualize-chain-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Visualize Chain Structure
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-progress-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Progress Tracking
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      Best Practices
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Best Practices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-agent-specialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Agent Specialization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-error-recovery-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Error Recovery Patterns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-performance-optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Performance Optimization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#direckt-call-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      Direckt call Support
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chain-operators-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Chain Operators Reference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cf-chain-format-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      CF (Chain Format) Reference
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    isaa_help
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    etc
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            etc
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../account_management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    account_management
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    changelog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../db_usage_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    db_usage_guide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../p2p_rpc_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    p2p_rpc_protocol
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    stack
     
   </span>
   
@@ -1107,19 +2129,7 @@
 <p><code>AISemanticMemory</code> serves as the long-term memory for the entire system. Agents can query this memory to retrieve past knowledge or save new information for future use.</p>
 <h2 id="3-initialization-and-configuration-tools-class">3. Initialization and Configuration (<code>Tools</code> Class)<a class="headerlink" href="#3-initialization-and-configuration-tools-class" title="Permanent link">&para;</a></h2>
 <p>The <code>Tools</code> class is the main entry point for using the ISAA module.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.module</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tools</span>
 
 <span class="c1"># Get the application instance</span>
@@ -1132,25 +2142,14 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ISAA initialized.&quot;</span><span class="p">)</span>
 
 <span class="c1"># asyncio.run(initialize_isaa())</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="isaaon_exit"><code>isaa.on_exit()</code><a class="headerlink" href="#isaaon_exit" title="Permanent link">&para;</a></h3>
 <p>This method ensures that all agent configurations and other states are saved gracefully when the application shuts down.</p>
 <h2 id="4-agent-management">4. Agent Management<a class="headerlink" href="#4-agent-management" title="Permanent link">&para;</a></h2>
 <p>All agent management is now fully asynchronous and builder-oriented.</p>
 <h3 id="41-getting-an-agent-builder-get_agent_builder">4.1. Getting an Agent Builder (<code>get_agent_builder</code>)<a class="headerlink" href="#41-getting-an-agent-builder-get_agent_builder" title="Permanent link">&para;</a></h3>
 <p>This is the starting point for creating any new agent. It returns a <code>FlowAgentBuilder</code> pre-configured with ISAA's core tools.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">manage_agent_builder</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">manage_agent_builder</span><span class="p">():</span>
     <span class="c1"># Get a builder for an agent named &quot;coder_agent&quot;</span>
     <span class="n">coder_builder</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent_builder</span><span class="p">(</span><span class="s2">&quot;coder_agent&quot;</span><span class="p">)</span>
 
@@ -1162,49 +2161,29 @@
     <span class="n">coder_builder</span><span class="o">.</span><span class="n">with_system_message</span><span class="p">(</span><span class="s2">&quot;You are a master Python programmer.&quot;</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">coder_builder</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="42-registering-an-agent-async-register_agent">4.2. Registering an Agent (<code>async register_agent</code>)<a class="headerlink" href="#42-registering-an-agent-async-register_agent" title="Permanent link">&para;</a></h3>
 <p>Once a builder is configured, you register its configuration with ISAA. This saves the agent's definition and makes it available for use.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">register_my_agent</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">register_my_agent</span><span class="p">():</span>
     <span class="n">builder</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent_builder</span><span class="p">(</span><span class="s2">&quot;my_query_agent&quot;</span><span class="p">)</span>
     <span class="n">builder</span><span class="o">.</span><span class="n">with_system_message</span><span class="p">(</span><span class="s2">&quot;You answer questions based on internal memory.&quot;</span><span class="p">)</span>
 
     <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">register_agent</span><span class="p">(</span><span class="n">builder</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Agent &#39;my_query_agent&#39; configuration registered.&quot;</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="43-retrieving-an-agent-instance-async-get_agent">4.3. Retrieving an Agent Instance (<code>async get_agent</code>)<a class="headerlink" href="#43-retrieving-an-agent-instance-async-get_agent" title="Permanent link">&para;</a></h3>
 <p>This method builds (or retrieves from a cache) a fully operational <code>FlowAgent</code> instance from a registered configuration.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_and_use_agent</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_and_use_agent</span><span class="p">():</span>
     <span class="c1"># This will build the agent if it&#39;s the first time it&#39;s requested</span>
     <span class="n">my_agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;my_query_agent&quot;</span><span class="p">)</span>
 
     <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">my_agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span><span class="s2">&quot;What is the capital of France?&quot;</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="5-running-agents-and-tasks">5. Running Agents and Tasks<a class="headerlink" href="#5-running-agents-and-tasks" title="Permanent link">&para;</a></h2>
 <h3 id="51-running-an-agent-async-run_agent">5.1. Running an Agent (<code>async run_agent</code>)<a class="headerlink" href="#51-running-an-agent-async-run_agent" title="Permanent link">&para;</a></h3>
 <p>The primary method for interacting with a registered agent by name.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_specific_agent</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_specific_agent</span><span class="p">():</span>
     <span class="c1"># Register a simple agent if it doesn&#39;t exist</span>
     <span class="k">if</span> <span class="s2">&quot;responder&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">isaa</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;agents-name-list&quot;</span><span class="p">,</span> <span class="p">[]):</span>
         <span class="n">builder</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent_builder</span><span class="p">(</span><span class="s2">&quot;responder&quot;</span><span class="p">)</span>
@@ -1215,25 +2194,10 @@
     <span class="n">response1</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">run_agent</span><span class="p">(</span><span class="s2">&quot;responder&quot;</span><span class="p">,</span> <span class="s2">&quot;My favorite color is blue.&quot;</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">)</span>
     <span class="n">response2</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">run_agent</span><span class="p">(</span><span class="s2">&quot;responder&quot;</span><span class="p">,</span> <span class="s2">&quot;What is my favorite color?&quot;</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Agent remembers: </span><span class="si">{</span><span class="n">response2</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="52-structured-output-async-format_class">5.2. Structured Output (<code>async format_class</code>)<a class="headerlink" href="#52-structured-output-async-format_class" title="Permanent link">&para;</a></h3>
 <p>Leverage an agent's reasoning to structure output according to a Pydantic model.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">UserProfile</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -1249,36 +2213,12 @@
     <span class="k">if</span> <span class="n">profile_dict</span><span class="p">:</span>
         <span class="n">profile</span> <span class="o">=</span> <span class="n">UserProfile</span><span class="p">(</span><span class="o">**</span><span class="n">profile_dict</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Parsed User: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">, Interests: </span><span class="si">{</span><span class="n">profile</span><span class="o">.</span><span class="n">interests</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="6-code-execution-with-toolsinterface">6. Code Execution with <code>ToolsInterface</code><a class="headerlink" href="#6-code-execution-with-toolsinterface" title="Permanent link">&para;</a></h2>
 <p>The <code>ToolsInterface</code> provides a powerful, stateful environment for each agent to execute code, manage files, and interact with the web. <strong>You do not interact with the <code>ToolsInterface</code> directly.</strong> Instead, you instruct the agent to use the tools that ISAA has automatically provided from the interface.</p>
 <p>The agent's reasoner is aware of these tools and will use them when a task requires it.</p>
 <p><strong>Example: Instructing an agent to use its file and code tools.</strong>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute_code_task</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute_code_task</span><span class="p">():</span>
     <span class="c1"># 1. Get a builder for a coding agent. ISAA will automatically add</span>
     <span class="c1">#    code and file tools from the ToolsInterface.</span>
     <span class="n">coder_builder</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent_builder</span><span class="p">(</span><span class="s2">&quot;PyCoder&quot;</span><span class="p">)</span>
@@ -1303,20 +2243,10 @@
     <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">coder_agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span><span class="n">task_prompt</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;--- Agent Response ---&quot;</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div></p>
+</code></pre></div></p>
 <h2 id="7-semantic-memory-aisemanticmemory">7. Semantic Memory (<code>AISemanticMemory</code>)<a class="headerlink" href="#7-semantic-memory-aisemanticmemory" title="Permanent link">&para;</a></h2>
 <p>Agents can interact with the shared semantic memory through the tools provided by ISAA.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">use_semantic_memory</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">use_semantic_memory</span><span class="p">():</span>
     <span class="c1"># Get a general-purpose agent</span>
     <span class="n">agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;self&quot;</span><span class="p">)</span>
 
@@ -1327,7 +2257,7 @@
     <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span><span class="s2">&quot;What is the project codename?&quot;</span><span class="p">,</span> <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;project_orion&quot;</span><span class="p">)</span>
 
     <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span> <span class="c1"># The agent will use its `memorySearch` tool to find the answer.</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="8-tool-integration">8. Tool Integration<a class="headerlink" href="#8-tool-integration" title="Permanent link">&para;</a></h2>
 <p>The <code>FlowAgentBuilder</code> is the central point for tool management. ISAA's <code>get_agent_builder</code> method automatically equips new builders with a powerful set of default tools.</p>
 <h3 id="default-isaa-tools">Default ISAA Tools<a class="headerlink" href="#default-isaa-tools" title="Permanent link">&para;</a></h3>
@@ -1339,25 +2269,7 @@
 </ul>
 <h3 id="adding-your-own-tools">Adding Your Own Tools<a class="headerlink" href="#adding-your-own-tools" title="Permanent link">&para;</a></h3>
 <p>You can easily add your own custom functions to any agent builder.
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># 1. Define your custom async function</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Define your custom async function</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_database_user_count</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Returns the current number of users in the database.&quot;&quot;&quot;</span>
     <span class="c1"># In a real scenario, this would connect to a database</span>
@@ -1376,69 +2288,10 @@
 <span class="n">db_agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;db_agent&quot;</span><span class="p">)</span>
 <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">db_agent</span><span class="o">.</span><span class="n">a_run</span><span class="p">(</span><span class="s2">&quot;How many users are in the system?&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div></p>
+</code></pre></div></p>
 <h2 id="9-example-usage-flow">9. Example Usage Flow<a class="headerlink" href="#9-example-usage-flow" title="Permanent link">&para;</a></h2>
 <p>This example demonstrates a complete workflow: creating an agent, giving it a complex task that requires file I/O and code execution, and getting the final result.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span>
-<span class="normal">36</span>
-<span class="normal">37</span>
-<span class="normal">38</span>
-<span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span>
-<span class="normal">56</span>
-<span class="normal">57</span>
-<span class="normal">58</span>
-<span class="normal">59</span>
-<span class="normal">60</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.module</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tools</span>
 
@@ -1498,7 +2351,7 @@
 
 <span class="c1"># --- Run the Demo ---</span>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main_demo</span><span class="p">())</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="10-important-notes">10. Important Notes<a class="headerlink" href="#10-important-notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Asynchronous First</strong>: The entire ISAA module is built around <code>asyncio</code>. Ensure your code is running in an async context.</li>
@@ -1521,15 +2374,7 @@
 <h3 id="2-chain-components">2. Chain Components<a class="headerlink" href="#2-chain-components" title="Permanent link">&para;</a></h3>
 <h4 id="cf-chain-format"><strong>CF (Chain Format)</strong><a class="headerlink" href="#cf-chain-format" title="Permanent link">&para;</a></h4>
 <p>Handles data transformation and extraction between agents using Pydantic models.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span>
-<span class="normal">8</span>
-<span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">UserProfile</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
@@ -1538,47 +2383,15 @@
 
 <span class="c1"># Create a formatter</span>
 <span class="n">profile_format</span> <span class="o">=</span> <span class="n">CF</span><span class="p">(</span><span class="n">UserProfile</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h4 id="is-conditional-check"><strong>IS (Conditional Check)</strong><a class="headerlink" href="#is-conditional-check" title="Permanent link">&para;</a></h4>
 <p>Creates conditional logic based on data values.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Check if age is over 18</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Check if age is over 18</span>
 <span class="n">adult_check</span> <span class="o">=</span> <span class="n">IS</span><span class="p">(</span><span class="s2">&quot;age&quot;</span><span class="p">,</span> <span class="mi">18</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="basic-usage">Basic Usage<a class="headerlink" href="#basic-usage" title="Permanent link">&para;</a></h2>
 <h3 id="1-setting-up-agents-for-chaining">1. Setting Up Agents for Chaining<a class="headerlink" href="#1-setting-up-agents-for-chaining" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_app</span>
 
 <span class="c1"># Initialize ISAA</span>
@@ -1610,25 +2423,9 @@
     <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">register_agent</span><span class="p">(</span><span class="n">reporter_builder</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">setup_agents</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="2-simple-sequential-chain">2. Simple Sequential Chain<a class="headerlink" href="#2-simple-sequential-chain" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">simple_sequential_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">simple_sequential_chain</span><span class="p">():</span>
     <span class="c1"># Get agent instances</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
     <span class="n">analyzer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
@@ -1645,41 +2442,10 @@
 
 <span class="c1"># Run the chain</span>
 <span class="k">await</span> <span class="n">simple_sequential_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="advanced-chain-features">Advanced Chain Features<a class="headerlink" href="#advanced-chain-features" title="Permanent link">&para;</a></h2>
 <h3 id="1-data-formatting-with-cf">1. Data Formatting with CF<a class="headerlink" href="#1-data-formatting-with-cf" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">PersonData</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -1711,44 +2477,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Structured Result:&quot;</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">formatted_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="2-data-extraction-with-key-selection">2. Data Extraction with Key Selection<a class="headerlink" href="#2-data-extraction-with-key-selection" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span>
-<span class="normal">36</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">extraction_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">extraction_chain</span><span class="p">():</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
     <span class="n">analyzer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
 
@@ -1784,37 +2515,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;All data:&quot;</span><span class="p">,</span> <span class="n">result3</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">extraction_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="3-parallel-processing">3. Parallel Processing<a class="headerlink" href="#3-parallel-processing" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">parallel_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">parallel_chain</span><span class="p">():</span>
     <span class="n">analyzer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
     <span class="n">reporter</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;reporter&quot;</span><span class="p">)</span>
 
@@ -1843,36 +2546,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Complex Chain Result:&quot;</span><span class="p">,</span> <span class="n">complex_result</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">parallel_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="4-auto-parallel-processing">4. Auto-Parallel Processing<a class="headerlink" href="#4-auto-parallel-processing" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskList</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskList</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">tasks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
     <span class="n">priority</span><span class="p">:</span> <span class="nb">str</span>
 
@@ -1900,39 +2576,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Auto-parallel Results:&quot;</span><span class="p">,</span> <span class="n">results</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">auto_parallel_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="5-conditional-chains">5. Conditional Chains<a class="headerlink" href="#5-conditional-chains" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">conditional_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">conditional_chain</span><span class="p">():</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
     <span class="n">analyzer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
     <span class="n">reporter</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;reporter&quot;</span><span class="p">)</span>
@@ -1963,30 +2609,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Rejected path result:&quot;</span><span class="p">,</span> <span class="n">result2</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">conditional_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="6-error-handling-chains">6. Error Handling Chains<a class="headerlink" href="#6-error-handling-chains" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">error_handling_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">error_handling_chain</span><span class="p">():</span>
     <span class="c1"># Create a potentially failing agent</span>
     <span class="n">risky_builder</span> <span class="o">=</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent_builder</span><span class="p">(</span><span class="s2">&quot;risky_processor&quot;</span><span class="p">)</span>
     <span class="n">risky_builder</span><span class="o">.</span><span class="n">with_system_message</span><span class="p">(</span>
@@ -2008,64 +2633,10 @@
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Chain failed despite fallback:&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">error_handling_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="complex-workflow-examples">Complex Workflow Examples<a class="headerlink" href="#complex-workflow-examples" title="Permanent link">&para;</a></h2>
 <h3 id="1-multi-stage-document-processing">1. Multi-Stage Document Processing<a class="headerlink" href="#1-multi-stage-document-processing" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span>
-<span class="normal">36</span>
-<span class="normal">37</span>
-<span class="normal">38</span>
-<span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DocumentMetadata</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DocumentMetadata</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">author</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">document_type</span><span class="p">:</span> <span class="nb">str</span>
@@ -2120,60 +2691,9 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Simple Document Result:&quot;</span><span class="p">,</span> <span class="n">simple_result</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">document_processing_workflow</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="2-customer-service-chain">2. Customer Service Chain<a class="headerlink" href="#2-customer-service-chain" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span>
-<span class="normal">28</span>
-<span class="normal">29</span>
-<span class="normal">30</span>
-<span class="normal">31</span>
-<span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span>
-<span class="normal">36</span>
-<span class="normal">37</span>
-<span class="normal">38</span>
-<span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CustomerInquiry</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CustomerInquiry</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">customer_id</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">inquiry_type</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">priority</span><span class="p">:</span> <span class="nb">str</span>
@@ -2225,27 +2745,10 @@
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Low Priority Response:&quot;</span><span class="p">,</span> <span class="n">low_result</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">customer_service_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="chain-visualization-and-debugging">Chain Visualization and Debugging<a class="headerlink" href="#chain-visualization-and-debugging" title="Permanent link">&para;</a></h2>
 <h3 id="1-visualize-chain-structure">1. Visualize Chain Structure<a class="headerlink" href="#1-visualize-chain-structure" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">visualize_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">visualize_chain</span><span class="p">():</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
     <span class="n">analyzer</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
     <span class="n">reporter</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;reporter&quot;</span><span class="p">)</span>
@@ -2263,35 +2766,9 @@
     <span class="n">complex_chain</span><span class="o">.</span><span class="n">print_graph</span><span class="p">()</span>
 
 <span class="k">await</span> <span class="n">visualize_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="2-progress-tracking">2. Progress Tracking<a class="headerlink" href="#2-progress-tracking" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span>
-<span class="normal">27</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.base.Agent.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProgressEvent</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.isaa.base.Agent.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProgressEvent</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">ChainProgressTracker</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
@@ -2318,35 +2795,10 @@
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">timestamp</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">event_type</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">node_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
 <span class="k">await</span> <span class="n">tracked_chain</span><span class="p">()</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-agent-specialization">1. Agent Specialization<a class="headerlink" href="#1-agent-specialization" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span>
-<span class="normal">23</span>
-<span class="normal">24</span>
-<span class="normal">25</span>
-<span class="normal">26</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">specialized_agents_example</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">specialized_agents_example</span><span class="p">():</span>
     <span class="c1"># Create highly specialized agents for better chain performance</span>
 
     <span class="c1"># JSON extractor</span>
@@ -2372,20 +2824,9 @@
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">extraction_chain</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="2-error-recovery-patterns">2. Error Recovery Patterns<a class="headerlink" href="#2-error-recovery-patterns" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">robust_chain_pattern</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">robust_chain_pattern</span><span class="p">():</span>
     <span class="n">primary_agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
     <span class="n">backup_agent</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
 
@@ -2397,23 +2838,9 @@
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">robust_chain</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="3-performance-optimization">3. Performance Optimization<a class="headerlink" href="#3-performance-optimization" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">optimized_chain</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">optimized_chain</span><span class="p">():</span>
     <span class="c1"># Use parallel processing for independent operations</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;data_extractor&quot;</span><span class="p">)</span>
     <span class="n">analyzer1</span> <span class="o">=</span> <span class="k">await</span> <span class="n">isaa</span><span class="o">.</span><span class="n">get_agent</span><span class="p">(</span><span class="s2">&quot;analyzer&quot;</span><span class="p">)</span>
@@ -2428,7 +2855,7 @@
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">optimized</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="direckt-call-support">Direckt call Support<a class="headerlink" href="#direckt-call-support" title="Permanent link">&para;</a></h3>
 <ul>
 <li>chain(...) → ruft sofort run</li>
@@ -2563,7 +2990,7 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "search.highlight", "navigation.expand", "navigation.tabs"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../assets/javascripts/bundle.92b07e13.min.js"></script>

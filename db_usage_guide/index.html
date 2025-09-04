@@ -11,6 +11,10 @@
         <link rel="canonical" href="https://MarkinHaus.github.io/ToolBoxV2/db_usage_guide/">
       
       
+        <link rel="prev" href="../changelog/">
+      
+      
+        <link rel="next" href="../p2p_rpc_protocol/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -18,7 +22,7 @@
     
     
       
-        <title>ToolBoxV2 Database (DB) Module Guide - ToolBoxV2 Docs</title>
+        <title>db_usage_guide - ToolBoxV2 Docs</title>
       
     
     
@@ -61,7 +65,7 @@
     
     
     
-    <body dir="ltr" data-md-color-scheme="preference" data-md-color-primary="indigo" data-md-color-accent="indigo">
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -82,9 +86,7 @@
     
       
 
-  
-
-<header class="md-header md-header--shadow" data-md-component="header">
+<header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="ToolBoxV2 Docs" class="md-header__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
       
@@ -106,7 +108,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ToolBoxV2 Database (DB) Module Guide
+              db_usage_guide
             
           </span>
         </div>
@@ -180,6 +182,209 @@
       
         
           
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../usage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Usage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../module_creation_guide/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tbjs/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  TBjs
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../clis/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CLIS
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/MarkinHaus/ToolBoxV2/issues" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Report Issues
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../toolboxv2/" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../account_management/" class="md-tabs__link">
+          
+  
+  
+  etc
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
         
       
       <main class="md-main" data-md-component="main">
@@ -193,8 +398,10 @@
                     
 
 
+  
 
-<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="ToolBoxV2 Docs" class="md-nav__button md-logo" aria-label="ToolBoxV2 Docs" data-md-component="logo">
       
@@ -314,7 +521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../faq/" class="md-nav__link">
+      <a href="../module_creation_guide/" class="md-nav__link">
         
   
   
@@ -405,12 +612,17 @@
     
     
     
+      
+      
+    
     
     <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
         
           
           <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
@@ -469,6 +681,426 @@
   
   <span class="md-ellipsis">
     utils
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../isaa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    isaa
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    agent
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    isaa_help
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    etc
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            etc
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../account_management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    account_management
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    changelog
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    db_usage_guide
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    db_usage_guide
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-core-concepts" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Core Concepts
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Core Concepts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key Features:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#database-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Database Modes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-basic-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Basic Usage
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Basic Usage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#storing-data-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      Storing Data (set)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retrieving-data-get" class="md-nav__link">
+    <span class="md-ellipsis">
+      Retrieving Data (get)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Retrieving Data (get)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#special-get-queries-all-and-all-k" class="md-nav__link">
+    <span class="md-ellipsis">
+      Special get Queries: all and all-k
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checking-for-existence-if_exist" class="md-nav__link">
+    <span class="md-ellipsis">
+      Checking for Existence (if_exist)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deleting-data-delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      Deleting Data (delete)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#appending-to-a-list-append_on_set" class="md-nav__link">
+    <span class="md-ellipsis">
+      Appending to a List (append_on_set)
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-configuration-and-mode-switching" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Configuration and Mode Switching
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Configuration and Mode Switching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration-via-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration via Environment Variables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#switching-modes-programmatically" class="md-nav__link">
+    <span class="md-ellipsis">
+      Switching Modes Programmatically
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../p2p_rpc_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    p2p_rpc_protocol
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    stack
     
   </span>
   
@@ -696,27 +1328,15 @@
 </ul>
 <h2 id="2-basic-usage">2. Basic Usage<a class="headerlink" href="#2-basic-usage" title="Permanent link">&para;</a></h2>
 <p>To use the DB module, you first need to get a handle to it from the main <code>app</code> instance. All interactions then happen through this instance.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Assuming &#39;app&#39; is your ToolBoxV2 App instance</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Assuming &#39;app&#39; is your ToolBoxV2 App instance</span>
 <span class="n">db</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">)</span>
 
 <span class="c1"># Or, if you have a specific instance of the DB module</span>
 <span class="n">db_spec</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">,</span> <span class="n">spec</span><span class="o">=</span><span class="s2">&quot;MySpecialDB&quot;</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="storing-data-set">Storing Data (<code>set</code>)<a class="headerlink" href="#storing-data-set" title="Permanent link">&para;</a></h3>
 <p>The <code>set</code> function stores a value associated with a key. It overwrites any existing value.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span>
-<span class="normal">8</span>
-<span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Store a simple string</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Store a simple string</span>
 <span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">,</span> <span class="s2">&quot;Alice&quot;</span><span class="p">)</span>
 
 <span class="c1"># Store a dictionary (will be automatically JSON-serialized)</span>
@@ -725,20 +1345,10 @@
 
 <span class="c1"># Store a list</span>
 <span class="n">db</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;user:123:roles&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;admin&quot;</span><span class="p">,</span> <span class="s2">&quot;editor&quot;</span><span class="p">])</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="retrieving-data-get">Retrieving Data (<code>get</code>)<a class="headerlink" href="#retrieving-data-get" title="Permanent link">&para;</a></h3>
 <p>The <code>get</code> function retrieves a value by its key. The data is returned as a <code>Result</code> object.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span>
 
 <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
     <span class="n">user_name</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span> <span class="c1"># .get() extracts the data from the Result</span>
@@ -749,7 +1359,7 @@
     <span class="c1"># The DB module automatically deserializes the JSON string back into a dict</span>
     <span class="n">profile_data</span> <span class="o">=</span> <span class="n">profile_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;User email: </span><span class="si">{</span><span class="n">profile_data</span><span class="p">[</span><span class="s1">&#39;email&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># Output: User email: alice@example.com</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h4 id="special-get-queries-all-and-all-k">Special <code>get</code> Queries: <code>all</code> and <code>all-k</code><a class="headerlink" href="#special-get-queries-all-and-all-k" title="Permanent link">&para;</a></h4>
 <p>The <code>get</code> method supports special query strings to retrieve all keys or all key-value pairs from the database.</p>
 <ul>
@@ -757,19 +1367,7 @@
 <li><code>get('all')</code>: Returns a list of all key-value pairs (as tuples) in the database.</li>
 </ul>
 <p><strong>Example:</strong></p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Get all keys</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Get all keys</span>
 <span class="n">all_keys_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;all-k&quot;</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">all_keys_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
     <span class="n">keys</span> <span class="o">=</span> <span class="n">all_keys_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
@@ -782,26 +1380,16 @@
     <span class="n">items</span> <span class="o">=</span> <span class="n">all_items_result</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;All items: </span><span class="si">{</span><span class="n">items</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="c1"># Output: All items: [(\&#39;user:123:name\&#39;, \&#39;Alice\&#39;), (\&#39;user:123:profile\&#39;, {\&#39;email\&#39;: \&#39;alice@example.com\&#39;, \&#39;level\&#39;: 10}), ...]</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="checking-for-existence-if_exist">Checking for Existence (<code>if_exist</code>)<a class="headerlink" href="#checking-for-existence-if_exist" title="Permanent link">&para;</a></h3>
 <p>To check if a key exists without retrieving its value, use <code>if_exist</code>.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">if</span> <span class="n">db</span><span class="o">.</span><span class="n">if_exist</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">db</span><span class="o">.</span><span class="n">if_exist</span><span class="p">(</span><span class="s2">&quot;user:123:name&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;User 123 exists!&quot;</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;User 123 not found.&quot;</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="deleting-data-delete">Deleting Data (<code>delete</code>)<a class="headerlink" href="#deleting-data-delete" title="Permanent link">&para;</a></h3>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span>
-<span class="normal">8</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Delete a single key</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Delete a single key</span>
 <span class="n">delete_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;user:123:roles&quot;</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">delete_result</span><span class="o">.</span><span class="n">is_ok</span><span class="p">():</span>
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Roles deleted.&quot;</span><span class="p">)</span>
@@ -809,18 +1397,10 @@
 <span class="c1"># Delete multiple keys using a matching prefix (supported in Redis/Dict modes)</span>
 <span class="c1"># This would delete all keys starting with &quot;user:123:&quot;</span>
 <span class="n">db</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="s2">&quot;user:123:&quot;</span><span class="p">,</span> <span class="n">matching</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h3 id="appending-to-a-list-append_on_set">Appending to a List (<code>append_on_set</code>)<a class="headerlink" href="#appending-to-a-list-append_on_set" title="Permanent link">&para;</a></h3>
 <p>This function is useful for adding items to a key that stores a list. If the key doesn't exist, it's created as a new list.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span>
-<span class="normal">8</span>
-<span class="normal">9</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Assuming &quot;user:123:logs&quot; doesn&#39;t exist yet</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Assuming &quot;user:123:logs&quot; doesn&#39;t exist yet</span>
 <span class="n">db</span><span class="o">.</span><span class="n">append_on_set</span><span class="p">(</span><span class="s2">&quot;user:123:logs&quot;</span><span class="p">,</span> <span class="s2">&quot;User logged in.&quot;</span><span class="p">)</span>
 
 <span class="c1"># Append another log</span>
@@ -829,7 +1409,7 @@
 <span class="c1"># Retrieve the list</span>
 <span class="n">logs_result</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:123:logs&quot;</span><span class="p">)</span>
 <span class="c1"># logs_result.get() will be [&quot;User logged in.&quot;, &quot;User updated profile.&quot;]</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <h2 id="3-configuration-and-mode-switching">3. Configuration and Mode Switching<a class="headerlink" href="#3-configuration-and-mode-switching" title="Permanent link">&para;</a></h2>
 <p>While the default mode is <code>CLUSTER_BLOB</code>, you can change it for development or other specific needs.</p>
 <h3 id="configuration-via-environment-variables">Configuration via Environment Variables<a class="headerlink" href="#configuration-via-environment-variables" title="Permanent link">&para;</a></h3>
@@ -866,24 +1446,12 @@
 </tbody>
 </table>
 <p><strong>Example <code>.env</code> file for using Local Redis:</strong>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code>DB_MODE_KEY=LR
+<div class="highlight"><pre><span></span><code>DB_MODE_KEY=LR
 DB_CONNECTION_URI=redis://localhost:6379
-</code></pre></div></td></tr></table></div></p>
+</code></pre></div></p>
 <h3 id="switching-modes-programmatically">Switching Modes Programmatically<a class="headerlink" href="#switching-modes-programmatically" title="Permanent link">&para;</a></h3>
 <p>You can switch the database mode at runtime, which is useful for testing or dynamic configuration.</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.DB.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DatabaseModes</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">toolboxv2.mods.DB.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">DatabaseModes</span>
 
 <span class="n">db</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">get_mod</span><span class="p">(</span><span class="s2">&quot;DB&quot;</span><span class="p">)</span>
 
@@ -895,7 +1463,7 @@ DB_CONNECTION_URI=redis://localhost:6379
 
 <span class="c1"># The module will automatically close the old connection </span>
 <span class="c1"># and initialize the new one.</span>
-</code></pre></div></td></tr></table></div>
+</code></pre></div>
 <p>This guide covers the primary functionalities of the ToolBoxV2 <code>DB</code> module. By leveraging its abstraction and flexible configuration, you can build robust applications with persistent data storage tailored to your specific needs.</p>
 
 
@@ -946,7 +1514,7 @@ DB_CONNECTION_URI=redis://localhost:6379
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "search.highlight"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "search.highlight", "navigation.expand", "navigation.tabs"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../assets/javascripts/bundle.92b07e13.min.js"></script>
