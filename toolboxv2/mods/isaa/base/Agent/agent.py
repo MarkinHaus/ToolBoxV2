@@ -2380,7 +2380,7 @@ class LLMToolNode(AsyncNode):
                 )
 
                 llm_response = response
-                if not llm_response:
+                if not llm_response and  not final_response:
                     final_response = "I encountered an error while processing your request."
                     break
 
@@ -2403,6 +2403,7 @@ class LLMToolNode(AsyncNode):
 
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
+                final_response = tool_results_text
                 conversation_history.append({"role": "user",
                                              "content": f"Tool results:\n{tool_results_text}\n\nPlease continue with the next action do nor repeat or provide your final response."})
 
