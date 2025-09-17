@@ -33,7 +33,7 @@ from toolboxv2.mods.isaa.base.Agent.chain import (
     ParallelChain,
 )
 from toolboxv2.mods.isaa.base.Agent.types import NodeStatus, ProgressEvent, ChainMetadata
-from toolboxv2.mods.isaa.extras.terminal_progress import ChainProgressTracker, ChainPrinter
+from toolboxv2.mods.isaa.extras.cahin_printer import ChainProgressTracker, ChainPrinter
 
 NAME = "chain"
 

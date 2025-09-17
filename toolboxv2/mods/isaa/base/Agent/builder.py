@@ -7,7 +7,7 @@ import platform
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -89,8 +89,8 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     enabled: bool = False
-    config_path: str = None  # Path to MCP tools config file
-    server_name: str = None
+    config_path: Optional[str] = None  # Path to MCP tools config file
+    server_name: Optional[str] = None
     host: str = "0.0.0.0"
     port: int = 8000
     auto_expose_tools: bool = True
@@ -104,8 +104,8 @@ class A2AConfig(BaseModel):
     enabled: bool = False
     host: str = "0.0.0.0"
     port: int = 5000
-    agent_name: str = None
-    agent_description: str = None
+    agent_name: Optional[str] = None
+    agent_description: Optional[str] = None
     agent_version: str = "1.0.0"
     expose_tools_as_skills: bool = True
 
@@ -113,8 +113,8 @@ class A2AConfig(BaseModel):
 class TelemetryConfig(BaseModel):
     """OpenTelemetry configuration"""
     enabled: bool = False
-    service_name: str = None
-    endpoint: str = None  # OTLP endpoint
+    service_name: Optional[str] = None
+    endpoint: Optional[str] = None  # OTLP endpoint
     console_export: bool = True
     batch_export: bool = True
     sample_rate: float = 1.0
@@ -168,9 +168,9 @@ Always utilize available tools when they can help solve the user's request effic
     verbose_logging: bool = False
 
     # Persona and formatting
-    active_persona: str = None
+    active_persona: Optional[str] = None
     persona_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    default_format_config: dict[str, Any] = None
+    default_format_config: Optional[dict[str, Any]] = None
 
     # Custom variables and world model
     custom_variables: dict[str, Any] = Field(default_factory=dict)

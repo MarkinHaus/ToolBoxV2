@@ -752,13 +752,15 @@ class AISemanticMemory(metaclass=Singleton):
                     max_cross_refs=query_params.get("max_cross_refs", 6) if query_params else 6,
                     max_sentences=query_params.get("max_sentences", 12) if query_params else 12
                 )
-                results.append({
-                    "memory": name,
-                    "result": result
-                })
+                if result.overview:
+                    results.append({
+                        "memory": name,
+                        "result": result
+                    })
             #except Exception as e:
             #    print(f"Query failed on {name}: {str(e)}")
         if to_str:
+            str_res = ""
             if not unified_retrieve:
                 str_res = [
                     f"{x['memory']} - {json.dumps(x['result'].overview)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k, v in x['result'].cross_references.items()]}"

@@ -689,7 +689,7 @@ class KnowledgeBase:
             async def process_batch(batch: list[str]) -> np.ndarray:
                 from toolboxv2.mods.isaa.extras.adapter import litellm_embed
                 # print("Processing", batch)
-                embeddings = await litellm_embed(texts=batch, model=self.embedding_model)
+                embeddings = await litellm_embed(texts=batch, model=self.embedding_model, dimensions=self.embedding_dim)
                 return normalize_vectors(embeddings)
 
             tasks = []
@@ -1589,7 +1589,7 @@ class KnowledgeBase:
 
         try:
             from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-            await asyncio.sleep(0.25)
+            # await asyncio.sleep(0.25)
             llm_response = await litellm_complete(
                 model_name=self.model_name,
                 prompt=prompt,

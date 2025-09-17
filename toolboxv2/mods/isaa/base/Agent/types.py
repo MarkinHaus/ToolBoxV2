@@ -330,10 +330,19 @@ class ProgressTracker:
         """Calculate approximate LLM cost"""
         try:
             import litellm
+            if model.count('/') == 3:
+                model = '/'.join(model.split('/')[1:])
             cost = litellm.completion_cost(model=model, completion_response=completion_response)
             return cost
         except ImportError:
             cost = 0.0
+        except Exception as e:
+            try:
+                import litellm
+                cost = litellm.completion_cost(model=model.split("/")[-1], completion_response=completion_response)
+                return cost
+            except Exception:
+                cost = 0.0
         # Simplified cost calculation - would need actual provider pricing
         input_cost = (input_tokens / 1000) * self.token_costs["input"]
         output_cost = (output_tokens / 1000) * self.token_costs["output"]

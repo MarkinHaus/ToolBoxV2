@@ -431,7 +431,6 @@ class TaskPlannerNode(AsyncNode):
                         "strategy": exec_res.execution_strategy
                     }
                 ))
-                await asyncio.sleep(0.1)
 
             # Erfolgreicher Plan
             shared["current_plan"] = exec_res
@@ -2133,7 +2132,7 @@ Your decision:"""
                 last_exception = e
                 if attempt < max_retries:
                     wprint(f"Tool {tool_name} failed (attempt {attempt + 1}), retrying: {e}")
-                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive delay
+                    # await asyncio.sleep(0.5 * (attempt + 1))  # Progressive delay
                 else:
                     eprint(f"Tool {tool_name} failed after {max_retries + 1} attempts")
 
@@ -2709,23 +2708,6 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                 result = await agent_instance.arun_function(tool_name, **resolved_args)
                 tool_duration = time.perf_counter() - tool_start
                 variable_manager.set(f"results.{tool_name}.data", result)
-                if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="tool_call",
-                        timestamp=time.time(),
-                        node_name="LLMToolNode",
-                        status=NodeStatus.COMPLETED,
-                        tool_name=tool_name,
-                        tool_args=resolved_args,
-                        tool_result=result,
-                        duration=tool_duration,
-                        success=True,
-                        session_id=prep_res.get("session_id"),
-                        metadata={
-                            "result_type": type(result).__name__,
-                            "result_length": len(str(result))
-                        }
-                    ))
                 results.append({
                     "tool_name": tool_name,
                     "arguments": resolved_args,
@@ -4094,9 +4076,31 @@ class LLMReasonerNode(AsyncNode):
 
         # STEP 1: MANDATORY OUTLINE CREATION
         if not self.outline:
-            outline_result = await self._create_initial_outline(prep_res)
-            if not outline_result:
-                return await self._create_error_response(original_query, "Failed to create initial outline")
+            with Spinner("Creating initial outline..."):
+                outline_result = await self._create_initial_outline(prep_res)
+            if self.outline and len(self.outline.get("steps", [])) == 1:
+                # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
+                print("Fast direct response triggered")
+                response = await self.agent_instance.a_run_llm_completion(
+                    model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                    messages=[{"role": "user", "content": prep_res["original_query"]}],
+                    temperature=0.3,
+                    max_tokens=2048,
+                    node_name="LLMReasonerNode",
+                    task_id="fast_direct_response"
+                )
+                return {
+                        "final_result": response,
+                        "reasoning_loops": self.current_loop_count,
+                        "reasoning_context": self.reasoning_context.copy(),
+                        "internal_task_stack": self.internal_task_stack.copy(),
+                        "outline": self.outline,
+                        "outline_completion": self.current_outline_step,
+                        "performance_metrics": self.performance_metrics,
+                        "auto_recovery_attempts": self.auto_recovery_attempts
+                    }
+            elif not outline_result:
+                return await self._fallback_direct_response(prep_res)
 
         final_result = None
         consecutive_no_progress = 0
@@ -4423,6 +4427,7 @@ If the query is simple and can be answered directly without needing tools or com
 
 Create a structured outline using this EXACT format:
 
+```outline
 OUTLINE_START
 Step 1: [Brief description of first step]
 - Method: [internal_reasoning | delegate_to_llm_tool_node | create_and_execute_plan | direct_response]
@@ -4436,6 +4441,7 @@ Final Step: Synthesize results and provide comprehensive response
 - Expected outcome: Complete answer to user query
 - Success criteria: User query fully addressed
 OUTLINE_END
+```
 
 **Requirements:**
 1. Outline must have between 1 and 7 steps.
@@ -4448,14 +4454,18 @@ Create the outline now:"""
         try:
             llm_response = await agent_instance.a_run_llm_completion(
                 model=prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o"),
-                messages=[{"role": "user", "content": outline_prompt}],
+                messages=[{"role": "system", "content": outline_prompt}, {"role": "user", "content": original_query}],
                 temperature=0.2,  # Lower temperature for more deterministic outlining
-                max_tokens=2048,
                 node_name="LLMReasonerNode",
-                task_id="create_initial_outline"
+                task_id="create_initial_outline",
+                stream=False,
+                auto_fallbacks=False,
+                stop=["OUTLINE_END"]
             )
+            llm_response += "OUTLINE_END"
 
             # Parse outline from response
+            # print(llm_response)
             outline = self._parse_outline_from_response(llm_response)
 
             if self.agent_instance and self.agent_instance.progress_tracker:
@@ -4490,6 +4500,8 @@ Create the outline now:"""
 
         except Exception as e:
             eprint(f"Failed to create initial outline: {e}")
+            import traceback
+            print(traceback.format_exc())
             return False
 
     def _parse_outline_from_response(self, response: str) -> dict[str, Any]:
@@ -7625,7 +7637,8 @@ class UnifiedContextManager:
 
         # PRIMARY: Store in ChatSession
         if hasattr(session, 'add_message'):
-            await session.add_message(message, direct=False)
+            from toolboxv2 import get_app
+            get_app().run_bg_task_advanced(session.add_message, message, direct=False)
         elif isinstance(session, dict) and 'history' in session:
             # Fallback mode
             session['history'].append(message)
@@ -7654,17 +7667,17 @@ class UnifiedContextManager:
         try:
             # ChatSession mode
             if hasattr(session, 'get_past_x'):
-                recent_history = session.get_past_x(max_entries * 2, last_u=False)
-                # await session.get_reference(query, limit=5)
-
-                return recent_history[:max_entries]
+                recent_history = session.get_past_x(max_entries, last_u=False)
+                c = await session.get_reference(query)
+                return recent_history[:max_entries] + ([] if not c else  [{'role': 'system', 'content': c,
+                                                        'timestamp': datetime.now().isoformat(), 'metadata': {'source': 'contextual_history'}}] )
 
             # Fallback mode
             elif isinstance(session, dict) and 'history' in session:
                 history = session['history']
                 # Return last max_entries, starting with last user message
                 result = []
-                for msg in reversed(history[-max_entries * 2:]):
+                for msg in reversed(history[-max_entries:]):
                     result.append(msg)
                     if msg.get('role') == 'user' and len(result) >= max_entries:
                         break
@@ -7685,7 +7698,7 @@ class UnifiedContextManager:
         if cached:
             return cached
 
-        context = {
+        context: dict[str, Any] = {
             'timestamp': datetime.now().isoformat(),
             'session_id': session_id,
             'query': query,
@@ -7694,9 +7707,10 @@ class UnifiedContextManager:
 
         try:
             # 1. CHAT HISTORY (Primary - from ChatSession)
-            context['chat_history'] = await self.get_contextual_history(
-                session_id, query or "", max_entries=15
-            )
+            with Spinner("Building unified context..."):
+                context['chat_history'] = await self.get_contextual_history(
+                    session_id, query or "", max_entries=15
+                )
 
             # 2. VARIABLE SYSTEM STATE
             if self.variable_manager:
@@ -7790,6 +7804,8 @@ class UnifiedContextManager:
 
         except Exception as e:
             eprint(f"Error formatting context for LLM: {e}")
+            import traceback
+            print(traceback.format_exc())
             return f"Context formatting error: {str(e)}"
 
     def _merge_and_dedupe_history(self, recent_history: list[dict], relevant_refs: list) -> list[dict]:
@@ -8012,9 +8028,11 @@ class FlowAgent:
         checkpoint_interval: int = 300,  # 5 minutes
         max_parallel_tasks: int = 3,
         progress_callback: callable = None,
+        stream:bool=True,
         **kwargs
     ):
         self.amd = amd
+        self.stream = stream
         self.world_model = world_model or {}
         self.verbose = verbose
         self.enable_pause_resume = enable_pause_resume
@@ -8052,6 +8070,7 @@ class FlowAgent:
         self.is_paused = False
         self.last_checkpoint = None
         self.checkpoint_data = {}
+        self.ac_cost = 0
 
         # Threading
         self.executor = ThreadPoolExecutor(max_workers=max_parallel_tasks)
@@ -8089,9 +8108,12 @@ class FlowAgent:
     def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, **kwargs) -> str:
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, **kwargs) -> str:
         if "model" not in kwargs:
             kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
+
+        if not 'stream' in kwargs:
+            kwargs['stream'] = self.stream
 
         llm_start = time.perf_counter()
 
@@ -8134,7 +8156,7 @@ class FlowAgent:
 
         # build fallback dict using FALLBACKS_MODELS/PREM and _KEYS
 
-        if 'fallbacks' not in kwargs:
+        if auto_fallbacks and 'fallbacks' not in kwargs:
             fallbacks_dict_list = []
             fallbacks = os.getenv("FALLBACKS_MODELS", '').split(',') if model_preference == "fast" else os.getenv(
                 "FALLBACKS_MODELS_PREM", '').split(',')
@@ -8142,14 +8164,48 @@ class FlowAgent:
                 ',') if model_preference == "fast" else os.getenv(
                 "FALLBACKS_MODELS_KEYS_PREM", '').split(',')
             for model, key in zip(fallbacks, fallbacks_keys):
-                fallbacks_dict_list.append({"model": model, "api_key": key})
+                fallbacks_dict_list.append({"model": model, "api_key": os.getenv(key, kwargs.get("api_key", None))})
             kwargs['fallbacks'] = fallbacks_dict_list
         try:
 
-            response = await litellm.acompletion(**kwargs)
+            if kwargs.get("stream", False):
+                kwargs["stream_options"] = {"include_usage": True}
 
+            with Spinner("Calling LLM..."):
+                response = await litellm.acompletion(**kwargs)
+
+            if not kwargs.get("stream", False):
+                result = response.choices[0].message.content
+                usage = response.usage
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                total_tokens = usage.total_tokens if usage else 0
+
+            else:
+                result = ""
+                final_chunk = None
+                async for chunk in response:
+                    content = chunk.choices[0].delta.content or ""
+                    result += content
+                    if self.progress_tracker and content:
+                        await self.progress_tracker.emit_event(ProgressEvent(
+                            event_type="llm_stream_chunk",
+                            node_name=node_name,
+                            task_id=task_id,
+                            session_id=self.active_session,
+                            status=NodeStatus.RUNNING,
+                            # weitere Felder wie model, tokens wenn verfügbar
+                            llm_model=kwargs["model"],
+                            llm_output=content,
+                            # optional: llm_tokens so far? usage in chunk?
+                        ))
+                    final_chunk = chunk
+
+                usage = final_chunk.usage if hasattr(final_chunk, "usage") else None
+                output_tokens = usage.completion_tokens if usage else 0
+                input_tokens = usage.prompt_tokens if usage else 0
+                total_tokens = usage.total_tokens if usage else 0
             llm_duration = time.perf_counter() - llm_start
-            result = response.choices[0].message.content
 
             if AGENT_VERBOSE and self.verbose:
                 kwargs["messages"] += [{"role": "assistant", "content": result}]
@@ -8158,14 +8214,11 @@ class FlowAgent:
             #     print_prompt([{"role": "assistant", "content": result}])
 
             # Extract token usage and cost
-            usage = response.usage
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            total_tokens = usage.total_tokens if usage else 0
+
 
             call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
                                                             output_tokens, response) if self.progress_tracker else 0.0
-
+            self.ac_cost += call_cost
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="llm_call",
@@ -8190,6 +8243,7 @@ class FlowAgent:
             llm_duration = time.perf_counter() - llm_start
             import traceback
             print(traceback.format_exc())
+            # print(f"LLM call failed: {json.dumps(kwargs, indent=2)}")
 
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
@@ -8315,8 +8369,8 @@ class FlowAgent:
 
             # Checkpoint if needed
             if self.enable_pause_resume:
-                await self._maybe_checkpoint()
-
+                with Spinner("Creating checkpoint..."):
+                    await self._maybe_checkpoint()
             return result
 
         except Exception as e:
@@ -10128,6 +10182,7 @@ Respond in YAML format only:
                 response = await self.a_run_llm_completion(
                     model=self.amd.complex_llm_model,
                     messages=messages,
+                    stream=False,
                     with_context=auto_context,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -10179,7 +10234,7 @@ Respond in YAML format only:
                     messages[-1]["content"] = enhanced_prompt + error_feedback
 
                     # Brief delay before retry
-                    await asyncio.sleep(0.5 * (attempt + 1))
+                    # await asyncio.sleep(0.5 * (attempt + 1))
                 else:
                     eprint(f"[{model_name}] All {max_retries + 1} attempts failed")
 

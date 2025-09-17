@@ -453,7 +453,10 @@ class Tools(MainTool, FileHandler):
                           name=self.name, logs=None, color=self.color, on_exit=self.on_exit)
 
         from .extras.web_search import web_search
-        self.web_search = web_search
+        async def web_search_tool(query: str) -> str:
+            res = web_search(query)
+            return await self.mas_text_summaries(str(res), min_length=12000, ref=query)
+        self.web_search = web_search_tool
         self.shell_tool_function = shell_tool_function
         self.tools["shell"] = shell_tool_function
 
@@ -625,7 +628,7 @@ class Tools(MainTool, FileHandler):
                 # The AgentConfig is already in self.agent_data, which should be saved.
                 pass  # Agent instances are not directly saved, their configs are.
 
-        self.scripts.save_scripts()
+        self.print(self.scripts.save_scripts())
         threading.Thread(target=self.save_to_mem_sync, daemon=True).start()  # Sync wrapper for save_to_mem
 
         # Save controller if initialized
@@ -713,6 +716,8 @@ class Tools(MainTool, FileHandler):
         if name not in self.tools_interfaces:
             try:
                 # Initialize ToolsInterface
+                p = Path(get_app().data_dir) / "Agents" / name / "tools_session"
+                p.mkdir(parents=True, exist_ok=True)
                 tools_interface = ToolsInterface(
                     session_dir=str(Path(get_app().data_dir) / "Agents" / name / "tools_session"),
                     auto_remove=False,  # Keep session data for agents
@@ -777,8 +782,12 @@ class Tools(MainTool, FileHandler):
 
         # Scripting tools
         # Enhanced tool descriptions for agent understanding
+        def run_script_tool(name: str, args: str = ""):
+            if tools_interface:
+                self.scripts.temp_dir = tools_interface.vfs.current_dir
+            return self.scripts.run_script(name, args)
         builder.add_tool(
-            self.scripts.run_script,
+            run_script_tool,
             "runScript",
             """POWER TOOL: Execute saved scripts to perform complex operations beyond basic functions.
 
@@ -804,7 +813,7 @@ class Tools(MainTool, FileHandler):
             Python scripts can use external libraries via 'uv' dependency management.
             Shell scripts work cross-platform for system operations.
 
-            WHEN TO CREATE: When you need to repeat complex operations, use external libraries, or perform system-level tasks.
+            WHEN TO CREATE:When asked to learn something new or When you need to repeat complex operations, use external libraries, or perform system-level tasks.
 
             Args: name, description, content, script_type ('py' or 'sh'), dependencies (optional - for Python: 'requests pandas numpy' format)
 
@@ -1090,7 +1099,7 @@ class Tools(MainTool, FileHandler):
 
     async def mini_task_completion(self, mini_task: str, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
-                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion"):
+                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False):
         if mini_task is None: return None
         if agent_name is None: return None
         if mini_task == "test": return "test"
@@ -1116,7 +1125,10 @@ class Tools(MainTool, FileHandler):
         messages.append({"role": "user", "content": current_prompt})
 
         # Prepare params for a_run_llm_completion
-        llm_params = {"model": agent.amd.fast_llm_model if agent.amd.use_fast_response else agent.amd.complex_llm_model, "messages": messages}
+        if use_complex:
+            llm_params = {"model": agent.amd.complex_llm_model, "messages": messages}
+        else:
+            llm_params = {"model": agent.amd.fast_llm_model if agent.amd.use_fast_response else agent.amd.complex_llm_model, "messages": messages}
         if max_tokens_override:
             llm_params['max_tokens'] = max_tokens_override
         else:
@@ -1147,7 +1159,7 @@ class Tools(MainTool, FileHandler):
 
     async def mini_task_completion_format(self, mini_task, format_schema: type[BaseModel],
                                           max_tokens_override: int | None = None, agent_name="TaskCompletion",
-                                          task_from="system", mode_overload: Any = None, user_task: str | None = None, auto_context=False):
+                                          task_from="system", mode_overload: Any = None, user_task: str | None = None, auto_context=False, **kwargs):
         if mini_task is None: return None
         self.print(f"Running formatted mini task, volume {len(mini_task)}")
 
@@ -1242,7 +1254,7 @@ class Tools(MainTool, FileHandler):
     # and specific summarization strategies. For now, keeping their structure,
     # but calls to self.format_class or self.mini_task_completion will become async.
 
-    async def mas_text_summaries(self, text, min_length=36000, ref=None):
+    async def mas_text_summaries(self, text, min_length=36000, ref=None, max_tokens_override=None):
         len_text = len(text)
         if len_text < min_length: return text
         key = self.one_way_hash(text, 'summaries', 'isaa')
@@ -1257,7 +1269,7 @@ class Tools(MainTool, FileHandler):
         )
         summary = await self.mini_task_completion(
             mini_task=f"Summarize this text, focusing on aspects related to '{ref if ref else 'key details'}'. The text is: {text}",
-            mode=self.controller.rget(SummarizationMode))
+            mode=self.controller.rget(SummarizationMode), max_tokens_override=max_tokens_override, agent_name="self")
 
         if summary is None or not isinstance(summary, str):
             # Fallback or error handling

@@ -24,7 +24,6 @@ from inspect import (
 from pathlib import Path
 from typing import Any
 
-import nest_asyncio
 from pydantic import BaseModel
 
 import toolboxv2
@@ -554,7 +553,8 @@ class MockIPython:
         self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
         self._venv_path = self._session_dir / 'venv'
         self.user_ns: dict[str, Any] = {}
-        nest_asyncio.apply()
+        # import nest_asyncio
+        # nest_asyncio.apply()
         # Set up virtual environment if it doesn't exist
         with Spinner("Starting virtual environment"):
             self._setup_venv()
