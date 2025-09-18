@@ -1099,7 +1099,7 @@ class Tools(MainTool, FileHandler):
 
     async def mini_task_completion(self, mini_task: str, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
-                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False):
+                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False, **kwargs):
         if mini_task is None: return None
         if agent_name is None: return None
         if mini_task == "test": return "test"
@@ -1133,7 +1133,8 @@ class Tools(MainTool, FileHandler):
             llm_params['max_tokens'] = max_tokens_override
         else:
             llm_params['max_tokens'] = agent.amd.max_tokens
-
+        if kwargs:
+            llm_params.update(kwargs)  # Add any additional kwargs
         if stream_function:
             llm_params['stream'] = True
             # FlowAgent a_run_llm_completion handles stream_callback via agent.stream_callback
