@@ -2101,6 +2101,9 @@ class App(AppType, metaclass=Singleton):
 
         return decorator
 
+    def export(self, *args, **kwargs):
+        return self.tb(*args, **kwargs)
+
     def tb(self, name=None,
            mod_name: str = "",
            helper: str = "",

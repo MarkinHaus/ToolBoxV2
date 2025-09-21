@@ -61,6 +61,7 @@ class CharacterRole(str, Enum):
     MYSTERIOUS = "mysterious"
 
 class ImageStyle(str, Enum):
+    IMAX = "imax"
     REALISTIC = "realistic"
     CARTOON = "cartoon"
     ANIME = "anime"
@@ -142,6 +143,7 @@ class StylePreset(BaseModel):
         """Generate style-consistent prompt"""
 
         style_mapping = {
+            ImageStyle.IMAX: "IMAX quality, cinematic, nature style, realistic textures, organic",
             ImageStyle.REALISTIC: "Photorealistic rendering, ultra-detailed, 4K resolution, true-to-life colors",
             ImageStyle.CARTOON: "Cartoon style, vibrant colors, clean outlines, cel-shaded look",
             ImageStyle.ANIME: "Anime art style, manga-inspired, expressive characters, detailed eyes, soft shading",
@@ -395,8 +397,8 @@ Visual Style Requirements:
 - Color scheme: {style_preset.color_palette}
 
 Story Requirements:
-- 2-3 main characters with distinct visual features optimized for {style_preset.image_style.value} style
-- 3-4 scenes, each 2-3 sentences of narration + dialogue
+- 0-3 main characters with distinct visual features optimized for {style_preset.image_style.value} style, 0 catheters possible only narrator.
+- 3-4 scenes, each 2-3 sentences of narration + (dialogue)
 - Clear world setting description (2-4 sentences)
 - Character descriptions should work well with {style_preset.image_style.value} rendering
 
@@ -1122,8 +1124,8 @@ class AudioGenerator:
 
         # ElevenLabs high-quality voice mapping
         self.elevenlabs_voice_map = {
-            VoiceType.NARRATOR: "IRHApOXLvnW57QJPQH2P",  # Rachel - Professional female narrator
-            VoiceType.MALE_1: "c6SfcYrb2t09NHXiT80T",  # Adam - Deep, authoritative male
+            VoiceType.NARRATOR: "c6SfcYrb2t09NHXiT80T",  # Rachel - Professional female narrator
+            VoiceType.MALE_1: "UgBBYS2sOqTuMpoF3BR0",  # Adam - Deep, authoritative male
             VoiceType.MALE_2: "TX3LPaxmHKxFdv7VOQHJ",  # Antoni - Warm, friendly male
             VoiceType.MALE_3: "N2lVS1w4EtoT3dr4eOWO",  # Sam - Energetic male
             VoiceType.MALE_4: "JBFqnCBsd6RMkjVDRZzb",  # Arnold - Mature male
@@ -6207,9 +6209,6 @@ class ProjectManager:
 
         if not story.title or len(story.title.strip()) < 3:
             errors.append("Story title too short or missing")
-
-        if not story.characters or len(story.characters) < 1:
-            errors.append("Story needs at least one character")
 
         if not story.scenes or len(story.scenes) < 1:
             errors.append("Story needs at least one scene")
