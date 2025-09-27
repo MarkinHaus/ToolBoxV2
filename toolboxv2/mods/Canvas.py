@@ -898,7 +898,7 @@ ENHANCED_CANVAS_HTML_TEMPLATE_V0_1_0 = """
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.min.js"></script>
 <script type="module" defer>
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+//pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
   import { getStroke } from 'https://cdn.jsdelivr.net/npm/perfect-freehand@1.2.2/dist/esm/index.mjs';
 
   window.getStroke = getStroke; // Make globally reachable
