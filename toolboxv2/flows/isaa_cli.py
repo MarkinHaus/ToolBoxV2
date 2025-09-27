@@ -257,7 +257,6 @@ class WorkspaceIsaasCli:
             )
 
             # Finale Zusammenfassung nach erfolgreichem Lauf
-            self.printer.print_final_summary()
 
             self.formatter.print_success("Agent response:")
             print(response)

@@ -53,7 +53,6 @@ from .base.Agent.builder import (
 from .base.AgentUtils import (
     AISemanticMemory,
     ControllerManager,
-    Scripts,
     detect_shell,
     safe_decode,
 )
@@ -443,7 +442,6 @@ class Tools(MainTool, FileHandler):
         self.summarization_mode = 1
         self.summarization_limiter = 102000
         self.speak = lambda x, *args, **kwargs: x  # Placeholder
-        self.scripts = Scripts(f"{app.data_dir}{extra_path}/ScriptFile")
 
         self.default_setter = None  # For agent builder customization
         self.initialized = False
@@ -494,7 +492,6 @@ class Tools(MainTool, FileHandler):
         # This needs to be adapted. Serialization of FlowAgent is through AgentConfig.
         return {
             "Agents": self.serialize_all(),  # Returns dict of AgentConfig dicts
-            "customFunctions": json.dumps(self.scripts.scripts),  # Remains same
         }
 
     async def init_from_augment(self, augment, agent_name: str = 'self'):
@@ -515,15 +512,6 @@ class Tools(MainTool, FileHandler):
             agents_configs_dict = augment['Agents']
             self.deserialize_all(agents_configs_dict)
             self.print("Agent configurations loaded.")
-
-        # Load custom functions (scripts)
-        if "customFunctions" in a_keys:
-            custom_functions = augment['customFunctions']
-            if isinstance(custom_functions, str):
-                custom_functions = json.loads(custom_functions)
-            if custom_functions:
-                self.scripts.scripts = custom_functions
-                self.print("Custom functions loaded")
 
         # Tools are now handled by the builder system during agent creation
         if "tools" in a_keys:
@@ -589,9 +577,6 @@ class Tools(MainTool, FileHandler):
         sys.setrecursionlimit(1500)
         self.load_keys_from_env()
 
-        # Background loading
-        self.scripts.load_scripts()
-
         with Spinner(message="Building Controller", symbols='c'):
             self.controller.init(self.config['controller_file'])
         self.config["controller-init"] = True
@@ -627,8 +612,6 @@ class Tools(MainTool, FileHandler):
                 # asyncio.run(agent_instance.close()) # This might block, consider task group
                 # The AgentConfig is already in self.agent_data, which should be saved.
                 pass  # Agent instances are not directly saved, their configs are.
-
-        self.print(self.scripts.save_scripts())
         threading.Thread(target=self.save_to_mem_sync, daemon=True).start()  # Sync wrapper for save_to_mem
 
         # Save controller if initialized
@@ -664,7 +647,7 @@ class Tools(MainTool, FileHandler):
             memory_instance.load_all_memories(f"{get_app().data_dir}/Memory/")
         self.print("Memory loading process initiated")
 
-    def get_agent_builder(self, name="self", extra_tools=None) -> FlowAgentBuilder:
+    def get_agent_builder(self, name="self", extra_tools=None, add_tools=True, add_base_tools=True, working_directory=None) -> FlowAgentBuilder:
         if name == 'None':
             name = "self"
 
@@ -727,6 +710,8 @@ class Tools(MainTool, FileHandler):
                     },
                     variable_manager=getattr(self, 'variable_manager', None),
                 )
+                if working_directory:
+                    tools_interface.set_base_directory(working_directory)
 
                 self.tools_interfaces[name] = tools_interface
                 self.print(f"Created ToolsInterface for agent: {name}")
@@ -775,66 +760,23 @@ class Tools(MainTool, FileHandler):
             return 'Data added to memory.' if result else 'Error adding data to memory.'
 
         # Add ISAA core tools
-        builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
-        builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
-        builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
-        builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
-        # Scripting tools
-        # Enhanced tool descriptions for agent understanding
-        def run_script_tool(name: str, args: str = ""):
-            if tools_interface:
-                self.scripts.temp_dir = tools_interface.vfs.current_dir
-            return self.scripts.run_script(name, args)
-        builder.add_tool(
-            run_script_tool,
-            "runScript",
-            """POWER TOOL: Execute saved scripts to perform complex operations beyond basic functions.
 
-            USE WHEN: You need file processing, data analysis, web scraping, API calls, system operations, mathematical computations, or any task requiring libraries/complex logic. or built-in tools not avalabel
-
-            DON'T USE: For simple text operations, basic math, or tasks you can do with built-in tools. or built-in tools avalabel
-
-            Args: name (required), args (optional - space-separated arguments for the script)
-            Example: runScript('web_scraper', 'https://example.com json')"""
-        )
-
-        builder.add_tool(
-            self.scripts.get_scripts_list,
-            "listScripts",
-            """View your extended capabilities. Shows all available scripts that enhance your abilities beyond built-in functions. Use this to discover what powerful operations you can perform."""
-        )
-
-        builder.add_tool(
-            self.scripts.create_script,
-            "createScript",
-            """CAPABILITY ENHANCER: Create scripts to permanently extend your abilities.
-
-            Python scripts can use external libraries via 'uv' dependency management.
-            Shell scripts work cross-platform for system operations.
-
-            WHEN TO CREATE:When asked to learn something new or When you need to repeat complex operations, use external libraries, or perform system-level tasks.
-
-            Args: name, description, content, script_type ('py' or 'sh'), dependencies (optional - for Python: 'requests pandas numpy' format)
-
-            Example: createScript('data_analyzer', 'Analyze CSV data', '...code...', 'py', 'pandas matplotlib')"""
-        )
-
-        builder.add_tool(
-            self.scripts.remove_script,
-            "deleteScript",
-            """Remove a script capability. Use when a script is no longer needed or needs to be replaced. Args: name"""
-        )
+        if add_base_tools:
+            builder.add_tool(memory_search_tool, "memorySearch", "Search ISAA's semantic memory")
+            builder.add_tool(save_to_memory_tool, "saveDataToMemory", "Save data to ISAA's semantic memory")
+            builder.add_tool(self.web_search, "searchWeb", "Search the web for information")
+            builder.add_tool(self.shell_tool_function, "shell", f"Run shell command in {detect_shell()}")
 
         # Add ToolsInterface tools dynamically
-        if tools_interface:
+        if add_tools and tools_interface:
             try:
                 # Get all tools from ToolsInterface
                 interface_tools = tools_interface.get_tools()
 
                 # Determine which tools to add based on agent name/type
                 tool_categories = {
-                    'code': ['execute_python', 'execute_rust', 'install_package'],
+                    'code': ['execute_python', 'install_package'],
                     'file': ['write_file', 'replace_in_file', 'read_file', 'list_directory', 'create_directory'],
                     'session': ['get_execution_history', 'clear_session', 'get_variables'],
                     'config': ['set_base_directory', 'set_current_file']
@@ -912,7 +854,6 @@ class Tools(MainTool, FileHandler):
             self.print(f"Failed to save agent metadata for {name}: {e}")
 
         return builder
-
 
     def get_tools_interface(self, agent_name: str = "self") -> ToolsInterface | None:
         """

@@ -226,3 +226,6 @@ ignore = [
 # Optional: Spezifische Konfigurationen für flake8-bandit
 # [tool.ruff.lint.flake8-bandit]
 # requests-timeout = 10 # Für S113 (requests without timeout), Standard ist 5
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

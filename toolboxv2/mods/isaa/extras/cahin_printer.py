@@ -1,19 +1,20 @@
 import time
-
+from typing import Any
 
 from toolboxv2.mods.isaa.base.Agent.types import (
     NodeStatus,
     ProgressEvent, ChainMetadata,
 )
+from toolboxv2.mods.isaa.extras.terminal_progress import arguments_summary
 
 
 class ChainProgressTracker:
     """Enhanced progress tracker for chain execution with live display"""
 
-    def __init__(self, chain_printer: 'ChainPrinter'):
+    def __init__(self, chain_printer: 'ChainPrinter' = None):
         self.events: list[ProgressEvent] = []
         self.start_time = time.time()
-        self.chain_printer = chain_printer
+        self.chain_printer = chain_printer or ChainPrinter()
         self.current_task = None
         self.task_count = 0
         self.completed_tasks = 0
@@ -49,7 +50,7 @@ class ChainProgressTracker:
                                                                                                                  "Unknown error"))))
 
         elif event.event_type == "tool_call" and event.success == True:
-            self.chain_printer.print_tool_usage_success(event.tool_name, event.duration, event.is_meta_tool)
+            self.chain_printer.print_tool_usage_success(event.tool_name, event.duration, event.is_meta_tool, event.tool_args)
 
         elif event.event_type == "outline_created":
             self.chain_printer.print_outline_created(event.metadata.get("outline", {}))
@@ -118,11 +119,11 @@ class ChainPrinter:
         status = self._colorize('✅ COMPLETED', 'success') if success else self._colorize('❌ FAILED', 'error')
         print(f"\n{status} {chain_name} ({duration:.2f}s)\n")
 
-    def print_tool_usage_success(self, tool_name: str, duration: float, is_meta_tool: bool = False):
+    def print_tool_usage_success(self, tool_name: str, duration: float, is_meta_tool: bool = False, tool_args: dict[str, Any] = None):
         if is_meta_tool:
-            print(f"  {self._colorize('🔧 ', 'info')}{tool_name} completed ({duration:.2f}s)")
+            print(f"  {self._colorize('🔧 ', 'info')}{tool_name} completed ({duration:.2f}s) {arguments_summary(tool_args)}")
         else:
-            print(f"  {self._colorize('🔩 ', 'info')}{tool_name} completed ({duration:.2f}s)")
+            print(f"  {self._colorize('🔩 ', 'info')}{tool_name} completed ({duration:.2f}s) {arguments_summary(tool_args)}")
 
     def print_tool_usage_error(self, tool_name: str, error: str, is_meta_tool: bool = False):
         if is_meta_tool:

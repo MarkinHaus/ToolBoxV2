@@ -33,7 +33,19 @@ try:
     from litellm.utils import get_max_tokens
     LITELLM_AVAILABLE = True
     # prin litllm version
-    print(f"INFO: LiteLLM version {litellm.api_version} found.")
+
+
+    def get_litellm_version():
+        version = None
+        try:
+            import importlib.metadata
+            version = importlib.metadata.version("litellm")
+        except importlib.metadata.PackageNotFoundError:
+            version = None
+        except Exception as e:
+            version = None
+        return version
+    print(f"INFO: LiteLLM version {get_litellm_version()} found.")
 except ImportError:
     LITELLM_AVAILABLE = False
     class BudgetManager: pass
@@ -535,16 +547,15 @@ focus on correct quotation and correct yaml format!
 
         try:
             agent_instance = prep_res["agent_instance"]
-            content = await agent_instance.a_run_llm_completion(
+            plan_data = await agent_instance.a_format_class(PlanData,
                 model=prep_res.get("complex_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                messages=[{"role": "user", "content": prompt}],
+                prompt= prompt,
                 temperature=0.3,
                 max_tokens=4512,
-                node_name="TaskPlannerNode", task_id="fast_simple_planning"
+                auto_context=True,
+                node_name="TaskPlannerNode",
+                task_id="fast_simple_planning"
             )
-
-            yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
-            plan_data = yaml.safe_load(yaml_content)
             # print("Simple", json.dumps(plan_data, indent=2))
             return TaskPlan(
                 id=str(uuid.uuid4()),
@@ -706,22 +717,14 @@ Generate the adaptive execution plan:
             model_to_use = prep_res.get("complex_llm_model", "openrouter/openai/gpt-4o")
             agent_instance = prep_res["agent_instance"]
 
-            content = await agent_instance.a_run_llm_completion(
+            plan_data = await agent_instance.a_format_class(PlanData,
                 model=model_to_use,
-                messages=[{"role": "user", "content": prompt}],
+                prompt= prompt,
                 temperature=0.3,
-                #max_tokens=2048,
+                auto_context=True,
                 node_name="TaskPlannerNode",
                 task_id="goals_based_planning" if planning_mode == "goals_based" else "adaptive_planning"
             )
-
-            if "```yaml" in content:
-                yaml_content = content.split("```yaml")[1].split("```")[0].strip()
-            else:
-                yaml_content = content
-
-            plan_data = yaml.safe_load(yaml_content)
-
             # Create specialized tasks
             tasks = []
             for task_data in plan_data.get("tasks", []):
@@ -2374,6 +2377,7 @@ class LLMToolNode(AsyncNode):
                     model=model_to_use,
                     messages=messages,
                     temperature=0.7,
+                    stream=False,
                     # max_tokens=2048,
                     node_name="LLMToolNode", task_id="llm_phase_" + str(runs)
                 )
@@ -2460,10 +2464,9 @@ class LLMToolNode(AsyncNode):
         query = prep_res.get('task_description', '').lower()
 
         base_message += ("\n\nAlways follow this action pattern"
-                         "**THINK** -> **PLAN** -> (**ADJUST**) and (**UPDATE**) or **ACT** using tools!\n"
+                         "**THINK** -> **PLAN** -> **ACT** using tools!\n"
                          "all progress must be stored to ( variable system, memory, external services )!\n"
-                         "if working on code or file based tasks, update and crate the files!\n"
-                         "all text only steps ar discarded and not stored! only the final response is stored! ")
+                         "if working on code or file based tasks, update and crate the files! sve result in file!\n")
 
         # --- Part 1: List available tools & capabilities ---
         if available_tools:
@@ -2849,14 +2852,14 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                         task_id = result.get("task_id", "unknown")
                         preview = result.get("preview", "")[:100] + "..."
                         success = "✅" if result.get("success") else "❌"
-                        unified_context_parts.append(f"{success} {task_id}: {preview}")
+                        unified_context_parts.append(f"{success=} {task_id}: {preview=}")
 
                 # World model facts from unified context
                 relevant_facts = unified_context.get("relevant_facts", [])
                 if relevant_facts:
                     unified_context_parts.append("\n## Relevant Known Facts")
-                    for key, value in relevant_facts[:3]:  # Top 3 facts
-                        fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
+                    for key, value in relevant_facts:  # Top 3 facts
+                        fact_preview = str(value)
                         unified_context_parts.append(f"- {key}: {fact_preview}")
 
             except Exception as e:
@@ -3070,15 +3073,15 @@ class TaskManagementFlow(AsyncFlow):
     The flow now starts with strategic reasoning and delegates to specialized sub-systems.
     """
 
-    def __init__(self, max_parallel_tasks: int = 3):
+    def __init__(self, max_parallel_tasks: int = 3, max_reasoning_loops: int = 24, max_tool_calls:int = 5):
         # Create the strategic reasoning core (new primary node)
-        self.llm_reasoner = LLMReasonerNode()
+        self.llm_reasoner = LLMReasonerNode(max_reasoning_loops=max_reasoning_loops)
 
         # Create specialized sub-system nodes (now supporting nodes)
         self.planner_node = TaskPlannerNode()
         self.executor_node = TaskExecutorNode(max_parallel=max_parallel_tasks)
         self.sync_node = StateSyncNode()
-        self.llm_tool_node = LLMToolNode()
+        self.llm_tool_node = LLMToolNode(max_tool_calls=max_tool_calls)
 
         # Store references for the reasoner to access sub-systems
         # These will be injected into shared state during execution
@@ -3970,7 +3973,7 @@ class LLMReasonerNode(AsyncNode):
     context management, auto-recovery, and intensive variable system integration.
     """
 
-    def __init__(self, max_reasoning_loops: int = 12, **kwargs):
+    def __init__(self, max_reasoning_loops: int = 24, **kwargs):
         super().__init__(**kwargs)
         self.max_reasoning_loops = max_reasoning_loops
         self.reasoning_context = []
@@ -4430,7 +4433,7 @@ Create a structured outline using this EXACT format:
 ```outline
 OUTLINE_START
 Step 1: [Brief description of first step]
-- Method: [internal_reasoning | delegate_to_llm_tool_node | create_and_execute_plan | direct_response]
+- Method: [internal_reasoning | delegate_to_llm_tool_node | direct_response]
 - Expected outcome: [What this step should achieve]
 - Success criteria: [How to know this step is complete]
 
@@ -4447,7 +4450,7 @@ OUTLINE_END
 1. Outline must have between 1 and 7 steps.
 2. For simple queries, a single "Final Step" using the 'direct_response' method is the correct approach.
 3. Each step must have clear success criteria and build logically toward the answer.
-4. Be specific about which meta-tools to use for each step. meta-tools ar not Tools ! avalabel meta-tools *Method* (internal_reasoning, delegate_to_llm_tool_node, create_and_execute_plan, direct_response) no exceptions
+4. Be specific about which meta-tools to use for each step. meta-tools ar not Tools ! avalabel meta-tools *Method* (internal_reasoning, delegate_to_llm_tool_node, direct_response) no exceptions
 
 Create the outline now:"""
 
@@ -4852,6 +4855,7 @@ Create the outline now:"""
 
 ## AVAILABLE META-TOOLS:
 You have access to these meta-tools to control sub-systems. Use the EXACT syntax shown:
+{self.meta_tools_registry if self.meta_tools_registry else ''}
 
 **META_TOOL_CALL: internal_reasoning(thought: str, thought_number: int, total_thoughts: int, next_thought_needed: bool, current_focus: str, key_insights: list[str], potential_issues: list[str], confidence_level: float)**
 - Purpose: Structure your thinking process explicitly
@@ -4868,12 +4872,6 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Use for: Web searches, file operations, API calls, single-, two-, or three-step tool usage
 - Example: META_TOOL_CALL: delegate_to_llm_tool_node(task_description="Search for latest news about AI developments", tools_list=["search_web"])
 - Rule: always validate delegate_to_llm_tool_node result. will be available in <immediate_context> after execution!
-
-**META_TOOL_CALL: create_and_execute_plan(goals: list[str])**
-- Purpose: Handle complex, multi-step projects with dependencies
-- Use for: Tasks requiring coordination, parallel execution, or complex workflows
-- Example: META_TOOL_CALL: create_and_execute_plan(goals=["Research company A financial data", "Research company B financial data", "Compare {{results.task_1.data}} and {{results.task_2.data}} and create report"])
-- Rule: always validate create_and_execute_plan result. will be available in <immediate_context> after execution!
 
 **META_TOOL_CALL: read_from_variables(scope: str, key: str, purpose: str)**
 - Unified context data is available in various scopes
@@ -5587,7 +5585,7 @@ You MUST use the specified method and achieve the expected outcome before advanc
                     result["action_taken"] = True
                     result["progress_made"] = True
 
-                elif tool_name == "create_and_execute_plan":
+                elif False and tool_name == "create_and_execute_plan":
                     meta_result = await self._execute_enhanced_create_plan(args, prep_res)
                     execution_details.update({
                         "goals_list": args.get("goals", []),
@@ -5597,6 +5595,17 @@ You MUST use the specified method and achieve the expected outcome before advanc
                         "complex_workflow": True,
                         "estimated_complexity": self._estimate_plan_complexity(args.get("goals", [])),
                         "outline_step_completion": args.get("outline_step_completion", False)
+                    })
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+
+                elif False and tool_name == "create_and_run_micro_plan":
+                    meta_result = await self._execute_create_and_run_micro_plan(args, prep_res)
+                    execution_details.update({
+                        "plan_data": args.get("plan_data", {}),
+                        "plan_tasks_count": len(args.get("plan_data", {}).get("tasks", [])),
+                        "sub_system_execution": True,
+                        "delegation_target": "TaskExecutorNode"
                     })
                     result["action_taken"] = True
                     result["progress_made"] = True
@@ -5677,6 +5686,18 @@ You MUST use the specified method and achieve the expected outcome before advanc
                     result["action_taken"] = True
                     result["progress_made"] = True
                     return result
+
+                # test if tool name is meta_tools_registry if so try to run it
+                elif tool_name in self.meta_tools_registry:
+                    function = self.meta_tools_registry[tool_name]
+                    meta_result = await function(**args)
+                    result["action_taken"] = True
+                    result["progress_made"] = True
+                    execution_details.update({
+                        "tool_name": tool_name,
+                        "tool_args": args,
+                        "tool_result": meta_result
+                    })
 
                 # test if tool name is in agent tools if so try to run it
                 elif tool_name in self.agent_instance.tool_registry:
@@ -6001,6 +6022,81 @@ DELEGATION END
             result["context_addition"] += f"\n✓ OUTLINE STEP {self.current_outline_step + 1} COMPLETED"
 
         return result
+
+    # Fügen Sie dies innerhalb der Klasse LLMReasonerNode hinzu
+
+    async def _execute_create_and_run_micro_plan(self, args: dict, prep_res: dict) -> dict[str, Any]:
+        """
+        Erstellt einen kleinen, dynamischen TaskPlan aus den LLM-Daten und führt ihn sofort
+        mit dem TaskExecutorNode aus.
+        """
+        plan_data = args.get("plan_data", {})
+
+        # Validierung der Eingabe
+        if not isinstance(plan_data, dict) or "tasks" not in plan_data:
+            error_msg = "❌ Micro-Plan-Fehler: Ungültiges `plan_data`-Format. Es muss ein Dictionary mit einem 'tasks'-Schlüssel sein."
+            eprint(error_msg)
+            return {"context_addition": error_msg}
+
+        try:
+            # 1. Task-Objekte aus den Rohdaten erstellen
+            tasks = []
+            for task_data in plan_data.get("tasks", []):
+                task_type = task_data.pop("type", "generic")  # 'type' entfernen, da es kein Task-Argument ist
+                task_class = {"LLMTask": LLMTask, "ToolTask": ToolTask, "DecisionTask": DecisionTask}.get(task_type,
+                                                                                                          Task)
+                tasks.append(task_class(**task_data))
+
+            # 2. TaskPlan-Objekt erstellen
+            plan = TaskPlan(
+                id=f"micro_plan_{str(uuid.uuid4())[:8]}",
+                name=plan_data.get("plan_name", "Dynamischer Micro-Plan"),
+                description=plan_data.get("description", "Vom LLMReasoner on-the-fly erstellter Plan"),
+                tasks=tasks,
+                execution_strategy=plan_data.get("execution_strategy", "sequential")
+            )
+
+            # 3. Den TaskExecutorNode vorbereiten und ausführen
+            task_executor_instance = prep_res.get("task_executor")
+            if not task_executor_instance:
+                return {"context_addition": "❌ Micro-Plan-Fehler: TaskExecutorNode-Instanz nicht gefunden."}
+
+            # Shared-State für den Executor-Lauf vorbereiten
+            executor_shared = {
+                "current_plan": plan,
+                "tasks": {task.id: task for task in tasks},
+                "variable_manager": self.variable_manager,
+                "agent_instance": self.agent_instance,
+                "progress_tracker": prep_res.get("progress_tracker"),
+                "fast_llm_model": prep_res.get("fast_llm_model"),
+                "complex_llm_model": prep_res.get("complex_llm_model"),
+                "available_tools": prep_res.get("available_tools", []),
+            }
+
+            # 4. Ausführungsschleife für den Executor
+            max_cycles = 10
+            for i in range(max_cycles):
+                result_status = await task_executor_instance.run_async(executor_shared)
+                if result_status in ["plan_completed", "execution_error", "needs_dynamic_replan"]:
+                    break
+
+            # 5. Ergebnisse zusammenfassen für den Reasoner-Kontext
+            final_results = executor_shared.get("results", {})
+            completed_tasks = [t for t in tasks if t.status == "completed"]
+            failed_tasks = [t for t in tasks if t.status == "failed"]
+
+            summary = f"""✅ Micro-Plan ausgeführt:
+    - Plan: '{plan.name}'
+    - Status: {len(completed_tasks)} erfolgreich, {len(failed_tasks)} fehlgeschlagen.
+    - Ergebnisse sind jetzt in den `results`-Variablen verfügbar (z.B. `{{{{ results.{tasks[0].id}.data }}}}`)."""
+
+            return {"context_addition": summary}
+
+        except Exception as e:
+            import traceback
+            eprint(f"Fehler bei der Ausführung des Micro-Plans: {e}")
+            print(traceback.format_exc())
+            return {"context_addition": f"❌ Micro-Plan-Fehler: {str(e)}"}
 
     async def _execute_advance_outline_step(self, args: dict, prep_res: dict) -> dict[str, Any]:
         """Execute outline step advancement"""
@@ -7493,7 +7589,7 @@ class VariableManager:
         all_vars_docs = {}
 
         # 1. Document the world_model (top-level variables)
-        self._document_structure(self.world_model, "", all_vars_docs)
+        # self._document_structure(self.world_model, "", all_vars_docs)
 
         # 2. Document each scope
         for scope_name, scope_data in self.scopes.items():
@@ -7501,19 +7597,18 @@ class VariableManager:
             if scope_name == "shared":
                 continue
             if isinstance(scope_data, dict):
-                preview = f"Object with keys: {list(scope_data.keys())[:3]}" + (
-                    "..." if len(scope_data.keys()) > 3 else "")
+                pass
             elif isinstance(scope_data, list):
-                preview = f"List with {len(scope_data)} items"
+                pass
             elif isinstance(scope_data, str | int):
-                preview = str(scope_data)
+                pass
             else:
                 continue
 
-            all_vars_docs[scope_name] = {'preview': preview, 'type': type(scope_data).__name__}
+            all_vars_docs[scope_name] = scope_data
 
             # Recurse into the scope's data
-            self._document_structure(scope_data, scope_name, all_vars_docs)
+            # self._document_structure(scope_data, scope_name, all_vars_docs)
 
         return all_vars_docs
 
@@ -7758,47 +7853,121 @@ class UnifiedContextManager:
         try:
             parts = []
 
+            # Header with session info
+            session_id = unified_context.get('session_id', 'unknown')
+            query = unified_context.get('query', '')
+            context_type = unified_context.get('context_type', 'full')
+            parts.append(f"## Session Context ({context_type})")
+            parts.append(f"Session: {session_id}")
+            if query:
+                parts.append(f"Query: {query}")
+
             # Recent Chat History
             chat_history = unified_context.get('chat_history', [])
             if chat_history:
-                parts.append("## Recent Conversation")
+                parts.append("\n## Recent Conversation")
                 for msg in chat_history[-5:]:  # Last 5 messages
                     timestamp = msg.get('timestamp', '')[:19]  # Remove microseconds
                     role = msg.get('role', 'unknown')
-                    content = msg.get('content', '')[:500] + ("..." if len(msg.get('content', '')) > 500 else "")
-                    parts.append(f"[{timestamp}] {role}: {content}")
+                    content = msg.get('content', '')
+                    content_preview = content[:500] + ("..." if len(content) > 500 else "")
+                    parts.append(f"[{timestamp}] {role}: {content_preview}")
 
-            # System Status
+            # Variable System State
+            variables = unified_context.get('variables', {})
+            if variables and variables != {'status': 'variable_manager_not_available'}:
+                parts.append("\n## Variable System")
+
+                # Available scopes
+                scopes = variables.get('available_scopes', [])
+                if scopes:
+                    parts.append(f"Available Scopes: {', '.join(scopes)}")
+
+                # Total variables count
+                total_vars = variables.get('total_variables', 0)
+                if total_vars > 0:
+                    parts.append(f"Total Variables: {total_vars}")
+                    parts.append(f"Total Variables Values: \n{yaml.dump(self.variable_manager.get_available_variables())}")
+
+                # Recent results
+                recent_results = variables.get('recent_results', [])
+                if recent_results:
+                    parts.append(f"Recent Results ({len(recent_results)}):")
+                    for result in recent_results[:3]:  # Top 3 results
+                        task_id = result.get('task_id', 'unknown')
+                        preview = str(result.get('preview', ''))[:100]
+                        preview += "..." if len(str(result.get('preview', ''))) > 100 else ""
+                        parts.append(f"  - {task_id}: {preview}")
+            elif variables.get('status') == 'variable_manager_not_available':
+                parts.append("\n## Variable System: Not Available")
+
+            # World Model Facts (Relevant Facts)
+            relevant_facts = unified_context.get('relevant_facts', [])
+            if relevant_facts:
+                parts.append("\n## World Model Facts")
+                for fact in relevant_facts[:5]:  # Top 5 facts
+                    if isinstance(fact, (list, tuple)) and len(fact) >= 2:
+                        # Handle (key, value) tuple format
+                        key, value = fact[0], fact[1]
+                        fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
+                        parts.append(f"- {key}: {fact_preview}")
+                    elif isinstance(fact, dict):
+                        # Handle dict format
+                        for key, value in list(fact.items())[:1]:  # Just first item
+                            fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
+                            parts.append(f"- {key}: {fact_preview}")
+
+            # Execution State
             execution_state = unified_context.get('execution_state', {})
             if execution_state:
-                parts.append("\n## Current System State")
-                parts.append(f"Status: {execution_state.get('system_status', 'unknown')}")
+                parts.append("\n## System Status")
+
+                system_status = execution_state.get('system_status', 'unknown')
+                parts.append(f"Status: {system_status}")
 
                 active_tasks = execution_state.get('active_tasks', [])
                 if active_tasks:
                     parts.append(f"Active Tasks: {len(active_tasks)}")
+                    # Show task previews if available
+                    for task in active_tasks[:2]:  # Show first 2 tasks
+                        task_str = str(task)[:80] + ("..." if len(str(task)) > 80 else "")
+                        parts.append(f"  - {task_str}")
 
                 recent_completions = execution_state.get('recent_completions', [])
                 if recent_completions:
                     parts.append(f"Recent Completions: {len(recent_completions)}")
+                    # Show completion previews if available
+                    for completion in recent_completions[:2]:  # Show first 2 completions
+                        comp_str = str(completion)[:80] + ("..." if len(str(completion)) > 80 else "")
+                        parts.append(f"  - {comp_str}")
 
-            # Available Data
-            variables = unified_context.get('variables', {})
-            if variables and variables.get('recent_results'):
-                parts.append("\n## Available Results")
-                recent_results = variables['recent_results']
-                for result in recent_results[:3]:  # Top 3 results
-                    parts.append(f"- {result.get('task_id', 'unknown')}: {str(result.get('preview', ''))[:100]}...")
+            # Session Statistics
+            session_stats = unified_context.get('session_stats', {})
+            if session_stats:
+                parts.append("\n## Session Statistics")
 
-            # World Model Facts
-            relevant_facts = unified_context.get('relevant_facts', [])
-            if relevant_facts:
-                parts.append("\n## Known Facts")
-                for key, value in relevant_facts[:5]:  # Top 5 facts
-                    fact_preview = str(value)[:100] + ("..." if len(str(value)) > 100 else "")
-                    parts.append(f"- {key}: {fact_preview}")
+                total_sessions = session_stats.get('total_sessions', 0)
+                if total_sessions > 0:
+                    parts.append(f"Total Sessions: {total_sessions}")
 
-            parts.append(f"\n---\nContext generated at: {unified_context.get('timestamp', 'unknown')}")
+                current_length = session_stats.get('current_session_length', 0)
+                if current_length > 0:
+                    parts.append(f"Current Session Length: {current_length} messages")
+
+                cache_enabled = session_stats.get('cache_enabled', False)
+                parts.append(f"Cache Enabled: {cache_enabled}")
+
+            # Error handling
+            if unified_context.get('error'):
+                parts.append(f"\n## Error")
+                parts.append(f"Error: {unified_context['error']}")
+
+            if unified_context.get('fallback_mode'):
+                parts.append("⚠️  Running in fallback mode")
+
+            # Footer with timestamp
+            timestamp = unified_context.get('timestamp', 'unknown')
+            parts.append(f"\n---\nContext generated at: {timestamp}")
 
             return "\n".join(parts)
 
@@ -8097,6 +8266,11 @@ class FlowAgent:
 
         rprint(f"FlowAgent initialized: {amd.name}")
 
+    def task_flow_settings(self, max_parallel_tasks: int = 3, max_reasoning_loops: int = 24, max_tool_calls:int = 5):
+        self.task_flow.executor_node.max_parallel = max_parallel_tasks
+        self.task_flow.llm_reasoner.max_reasoning_loops = max_reasoning_loops
+        self.task_flow.llm_tool_node.max_tool_calls = max_tool_calls
+
     @property
     def progress_callback(self):
         return self.progress_tracker.progress_callback
@@ -8171,7 +8345,8 @@ class FlowAgent:
             if kwargs.get("stream", False):
                 kwargs["stream_options"] = {"include_usage": True}
 
-            with Spinner("Calling LLM..."):
+            # detailed informations str
+            with Spinner(f"LLM Call {self.amd.name}@{node_name}#{task_id if task_id else model_preference}-{kwargs['model']}"):
                 response = await litellm.acompletion(**kwargs)
 
             if not kwargs.get("stream", False):
@@ -8710,7 +8885,7 @@ class FlowAgent:
         for tool_name in cached_capabilities:
             if tool_name in self._tool_capabilities and tool_name not in registered_tools:
                 del self._tool_capabilities[tool_name]
-                print(f"Removed outdated capability for unavailable tool: {tool_name}")
+                iprint(f"Removed outdated capability for unavailable tool: {tool_name}")
 
         for tool_name in tqdm(self.shared["available_tools"], desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
             if tool_name not in self._tool_capabilities:
@@ -8783,9 +8958,9 @@ class FlowAgent:
         session_managers = self.shared.get("session_managers", {})
         for name, manager in session_managers.items():
             stats["session_managers"][name] = {
-                "history_length": len(manager.history),
-                "max_length": manager.max_length,
-                "space_name": manager.space_name
+                "history_length": len(manager.history if hasattr(manager, 'history') else (manager.get("history", []) if hasattr(manager, 'get') else [])),
+                "max_length": manager.max_length if hasattr(manager, 'max_length') else manager.get("max_length", 0),
+                "space_name": manager.space_name if hasattr(manager, 'space_name') else manager.get("space_name", "")
             }
 
         # Context node statistics if available
@@ -9203,7 +9378,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
         except Exception as e:
             eprint(f"Checkpoint-Speicherung fehlgeschlagen: {e}")
-            print(checkpoint)
+            import traceback
+            print(traceback.format_exc())
             return False
 
     async def load_latest_checkpoint(self, auto_restore_history: bool = True, max_age_hours: int = 24) -> dict[
@@ -9838,6 +10014,18 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             description: Description of when and how to use it
         """
 
+        if not asyncio.iscoroutinefunction(tool_func):
+            @wraps(tool_func)
+            async def async_wrapper(*args, **kwargs):
+                return await asyncio.to_thread(tool_func, *args, **kwargs)
+
+            effective_func = async_wrapper
+        else:
+            effective_func = tool_func
+
+        tool_name = name or effective_func.__name__
+        tool_description = description or effective_func.__doc__ or "No description"
+
         # Validate the tool function
         if not callable(tool_func):
             raise ValueError("Tool function must be callable")
@@ -9847,13 +10035,13 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             if not hasattr(self.task_flow.llm_reasoner, 'meta_tools_registry'):
                 self.task_flow.llm_reasoner.meta_tools_registry = {}
 
-            self.task_flow.llm_reasoner.meta_tools_registry[name] = {
-                "function": tool_func,
-                "description": description,
-                "added_at": datetime.now().isoformat()
+            self.task_flow.llm_reasoner.meta_tools_registry[tool_name] = {
+                "function": effective_func,
+                "description": tool_description,
+                "args_schema": get_args_schema(tool_func)
             }
 
-            rprint(f"First-class meta-tool added: {name}")
+            rprint(f"First-class meta-tool added: {tool_name}")
         else:
             wprint("LLMReasonerNode not available for first-class tool registration")
 
@@ -10193,7 +10381,9 @@ Respond in YAML format only:
                     raise ValueError("Empty response from LLM")
 
                 # Extract YAML content with multiple fallback strategies
+
                 yaml_content = self._extract_yaml_content(response)
+
 
                 if not yaml_content:
                     raise ValueError("No valid YAML content found in response")
@@ -10203,7 +10393,7 @@ Respond in YAML format only:
                     parsed_data = yaml.safe_load(yaml_content)
                 except yaml.YAMLError as e:
                     raise ValueError(f"Invalid YAML syntax: {e}")
-
+                iprint(parsed_data)
                 if not isinstance(parsed_data, dict):
                     raise ValueError(f"Expected dict, got {type(parsed_data)}")
 
@@ -10548,7 +10738,399 @@ Respond in YAML format only:
             return getattr(self.amd.budget_manager, 'total_cost', 0.0)
         return 0.0
 
-    def status(self, pretty_print: bool = False) -> dict[str, Any] | str:
+    async def get_context_overview(self, session_id: str = None, display: bool = False) -> dict[str, Any]:
+        """
+        Detaillierte Übersicht des aktuellen Contexts mit Token-Counts und optionaler Display-Darstellung
+
+        Args:
+            session_id: Session ID für context (default: active_session)
+            display: Ob die Übersicht im Terminal-Style angezeigt werden soll
+
+        Returns:
+            dict: Detaillierte Context-Übersicht mit Raw-Daten und Token-Counts
+        """
+        try:
+            session_id = session_id or self.active_session or "default"
+
+            # Token counting function
+            def count_tokens(text: str) -> int:
+                """Einfache Token-Approximation (4 chars ≈ 1 token für deutsche/englische Texte)"""
+                try:
+                    from litellm import token_counter
+                    return token_counter(self.amd.fast_llm_model, text=text)
+                except:
+                    pass
+                return max(1, len(str(text)) // 4)
+
+            context_overview = {
+                "session_info": {
+                    "session_id": session_id,
+                    "agent_name": self.amd.name,
+                    "timestamp": datetime.now().isoformat(),
+                    "active_session": self.active_session,
+                    "is_running": self.is_running
+                },
+                "system_prompt": {},
+                "meta_tools": {},
+                "agent_tools": {},
+                "mcp_tools": {},
+                "variables": {},
+                "system_history": {},
+                "unified_context": {},
+                "reasoning_context": {},
+                "llm_tool_context": {},
+                "token_summary": {}
+            }
+
+            # === SYSTEM PROMPT ANALYSIS ===
+            system_message = self.amd.get_system_message_with_persona()
+            context_overview["system_prompt"] = {
+                "raw_data": system_message,
+                "token_count": count_tokens(system_message),
+                "components": {
+                    "base_message": self.amd.system_message,
+                    "persona_active": self.amd.persona is not None,
+                    "persona_name": self.amd.persona.name if self.amd.persona else None,
+                    "persona_integration": self.amd.persona.apply_method if self.amd.persona else None
+                }
+            }
+
+            # === META TOOLS ANALYSIS ===
+            if hasattr(self.task_flow, 'llm_reasoner') and hasattr(self.task_flow.llm_reasoner, 'meta_tools_registry'):
+                meta_tools = self.task_flow.llm_reasoner.meta_tools_registry
+            else:
+                meta_tools = {}
+
+            meta_tools_info = ""
+            for tool_name, tool_info in meta_tools.items():
+                tool_desc = tool_info.get("description", "No description")
+                meta_tools_info += f"{tool_name}: {tool_desc}\n"
+
+            # Standard Meta-Tools
+            standard_meta_tools = [
+                "internal_reasoning", "manage_internal_task_stack", "delegate_to_llm_tool_node",
+                "create_and_execute_plan", "advance_outline_step", "write_to_variables",
+                "read_from_variables", "direct_response"
+            ]
+
+            for meta_tool in standard_meta_tools:
+                meta_tools_info += f"{meta_tool}: Built-in meta-tool for agent orchestration\n"
+
+            context_overview["meta_tools"] = {
+                "raw_data": meta_tools_info,
+                "token_count": count_tokens(meta_tools_info),
+                "count": len(meta_tools) + len(standard_meta_tools),
+                "custom_meta_tools": list(meta_tools.keys()),
+                "standard_meta_tools": standard_meta_tools
+            }
+
+            # === AGENT TOOLS ANALYSIS ===
+            tools_info = ""
+            tool_capabilities_text = ""
+
+            for tool_name in self.shared.get("available_tools", []):
+                tool_data = self._tool_registry.get(tool_name, {})
+                description = tool_data.get("description", "No description")
+                args_schema = tool_data.get("args_schema", "()")
+                tools_info += f"{tool_name}{args_schema}: {description}\n"
+
+                # Tool capabilities if available
+                if tool_name in self._tool_capabilities:
+                    cap = self._tool_capabilities[tool_name]
+                    primary_function = cap.get("primary_function", "Unknown")
+                    use_cases = cap.get("use_cases", [])
+                    tool_capabilities_text += f"{tool_name}: {primary_function}\n"
+                    if use_cases:
+                        tool_capabilities_text += f"  Use cases: {', '.join(use_cases[:3])}\n"
+
+            context_overview["agent_tools"] = {
+                "raw_data": tools_info,
+                "capabilities_data": tool_capabilities_text,
+                "token_count": count_tokens(tools_info + tool_capabilities_text),
+                "count": len(self.shared.get("available_tools", [])),
+                "analyzed_count": len(self._tool_capabilities),
+                "tool_names": self.shared.get("available_tools", []),
+                "intelligence_level": "high" if self._tool_capabilities else "basic"
+            }
+
+            # === MCP TOOLS ANALYSIS ===
+            # Placeholder für MCP Tools (falls implementiert)
+            mcp_tools_info = "No MCP tools currently active"
+            if self.mcp_server:
+                mcp_tools_info = f"MCP Server active: {getattr(self.mcp_server, 'name', 'Unknown')}"
+
+            context_overview["mcp_tools"] = {
+                "raw_data": mcp_tools_info,
+                "token_count": count_tokens(mcp_tools_info),
+                "server_active": bool(self.mcp_server),
+                "server_name": getattr(self.mcp_server, 'name', None) if self.mcp_server else None
+            }
+
+            # === VARIABLES ANALYSIS ===
+            variables_text = ""
+            if self.variable_manager:
+                variables_text = self.variable_manager.get_llm_variable_context()
+            else:
+                variables_text = "No variable manager available"
+
+            context_overview["variables"] = {
+                "raw_data": variables_text,
+                "token_count": count_tokens(variables_text),
+                "manager_available": bool(self.variable_manager),
+                "total_scopes": len(self.variable_manager.scopes) if self.variable_manager else 0,
+                "scope_names": list(self.variable_manager.scopes.keys()) if self.variable_manager else []
+            }
+
+            # === SYSTEM HISTORY ANALYSIS ===
+            history_text = ""
+            if self.context_manager and session_id in self.context_manager.session_managers:
+                session = self.context_manager.session_managers[session_id]
+                if hasattr(session, 'history'):
+                    history_count = len(session.history)
+                    history_text = f"Session History: {history_count} messages\n"
+
+                    # Recent messages preview
+                    for msg in session.history[-3:]:
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')[:100] + "..." if len(
+                            msg.get('content', '')) > 100 else msg.get('content', '')
+                        timestamp = msg.get('timestamp', '')[:19]
+                        history_text += f"[{timestamp}] {role}: {content}\n"
+                elif isinstance(session, dict) and 'history' in session:
+                    history_count = len(session['history'])
+                    history_text = f"Fallback Session History: {history_count} messages"
+            else:
+                history_text = "No session history available"
+
+            context_overview["system_history"] = {
+                "raw_data": history_text,
+                "token_count": count_tokens(history_text),
+                "session_initialized": self.shared.get("session_initialized", False),
+                "context_manager_available": bool(self.context_manager),
+                "session_count": len(self.context_manager.session_managers) if self.context_manager else 0
+            }
+
+            # === UNIFIED CONTEXT ANALYSIS ===
+            unified_context_text = ""
+            try:
+                unified_context = await self.context_manager.build_unified_context(session_id, "",
+                                                                                   "full") if self.context_manager else {}
+                if unified_context:
+                    formatted_context = self.context_manager.get_formatted_context_for_llm(unified_context)
+                    unified_context_text = formatted_context
+                else:
+                    unified_context_text = "No unified context available"
+            except Exception as e:
+                unified_context_text = f"Error building unified context: {str(e)}"
+
+            context_overview["unified_context"] = {
+                "raw_data": unified_context_text,
+                "token_count": count_tokens(unified_context_text),
+                "build_successful": "Error" not in unified_context_text,
+                "manager_available": bool(self.context_manager)
+            }
+
+            # === REASONING CONTEXT ANALYSIS ===
+            reasoning_context_text = ""
+            if hasattr(self.task_flow, 'llm_reasoner') and hasattr(self.task_flow.llm_reasoner, 'reasoning_context'):
+                reasoning_context = self.task_flow.llm_reasoner.reasoning_context
+                reasoning_context_text = f"Reasoning Context: {len(reasoning_context)} entries\n"
+
+                # Recent reasoning entries
+                for entry in reasoning_context[-3:]:
+                    entry_type = entry.get('type', 'unknown')
+                    content = str(entry.get('content', ''))[:150] + "..." if len(
+                        str(entry.get('content', ''))) > 150 else str(entry.get('content', ''))
+                    reasoning_context_text += f"  {entry_type}: {content}\n"
+            else:
+                reasoning_context_text = "No reasoning context available"
+
+            context_overview["reasoning_context"] = {
+                "raw_data": reasoning_context_text,
+                "token_count": count_tokens(reasoning_context_text),
+                "reasoner_available": hasattr(self.task_flow, 'llm_reasoner'),
+                "context_entries": len(self.task_flow.llm_reasoner.reasoning_context) if hasattr(self.task_flow,
+                                                                                                 'llm_reasoner') and hasattr(
+                    self.task_flow.llm_reasoner, 'reasoning_context') else 0
+            }
+
+            # === LLM TOOL CONTEXT ANALYSIS ===
+            llm_tool_context_text = ""
+            if hasattr(self.task_flow, 'llm_tool_node'):
+                llm_tool_context_text = f"LLM Tool Node available with max {self.task_flow.llm_tool_node.max_tool_calls} tool calls\n"
+                if hasattr(self.task_flow.llm_tool_node, 'call_log'):
+                    call_log = self.task_flow.llm_tool_node.call_log
+                    llm_tool_context_text += f"Call log: {len(call_log)} entries\n"
+            else:
+                llm_tool_context_text = "No LLM Tool Node available"
+
+            context_overview["llm_tool_context"] = {
+                "raw_data": llm_tool_context_text,
+                "token_count": count_tokens(llm_tool_context_text),
+                "node_available": hasattr(self.task_flow, 'llm_tool_node'),
+                "max_tool_calls": getattr(self.task_flow.llm_tool_node, 'max_tool_calls', 0) if hasattr(self.task_flow,
+                                                                                                        'llm_tool_node') else 0
+            }
+
+            # === TOKEN SUMMARY ===
+            total_tokens = sum([
+                context_overview["system_prompt"]["token_count"],
+                context_overview["meta_tools"]["token_count"],
+                context_overview["agent_tools"]["token_count"],
+                context_overview["mcp_tools"]["token_count"],
+                context_overview["variables"]["token_count"],
+                context_overview["system_history"]["token_count"],
+                context_overview["unified_context"]["token_count"],
+                context_overview["reasoning_context"]["token_count"],
+                context_overview["llm_tool_context"]["token_count"]
+            ])
+
+            context_overview["token_summary"] = {
+                "total_tokens": total_tokens,
+                "breakdown": {
+                    "system_prompt": context_overview["system_prompt"]["token_count"],
+                    "meta_tools": context_overview["meta_tools"]["token_count"],
+                    "agent_tools": context_overview["agent_tools"]["token_count"],
+                    "mcp_tools": context_overview["mcp_tools"]["token_count"],
+                    "variables": context_overview["variables"]["token_count"],
+                    "system_history": context_overview["system_history"]["token_count"],
+                    "unified_context": context_overview["unified_context"]["token_count"],
+                    "reasoning_context": context_overview["reasoning_context"]["token_count"],
+                    "llm_tool_context": context_overview["llm_tool_context"]["token_count"]
+                },
+                "percentage_breakdown": {}
+            }
+
+            # Calculate percentages
+            for component, token_count in context_overview["token_summary"]["breakdown"].items():
+                percentage = (token_count / total_tokens * 100) if total_tokens > 0 else 0
+                context_overview["token_summary"]["percentage_breakdown"][component] = round(percentage, 1)
+
+            # === DISPLAY OUTPUT ===
+            if display:
+                await self._display_context_overview(context_overview)
+
+            return context_overview
+
+        except Exception as e:
+            eprint(f"Error generating context overview: {e}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id
+            }
+
+    async def _display_context_overview(self, overview: dict[str, Any]):
+        """Display context overview in terminal-style format similar to the image"""
+        try:
+            from toolboxv2.utils.extras.Style import Spinner
+
+            print("\n" + "=" * 80)
+            print("🔍 FLOW AGENT CONTEXT OVERVIEW")
+            print("=" * 80)
+
+            # Session Info
+            session_info = overview["session_info"]
+            print(f"📅 Session: {session_info['session_id']} | Agent: {session_info['agent_name']}")
+            print(f"⏰ Generated: {session_info['timestamp'][:19]} | Running: {session_info['is_running']}")
+
+            # Token Summary (like in the image)
+            token_summary = overview["token_summary"]
+            total_tokens = token_summary["total_tokens"]
+            breakdown = token_summary["percentage_breakdown"]
+
+            print(f"\n📊 CONTEXT USAGE")
+            print(f"Total Context: ~{total_tokens:,} tokens")
+
+            # Create visual bars like in the image
+            bar_length = 50
+
+            try:mf=get_max_tokens(self.amd.fast_llm_model.split('/')[-1]);self.amd.max_tokens = mf
+            except:mf = self.amd.max_tokens
+            try:mc=get_max_tokens(self.amd.complex_llm_model.split('/')[-1]);self.amd.max_tokens = mf
+            except:mc = self.amd.max_tokens
+            components = [
+                ("System prompt", breakdown.get("system_prompt", 0), "🔧"),
+                ("Agent tools", breakdown.get("agent_tools", 0), "🛠️"),
+                ("Meta tools", breakdown.get("meta_tools", 0), "⚡"),
+                ("Variables", breakdown.get("variables", 0), "📝"),
+                ("History", breakdown.get("system_history", 0), "📚"),
+                ("Unified ctx", breakdown.get("unified_context", 0), "🔗"),
+                ("Reasoning", breakdown.get("reasoning_context", 0), "🧠"),
+                ("LLM Tools", breakdown.get("llm_tool_context", 0), "🤖"),
+                ("Free Space F", mf, "⬜"),
+                ("Free Space C", mc, "⬜"),
+
+            ]
+
+            for name, percentage, icon in components:
+                if percentage > 0:
+                    filled_length = int(percentage * bar_length / 100)
+                    bar = "█" * filled_length + "░" * (bar_length - filled_length)
+                    tokens = int(total_tokens * percentage / 100)
+                    print(f"{icon} {name:13}: {bar} {percentage:5.1f}% ({tokens:,} tokens)") if not name.startswith("Free") else print(f"{icon} {name:13}: ({tokens:,} tokens) used {total_tokens/tokens*100:.3f}%")
+
+            # Detailed breakdowns
+            sections = [
+                ("🔧 SYSTEM PROMPT", "system_prompt"),
+                ("⚡ META TOOLS", "meta_tools"),
+                ("🛠️ AGENT TOOLS", "agent_tools"),
+                ("📝 VARIABLES", "variables"),
+                ("📚 SYSTEM HISTORY", "system_history"),
+                ("🔗 UNIFIED CONTEXT", "unified_context"),
+                ("🧠 REASONING CONTEXT", "reasoning_context"),
+                ("🤖 LLM TOOL CONTEXT", "llm_tool_context")
+            ]
+
+            for title, key in sections:
+                section_data = overview.get(key, {})
+                token_count = section_data.get("token_count", 0)
+
+                if token_count > 0:
+                    print(f"\n{title} ({token_count:,} tokens)")
+                    print("-" * 50)
+
+                    # Show component-specific info
+                    if key == "agent_tools":
+                        print(f"  Available tools: {section_data.get('count', 0)}")
+                        print(f"  Analyzed tools: {section_data.get('analyzed_count', 0)}")
+                        print(f"  Intelligence: {section_data.get('intelligence_level', 'unknown')}")
+                    elif key == "variables":
+                        print(f"  Manager available: {section_data.get('manager_available', False)}")
+                        print(f"  Total scopes: {section_data.get('total_scopes', 0)}")
+                        print(f"  Scope names: {', '.join(section_data.get('scope_names', []))}")
+                    elif key == "system_history":
+                        print(f"  Session initialized: {section_data.get('session_initialized', False)}")
+                        print(f"  Total sessions: {section_data.get('session_count', 0)}")
+                    elif key == "reasoning_context":
+                        print(f"  Reasoner available: {section_data.get('reasoner_available', False)}")
+                        print(f"  Context entries: {section_data.get('context_entries', 0)}")
+                    elif key == "meta_tools":
+                        print(f"  Total meta tools: {section_data.get('count', 0)}")
+                        custom = section_data.get('custom_meta_tools', [])
+                        if custom:
+                            print(f"  Custom tools: {', '.join(custom)}")
+
+                    # Show raw data preview if reasonable size
+                    raw_data = section_data.get('raw_data', '')
+                    if len(raw_data) <= 200:
+                        print(f"  Preview: {raw_data[:200]}...")
+
+            print("\n" + "=" * 80)
+            print(f"💾 Total Context Size: ~{total_tokens:,} tokens")
+            print("=" * 80 + "\n")
+
+        except Exception as e:
+            eprint(f"Error displaying context overview: {e}")
+            # Fallback to simple display
+            print(f"\n=== CONTEXT OVERVIEW (Fallback) ===")
+            print(f"Total Tokens: {overview.get('token_summary', {}).get('total_tokens', 0):,}")
+            for key, data in overview.items():
+                if isinstance(data, dict) and 'token_count' in data:
+                    print(f"{key}: {data['token_count']:,} tokens")
+            print("=" * 40)
+
+    async def status(self, pretty_print: bool = False) -> dict[str, Any] | str:
         """Get comprehensive agent status with optional pretty printing"""
 
         # Core status information
@@ -10699,7 +11281,9 @@ Respond in YAML format only:
         # Add timestamp
         base_status["timestamp"] = datetime.now().isoformat()
 
+        base_status["context_statistic"] = self.get_context_statistics()
         if not pretty_print:
+            base_status["agent_context"] = await self.get_context_overview()
             return base_status
 
         # Pretty print using EnhancedVerboseOutput
@@ -10758,6 +11342,15 @@ Respond in YAML format only:
                 f"Session Managers: {memory['session_managers']}\n"
                 f"Variable Scopes: {memory['variable_scopes']}\n"
                 f"Session Initialized: {memory['session_initialized']}"
+            )
+
+            # Context Statistics
+            stats = base_status["context_statistic"]
+            verbose_output.formatter.print_section(
+                "Context & Stats",
+                f"Compression Stats: {stats['compression_stats']}\n"
+                f"Session Usage: {stats['context_usage']}\n"
+                f"Session Managers: {stats['session_managers']}\n"
             )
 
             # Configuration
@@ -10833,6 +11426,8 @@ Respond in YAML format only:
                 )
 
             verbose_output.print_separator()
+            await self.get_context_overview(display=True)
+            verbose_output.print_separator()
             verbose_output.print_info(f"Status generated at: {base_status['timestamp']}")
 
             return "Status printed above"
@@ -10858,6 +11453,340 @@ Respond in YAML format only:
     def __mod__(self, other):
         """Implements % operator for conditional branching"""
         return ConditionalChain(self, other)
+
+    def bind(self, *agents, shared_scopes: list[str] = None, auto_sync: bool = True):
+        """
+        Bind two or more agents together with shared and private variable spaces.
+
+        Args:
+            *agents: FlowAgent instances to bind together
+            shared_scopes: List of scope names to share (default: ['world', 'results', 'system'])
+            auto_sync: Whether to automatically sync variables and context
+
+        Returns:
+            dict: Binding configuration with agent references
+        """
+        if shared_scopes is None:
+            shared_scopes = ['world', 'results', 'system']
+
+        # Create unique binding ID
+        binding_id = f"bind_{int(time.time())}_{len(agents)}"
+
+        # All agents in this binding (including self)
+        all_agents = [self] + list(agents)
+
+        # Create shared variable manager that all agents will reference
+        shared_world_model = {}
+        shared_state = {}
+
+        # Merge existing data from all agents
+        for agent in all_agents:
+            # Merge world models
+            shared_world_model.update(agent.world_model)
+            shared_state.update(agent.shared)
+
+        # Create shared variable manager
+        shared_variable_manager = VariableManager(shared_world_model, shared_state)
+
+        # Set up shared scopes with merged data
+        for scope_name in shared_scopes:
+            merged_scope = {}
+            for agent in all_agents:
+                if hasattr(agent, 'variable_manager') and agent.variable_manager:
+                    agent_scope_data = agent.variable_manager.scopes.get(scope_name, {})
+                    if isinstance(agent_scope_data, dict):
+                        merged_scope.update(agent_scope_data)
+            shared_variable_manager.register_scope(scope_name, merged_scope)
+
+        # Create binding configuration
+        binding_config = {
+            'binding_id': binding_id,
+            'agents': all_agents,
+            'shared_scopes': shared_scopes,
+            'auto_sync': auto_sync,
+            'shared_variable_manager': shared_variable_manager,
+            'private_managers': {},
+            'created_at': datetime.now().isoformat()
+        }
+
+        # Configure each agent
+        for i, agent in enumerate(all_agents):
+            agent_private_id = f"{binding_id}_agent_{i}_{agent.amd.name}"
+
+            # Create private variable manager for agent-specific data
+            private_world_model = agent.world_model.copy()
+            private_shared = agent.shared.copy()
+            private_variable_manager = VariableManager(private_world_model, private_shared)
+
+            # Set up private scopes (user, session-specific data, agent-specific configs)
+            private_scopes = ['user', 'agent', 'session_private', 'tasks_private']
+            for scope_name in private_scopes:
+                if hasattr(agent, 'variable_manager') and agent.variable_manager:
+                    agent_scope_data = agent.variable_manager.scopes.get(scope_name, {})
+                    private_variable_manager.register_scope(f"{scope_name}_{agent.amd.name}", agent_scope_data)
+
+            binding_config['private_managers'][agent.amd.name] = private_variable_manager
+
+            # Replace agent's variable manager with a unified one
+            unified_manager = UnifiedBindingManager(
+                shared_manager=shared_variable_manager,
+                private_manager=private_variable_manager,
+                agent_name=agent.amd.name,
+                shared_scopes=shared_scopes,
+                auto_sync=auto_sync,
+                binding_config=binding_config
+            )
+
+            # Store original managers for unbinding
+            if not hasattr(agent, '_original_managers'):
+                agent._original_managers = {
+                    'variable_manager': agent.variable_manager,
+                    'world_model': agent.world_model.copy(),
+                    'shared': agent.shared.copy()
+                }
+
+            # Set new unified manager
+            agent.variable_manager = unified_manager
+            agent.world_model = shared_world_model
+            agent.shared = shared_state
+
+            # Update shared state with binding info
+            agent.shared['binding_config'] = binding_config
+            agent.shared['is_bound'] = True
+            agent.shared['binding_id'] = binding_id
+            agent.shared['bound_agents'] = [a.amd.name for a in all_agents]
+
+            # Sync context manager if available
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                agent.context_manager.variable_manager = unified_manager
+
+                # Share session managers between bound agents if auto_sync is enabled
+                if auto_sync:
+                    # Merge session managers from all agents
+                    all_sessions = {}
+                    for bound_agent in all_agents:
+                        if hasattr(bound_agent, 'context_manager') and bound_agent.context_manager:
+                            if hasattr(bound_agent.context_manager, 'session_managers'):
+                                all_sessions.update(bound_agent.context_manager.session_managers)
+
+                    # Update all agents with merged sessions
+                    for bound_agent in all_agents:
+                        if hasattr(bound_agent, 'context_manager') and bound_agent.context_manager:
+                            bound_agent.context_manager.session_managers.update(all_sessions)
+
+        # Set up auto-sync mechanism if enabled
+        if auto_sync:
+            binding_config['sync_handler'] = BindingSyncHandler(binding_config)
+
+        rprint(f"Successfully bound {len(all_agents)} agents together (Binding ID: {binding_id})")
+        rprint(f"Shared scopes: {', '.join(shared_scopes)}")
+        rprint(f"Bound agents: {', '.join([agent.amd.name for agent in all_agents])}")
+
+        return binding_config
+
+    def unbind(self, preserve_shared_data: bool = False):
+        """
+        Unbind this agent from any binding configuration.
+
+        Args:
+            preserve_shared_data: Whether to preserve shared data in the agent after unbinding
+
+        Returns:
+            dict: Unbinding result with statistics
+        """
+        if not self.shared.get('is_bound', False):
+            return {
+                'success': False,
+                'message': f"Agent {self.amd.name} is not currently bound to any other agents"
+            }
+
+        binding_config = self.shared.get('binding_config')
+        if not binding_config:
+            return {
+                'success': False,
+                'message': "No binding configuration found"
+            }
+
+        binding_id = binding_config['binding_id']
+        bound_agents = binding_config['agents']
+
+        unbind_stats = {
+            'binding_id': binding_id,
+            'agents_affected': [],
+            'shared_data_preserved': preserve_shared_data,
+            'private_data_restored': False,
+            'unbind_timestamp': datetime.now().isoformat()
+        }
+
+        try:
+            # Restore original managers for this agent
+            if hasattr(self, '_original_managers'):
+                original = self._original_managers
+
+                if preserve_shared_data:
+                    # Merge current shared data with original data
+                    if isinstance(original['world_model'], dict):
+                        original['world_model'].update(self.world_model)
+                    if isinstance(original['shared'], dict):
+                        original['shared'].update({k: v for k, v in self.shared.items()
+                                                   if k not in ['binding_config', 'is_bound', 'binding_id',
+                                                                'bound_agents']})
+
+                # Restore original variable manager
+                self.variable_manager = original['variable_manager']
+                self.world_model = original['world_model']
+                self.shared = original['shared']
+
+                # Update context manager
+                if hasattr(self, 'context_manager') and self.context_manager:
+                    self.context_manager.variable_manager = self.variable_manager
+
+                unbind_stats['private_data_restored'] = True
+                del self._original_managers
+
+            # Clean up binding state
+            self.shared.pop('binding_config', None)
+            self.shared.pop('is_bound', None)
+            self.shared.pop('binding_id', None)
+            self.shared.pop('bound_agents', None)
+
+            # Update binding configuration to remove this agent
+            remaining_agents = [agent for agent in bound_agents if agent != self]
+            if remaining_agents:
+                # Update binding config for remaining agents
+                binding_config['agents'] = remaining_agents
+                for agent in remaining_agents:
+                    if hasattr(agent, 'shared') and agent.shared.get('is_bound'):
+                        agent.shared['bound_agents'] = [a.amd.name for a in remaining_agents]
+
+            unbind_stats['agents_affected'] = [agent.amd.name for agent in bound_agents]
+
+            # Clean up sync handler if this was the last agent
+            if len(remaining_agents) <= 1:
+                sync_handler = binding_config.get('sync_handler')
+                if sync_handler and hasattr(sync_handler, 'cleanup'):
+                    sync_handler.cleanup()
+
+            rprint(f"Agent {self.amd.name} successfully unbound from binding {binding_id}")
+            rprint(f"Shared data preserved: {preserve_shared_data}")
+
+            return {
+                'success': True,
+                'stats': unbind_stats,
+                'message': f"Agent {self.amd.name} unbound successfully"
+            }
+
+        except Exception as e:
+            eprint(f"Error during unbinding: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'stats': unbind_stats
+            }
+
+class UnifiedBindingManager:
+    """Unified manager that handles both shared and private variable scopes for bound agents"""
+
+    def __init__(self, shared_manager: VariableManager, private_manager: VariableManager,
+                 agent_name: str, shared_scopes: list[str], auto_sync: bool, binding_config: dict):
+        self.shared_manager = shared_manager
+        self.private_manager = private_manager
+        self.agent_name = agent_name
+        self.shared_scopes = shared_scopes
+        self.auto_sync = auto_sync
+        self.binding_config = binding_config
+
+    def get(self, path: str, default=None, use_cache: bool = True):
+        """Get variable from appropriate manager (shared or private)"""
+        scope = path.split('.')[0] if '.' in path else path
+
+        if scope in self.shared_scopes:
+            return self.shared_manager.get(path, default, use_cache)
+        else:
+            # Try private first, then shared as fallback
+            result = self.private_manager.get(path, None, use_cache)
+            if result is None:
+                return self.shared_manager.get(path, default, use_cache)
+            return result
+
+    def set(self, path: str, value, create_scope: bool = True):
+        """Set variable in appropriate manager (shared or private)"""
+        scope = path.split('.')[0] if '.' in path else path
+
+        if scope in self.shared_scopes:
+            self.shared_manager.set(path, value, create_scope)
+            # Auto-sync to other bound agents if enabled
+            if self.auto_sync:
+                self._sync_to_bound_agents(path, value)
+        else:
+            # Private scope - add agent identifier
+            private_path = f"{path}_{self.agent_name}" if not path.endswith(f"_{self.agent_name}") else path
+            self.private_manager.set(private_path, value, create_scope)
+
+    def _sync_to_bound_agents(self, path: str, value):
+        """Sync shared variable changes to all bound agents"""
+        try:
+            bound_agents = self.binding_config.get('agents', [])
+            for agent in bound_agents:
+                if (agent.amd.name != self.agent_name and
+                    hasattr(agent, 'variable_manager') and
+                    isinstance(agent.variable_manager, UnifiedBindingManager)):
+                    agent.variable_manager.shared_manager.set(path, value, create_scope=True)
+        except Exception as e:
+            wprint(f"Auto-sync failed for path {path}: {e}")
+
+    def format_text(self, text: str, context: dict = None) -> str:
+        """Format text with variables from both managers"""
+        # First try private manager, then shared manager
+        try:
+            result = self.private_manager.format_text(text, context)
+            return self.shared_manager.format_text(result, context)
+        except:
+            return self.shared_manager.format_text(text, context)
+
+    def get_available_variables(self) -> dict[str, dict]:
+        """Get available variables from both managers"""
+        shared_vars = self.shared_manager.get_available_variables()
+        private_vars = self.private_manager.get_available_variables()
+
+        # Merge with prefix for private vars
+        combined = shared_vars.copy()
+        for key, value in private_vars.items():
+            combined[f"private_{self.agent_name}_{key}"] = value
+
+        return combined
+
+    def get_scope_info(self) -> dict[str, Any]:
+        """Get scope information from both managers"""
+        shared_info = self.shared_manager.get_scope_info()
+        private_info = self.private_manager.get_scope_info()
+
+        return {
+            'shared_scopes': shared_info,
+            'private_scopes': private_info,
+            'binding_info': {
+                'agent_name': self.agent_name,
+                'binding_id': self.binding_config.get('binding_id'),
+                'auto_sync': self.auto_sync
+            }
+        }
+
+    # Delegate other methods to shared manager by default
+    def __getattr__(self, name):
+        return getattr(self.shared_manager, name)
+
+class BindingSyncHandler:
+    """Handles automatic synchronization between bound agents"""
+
+    def __init__(self, binding_config: dict):
+        self.binding_config = binding_config
+        self.sync_queue = []
+        self.last_sync = time.time()
+
+    def cleanup(self):
+        """Clean up sync handler resources"""
+        self.sync_queue.clear()
+        rprint(f"Binding sync handler for {self.binding_config['binding_id']} cleaned up")
 
 
 def get_progress_summary(self) -> dict[str, Any]:
@@ -11101,428 +12030,6 @@ def auto_unescape(args: Any) -> Any:
 
 # Add this method to FlowAgent class
 FlowAgent.get_progress_summary = get_progress_summary
-if __name__ == "__main__3":
-
-    agent_text = '''
-First, let me examine the results of the previous tasks:
-
-```yaml
-TOOL_CALLS:
-  - tool: list_directory
-    args:
-      dirpath: ImageCreation
-```
-
-I see that we've created the ImageCreation directory successfully, but the image move operation failed because the source image `unique_complex_image.png` couldn't be found in the current location. Let me check the current directory to locate the image file:
-
-```yaml
-TOOL_CALLS:
-  - tool: list_directory
-    args:
-      dirpath: .
-```
-
-Now I'll check if we can find information about fractal pattern generation to prepare for creating our script:
-
-```yaml
-TOOL_CALLS:
-  - tool: searchWeb
-    args:
-      query: python fractal pattern generation leaves trees stars houses
-      max_results: 5
-```
-
-Let me also check for any existing agents that might be helpful for this task:
-
-```yaml
-TOOL_CALLS:
-  - tool: list_agents
-    args:
-      detailed: false
-```
-
-Based on the search results, I'll now create a specialized agent that can help with generating complex fractal patterns:
-
-```yaml
-TOOL_CALLS:
-  - tool: create_specialized_agent
-    args:
-      agent_name: fractal_artist
-      system_prompt: "You are a specialized AI artist focused on creating complex fractal patterns. You understand mathematical concepts behind fractals and can generate code to create visual representations of fractals that resemble natural objects like leaves, trees, stars, and architectural patterns like houses. You're skilled in Python with libraries like PIL, NumPy, and matplotlib for image generation."
-      model: null
-```
-
-I'll also look for specific libraries that might be useful for generating fractal images:
-
-```yaml
-TOOL_CALLS:
-  - tool: context7-mcp_resolve-library-id
-    args:
-      libraryName: PIL
-```
-
-Let's also check for NumPy which is commonly used in fractal generation:
-
-```yaml
-TOOL_CALLS:
-  - tool: context7-mcp_resolve-library-id
-    args:
-      libraryName: NumPy
-```
-
-Now I'll create the Python script for generating fractal patterns. First, let me check if we have the required libraries' documentation:
-
-```yaml
-TOOL_CALLS:
-  - tool: context7-mcp_get-library-docs
-    args:
-      context7CompatibleLibraryID: PIL
-      topic: Image generation
-```
-
-Let's also get documentation for NumPy:
-
-```yaml
-TOOL_CALLS:
-  - tool: context7-mcp_get-library-docs
-    args:
-      context7CompatibleLibraryID: numpy
-      topic: mathematical operations
-```
-
-Now I'll create a Python script that can generate complex fractal patterns:
-
-```yaml
-TOOL_CALLS:
-  - tool: createScript
-    args:
-      name: generate_fractal_patterns.py
-      description: Generates complex fractal patterns resembling leaves, trees, stars, and houses
-      content: |
-        import numpy as np
-        from PIL import Image, ImageDraw
-        import math
-        import random
-        import os
-
-        def create_fractal_leaf(width=800, height=800):
-            """Generate a fractal leaf pattern"""
-            img = Image.new('RGB', (width, height), (0, 0, 0))
-            draw = ImageDraw.Draw(img)
-
-            def draw_branch(x, y, length, angle, depth):
-                if depth == 0:
-                    return
-
-                # Calculate end point
-                end_x = x + length * math.cos(angle)
-                end_y = y + length * math.sin(angle)
-
-                # Draw the branch
-                color = (0, min(255, depth * 40), 0)
-                draw.line((x, y, end_x, end_y), fill=color, width=depth)
-
-                # Recursive calls for sub-branches
-                new_length = length * 0.7
-                draw_branch(end_x, end_y, new_length, angle - 0.3, depth - 1)
-                draw_branch(end_x, end_y, new_length, angle + 0.3, depth - 1)
-
-                # Occasionally add a leaf
-                if depth <= 2 and random.random() > 0.7:
-                    leaf_size = random.randint(2, 5)
-                    draw.ellipse((end_x - leaf_size, end_y - leaf_size,
-                                end_x + leaf_size, end_y + leaf_size),
-                               fill=(0, min(255, depth * 50), 0))
-
-            # Start with a main trunk
-            draw_branch(width/2, height, 100, -math.pi/2, 8)
-            return img
-
-        def create_fractal_tree(width=800, height=800):
-            """Generate a fractal tree pattern"""
-            img = Image.new('RGB', (width, height), (0, 0, 0))
-            draw = ImageDraw.Draw(img)
-
-            def draw_tree(x, y, length, angle, depth):
-                if depth == 0:
-                    return
-
-                # Calculate end point
-                end_x = x + length * math.cos(angle)
-                end_y = y + length * math.sin(angle)
-
-                # Draw the branch with brown color
-                color = (min(139, depth * 20), min(69, depth * 10), min(19, depth * 3))
-                draw.line((x, y, end_x, end_y), fill=color, width=max(1, depth//2))
-
-                # Recursive calls for sub-branches
-                if depth > 1:
-                    # Add some randomness to angles
-                    angle1 = angle - random.uniform(0.1, 0.5)
-                    angle2 = angle + random.uniform(0.1, 0.5)
-                    angle3 = angle + random.uniform(-0.1, 0.1)
-
-                    new_length = length * random.uniform(0.6, 0.8)
-                    draw_tree(end_x, end_y, new_length, angle1, depth - 1)
-                    draw_tree(end_x, end_y, new_length, angle2, depth - 1)
-
-                    # Occasionally add a third branch
-                    if random.random() > 0.6:
-                        draw_tree(end_x, end_y, new_length * 0.7, angle3, depth - 1)
-
-            # Start with a main trunk
-            draw_tree(width/2, height, 120, -math.pi/2, 10)
-            return img
-
-        def create_fractal_stars(width=800, height=800):
-            """Generate a fractal star pattern"""
-            img = Image.new('RGB', (width, height), (0, 0, 20))
-            draw = ImageDraw.Draw(img)
-
-            def draw_star(x, y, size, depth):
-                if depth == 0:
-                    return
-
-                # Draw a star shape
-                points = []
-                for i in range(10):
-                    angle = math.pi/5 * i
-                    radius = size if i % 2 == 0 else size * 0.4
-                    px = x + radius * math.cos(angle)
-                    py = y + radius * math.sin(angle)
-                    points.append((px, py))
-
-                # Draw the star with gradient color
-                brightness = min(255, 200 + depth * 15)
-                draw.polygon(points, fill=(brightness, brightness, brightness))
-
-                # Recursive calls for smaller stars
-                if depth > 1:
-                    for i in range(5):
-                        angle = math.pi/2.5 * i
-                        distance = size * 1.5
-                        new_x = x + distance * math.cos(angle)
-                        new_y = y + distance * math.sin(angle)
-                        new_size = size * 0.4
-                        if 0 <= new_x < width and 0 <= new_y < height:
-                            draw_star(new_x, new_y, new_size, depth - 1)
-
-            # Draw several stars with different properties
-            for _ in range(20):
-                x = random.randint(0, width)
-                y = random.randint(0, height)
-                size = random.randint(10, 30)
-                depth = random.randint(2, 4)
-                draw_star(x, y, size, depth)
-
-            return img
-
-        def create_fractal_house(width=800, height=800):
-            """Generate a fractal house pattern"""
-            img = Image.new('RGB', (width, height), (135, 206, 235))  # Sky blue background
-            draw = ImageDraw.Draw(img)
-
-            def draw_house(x, y, size, depth):
-                if depth == 0:
-                    return
-
-                # Draw main house structure
-                house_color = (random.randint(180, 220), random.randint(60, 100), random.randint(40, 80))
-                draw.rectangle([x, y, x+size, y+size], fill=house_color)
-
-                # Draw roof
-                roof_color = (random.randint(100, 150), random.randint(20, 60), random.randint(10, 40))
-                roof_points = [(x-5, y), (x+size//2, y-size//3), (x+size+5, y)]
-                draw.polygon(roof_points, fill=roof_color)
-
-                # Draw door
-                door_color = (101, 67, 33)
-                draw.rectangle([x+size//3, y+size//2, x+2*size//3, y+size], fill=door_color)
-
-                # Draw windows
-                window_color = (173, 216, 230)
-                draw.rectangle([x+size//6, y+size//4, x+size//3, y+size//2], fill=window_color)
-                draw.rectangle([x+2*size//3, y+size//4, x+5*size//6, y+size//2], fill=window_color)
-
-                # Recursive calls for smaller houses
-                if depth > 1:
-                    # Draw a smaller house next to the current one
-                    new_size = size // 2
-                    new_x = x + size + 20
-                    new_y = y + size - new_size
-                    if new_x + new_size < width and new_y + new_size < height:
-                        draw_house(new_x, new_y, new_size, depth - 1)
-
-                    # Draw a smaller house above the current one
-                    new_size2 = size // 3
-                    new_x2 = x + size//2 - new_size2//2
-                    new_y2 = y - new_size2 - 10
-                    if 0 <= new_x2 and new_x2 + new_size2 < width and 0 <= new_y2:
-                        draw_house(new_x2, new_y2, new_size2, depth - 1)
-
-            # Draw main house
-            draw_house(width//4, height//2, 200, 3)
-
-            # Draw some bushes
-            for i in range(5):
-                bush_x = random.randint(0, width)
-                bush_y = height - 50
-                bush_size = random.randint(20, 40)
-                bush_color = (random.randint(0, 50), random.randint(100, 150), random.randint(0, 50))
-                draw.ellipse([bush_x, bush_y, bush_x + bush_size, bush_y + bush_size//2], fill=bush_color)
-
-            return img
-
-        def create_fractal_mosaic(width=800, height=800):
-            """Generate a fractal mosaic pattern"""
-            img = Image.new('RGB', (width, height), (0, 0, 0))
-            pixels = img.load()
-
-            def mandelbrot(c, max_iter=100):
-                z = 0
-                for n in range(max_iter):
-                    if abs(z) > 2:
-                        return n
-                    z = z*z + c
-                return max_iter
-
-            # Generate Mandelbrot set based pattern
-            for x in range(width):
-                for y in range(height):
-                    # Convert pixel coordinate to complex number
-                    c = complex(-2.0 + 3.0 * x / width, -1.5 + 3.0 * y / height)
-                    # Compute the number of iterations
-                    m = mandelbrot(c)
-                    # Color based on iterations
-                    hue = int(255 * m / 100)
-                    pixels[x, y] = (hue, (hue * 2) % 256, (hue * 3) % 256)
-
-            return img
-
-        def main():
-            """Generate all fractal patterns and save them"""
-            # Create ImageCreation directory if it doesn't exist
-            if not os.path.exists("ImageCreation"):
-                os.makedirs("ImageCreation")
-
-            # Generate and save all patterns
-            patterns = [
-                ("fractal_leaf.png", create_fractal_leaf),
-                ("fractal_tree.png", create_fractal_tree),
-                ("fractal_stars.png", create_fractal_stars),
-                ("fractal_house.png", create_fractal_house),
-                ("fractal_mosaic.png", create_fractal_mosaic)
-            ]
-
-            for filename, func in patterns:
-                print(f"Generating {filename}...")
-                img = func()
-                img.save(f"ImageCreation/{filename}")
-                print(f"Saved {filename}")
-
-            print("All fractal patterns generated successfully!")
-
-        if __name__ == "__main__":
-            main()
-      script_type: py
-```
-
-Now let's run the script to generate the fractal patterns:
-
-```yaml
-TOOL_CALLS:
-  - tool: runScript
-    args:
-      name: generate_fractal_patterns.py
-```
-
-Let's check if the images were created successfully:
-
-```yaml
-TOOL_CALLS:
-  - tool: list_directory
-    args:
-      dirpath: ImageCreation
-```
-
-Let me verify the content of the generated images by analyzing one of them:
-
-```yaml
-TOOL_CALLS:
-  - tool: askAgent
-    args:
-      target_agent_name: fractal_artist
-      instructions: "Analyze the fractal patterns generated in the ImageCreation folder. Specifically, examine the complexity of the generated images like fractal_tree.png and fractal_mosaic.png. Do they exhibit the complex, fractal-like patterns requested for leaves, trees, stars, houses, and mosaics? Please provide a detailed assessment."
-```
-
-Let me also create a summary report of what we've accomplished:
-
-```yaml
-TOOL_CALLS:
-  - tool: write_file
-    args:
-      filepath: ImageCreation/GENERATION_REPORT.md
-      content: |
-        # Fractal Pattern Generation Report
-
-        ## Overview
-        This project successfully generated complex fractal patterns resembling natural and architectural forms including leaves, trees, stars, houses, and mosaics.
-
-        ## Generated Patterns
-
-        ### 1. Fractal Leaf (`fractal_leaf.png`)
-        - Created using recursive branching algorithms
-        - Features realistic vein structures
-        - Color gradient from trunk to leaf tips
-
-        ### 2. Fractal Tree (`fractal_tree.png`)
-        - Multi-level branching structure
-        - Random variations for natural appearance
-        - Brown trunk with green foliage
-
-        ### 3. Fractal Stars (`fractal_stars.png`)
-        - Recursive star patterns
-        - Depth-based brightness variations
-        - Space-like background
-
-        ### 4. Fractal House (`fractal_house.png`)
-        - Recursive house structures
-        - Roof and window details
-        - Surrounding landscape elements
-
-        ### 5. Fractal Mosaic (`fractal_mosaic.png`)
-        - Mathematically-generated Mandelbrot set visualization
-        - Colorful, intricate patterns
-        - Infinite complexity at boundaries
-
-        ## Technical Implementation
-        - Language: Python
-        - Libraries: PIL (Pillow), NumPy
-        - Techniques: Recursive algorithms, mathematical transformations
-
-        ## Complexity Assessment
-        All generated images exhibit complex, fractal-like patterns with self-similarity at different scales. The recursive nature of the algorithms ensures that patterns repeat with variations, creating visually interesting and mathematically significant imagery.
-```
-
-Finally, let's provide a summary to the user about what we've accomplished:
-
-```yaml
-TOOL_CALLS:
-  - tool: workspace_status
-    args:
-      include_git: false
-```
-
-I'll check the final status of our tasks:
-
-```yaml
-TOOL_CALLS:
-  - tool: get_background_tasks_status
-    args:
-      show_completed: true
-```'''
-    print(LLMToolNode._extract_tool_calls(agent_text))
-
 
 # Example usage and tests
 async def tchains():
@@ -11791,7 +12298,7 @@ if __name__ == "__main__2":
         response = await agent.a_run("is 1980 45 years ago?")
         print(f"Time: {time.perf_counter() - t}")
         print(f"Response: {response}")
-        agent.status(pretty_print=True)
+        await agent.status(pretty_print=True)
 
         while True:
             query = input("Query: ")

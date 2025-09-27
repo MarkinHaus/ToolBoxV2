@@ -271,13 +271,18 @@ class VirtualFileSystem:
         self.virtual_files: dict[str, str] = {}
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def ifile_exists(self, filepath: str | Path) -> bool:
+        """Check if a file exists"""
+        abs_path = self._resolve_path(filepath)
+        return abs_path.exists()
+
     def write_file(self, filepath: str | Path, content: str) -> Path:
         """Write content to a virtual file and persist to disk using UTF-8"""
         try:
             abs_path = self._resolve_path(filepath)
         except ValueError:
             print("invalid :", filepath)
-            filepath = "src/temp_js/_temp_fix.py"
+            filepath = "src/temp/_temp_fix.py"
             abs_path = self._resolve_path(filepath)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -288,6 +293,10 @@ class VirtualFileSystem:
         # Write to actual filesystem with UTF-8 encoding
         with open(abs_path, 'w', encoding='utf-8', errors='replace') as f:
             f.write(content)
+
+        parent_dir_str = str(abs_path.parent.absolute())
+        if parent_dir_str not in sys.path and abs_path.suffix == '.py':
+            sys.path.insert(0, parent_dir_str)
 
         return abs_path
 
@@ -326,6 +335,12 @@ class VirtualFileSystem:
         abs_path.mkdir(parents=True, exist_ok=True)
         return abs_path
 
+    def list_files(self, dirpath: str | Path = '.') -> list:
+        """List files in a directory"""
+        abs_path = self._resolve_path(dirpath)
+        if not abs_path.exists():
+            raise FileNotFoundError(f"Directory not found: {dirpath}")
+        return [p.name for p in abs_path.iterdir() if p.is_file()]
 
     def list_directory(self, dirpath: str | Path = '.') -> list:
         """List contents of a directory"""
@@ -560,6 +575,35 @@ class MockIPython:
             self._setup_venv()
         self.reset()
 
+    def _virtual_open(self, filepath, mode='r', *args, **kwargs):
+        """Custom open function that uses virtual filesystem and makes files available for import"""
+        try:
+            abs_path = self.vfs._resolve_path(filepath)
+        except ValueError:
+            # If path resolution fails, try to resolve relative to current working directory
+            abs_path = self.vfs.base_dir / filepath
+
+        if 'w' in mode or 'a' in mode:
+            # Ensure parent directory exists
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use actual filesystem but track in virtual fs
+        real_file = open(abs_path, mode, *args, **kwargs)
+
+        if 'r' in mode:
+            # Track file content in virtual filesystem when reading
+            rel_path = str(abs_path.relative_to(self.vfs.base_dir))
+            if rel_path not in self.vfs.virtual_files:
+                try:
+                    content = real_file.read()
+                    self.vfs.virtual_files[rel_path] = content
+                    real_file.seek(0)
+                except UnicodeDecodeError:
+                    # Handle binary files
+                    pass
+
+        return real_file
+
     def _setup_venv(self):
         """Create virtual environment if it doesn't exist"""
         if not self._venv_path.exists():
@@ -602,6 +646,7 @@ class MockIPython:
             '__path__': [str(self.vfs.current_dir)],
             'auto_install': auto_install,
             'modify_code': self.modify_code,
+            'open': self._virtual_open,
         }
         self.output_history.clear()
         self._execution_count = 0
@@ -1075,6 +1120,42 @@ class MockIPython:
                 output.append(f"Out[{count}]: {data['result']}")
         return "\n".join(output)
 
+    def set_base_directory(self, path: str) -> str:
+        """
+        Set the base directory for the virtual file system and add it to sys.path for imports.
+
+        Args:
+            path: New base directory path
+
+        Returns:
+            Success message
+        """
+        try:
+            new_path = Path(path) if isinstance(path, str) else path
+            new_path.mkdir(parents=True, exist_ok=True)
+
+            # Remove old base directory from sys.path if it exists
+            old_base_str = str(self.vfs.base_dir)
+            if old_base_str in sys.path:
+                sys.path.remove(old_base_str)
+
+            # Update VFS base directory
+            self.vfs.base_dir = new_path
+            self.vfs.current_dir = new_path
+
+            # Add new base directory to sys.path for imports
+            new_base_str = str(new_path)
+            if new_base_str not in sys.path:
+                sys.path.insert(0, new_base_str)
+
+            # Update user namespace paths
+            self.user_ns['__path__'] = [new_base_str]
+
+            return f"Base directory set to: {new_path} (added to sys.path)"
+
+        except Exception as e:
+            return f"Set base directory error: {str(e)}"
+
 
 def super_strip(s: str) -> str:
     # Remove ANSI escape sequences (e.g. "\x1b[K", "\x1b[...m", etc.)
@@ -1348,10 +1429,10 @@ class ToolsInterface:
         Args:
             filepath: Path to the file
             content: Content to write
-
         Returns:
             Success message
         """
+
         try:
             abs_path = self.vfs.write_file(filepath, content)
 
@@ -1441,6 +1522,24 @@ class ToolsInterface:
         except Exception as e:
             return f"File read error: {str(e)}"
 
+    async def list_files(self, dirpath: str = '.') -> str:
+        """
+        List files in a directory.
+
+        Args:
+            dirpath: Directory path to list
+
+        Returns:
+            File listing as string
+        """
+        try:
+            files = self.vfs.list_files(dirpath)
+            listing = "\n".join(f"- {file}" for file in files)
+            return f"Files in '{dirpath}':\n{listing}"
+
+        except Exception as e:
+            return f"File listing error: {str(e)}"
+
     async def list_directory(self, dirpath: str = '.') -> str:
         """
         List contents of a directory.
@@ -1468,6 +1567,7 @@ class ToolsInterface:
         except Exception as e:
             return f"Directory listing error: {str(e)}"
 
+
     async def create_directory(self, dirpath: str) -> str:
         """
         Create a new directory.
@@ -1485,7 +1585,7 @@ class ToolsInterface:
         except Exception as e:
             return f"Directory creation error: {str(e)}"
 
-    async def set_base_directory(self, path: str) -> str:
+    def set_base_directory(self, path: str) -> str:
         """
         Set the base directory for the virtual file system.
 
@@ -1496,12 +1596,17 @@ class ToolsInterface:
             Success message
         """
         try:
-            new_path = Path(path)
+            new_path = Path(path) if isinstance(path, str) else path
+            new_path = new_path.absolute()
+            print(f"New path: {new_path}")
             new_path.mkdir(parents=True, exist_ok=True)
             self.vfs.base_dir = new_path
             self.vfs.current_dir = new_path
 
-            return f"Base directory set to: {new_path}"
+            # Update MockIPython base directory and sys.path
+            result = self.ipython.set_base_directory(path)
+
+            return result
 
         except Exception as e:
             return f"Set base directory error: {str(e)}"
@@ -1628,7 +1733,7 @@ print(f"Successfully imported {package_name}")
         except Exception as e:
             return f"Get variables error: {str(e)}"
 
-    def get_tools(self) -> list[tuple[Any, str, str]]:
+    def get_tools(self, name:str=None) -> list[tuple[Any, str, str]]:
         """
         Get all available tools as list of tuples (function, name, description).
 
@@ -1638,10 +1743,12 @@ print(f"Successfully imported {package_name}")
         tools = [
             # Code execution tools
             (self.execute_python, "execute_python",
-             "Execute Python code in virtual environment. Args: code (str) -> str"),
+             "Execute Python code in virtual environment. all variables ar available under the python scope.\n"
+             "The isaa_instance is available as isaa_instance in the python code."
+             " Args: code (str) -> str"),
 
-            (self.execute_rust, "execute_rust",
-             "Execute Rust code using Cargo. Args: code (str) -> str"),
+            # (self.execute_rust, "execute_rust",
+            #  "Execute Rust code using Cargo. Args: code (str) -> str"),
 
             # File system tools
             (self.write_file, "write_file",
@@ -1655,6 +1762,9 @@ print(f"Successfully imported {package_name}")
 
             (self.read_file, "read_file",
              "Read content from file in virtual filesystem. Args: filepath (str) -> str"),
+
+            (self.list_files, "list_files",
+             "List files in directory. Args: dirpath (str) = '.' -> str"),
 
             (self.list_directory, "list_directory",
              "List directory contents. Args: dirpath (str) = '.' -> str"),
@@ -1682,7 +1792,8 @@ print(f"Successfully imported {package_name}")
             (self.get_variables, "get_variables",
              "Get current variables as JSON. Args: None -> str"),
         ]
-
+        if name is not None:
+            tools = [t for t in tools if t[1] == name][0]
         return tools
 
     def __aenter__(self):

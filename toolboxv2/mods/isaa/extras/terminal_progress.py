@@ -8,6 +8,7 @@ import os
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
+from io import StringIO
 from typing import Any
 
 # Annahme: Diese Klassen sind wie in Ihrem Code definiert.
@@ -170,6 +171,173 @@ class StateProcessor:
                     task.error = (event.error_details or {}).get('message', 'Unbekannter Fehler')
                 break
 
+
+from typing import Any, Dict, List, Union
+import json
+
+
+def arguments_summary(tool_args: dict[str, Any], max_length: int = 50) -> str:
+    """
+    Creates a summary of the tool arguments for display purposes.
+
+    Args:
+        tool_args: Dictionary containing tool arguments
+        max_length: Maximum length for individual argument values in summary
+
+    Returns:
+        Formatted string summary of the arguments
+    """
+
+    if not tool_args:
+        return "No arguments"
+
+    return_str = ""
+
+    # Handle different types of arguments
+    for key, value in tool_args.items():
+        # Format the key
+        formatted_key = key.replace('_', ' ').title()
+
+        # Handle different value types
+        if value is None:
+            formatted_value = "None"
+        elif isinstance(value, bool):
+            formatted_value = str(value)
+        elif isinstance(value, (int, float)):
+            formatted_value = str(value)
+        elif isinstance(value, str):
+            # Truncate long strings
+            if len(value) > max_length:
+                formatted_value = f'"{value[:max_length - 3]}..."'
+            else:
+                formatted_value = f'"{value}"'
+        elif isinstance(value, list):
+            if not value:
+                formatted_value = "[]"
+            elif len(value) == 1:
+                item = value[0]
+                if isinstance(item, str) and len(item) > max_length:
+                    formatted_value = f'["{item[:max_length - 6]}..."]'
+                else:
+                    formatted_value = f'["{item}"]' if isinstance(item, str) else f'[{item}]'
+            else:
+                formatted_value = f"[{len(value)} items]"
+        elif isinstance(value, dict):
+            if not value:
+                formatted_value = "{}"
+            else:
+                keys = list(value.keys())[:3]  # Show first 3 keys
+                if len(value) <= 3:
+                    formatted_value = f"{{{', '.join(keys)}}}"
+                else:
+                    formatted_value = f"{{{', '.join(keys)}, ...}} ({len(value)} keys)"
+        else:
+            # Fallback for other types
+            str_value = str(value)
+            if len(str_value) > max_length:
+                formatted_value = f"{str_value[:max_length - 3]}..."
+            else:
+                formatted_value = str_value
+
+        # Add to return string
+        if return_str:
+            return_str += ", "
+        return_str += f"{formatted_key}: {formatted_value}"
+
+    # Handle meta-tool specific summaries
+    if "tool_name" in tool_args:
+        tool_name = tool_args["tool_name"]
+
+        if tool_name == "internal_reasoning":
+            meta_summary = []
+            if "thought_number" in tool_args and "total_thoughts" in tool_args:
+                meta_summary.append(f"Thought {tool_args['thought_number']}/{tool_args['total_thoughts']}")
+            if "current_focus" in tool_args and tool_args["current_focus"]:
+                focus = tool_args["current_focus"]
+                if len(focus) > 30:
+                    focus = focus[:27] + "..."
+                meta_summary.append(f"Focus: {focus}")
+            if "confidence_level" in tool_args:
+                meta_summary.append(f"Confidence: {tool_args['confidence_level']}")
+
+            if meta_summary:
+                return_str = f"Internal Reasoning - {', '.join(meta_summary)}"
+
+        elif tool_name == "manage_internal_task_stack":
+            action = tool_args.get("action", "unknown")
+            task_desc = tool_args.get("task_description", "")
+            if len(task_desc) > 40:
+                task_desc = task_desc[:37] + "..."
+            return_str = f"Task Stack - Action: {action.title()}, Task: {task_desc}"
+
+        elif tool_name == "delegate_to_llm_tool_node":
+            task_desc = tool_args.get("task_description", "")
+            tools_count = len(tool_args.get("tools_list", []))
+            if len(task_desc) > 40:
+                task_desc = task_desc[:37] + "..."
+            return_str = f"Delegate - Task: {task_desc}, Tools: {tools_count}"
+
+        elif tool_name == "create_and_execute_plan":
+            goals_count = len(tool_args.get("goals", []))
+            return_str = f"Create Plan - Goals: {goals_count}"
+
+        elif tool_name == "advance_outline_step":
+            completed = tool_args.get("step_completed", False)
+            next_focus = tool_args.get("next_step_focus", "")
+            if len(next_focus) > 30:
+                next_focus = next_focus[:27] + "..."
+            return_str = f"Advance Step - Completed: {completed}, Next: {next_focus}"
+
+        elif tool_name == "write_to_variables":
+            scope = tool_args.get("scope", "unknown")
+            key = tool_args.get("key", "")
+            return_str = f"Write Variable - Scope: {scope}, Key: {key}"
+
+        elif tool_name == "read_from_variables":
+            scope = tool_args.get("scope", "unknown")
+            key = tool_args.get("key", "")
+            return_str = f"Read Variable - Scope: {scope}, Key: {key}"
+
+        elif tool_name == "direct_response":
+            final_answer = tool_args.get("final_answer", "")
+            if len(final_answer) > 50:
+                final_answer = final_answer[:47] + "..."
+            return_str = f"Direct Response - Answer: {final_answer}"
+
+    # Handle live tool specific summaries
+    elif any(key in tool_args for key in ["code", "filepath", "package_name"]):
+        if "code" in tool_args:
+            code = tool_args["code"]
+            code_preview = code.replace('\n', ' ').strip()
+            if len(code_preview) > 40:
+                code_preview = code_preview[:37] + "..."
+            return_str = f"Execute Code - {code_preview}"
+
+        elif "filepath" in tool_args:
+            filepath = tool_args["filepath"]
+            if "content" in tool_args:
+                content_length = len(str(tool_args["content"]))
+                return_str = f"File Operation - Path: {filepath}, Content: {content_length} chars"
+            elif "old_content" in tool_args and "new_content" in tool_args:
+                return_str = f"Replace in File - Path: {filepath}, Replace operation"
+            else:
+                return_str = f"File Operation - Path: {filepath}"
+
+        elif "package_name" in tool_args:
+            package = tool_args["package_name"]
+            version = tool_args.get("version", "latest")
+            return_str = f"Install Package - {package} ({version})"
+
+    # Ensure we don't exceed reasonable length for the entire summary
+    if len(return_str) > 200:
+        return_str = return_str[:197] + "..."
+
+    return return_str
+
+
+
+
+
 class ProgressiveTreePrinter:
     """Eine moderne, produktionsreife Terminal-Visualisierung für den Agenten-Ablauf."""
 
@@ -177,9 +345,9 @@ class ProgressiveTreePrinter:
         self.processor = StateProcessor()
         self.style = Style()
         self.llm_stream_chunks = ""
+        self.buffer = 0
         self._display_interval = 0.1
         self._last_update_time = time.time()
-        self._current_output_lines = 0
         self._terminal_width = 80
         self._terminal_height = 24
         self._is_initialized = False
@@ -190,7 +358,55 @@ class ProgressiveTreePrinter:
         # Original print sichern
         import builtins
         self._original_print = builtins.print
-        builtins.print = self.new_print
+        builtins.print = self.print
+        self._terminal_content = []  # List für O(1) append
+
+
+    def print(self, *args, **kwargs):
+        """
+        Überladene print Funktion die automatisch Content speichert
+        """
+        # Capture output in StringIO für Effizienz
+        output = StringIO()
+        if 'file' in kwargs:
+            del kwargs['file']
+        self._original_print(*args, file=output, **kwargs)
+        content = output.getvalue()
+
+        # Speichere nur wenn content nicht leer
+        if content.strip():
+            self._terminal_content.append(content.rstrip('\n'))
+
+        # Normale Ausgabe
+        self._original_print(*args, **kwargs)
+
+    def live_print(self,*args, **kwargs):
+        """
+        Live print ohne Content-Speicherung für temporäre Ausgaben
+        """
+        self._original_print(*args, **kwargs)
+
+    @staticmethod
+    def clear():
+        """
+        Speichert aktuellen Terminal-Content und cleared das Terminal
+        Systemagnostisch (Windows/Unix)
+        """
+        # Clear terminal - systemagnostisch
+        if os.name == 'nt':  # Windows
+            os.system('cls')
+        else:  # Unix/Linux/macOS
+            os.system('clear')
+
+    def restore_content(self):
+        """
+        Stellt den gespeicherten Terminal-Content in einer Aktion wieder her
+        Effizient durch join operation
+        """
+        if self._terminal_content:
+            # Effiziente Wiederherstellung mit join
+            restored_output = '\n'.join(self._terminal_content)
+            self._original_print(restored_output)
 
     def _update_terminal_size(self):
         """Aktualisiert die Terminal-Dimensionen."""
@@ -201,32 +417,6 @@ class ProgressiveTreePrinter:
         except:
             self._terminal_width = 80
             self._terminal_height = 24
-
-    def _clear_screen(self):
-        """Löscht den Bildschirm plattformübergreifend."""
-        if os.name == 'nt':  # Windows
-            os.system('cls')
-        else:  # Unix/Linux/MacOS
-            sys.stdout.write('\033[2J\033[H')
-            sys.stdout.flush()
-
-    def _move_cursor_to_top(self):
-        """Bewegt den Cursor an den Anfang des Terminals."""
-        sys.stdout.write('\033[H')
-        sys.stdout.flush()
-
-    def _clear_current_output(self):
-        """Löscht die aktuelle Ausgabe durch Überschreiben mit Leerzeichen."""
-        if self._current_output_lines > 0:
-            # Cursor nach oben bewegen
-            sys.stdout.write(f'\033[{self._current_output_lines}A')
-            # Jede Zeile löschen
-            for _ in range(self._current_output_lines):
-                sys.stdout.write('\033[2K')  # Zeile löschen
-                sys.stdout.write('\033[1B')  # Eine Zeile nach unten
-            # Cursor wieder nach oben
-            sys.stdout.write(f'\033[{self._current_output_lines}A')
-            sys.stdout.flush()
 
     def _truncate_text(self, text: str, max_length: int) -> str:
         """Kürzt Text auf maximale Länge und fügt '...' hinzu."""
@@ -268,10 +458,10 @@ class ProgressiveTreePrinter:
 
     async def progress_callback(self, event: ProgressEvent):
         """Haupteingangspunkt für Progress Events."""
-        if event.event_type == 'execution_start' and event.node_name == 'FlowAgent':
+        if event.event_type == 'execution_start':
             self.processor = StateProcessor()
-            self._current_output_lines = 0
             self._is_initialized = True
+
 
         self.processor.process_event(event)
 
@@ -279,9 +469,14 @@ class ProgressiveTreePrinter:
         if event.event_type == 'llm_stream_chunk':
             self.llm_stream_chunks += event.llm_output
             # Stream-Chunks auf vernünftige Größe begrenzen
-            lines = self.llm_stream_chunks.split('\n')
+            lines = self.llm_stream_chunks.replace('\\n', '\n').split('\n')
             if len(lines) > 8:
                 self.llm_stream_chunks = '\n'.join(lines[-8:])
+            self.buffer += 1
+            if self.buffer > 5:
+                self.buffer = 0
+            else:
+                return
 
         if event.event_type == 'llm_call':
             self.llm_stream_chunks = ""
@@ -296,23 +491,19 @@ class ProgressiveTreePrinter:
             self._update_display()
             self._last_update_time = time.time()
 
+
+        if event.event_type in ['execution_complete', 'error']:
+            self.restore_content()
+            self.print_final_summary()
+
     def _update_display(self):
         """Aktualisiert die Anzeige im Terminal."""
         self._update_terminal_size()  # Terminal-Größe neu ermitteln
-
         output_lines = self._render_full_display()
 
-        # Vorherige Ausgabe löschen
-        self._clear_current_output()
+        self.clear()
+        self.live_print('\n'.join(output_lines))
 
-        # Neue Ausgabe schreiben
-        for line in output_lines:
-            sys.stdout.write(line + '\n')
-
-        sys.stdout.flush()
-
-        # Neue Zeilenzahl speichern
-        self._current_output_lines = len(output_lines)
 
     def _render_full_display(self) -> list:
         """Rendert die komplette Anzeige als Liste von Zeilen."""
@@ -510,7 +701,7 @@ class ProgressiveTreePrinter:
 
             # Fehler anzeigen wenn vorhanden
             if hasattr(task, 'error') and task.error:
-                error_text = task.error[:60]
+                error_text = task.error[:self._terminal_width - 5]
                 lines.append(self.style.RED(f"    🔥 {error_text}"))
 
             displayed_count += 1
@@ -525,18 +716,18 @@ class ProgressiveTreePrinter:
 
         lines = [self.style.Bold(self.style.YELLOW("🛠️ Tool-Historie"))]
 
-        # Nur die letzten 3 Tools
-        for event in reversed(history[-3:]):
+        # Nur die letzten 5 Tools
+        for event in reversed(history[-5:]):
             icon = "✅" if event.success else "❌"
             style_func = self.style.GREEN if event.success else self.style.RED
             duration = f"({human_readable_time(event.node_duration)})" if event.node_duration else ""
 
-            tool_line = f"  {icon} {event.tool_name} {duration}"
+            tool_line = f"  {icon} {event.tool_name} {duration} {arguments_summary(event.tool_args, self._terminal_width)}"
             lines.append(style_func(tool_line))
 
             # Fehler kurz anzeigen
             if not event.success and event.tool_error:
-                error_text = event.tool_error[:50]
+                error_text = event.tool_error[:self._terminal_width - 5]
                 lines.append(self.style.RED(f"    💥 {error_text}"))
 
         return lines
@@ -576,7 +767,9 @@ class ProgressiveTreePrinter:
 
     def print_final_summary(self):
         """Zeigt die finale Zusammenfassung."""
-        self._update_display()
+        self._update_terminal_size()  # Terminal-Größe neu ermitteln
+        output_lines = self._render_full_display()
+        print('\n'.join(output_lines))
         summary_lines = [
             "",
             self.style.GREEN2(self.style.Bold("🏁 Ausführung Abgeschlossen")),
@@ -588,10 +781,67 @@ class ProgressiveTreePrinter:
         for line in summary_lines:
             print(line)
 
-    def new_print(self, *args, **kwargs):
-        """Ersetzt die Standard-print Funktion für saubere Integration."""
-        self._update_display()
-        # Normal printen
-        self._original_print(*args, **kwargs)
-        self._current_output_lines+=str(args).count('\n')
 
+# Test cases to demonstrate functionality
+if __name__ == "__main__":
+    # Test with meta-tools
+    test_cases = [
+        # Internal reasoning
+        {
+            "tool_name": "internal_reasoning",
+            "thought_number": 2,
+            "total_thoughts": 5,
+            "current_focus": "Analyzing the problem structure and identifying key components",
+            "confidence_level": 0.8,
+            "key_insights": ["insight1", "insight2"],
+            "potential_issues": ["issue1"]
+        },
+
+        # Task stack management
+        {
+            "tool_name": "manage_internal_task_stack",
+            "action": "push",
+            "task_description": "Complete the data analysis for the quarterly report",
+            "outline_step_ref": "step_3"
+        },
+
+        # Code execution
+        {
+            "code": "import pandas as pd\ndf = pd.read_csv('data.csv')\nprint(df.head())",
+        },
+
+        # File operations
+        {
+            "filepath": "/path/to/document.txt",
+            "content": "This is a long content string that should be truncated in the summary because it exceeds the maximum length limit"
+        },
+
+        # Simple arguments
+        {
+            "package_name": "numpy",
+            "version": "1.24.0"
+        },
+
+        # Empty args
+        {},
+
+        # Complex nested structure
+        {
+            "complex_data": {
+                "nested": {"deep": "value"},
+                "list": [1, 2, 3, 4, 5],
+                "boolean": True
+            },
+            "simple_string": "test"
+        }
+    ]
+
+    print("Testing arguments_summary function:")
+    print("=" * 50)
+
+    for i, test_case in enumerate(test_cases, 1):
+        result = arguments_summary(test_case)
+        print(f"Test {i}:")
+        print(f"Input: {test_case}")
+        print(f"Summary: {result}")
+        print("-" * 30)

@@ -328,25 +328,21 @@ class ProgressTracker:
 
     def calculate_llm_cost(self, model: str, input_tokens: int, output_tokens: int,completion_response:Any=None) -> float:
         """Calculate approximate LLM cost"""
+        cost = (input_tokens / 1000) * self.token_costs["input"] + (output_tokens / 1000) * self.token_costs["output"]
+        if hasattr(completion_response, "_hidden_params"):
+            cost = completion_response._hidden_params.get("response_cost", 0)
         try:
             import litellm
-            if model.count('/') == 3:
-                model = '/'.join(model.split('/')[1:])
             cost = litellm.completion_cost(model=model, completion_response=completion_response)
-            return cost
         except ImportError:
-            cost = 0.0
+            pass
         except Exception as e:
             try:
                 import litellm
-                cost = litellm.completion_cost(model=model.split("/")[-1], completion_response=completion_response)
-                return cost
+                cost = litellm.completion_cost(model=model.split('/')[-1], completion_response=completion_response)
             except Exception:
-                cost = 0.0
-        # Simplified cost calculation - would need actual provider pricing
-        input_cost = (input_tokens / 1000) * self.token_costs["input"]
-        output_cost = (output_tokens / 1000) * self.token_costs["output"]
-        return input_cost + output_cost
+                pass
+        return cost or (input_tokens / 1000) * self.token_costs["input"] + (output_tokens / 1000) * self.token_costs["output"]
 
     def get_summary(self) -> dict[str, Any]:
         """Get comprehensive progress summary"""
@@ -505,6 +501,14 @@ class DecisionTask(Task):
     decision_prompt: str = ""  # Kurze Frage an LLM
     routing_map: dict[str, str] = field(default_factory=dict)  # Ergebnis -> nächster Task
     decision_model: str = "fast"  # Welches LLM für Entscheidung
+
+
+class PlanData(BaseModel):
+    """Dataclass for plan data"""
+    plan_name: str = Field(..., discription="Name of the plan")
+    description: str = Field(..., discription="Description of the plan")
+    execution_strategy: str = Field(..., discription="Execution strategy for the plan")
+    tasks: list[LLMTask | ToolTask | DecisionTask] = Field(..., discription="List of tasks in the plan")
 
 
 # Erweiterte Task-Erstellung

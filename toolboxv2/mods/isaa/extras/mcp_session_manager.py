@@ -302,7 +302,7 @@ class MCPSessionManager:
             wprint(f"Cleanup error for {server_name}: {e}")
 
     async def cleanup_all(self):
-        """Clean up all sessions with timeout"""
+        """Clean up all sessions with timeout and proper error handling"""
         cleanup_tasks = []
         for server_name in list(self.sessions.keys()):
             task = asyncio.create_task(self._cleanup_session(server_name))
@@ -310,9 +310,34 @@ class MCPSessionManager:
 
         if cleanup_tasks:
             try:
-                await asyncio.wait_for(
+                # Use gather with return_exceptions=True to collect all results
+                results = await asyncio.wait_for(
                     asyncio.gather(*cleanup_tasks, return_exceptions=True),
                     timeout=5.0
                 )
-            except TimeoutError:
-                wprint("MCP session cleanup timeout")
+
+                # Log any non-cancellation exceptions
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                        wprint(f"Error cleaning up MCP session: {result}")
+
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                # Handle timeout and cancellation
+                wprint("MCP session cleanup timeout or cancelled")
+                # Cancel all tasks
+                for task in cleanup_tasks:
+                    if not task.done():
+                        task.cancel()
+
+                # Give tasks a moment to cancel cleanly
+                try:
+                    await asyncio.wait(cleanup_tasks, timeout=1.0)
+                except asyncio.CancelledError:
+                    pass
+
+            except Exception as e:
+                wprint(f"Unexpected error during MCP session cleanup: {e}")
+                # Cancel remaining tasks
+                for task in cleanup_tasks:
+                    if not task.done():
+                        task.cancel()

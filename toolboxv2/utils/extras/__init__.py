@@ -1,6 +1,7 @@
 from .base_widget import BaseWidget
 from .helper_test_functions import generate_test_cases
 from .show_and_hide_console import show_console
+from .notification import ask_question, quick_error, quick_info, quick_success, quick_warning
 from .Style import (
     Style,
     cls,
@@ -21,5 +22,10 @@ __all__ = [
     "extract_json_strings",
     "extract_python_code",
     "stram_print",
-    "BaseWidget"
+    "BaseWidget",
+    "ask_question",
+    "quick_error",
+    "quick_info",
+    "quick_success",
+    "quick_warning",
 ]

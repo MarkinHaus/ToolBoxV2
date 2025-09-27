@@ -3,7 +3,7 @@ import asyncio
 import copy
 from enum import Enum
 from typing import Any, Union
-
+from toolboxv2.mods.isaa.extras.cahin_printer import ChainPrinter
 from pydantic import BaseModel
 
 
@@ -34,11 +34,10 @@ class CF:
             new_cf.extract_key = key
         return new_cf
 
-
 class IS:
     """Conditional check for branching logic."""
 
-    def __init__(self, key: str, expected_value: Any):
+    def __init__(self, key: str, expected_value: Any = True):
         self.key = key
         self.expected_value = expected_value
 
@@ -109,6 +108,27 @@ class ChainBase:
             """Asynchronous execution."""
             return self.parent.a_run(*self.args, **self.kwargs).__await__()
 
+class Function(ChainBase):
+    """A wrapper to treat native Python functions as chainable components."""
+
+    def __init__(self, func: callable):
+        if not callable(func):
+            raise TypeError("Function object must be initialized with a callable.")
+        self.func = func
+        # Get a meaningful name for visualization
+        self.func_name = getattr(func, '__name__', 'anonymous_lambda')
+
+    async def a_run(self, data: Any, **kwargs):
+        """Executes the wrapped function, handling both sync and async cases."""
+        # Note: kwargs from the chain run are not passed to the native function
+        # to maintain a simple, predictable (data in -> data out) interface.
+        if asyncio.iscoroutinefunction(self.func):
+            return await self.func(data)
+        else:
+            return self.func(data)
+
+    def __repr__(self):
+        return f"Function(name='{self.func_name}')"
 
 class ParallelChain(ChainBase):
     """Handles parallel execution of multiple agents or chains."""
@@ -172,7 +192,7 @@ class Chain(ChainBase):
 
     def __init__(self, agent: 'FlowAgent' = None):
         self.tasks: list[Any] = [agent] if agent else []
-        self.progress_tracker: ProgressTracker | None = None
+        self.progress_tracker: ChainPrinter | None = None
 
     @classmethod
     def _create_chain(cls, components: list[Any]) -> 'Chain':
@@ -238,6 +258,8 @@ class Chain(ChainBase):
                             ]
                             current_data = await asyncio.gather(*parallel_tasks)
 
+                            print("Parallel results:", type(current_data))
+                            print("Parallel results:", len(current_data))
                             # Überspringe die nächste Aufgabe, da sie bereits parallel ausgeführt wurde
                             i += 1
                         else:
@@ -251,6 +273,15 @@ class Chain(ChainBase):
             elif isinstance(task, ParallelChain | ConditionalChain | ErrorHandlingChain):
                 current_data = await task.a_run(current_data, **kwargs)
 
+            elif callable(task) and not isinstance(task, (ChainBase, type)):
+                # Check if the function is async, then await it
+                if asyncio.iscoroutinefunction(task):
+                    current_data = await task(current_data)
+                # Otherwise, run the synchronous function normally
+                else:
+                    current_data = task(current_data)
+            elif hasattr(task, 'a_run'):
+                current_data = await task.a_run(current_data, **kwargs)
             elif isinstance(task, IS):
                 # IS needs to be paired with >> to form a ConditionalChain
                 next_task_for_cond = self.tasks[i + 1] if (i + 1) < len(self.tasks) else None
@@ -360,6 +391,14 @@ def chain_to_graph(self) -> dict[str, Any]:
                     "depth": depth
                 }
 
+            if isinstance(comp, Function):
+                return {
+                    "type": "Function",
+                    "display": f"[Func] {comp.func_name}",
+                    "function_name": comp.func_name,
+                    "depth": depth
+                }
+
             # Conditional chain detection
             if hasattr(comp, 'condition') and hasattr(comp, 'true_branch'):
                 condition_data = process_component(comp.condition, depth + 1,
@@ -464,6 +503,7 @@ def print_graph(self):
         "Format": "\033[92m",  # Green
         "Condition": "\033[93m",  # Yellow
         "Parallel": "\033[95m",  # Magenta
+        "Function": "\033[35m",  # Light Purple
         "Conditional": "\033[96m",  # Cyan
         "ErrorHandling": "\033[91m",  # Red
         "Chain": "\033[97m",  # White
@@ -477,6 +517,7 @@ def print_graph(self):
     PARALLEL_ICON = "⚡"
     BRANCH_ICON = "🔀"
     ERROR_ICON = "🚨"
+    FUNCTION_ICON = "ƒ"
 
     def style_component(comp, override_color=None):
         """Apply enhanced styling with parallel indicators."""
@@ -485,11 +526,12 @@ def print_graph(self):
 
         comp_type = comp.get("type", "Unknown")
         display = comp.get("display", f"[{comp_type}]")
-
+        color = override_color or COLORS.get(comp_type, COLORS['Unknown'])
         # Special handling for parallel-creating formats
         if comp_type == "Format" and comp.get("creates_parallel", False):
-            color = override_color or COLORS["AutoParallel"]
             return f"{color}{PARALLEL_ICON} {display}{RESET}"
+        elif comp_type == "Function":
+            return f"{color}{FUNCTION_ICON} {display}{RESET}"
         else:
             color = override_color or COLORS.get(comp_type, COLORS['Unknown'])
             return f"{color}{display}{RESET}"

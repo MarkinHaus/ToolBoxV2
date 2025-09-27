@@ -717,7 +717,7 @@ class FlowAgentBuilder:
             mcp_config = config_path
             from toolboxv2 import get_app
             name = self.config.name or "inline_config"
-            path = Path(get_app().appdata) / "isaa" / "MPCConfig" / f"{name}.json"
+            path = Path(get_app().appdata) / "isaa" / "MCPConfig" / f"{name}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(mcp_config, indent=2))
             config_path = path
