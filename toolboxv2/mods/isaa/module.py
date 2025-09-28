@@ -429,6 +429,7 @@ class Tools(MainTool, FileHandler):
             "get_agent": self.get_agent,
             "format_class": self.format_class,  # Now async
             "get_memory": self.get_memory,
+            "save_all_memory_vis": self.save_all_memory_vis,
             "rget_mode": lambda mode: self.controller.rget(mode),
         }
         self.tools_interfaces: dict[str, ToolsInterface] = {}
@@ -1234,6 +1235,16 @@ class Tools(MainTool, FileHandler):
             mem_kb = cm.get(name)  # This might return a list of KnowledgeBase or single one
             return mem_kb
         return cm
+
+    async def save_all_memory_vis(self, dir_path=None):
+        if dir_path is None:
+            dir_path = f"{get_app().data_dir}/Memory/vis"
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
+        self.load_to_mem_sync()
+        for name, kb in self.get_memory().memories.items():
+            self.print(f"Saving to {name}.html with {len(kb.concept_extractor.concept_graph.concepts)} concepts")
+            await kb.vis(output_file=f"{dir_path}/{name}.html")
+        return dir_path
 
     async def host_agent_ui(
         self,

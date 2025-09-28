@@ -10,12 +10,12 @@ import os
 import pstats
 import time
 import traceback
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from inspect import signature
 from types import ModuleType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Awaitable
 
 from pydantic import BaseModel
 
@@ -1268,6 +1268,17 @@ class AppType:
 
     websocket_handlers: dict[str, dict[str, Callable]] = {}
     _rust_ws_bridge: Any = None
+
+    docs_reader: Callable | None = None
+    docs_writer: Callable | None = None
+    get_update_suggestions: Callable | None = None
+    source_code_lookup: Callable | None = None
+    auto_update_docs: Callable | None = None
+
+    initial_docs_parse: Callable | None = None
+    auto_adapt_docs_to_index: Callable | None = None
+    find_unclear_and_missing: Callable | None = None
+    rebuild_clean_docs: Callable | None = None
 
     def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
         self.args_sto = args

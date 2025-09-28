@@ -13,6 +13,7 @@ import uuid
 import hashlib
 import time
 import logging
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,9 @@ class MCPConfig:
     enable_flows: bool = True
     enable_python_execution: bool = True
     enable_system_manipulation: bool = True
+    docs_system: bool = True
+    docs_reader: bool = True
+    docs_writer: bool = True
 
 class APIKeyManager:
     """Manages API keys for MCP authentication"""
@@ -206,6 +210,7 @@ class ToolBoxV2MCPServer:
         self.flow_session_manager = FlowSessionManager()
         self.tb_app: Optional[App] = None
         self.authenticated_sessions: Dict[str, Dict] = {}
+        self.docs_system = None
 
         # Initialize ToolBoxV2 app with suppressed output
         with MCPSafeIO():
@@ -224,6 +229,8 @@ class ToolBoxV2MCPServer:
                 # Set up flows
                 flows_dict = flows_dict_func(remote=False)
                 self.tb_app.set_flows(flows_dict)
+                await self.tb_app.get_mod("isaa").init_isaa()
+                self.docs_system = self.tb_app.mkdocs
         except Exception as e:
             logging.error(f"Failed to initialize ToolBoxV2: {e}")
 
@@ -269,6 +276,190 @@ class ToolBoxV2MCPServer:
                     "required": ["module_name", "function_name"]
                 }
             ))
+
+            if self.config.docs_system:
+                if self.config.docs_reader:
+                    tools.append(
+                    types.Tool(
+                        name="docs_reader",
+                        description="Read documentation with advanced filtering and search capabilities",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query for finding specific documentation"
+                                },
+                                "section_id": {
+                                    "type": "string",
+                                    "description": "Specific section ID to retrieve (e.g., 'file.md#Section Title')"
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Filter by specific documentation file path"
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Filter by tags"
+                                },
+                                "include_source_refs": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Include source code references"
+                                },
+                                "format_type": {
+                                    "type": "string",
+                                    "enum": ["structured", "markdown", "json"],
+                                    "default": "structured",
+                                    "description": "Output format type"
+                                }
+                            }
+                        }
+                    )
+                    )
+                if self.config.docs_writer and self.config.enable_system_manipulation:
+                    tools.extend([
+                    types.Tool(
+                        name="docs_writer",
+                        description="Write, update, or generate documentation with precise control",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["create_file", "add_section", "update_section", "generate_from_code"],
+                                    "description": "Type of documentation action to perform"
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Target documentation file path (relative to docs/)"
+                                },
+                                "section_title": {
+                                    "type": "string",
+                                    "description": "Title for new or updated section"
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "Content for the section (if not auto-generating)"
+                                },
+                                "source_file": {
+                                    "type": "string",
+                                    "description": "Source code file to generate documentation from"
+                                },
+                                "auto_generate": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Use AI to generate content from source code"
+                                },
+                                "position": {
+                                    "type": "string",
+                                    "description": "Position for new sections: 'top', 'bottom', or 'after:SectionName'"
+                                },
+                                "level": {
+                                    "type": "integer",
+                                    "default": 2,
+                                    "minimum": 1,
+                                    "maximum": 6,
+                                    "description": "Header level for new sections"
+                                }
+                            },
+                            "required": ["action"]
+                        }
+                    ),
+                    types.Tool(
+                        name="auto_update_docs",
+                        description="Automatically update documentation based on code changes",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "dry_run": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Preview changes without actually updating files"
+                                },
+                                "max_updates": {
+                                    "type": "integer",
+                                    "default": 10,
+                                    "minimum": 1,
+                                    "description": "Maximum number of updates to process"
+                                },
+                                "priority_filter": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"]
+                                    },
+                                    "description": "Only process suggestions with these priorities"
+                                },
+                                "force_scan": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Force full project scan for changes"
+                                }
+                            }
+                        }
+                    )])
+                tools.extend([
+                    types.Tool(
+                        name="get_update_suggestions",
+                        description="Get suggestions for documentation updates based on code changes",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "force_scan": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Force full project scan instead of git-based change detection"
+                                },
+                                "priority_filter": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"]
+                                    },
+                                    "description": "Filter suggestions by priority level"
+                                }
+                            }
+                        }
+                    ),
+
+                    types.Tool(
+                        name="source_code_lookup",
+                        description="Look up source code elements and their documentation references",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "element_name": {
+                                    "type": "string",
+                                    "description": "Name of class, function, or method to search for"
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Filter by specific source file path"
+                                },
+                                "element_type": {
+                                    "type": "string",
+                                    "enum": ["class", "function", "method", "variable", "module"],
+                                    "description": "Type of code element to find"
+                                }
+                            }
+                        }
+                    ),
+                    types.Tool(
+                        name="docs_system_status",
+                        description="Get status and statistics of the documentation system",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "include_file_list": {
+                                    "type": "boolean",
+                                    "default": False,
+                                    "description": "Include list of indexed files"
+                                }
+                            }
+                        }
+                    )])
 
             # Flow management tools
             if self.config.enable_flows:
@@ -320,13 +511,13 @@ class ToolBoxV2MCPServer:
             if self.config.enable_python_execution:
                 tools.append(types.Tool(
                     name="python_execute",
-                    description="Execute Python code with direct access to ToolBoxV2 app instance",
+                    description="Execute Python code with direct access to ToolBoxV2 app instance use toolbox_info (python_guide) for further usage informations",
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "code": {
                                 "type": "string",
-                                "description": "Python code to execute. 'app' variable contains the ToolBoxV2 instance"
+                                "description": "Python code to execute. 'app' variable contains the ToolBoxV2 instance in an async ipy like env"
                             },
                             "globals": {
                                 "type": "object",
@@ -379,7 +570,7 @@ class ToolBoxV2MCPServer:
                             "properties": {
                                 "info_type": {
                                     "type": "string",
-                                    "enum": ["modules", "functions", "module_detail", "function_detail", "implementation_guide", "flow_guide"]
+                                    "enum": ["modules", "functions", "module_detail", "function_detail", "python_guide", "docs_reader", "flow_guide"]
                                 },
                                 "target": {
                                     "type": "string",
@@ -388,8 +579,92 @@ class ToolBoxV2MCPServer:
                             },
                             "required": ["info_type"]
                         }
-                    )
+                    ),
+
                 ])
+                if self.config.docs_system:
+                    tools.extend([
+types.Tool(
+    name="initial_docs_parse",
+    description="Parse existing documentation and TOCs, complete the index",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "update_index": {
+                "type": "boolean",
+                "default": True,
+                "description": "Whether to update the documentation index"
+            }
+        }
+    }
+),
+
+types.Tool(
+    name="auto_adapt_docs_to_index",
+    description="Automatically adapt documentation to match current code index",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "create_missing": {
+                "type": "boolean",
+                "default": True,
+                "description": "Create documentation for undocumented code elements"
+            },
+            "update_existing": {
+                "type": "boolean",
+                "default": True,
+                "description": "Update existing documentation that's outdated"
+            }
+        }
+    }
+),
+
+types.Tool(
+    name="find_unclear_and_missing",
+    description="Find unclear documentation and missing implementations from TOC sections",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "analyze_tocs": {
+                "type": "boolean",
+                "default": True,
+                "description": "Analyze table of contents structure for issues"
+            }
+        }
+    }
+),
+
+types.Tool(
+    name="rebuild_clean_docs",
+    description="Rebuild and clean documentation with options to preserve content",
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "keep_unclear": {
+                "type": "boolean",
+                "default": True,
+                "description": "Keep sections marked as unclear"
+            },
+            "keep_missing": {
+                "type": "boolean",
+                "default": True,
+                "description": "Keep sections with missing implementations"
+            },
+            "keep_level": {
+                "type": "integer",
+                "default": 1,
+                "minimum": 1,
+                "maximum": 6,
+                "description": "Maximum header level to keep (deeper levels will be removed)"
+            },
+            "update_mkdocs": {
+                "type": "boolean",
+                "default": True,
+                "description": "Update mkdocs.yml configuration file"
+            }
+        }
+    }
+)])
 
             return tools
 
@@ -417,6 +692,261 @@ class ToolBoxV2MCPServer:
                     return await self._handle_module_manage(arguments)
                 elif name == "toolbox_info":
                     return await self._handle_toolbox_info(arguments)
+
+
+                elif name == "initial_docs_parse":
+                    result = await self.tb_app.initial_docs_parse(
+                        update_index=arguments.get("update_index", True)
+                    )
+                    return [types.TextContent(type="text", text=json.dumps(
+                        result.data if result.is_ok() else {"error": result.error}, indent=2))]
+
+                elif name == "auto_adapt_docs_to_index":
+                    result = await self.tb_app.auto_adapt_docs_to_index(
+                        create_missing=arguments.get("create_missing", True),
+                        update_existing=arguments.get("update_existing", True)
+                    )
+                    return [types.TextContent(type="text", text=json.dumps(
+                        result.data if result.is_ok() else {"error": result.error}, indent=2))]
+
+                elif name == "find_unclear_and_missing":
+                    result = await self.tb_app.find_unclear_and_missing(
+                        analyze_tocs=arguments.get("analyze_tocs", True)
+                    )
+                    return [types.TextContent(type="text", text=json.dumps(
+                        result.data if result.is_ok() else {"error": result.error}, indent=2))]
+
+                elif name == "rebuild_clean_docs":
+                    result = await self.tb_app.rebuild_clean_docs(
+                        keep_unclear=arguments.get("keep_unclear", True),
+                        keep_missing=arguments.get("keep_missing", True),
+                        keep_level=arguments.get("keep_level", 1),
+                        update_mkdocs=arguments.get("update_mkdocs", True)
+                    )
+                    return [types.TextContent(type="text", text=json.dumps(
+                        result.data if result.is_ok() else {"error": result.error}, indent=2))]
+
+                elif name == "docs_reader":
+                    try:
+                        result = await self.tb_app.docs_reader(
+                            query=arguments.get("query"),
+                            section_id=arguments.get("section_id"),
+                            file_path=arguments.get("file_path"),
+                            tags=arguments.get("tags"),
+                            include_source_refs=arguments.get("include_source_refs", True),
+                            format_type=arguments.get("format_type", "structured")
+                        )
+
+                        if result.is_ok():
+                            if arguments.get("format_type") == "markdown":
+                                content = result.data
+                            else:
+                                content = json.dumps(result.data, indent=2, ensure_ascii=False)
+                        else:
+                            content = f"Error: {result.error}"
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error reading docs: {e}")]
+
+                elif name == "docs_writer":
+                    try:
+                        result = await self.tb_app.docs_writer(
+                            action=arguments["action"],
+                            file_path=arguments.get("file_path"),
+                            section_title=arguments.get("section_title"),
+                            content=arguments.get("content"),
+                            source_file=arguments.get("source_file"),
+                            auto_generate=arguments.get("auto_generate", False),
+                            position=arguments.get("position"),
+                            level=arguments.get("level", 2)
+                        )
+
+                        if result.is_ok():
+                            content = json.dumps(result.data, indent=2, ensure_ascii=False)
+                        else:
+                            content = f"Error: {result.error}"
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error writing docs: {e}")]
+
+                elif name == "get_update_suggestions":
+                    try:
+                        result = await self.tb_app.get_update_suggestions(
+                            force_scan=arguments.get("force_scan", False),
+                            priority_filter=arguments.get("priority_filter")
+                        )
+
+                        if result.is_ok():
+                            # Format suggestions in a readable way
+                            data = result.data
+                            content = f"""# Documentation Update Suggestions
+
+        ## Summary
+        - Total suggestions: {data['total_suggestions']}
+        - Force scan used: {data['force_scan_used']}
+        - Last indexed: {data.get('index_stats', {}).get('last_indexed', 'Unknown')}
+
+        ## Index Statistics
+        - Code elements: {data.get('index_stats', {}).get('code_elements', 0)}
+        - Documentation sections: {data.get('index_stats', {}).get('doc_sections', 0)}
+        - Import references: {data.get('index_stats', {}).get('import_refs', 0)}
+
+        ## Suggestions
+        """
+                            for i, suggestion in enumerate(data['suggestions'], 1):
+                                content += f"""
+        ### {i}. {suggestion['suggestion']}
+        - **Priority**: {suggestion['priority']}
+        - **Type**: {suggestion['type']}
+        - **Action**: {suggestion['action']}
+        - **Source file**: {suggestion.get('source_file', 'N/A')}
+        - **Doc file**: {suggestion.get('doc_file', 'N/A')}
+        - **Change type**: {suggestion.get('change_type', 'N/A')}
+        """
+
+                            if data.get('update_notes'):
+                                content += "\n## Recent Changes\n"
+                                for note in data['update_notes']:
+                                    content += f"- {note}\n"
+
+                        else:
+                            content = f"Error getting suggestions: {result.error}"
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error getting suggestions: {e}")]
+
+                elif name == "auto_update_docs":
+                    try:
+                        result = await self.tb_app.auto_update_docs(
+                            dry_run=arguments.get("dry_run", False),
+                            max_updates=arguments.get("max_updates", 10),
+                            priority_filter=arguments.get("priority_filter"),
+                            force_scan=arguments.get("force_scan", False)
+                        )
+
+                        if result.is_ok():
+                            data = result.data
+
+                            if data.get("dry_run"):
+                                content = f"""# Dry Run Results
+
+        Would update {data['would_update']} documentation sections:
+
+        """
+                                for suggestion in data['suggestions']:
+                                    content += f"- {suggestion['suggestion']} (Priority: {suggestion['priority']})\n"
+                            else:
+                                content = f"""# Auto-Update Results
+
+        ## Summary
+        - Total suggestions processed: {data['total_suggestions']}
+        - Actually processed: {data['processed']}
+        - Successful updates: {data['successful_updates']}
+
+        ## Results
+        """
+                                for i, result_item in enumerate(data['results'], 1):
+                                    content += f"""
+        ### {i}. {result_item['suggestion']['suggestion']}
+        - **Result**: {result_item['result']}
+        """
+                                    if result_item['result'] == 'error':
+                                        content += f"- **Error**: {result_item.get('error', 'Unknown error')}\n"
+                                    elif result_item['result'] == 'success':
+                                        details = result_item.get('details', {})
+                                        content += f"- **Action**: {details.get('action', 'Unknown')}\n"
+                        else:
+                            content = f"Error in auto-update: {result.error}"
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error in auto-update: {e}")]
+
+                elif name == "source_code_lookup":
+                    try:
+                        result = await self.tb_app.source_code_lookup(
+                            element_name=arguments.get("element_name"),
+                            file_path=arguments.get("file_path"),
+                            element_type=arguments.get("element_type")
+                        )
+
+                        if result.is_ok():
+                            data = result.data
+                            content = f"""# Source Code Lookup Results
+
+        Found {data['total_matches']} matches:
+
+        """
+                            for i, match in enumerate(data['matches'], 1):
+                                content += f"""
+        ## {i}. {match['name']} ({match['type']})
+        - **File**: {match['file_path']}:{match['line_start']}-{match['line_end']}
+        - **Signature**: `{match['signature']}`
+        """
+                                if match.get('parent_class'):
+                                    content += f"- **Parent Class**: {match['parent_class']}\n"
+
+                                if match.get('docstring'):
+                                    content += f"- **Docstring**: {match['docstring'][:100]}...\n"
+
+                                if match.get('related_documentation'):
+                                    content += "- **Related Documentation**:\n"
+                                    for doc in match['related_documentation']:
+                                        content += f"  - [{doc['title']}]({doc['file_path']})\n"
+                        else:
+                            content = f"Error in lookup: {result.error}"
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error in source lookup: {e}")]
+
+                elif name == "docs_system_status":
+                    try:
+                        if not self.docs_system:
+                            return [types.TextContent(type="text", text="Documentation system not initialized")]
+
+                        # Get current index status
+                        if self.docs_system.current_index:
+                            index = self.docs_system.current_index
+                            content = f"""# Documentation System Status
+
+        ## Index Statistics
+        - **Version**: {index.version}
+        - **Last indexed**: {index.last_indexed.strftime('%Y-%m-%d %H:%M:%S')}
+        - **Git commit**: {index.last_git_commit or 'Not tracked'}
+        - **Code elements**: {len(index.code_elements)}
+        - **Documentation sections**: {len(index.sections)}
+        - **Import references**: {len(index.import_refs)}
+        - **Tracked files**: {len(index.file_hashes)}
+
+        ## Configuration
+        - **Include directories**: {', '.join(self.docs_system.indexer.include_dirs)}
+        - **Exclude directories**: {', '.join(self.docs_system.indexer.exclude_dirs)}
+        - **Docs root**: {self.docs_system.docs_root}
+        - **Project root**: {self.docs_system.project_root}
+        """
+
+                            if arguments.get("include_file_list"):
+                                content += "\n## Indexed Files\n"
+                                for file_path in sorted(index.file_hashes.keys()):
+                                    content += f"- {file_path}\n"
+
+                        else:
+                            content = "Documentation system initialized but no index loaded yet."
+
+                        return [types.TextContent(type="text", text=content)]
+
+                    except Exception as e:
+                        return [types.TextContent(type="text", text=f"Error getting system status: {e}")]
+
                 else:
                     return [types.TextContent(
                         type="text",
@@ -774,6 +1304,17 @@ class ToolBoxV2MCPServer:
                     text=f"ToolBoxV2 Modules:\n" + "\n".join(modules_info)
                 )]
 
+            elif info_type == "module_detail":
+                # list all functions and their description
+                from toolboxv2 import TBEF
+                data = [x.lower() for x in TBEF.__dict__.get(target.upper(), Enum).__dict__.get("_member_names_", [])]
+
+                return [types.TextContent(
+                    type="text",
+                    text=f"Module Details for {target}:\n{data}"
+                )]
+
+
             elif info_type == "functions":
                 if target:
                     # Specific module functions
@@ -816,72 +1357,93 @@ class ToolBoxV2MCPServer:
                     text=f"Function Details for {target}:\n{json.dumps(func_data, indent=2, default=str)}"
                 )]
 
-            elif info_type == "implementation_guide":
-                guide = """
-# ToolBoxV2 Module Implementation Guide
+            elif info_type == "python_guide":
+                python_guide = """
+# Python IPy Session Guide: Using the App and Toolbox
 
-## Basic Module Structure
+# --- Basic Usage ---
 
-```python
-from toolboxv2 import get_app, Result
+# 1. Get the application instance
+# You can get a default or a named application instance.
+from toolboxv2 import get_app
+app = get_app()  # Get the default app
+named_app = get_app("my_specific_app")  # Get a named app
 
-app = get_app("MyModule")
-export = app.tb
+# 2. Get a module instance from the app
+# This allows you to interact with a specific module's functionality.
+mod = app.get_mod("mod_name")
 
-Name = "MyModule"
-version = "1.0.0"
+# 3. Run a function from a module
+# A direct way to execute a module's function without getting the module instance first.
+app.run_any(("mod_name", "function_name"), args_, kwargs_)
 
-@export(mod_name=Name, version=version, helper="My function description")
-def my_function(param1: str, param2: int = 10) -> Result:
-    '''Function docstring'''
-    # Your logic here
-    return Result.ok(data={"result": param1 * param2})
 
-# For API endpoints
-@export(mod_name=Name, version=version, api=True, api_methods=['GET', 'POST'])
-async def api_endpoint(request=None) -> Result:
-    return Result.json(data={"message": "API response"})
+# --- Advanced Workflow Example: Working with the 'isaa' Module ---
 
-# For initialization
-@export(mod_name=Name, version=version, initial=True)
-def on_load():
-    print(f"{Name} loaded successfully")
+# This example demonstrates a more complex workflow, including getting a module,
+# using a builder pattern, configuring, registering, and retrieving an agent.
 
-# For cleanup
-@export(mod_name=Name, version=version, exit_f=True)
-async def on_exit():
-    print(f"{Name} shutting down")
-```
+import os
+from toolboxv2 import init_cwd
+from toolboxv2.mods.isaa.module import Tools as Isaa
+from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter, VerbosityMode
 
-## MainTool Class (Advanced)
+# 1. Initialize the app and get the 'isaa' module
+app = get_app("isaa_test_app")
+isaa: Isaa = app.get_mod("isaa")
 
-```python
-from toolboxv2 import MainTool, Result
+# 2. Use a builder to create and configure an agent
+agent_builder = isaa.get_agent_builder(name="mcp-agent")
+config_path = os.path.join(init_cwd, "mcp.json")
+agent_builder.load_mcp_tools_from_config(config_path)
 
-class Tools(MainTool):
-    async def __ainit__(self):
-        await super().__ainit__(name="MyTool", v="1.0.0")
-        # Initialization code
+# 3. Register the agent with the module
+# This makes the agent available for later use.
+# Note: This is an async function, so you would typically 'await' it in an async context.
+# await isaa.register_agent(agent_builder)
 
-    @export(mod_name="MyTool")
-    def tool_function(self):
-        return Result.ok(data="Tool result")
-```
+# 4. Retrieve the registered agent
+agent_name = agent_builder.config.name
+# agent = await isaa.get_agent(agent_name)
 
-## Key Decorators Parameters
-
-- `mod_name`: Module name
-- `version`: Version string
-- `helper`: Description/help text
-- `api`: Enable as HTTP endpoint
-- `api_methods`: Allowed HTTP methods
-- `initial`: Run on module load
-- `exit_f`: Run on shutdown
-- `memory_cache`: Enable caching
-- `row`: Return raw data (not wrapped in Result)
-
+# 5. Interact with the agent
+# For example, setting up a progress callback for terminal output.
+printer = ProgressiveTreePrinter(mode=VerbosityMode.MINIMAL)
+# agent.progress_callback = printer.progress_callback
 """
-                return [types.TextContent(type="text", text=guide)]
+                return [types.TextContent(type="text", text=python_guide)]
+            elif info_type == "docs_reader":
+                try:
+                    if not self.tb_app or not hasattr(self.tb_app, 'docs_reader'):
+                        return [types.TextContent(type="text", text="Documentation system not available")]
+
+                    if target == "list":
+                        # List all available documentation sections
+                        result = await self.tb_app.docs_reader(format_type="json")
+                        if result.is_ok():
+                            sections = result.data if isinstance(result.data, list) else result.data.get('sections', [])
+                            section_list = []
+                            for section in sections:
+                                if isinstance(section, dict):
+                                    section_list.append(
+                                        f"- {section.get('title', 'Unknown')} ({section.get('file_path', 'Unknown')})")
+                                else:
+                                    section_list.append(f"- {section}")
+
+                            return [types.TextContent(type="text",
+                                                      text=f"# Available Documentation Sections\n\n" + "\n".join(
+                                                          section_list))]
+                        else:
+                            return [types.TextContent(type="text", text="Error listing documentation")]
+                    else:
+                        # Search for specific documentation
+                        result = await self.tb_app.docs_reader(query=target, format_type="markdown")
+                        if result.is_ok():
+                            return [types.TextContent(type="text", text=result.data)]
+                        else:
+                            return [types.TextContent(type="text", text=f"No documentation found for: {target}")]
+                except Exception as e:
+                    return [types.TextContent(type="text", text=f"Error accessing documentation: {e}")]
 
             elif info_type == "flow_guide":
                 flow_guide = """

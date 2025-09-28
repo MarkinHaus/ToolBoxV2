@@ -147,7 +147,8 @@ def after_format(d:str)->dict:
     try:
         d = eval(clean(d))
     except SyntaxError:
-        print("Invalid syntax in input data")
+        pass
+        # print("Invalid syntax in input data")
         # return d
     if isinstance(d, str):
         try:

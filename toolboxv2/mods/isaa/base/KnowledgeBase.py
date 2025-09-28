@@ -605,7 +605,7 @@ class TextSplitter:
         return chunks
 
 class KnowledgeBase:
-    def __init__(self, embedding_dim: int = 256, similarity_threshold: float = 0.61, batch_size: int = 64,
+    def __init__(self, embedding_dim: int = 256, similarity_threshold: float = 0.61, batch_size: int = 12,
                  n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("SUMMARYMODEL"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
                  vis_class:str | None = "FaissVectorStore",
@@ -1751,7 +1751,6 @@ class KnowledgeBase:
 
                 except Exception as e:
                     raise ValueError(f"Invalid path type {e}") from e
-
             # Create new knowledge base instance with saved configuration
             kb = cls(
                 embedding_dim=data['embedding_dim'],
@@ -1796,15 +1795,23 @@ class KnowledgeBase:
             return kb
 
         except Exception:
-            #print(f"Error loading knowledge base: {str(e)}")
-            #import traceback
-            #traceback.print_exception(e)
+            print(f"Error loading knowledge base: {str(e)}")
+            import traceback
+            traceback.print_exception(e)
             raise
 
-    def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+    async def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+
         if not self.concept_extractor.concept_graph.concepts:
-            print("NO Concepts defined")
-            return None
+
+            if len(self.sto) > 2:
+                await self.add_data([t for (t, m) in self.sto], [m for (t, m) in self.sto], direct=True)
+                # self.sto = []
+            if not self.concept_extractor.concept_graph.concepts:
+                print("NO Concepts defined and no data in sto")
+                return None
+
+
         net = self.concept_extractor.concept_graph.convert_to_networkx()
         if get_output_net:
             return net

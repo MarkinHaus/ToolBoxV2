@@ -21,6 +21,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from .extras.mkdocs import add_to_app
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
 from .singelton_class import Singleton
@@ -203,6 +204,7 @@ class App(AppType, metaclass=Singleton):
             _, server_list = self.cluster_manager.status_all()
         from .extras.blobs import BlobStorage
         self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
+        self.mkdocs = add_to_app(self)
         # self._start_event_loop()
 
     def _start_event_loop(self):
@@ -2293,3 +2295,5 @@ class App(AppType, metaclass=Singleton):
             await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
         except Exception as e:
             self.logger.error(f"Failed to broadcast WebSocket message to channel {channel_id}: {e}", exc_info=True)
+
+

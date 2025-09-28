@@ -645,6 +645,7 @@ class MockIPython:
             '__file__': None,
             '__path__': [str(self.vfs.current_dir)],
             'auto_install': auto_install,
+            'app': get_app(),
             'modify_code': self.modify_code,
             'open': self._virtual_open,
         }
