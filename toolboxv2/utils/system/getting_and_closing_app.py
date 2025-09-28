@@ -30,7 +30,7 @@ def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=
     # from inspect import getouterframes, currentframe
     # print(f"get app requested from: {getouterframes(currentframe(), 2)[1].filename}::{getouterframes(currentframe(), 2)[1].lineno}")
 
-    print(f"get app requested from: {from_} withe name: {name}")
+    # print(f"get app requested from: {from_} withe name: {name}")
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested from: {from_}"))
     if registered_apps[0] is not None:
