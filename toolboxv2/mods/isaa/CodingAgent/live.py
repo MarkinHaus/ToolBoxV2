@@ -276,6 +276,21 @@ class VirtualFileSystem:
         abs_path = self._resolve_path(filepath)
         return abs_path.exists()
 
+    def overwrite_lines(self, filepath: str | Path, new_content: str, lines: str = "") -> str:
+        """Overwrite lines in a file"""
+        try:
+            content = self.read_file(filepath)
+            content_lines = content.split('\n')
+            start, end = map(int, lines.split('-'))
+            # overwrite specif lines with new content keep the rest
+            content_before = content_lines[:start-1]
+            content_after = content_lines[end:]
+            content_lines = content_before + new_content.split('\n') + content_after
+            content = '\n'.join(content_lines)
+            return self.write_file(filepath, content)
+        except Exception as e:
+            return f"Overwrite lines failed: {str(e)}"
+
     def write_file(self, filepath: str | Path, content: str) -> Path:
         """Write content to a virtual file and persist to disk using UTF-8"""
         try:
@@ -1423,19 +1438,24 @@ class ToolsInterface:
             self._execution_history.append(('rust', code, error_msg))
             return error_msg
 
-    async def write_file(self, filepath: str, content: str) -> str:
+    async def write_file(self, filepath: str, content: str, lines: str = "") -> str:
         """
         Write content to a file in the virtual file system.
 
         Args:
             filepath: Path to the file
             content: Content to write
+            lines: Optional line range to write (e.g., "1-3" for lines 1 to 3)
+
         Returns:
             Success message
         """
 
         try:
-            abs_path = self.vfs.write_file(filepath, content)
+            if lines:
+                abs_path = self.vfs.overwrite_lines(filepath, content, lines)
+            else:
+                abs_path = self.vfs.write_file(filepath, content)
 
             # Update variable manager if available
             if self.variable_manager:
@@ -1497,12 +1517,13 @@ class ToolsInterface:
         except Exception as e:
             return f"Replace error: {str(e)}"
 
-    async def read_file(self, filepath: str) -> str:
+    async def read_file(self, filepath: str, lines: str="") -> str:
         """
         Read content from a file in the virtual file system.
 
         Args:
             filepath: Path to the file
+            lines: Optional line range to read (e.g., "1-3" for lines 1 to 3)
 
         Returns:
             File content or error message
@@ -1510,6 +1531,9 @@ class ToolsInterface:
         try:
             content = self.vfs.read_file(filepath)
 
+            if lines:
+                start, end = map(int, lines.split('-'))
+                content = '\n'.join(content.split('\n')[start-1:end])
             # Update variable manager if available
             if self.variable_manager:
                 self.variable_manager.set("files.last_read", {
@@ -1753,16 +1777,16 @@ print(f"Successfully imported {package_name}")
 
             # File system tools
             (self.write_file, "write_file",
-             "Write content to file in virtual filesystem. Args: filepath (str), content (str) -> str"),
+             "Write content to file in virtual filesystem. lines is a string with the line range to write (e.g., '1-3' for lines 1 to 3) Args: filepath (str), content (str), lines (str) = '' -> str"),
 
             (self.write_file, "create_file",
-             "Write content to file in virtual filesystem. Args: filepath (str), content (str) -> str"),
+             "Write content to file in virtual filesystem.  Args: filepath (str), content (str) -> str"),
 
             (self.replace_in_file, "replace_in_file",
              "Replace exact content in file. Args: filepath (str), old_content (str), new_content (str), precise (bool) = True -> str"),
 
             (self.read_file, "read_file",
-             "Read content from file in virtual filesystem. Args: filepath (str) -> str"),
+             "Read content from file in virtual filesystem. lines is a string with the line range to read (e.g., '1-3' for lines 1 to 3) Args: filepath (str), lines (str) = '' -> str"),
 
             (self.list_files, "list_files",
              "List files in directory. Args: dirpath (str) = '.' -> str"),

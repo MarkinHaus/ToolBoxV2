@@ -942,7 +942,7 @@ class App(AppType, metaclass=Singleton):
             try:
                 result = await t
                 if hasattr(result, 'Name'):
-                    print('Opened :', result.Name)
+                    self.print('Opened :', result.Name)
                 elif hasattr(result, 'name'):
                     if hasattr(result, 'async_initialized'):
                         if not result.async_initialized:
@@ -951,20 +951,20 @@ class App(AppType, metaclass=Singleton):
                                     if asyncio.iscoroutine(result):
                                         await result
                                     if hasattr(result, 'Name'):
-                                        print('Opened :', result.Name)
+                                        self.print('Opened :', result.Name)
                                     elif hasattr(result, 'name'):
-                                        print('Opened :', result.name)
+                                        self.print('Opened :', result.name)
                                 except Exception as e:
                                     self.debug_rains(e)
                                     if hasattr(result, 'Name'):
-                                        print('Error opening :', result.Name)
+                                        self.print('Error opening :', result.Name)
                                     elif hasattr(result, 'name'):
-                                        print('Error opening :', result.name)
+                                        self.print('Error opening :', result.name)
                             asyncio.create_task(_())
                         else:
-                            print('Opened :', result.name)
+                            self.print('Opened :', result.name)
                 else:
-                    print('Opened :', result)
+                    self.print('Opened :', result)
             except Exception as e:
                 self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
                 self.debug_rains(e)

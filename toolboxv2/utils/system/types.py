@@ -616,18 +616,143 @@ class ApiResult(BaseModel):
         return res
 
 
-class Result:
+from typing import TypeVar, Generic, List, Optional, Type, get_origin, get_args
+import inspect
+
+T = TypeVar('T')
+
+
+class Result(Generic[T]):
     _task = None
+    _generic_type: Optional[Type] = None
+
     def __init__(self,
                  error: ToolBoxError,
                  result: ToolBoxResult,
                  info: ToolBoxInfo,
                  origin: Any | None = None,
+                 generic_type: Optional[Type] = None
                  ):
         self.error: ToolBoxError = error
         self.result: ToolBoxResult = result
         self.info: ToolBoxInfo = info
         self.origin = origin
+        self._generic_type = generic_type
+
+    def __class_getitem__(cls, item):
+        """Enable Result[Type] syntax"""
+
+        class TypedResult(cls):
+            _generic_type = item
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._generic_type = item
+
+        return TypedResult
+
+    def typed_get(self, key=None, default=None) -> T:
+        """Get data with type validation"""
+        data = self.get(key, default)
+
+        if self._generic_type and data is not None:
+            # Validate type matches generic parameter
+            if not self._validate_type(data, self._generic_type):
+                from toolboxv2 import get_logger
+                get_logger().warning(f"Type mismatch: expected {self._generic_type}, got {type(data)}")
+
+        return data
+
+    async def typed_aget(self, key=None, default=None) -> T:
+        """Async get data with type validation"""
+        data = await self.aget(key, default)
+
+        if self._generic_type and data is not None:
+            if not self._validate_type(data, self._generic_type):
+                from toolboxv2 import get_logger
+                get_logger().warning(f"Type mismatch: expected {self._generic_type}, got {type(data)}")
+
+        return data
+
+    def _validate_type(self, data, expected_type) -> bool:
+        """Validate data matches expected type"""
+        try:
+            # Handle List[Type] syntax
+            origin = get_origin(expected_type)
+            if origin is list or origin is List:
+                if not isinstance(data, list):
+                    return False
+
+                # Check list element types if specified
+                args = get_args(expected_type)
+                if args and data:
+                    element_type = args[0]
+                    return all(isinstance(item, element_type) for item in data)
+                return True
+
+            # Handle other generic types
+            elif origin is not None:
+                return isinstance(data, origin)
+
+            # Handle regular types
+            else:
+                return isinstance(data, expected_type)
+
+        except Exception:
+            return True  # Skip validation on error
+
+    @classmethod
+    def typed_ok(cls, data: T, data_info="", info="OK", interface=ToolBoxInterfaces.native) -> 'Result[T]':
+        """Create OK result with type information"""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+        result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type=type(data).__name__)
+
+        instance = cls(error=error, info=info_obj, result=result)
+        if hasattr(cls, '_generic_type'):
+            instance._generic_type = cls._generic_type
+
+        return instance
+
+    @classmethod
+    def typed_json(cls, data: T, info="OK", interface=ToolBoxInterfaces.remote, exec_code=0,
+                   status_code=None) -> 'Result[T]':
+        """Create JSON result with type information"""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=status_code or exec_code, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=data,
+            data_info="JSON response",
+            data_type="json"
+        )
+
+        instance = cls(error=error, info=info_obj, result=result)
+        if hasattr(cls, '_generic_type'):
+            instance._generic_type = cls._generic_type
+
+        return instance
+
+    def cast_to(self, target_type: Type[T]) -> 'Result[T]':
+        """Cast result to different type"""
+        new_result = Result(
+            error=self.error,
+            result=self.result,
+            info=self.info,
+            origin=self.origin,
+            generic_type=target_type
+        )
+        new_result._generic_type = target_type
+        return new_result
+
+    def get_type_info(self) -> Optional[Type]:
+        """Get the generic type information"""
+        return self._generic_type
+
+    def is_typed(self) -> bool:
+        """Check if result has type information"""
+        return self._generic_type is not None
 
     def as_result(self):
         return self
@@ -1272,13 +1397,10 @@ class AppType:
     docs_reader: Callable | None = None
     docs_writer: Callable | None = None
     get_update_suggestions: Callable | None = None
-    source_code_lookup: Callable | None = None
     auto_update_docs: Callable | None = None
+    source_code_lookup: Callable | None = None
 
     initial_docs_parse: Callable | None = None
-    auto_adapt_docs_to_index: Callable | None = None
-    find_unclear_and_missing: Callable | None = None
-    rebuild_clean_docs: Callable | None = None
 
     def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
         self.args_sto = args

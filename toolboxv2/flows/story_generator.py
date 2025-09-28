@@ -37,7 +37,8 @@ try:
 
     import fal_client
 except ImportError as e:
-    print(f"Missing dependencies: {e}")
+    from toolboxv2 import get_logger
+    get_logger().warn(f"Missing dependencies: {e}")
 from toolboxv2 import App
 
 # ====================== CORE MODELS & CONFIG ======================
