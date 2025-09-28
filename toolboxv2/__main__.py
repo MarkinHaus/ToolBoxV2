@@ -408,6 +408,8 @@ def parse_args():
     parser.add_argument("gui", help="start gui no args", default=False,
                         action='store_true')
 
+    parser.add_argument("mcp", help="run MCP server", default=False, action='store_true')
+
     parser.add_argument("p2p", help="run rust p2p for mor infos run tb p2p -h", default=False,
                         action='store_true')
 
@@ -797,7 +799,12 @@ async def command_runner(tb_app, command, **kwargs):
     if isinstance(r, asyncio.Task):
         r = await r
 
-    print("Running", spec, r)
+    print("Running in ", spec)
+    if hasattr(r, 'print'):
+        r.print(full_data=True)
+    else:
+        print(r)
+    return r
 
 
 async def main():
@@ -1193,12 +1200,13 @@ def main_runner():
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
+        "mcp": lambda: __import__('toolboxv2.mcp_server', fromlist=['main']).main(),
     }
     if len(sys.argv) >= 2 and sys.argv[1] in runner:
-        if len(sys.argv) >= 3 and sys.argv[-1] == "status":
-            pass
-        else:
-            get_app()
+        # if len(sys.argv) >= 3 and sys.argv[-1] == "status":
+        #     pass
+        # else:
+        #     get_app()
         command = sys.argv[1]
         sys.argv[1:] = sys.argv[2:]
         sys.exit(runner[command]())

@@ -1016,13 +1016,13 @@ class Result:
         result = ToolBoxResult(data_to=interface, data=data, data_type=type(data).__name__)
         return cls(error=error, info=info, result=result)
 
-    def print(self, show=True, show_data=True, prifix=""):
+    def print(self, show=True, show_data=True, prifix="", full_data=False):
         data = '\n' + f"{((prifix + f'Data_{self.result.data_type}: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec code: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
                 f" {self.info.help_text} {'<|> ' + str(self.result.data_info) if self.result.data_info is not None else ''}"
-                f"{origin}{(data[:100]+'...') if not data.endswith('NO Data') else ''}\n")
+                f"{origin}{((data[:100]+'...') if not full_data else (data)) if not data.endswith('NO Data') else ''}\n")
         if not show:
             return text
         print("\n======== Result ========\n" + text + "------- EndOfD -------")

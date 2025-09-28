@@ -83,7 +83,7 @@ class MainTool:
             get_logger().info(f"{self.name} no load require")
 
     async def __ainit__(self, *args, **kwargs):
-        self.version = kwargs["v"]
+        self.version = kwargs.get("v", kwargs.get("version", "0.0.0"))
         self.tools = kwargs.get("tool", {})
         self.name = kwargs["name"]
         self.logger = kwargs.get("logs", get_logger())
