@@ -8896,6 +8896,8 @@ class FlowAgent:
 
             if tool_name in self._tool_capabilities:
                 function = self._tool_registry[tool_name]["function"]
+                if not isinstance(self._tool_capabilities[tool_name], dict):
+                    self._tool_capabilities[tool_name] = {}
                 self._tool_capabilities[tool_name]["args_schema"] = get_args_schema(function)
 
         # Set enhanced system context

@@ -1,362 +1,137 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ToolBox Extension</title>
-    <style>
-        /* ToolBox Professional Minimalist Design */
-        :root {
-            --tb-bg-primary: #181823;
-            --tb-bg-secondary: #2a2a3a;
-            --tb-text-primary: #E9F8F9;
-            --tb-text-secondary: #adb5bd;
-            --tb-text-muted: #6c757d;
-            --tb-accent-primary: #6c8ee8;
-            --tb-accent-secondary: #1a8cff;
-            --tb-glass-bg: rgba(10, 10, 15, 0.95);
-            --tb-glass-bg-light: rgba(255, 255, 255, 0.05);
-            --tb-glass-border: rgba(255, 255, 255, 0.1);
-            --tb-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-            --tb-success: #22c55e;
-            --tb-error: #ef4444;
-            --tb-transition: 0.15s ease-in-out;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            width: 380px;
-            min-height: 500px;
-            font-family: 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--tb-bg-primary);
-            color: var(--tb-text-primary);
-            overflow: hidden;
-        }
-
-        .header {
-            padding: 24px 24px 16px;
-            background: var(--tb-glass-bg);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--tb-glass-border);
-            text-align: center;
-        }
-
-        .header h1 {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-        }
-
-        .status {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-
-        .status.connected {
-            background: rgba(34, 197, 94, 0.15);
-            color: var(--tb-success);
-        }
-
-        .status.disconnected {
-            background: rgba(239, 68, 68, 0.15);
-            color: var(--tb-error);
-        }
-
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-
-        .content {
-            padding: 24px;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
-            background: var(--tb-glass-bg-light);
-            border: 1px solid var(--tb-glass-border);
-            border-radius: 12px;
-            padding: 16px 12px;
-            text-align: center;
-            transition: all var(--tb-transition);
-        }
-
-        .stat-card:hover {
-            background: var(--tb-glass-border);
-        }
-
-        .stat-value {
-            display: block;
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--tb-accent-primary);
-            margin-bottom: 4px;
-        }
-
-        .stat-label {
-            font-size: 11px;
-            color: var(--tb-text-muted);
-            font-weight: 500;
-        }
-
-        .actions-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .action-btn {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-            padding: 16px 12px;
-            background: var(--tb-glass-bg-light);
-            border: 1px solid var(--tb-glass-border);
-            border-radius: 12px;
-            color: var(--tb-text-primary);
-            font-size: 12px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all var(--tb-transition);
-            text-decoration: none;
-        }
-
-        .action-btn:hover {
-            background: var(--tb-accent-primary);
-            color: var(--tb-bg-primary);
-            transform: translateY(-1px);
-        }
-
-        .action-btn .icon {
-            font-size: 20px;
-        }
-
-        .password-section {
-            background: var(--tb-glass-bg-light);
-            border: 1px solid var(--tb-glass-border);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-
-        .password-section h3 {
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: var(--tb-accent-primary);
-        }
-
-        .password-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn-small {
-            flex: 1;
-            padding: 8px 12px;
-            background: var(--tb-accent-primary);
-            color: var(--tb-bg-primary);
-            border: none;
-            border-radius: 8px;
-            font-size: 11px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all var(--tb-transition);
-        }
-
-        .btn-small:hover {
-            background: var(--tb-accent-secondary);
-        }
-
-        .btn-secondary {
-            background: var(--tb-glass-border);
-            color: var(--tb-text-primary);
-        }
-
-        .btn-secondary:hover {
-            background: var(--tb-text-muted);
-        }
-
-        .settings-section {
-            border-top: 1px solid var(--tb-glass-border);
-            padding-top: 20px;
-        }
-
-        .setting-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-
-        .setting-item label {
-            font-size: 13px;
-            color: var(--tb-text-secondary);
-            font-weight: 500;
-        }
-
-        .toggle {
-            position: relative;
-            width: 44px;
-            height: 24px;
-            background: var(--tb-glass-border);
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background var(--tb-transition);
-        }
-
-        .toggle.active {
-            background: var(--tb-accent-primary);
-        }
-
-        .toggle::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
-            background: var(--tb-text-primary);
-            border-radius: 50%;
-            transition: transform var(--tb-transition);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-
-        .toggle.active::after {
-            transform: translateX(20px);
-        }
-
-        .footer {
-            padding: 16px 24px;
-            background: var(--tb-glass-bg-light);
-            border-top: 1px solid var(--tb-glass-border);
-            text-align: center;
-        }
-
-        .footer-text {
-            font-size: 11px;
-            color: var(--tb-text-muted);
-            margin-bottom: 8px;
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-        }
-
-        .footer-link {
-            color: var(--tb-accent-primary);
-            text-decoration: none;
-            font-size: 11px;
-            font-weight: 500;
-            transition: color var(--tb-transition);
-        }
-
-        .footer-link:hover {
-            color: var(--tb-accent-secondary);
-        }
-    </style>
+    <title>ToolBox - Voice, AI & Passwords</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="header">
-        <h1>🧰 ToolBox</h1>
-        <div class="status connected" id="connection-status">
-            <div class="status-dot"></div>
-            <span id="status-text">Connected</span>
-        </div>
-    </div>
-    
-    <div class="content">
-        <div class="stats-grid">
-            <div class="stat-card">
-                <span class="stat-value" id="passwords-count">-</span>
-                <span class="stat-label">Passwords</span>
+    <div class="tb-container">
+        <!-- Header -->
+        <header class="tb-header">
+            <div class="tb-logo">
+                <span class="tb-icon">🧰</span>
+                <span class="tb-title">ToolBox</span>
             </div>
-            <div class="stat-card">
-                <span class="stat-value" id="sites-enhanced">-</span>
-                <span class="stat-label">Sites</span>
+            <div class="tb-status" id="connectionStatus">
+                <span class="tb-status-dot" id="statusDot"></span>
+                <span class="tb-status-text" id="statusText">Connecting...</span>
             </div>
-            <div class="stat-card">
-                <span class="stat-value" id="time-saved">-</span>
-                <span class="stat-label">Time Saved</span>
+        </header>
+
+        <!-- Voice Search Section -->
+        <section class="tb-section">
+            <div class="tb-voice-container">
+                <div class="tb-input-group">
+                    <input
+                        type="text"
+                        id="voiceInput"
+                        class="tb-input"
+                        placeholder="Ask ISAA anything or use voice..."
+                        autocomplete="off"
+                    >
+                    <button id="voiceBtn" class="tb-btn tb-btn-voice" title="Voice Search">
+                        <span class="tb-voice-icon">🎤</span>
+                    </button>
+                    <button id="sendBtn" class="tb-btn tb-btn-primary" title="Send">
+                        <span>→</span>
+                    </button>
+                </div>
+                <div class="tb-voice-status" id="voiceStatus" style="display: none;">
+                    <span class="tb-voice-indicator"></span>
+                    <span class="tb-voice-text">Listening...</span>
+                </div>
             </div>
+        </section>
+
+        <!-- Quick Actions -->
+        <section class="tb-section">
+            <h3 class="tb-section-title">Quick Actions</h3>
+            <div class="tb-actions">
+                <button id="generatePasswordBtn" class="tb-btn tb-btn-secondary">
+                    <span class="tb-btn-icon">🔑</span>
+                    <span>Generate Password</span>
+                </button>
+                <button id="autofillBtn" class="tb-btn tb-btn-secondary">
+                    <span class="tb-btn-icon">🔄</span>
+                    <span>Auto-fill</span>
+                </button>
+                <button id="passwordManagerBtn" class="tb-btn tb-btn-secondary">
+                    <span class="tb-btn-icon">🔒</span>
+                    <span>Passwords</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- ISAA Chat -->
+        <section class="tb-section">
+            <div class="tb-chat-header">
+                <h3 class="tb-section-title">ISAA Assistant</h3>
+                <button id="chatToggle" class="tb-btn tb-btn-ghost">
+                    <span id="chatToggleIcon">▼</span>
+                </button>
+            </div>
+            <div class="tb-chat-container" id="chatContainer">
+                <div class="tb-chat-messages" id="chatMessages">
+                    <div class="tb-chat-message tb-chat-system">
+                        <span class="tb-chat-icon">🤖</span>
+                        <span class="tb-chat-text">Hi! I'm ISAA, your AI assistant. How can I help you today?</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Loading Overlay -->
+        <div class="tb-loading" id="loadingOverlay" style="display: none;">
+            <div class="tb-spinner"></div>
+            <span class="tb-loading-text">Processing...</span>
         </div>
 
-        <div class="password-section">
-            <h3>🔐 Password Manager</h3>
-            <div class="password-actions">
-                <button class="btn-small" id="auto-fill-btn">Auto-fill</button>
-                <button class="btn-small btn-secondary" id="generate-pwd-btn">Generate</button>
-                <button class="btn-small btn-secondary" id="open-manager-btn">Manage</button>
+        <!-- Notification Area -->
+        <div class="tb-notifications" id="notifications"></div>
+    </div>
+
+    <!-- Password Manager Modal -->
+    <div class="tb-modal-overlay" id="passwordModal" style="display: none;">
+        <div class="tb-modal">
+            <div class="tb-modal-header">
+                <h3>Password Manager</h3>
+                <button id="closePasswordModal" class="tb-btn tb-btn-ghost">✕</button>
             </div>
-        </div>
-        
-        <div class="actions-grid">
-            <button class="action-btn" id="toggle-panel">
-                <span class="icon">📱</span>
-                Toggle Panel
-            </button>
-            <button class="action-btn" id="voice-command">
-                <span class="icon">🎤</span>
-                Voice Command
-            </button>
-            <button class="action-btn" id="ai-analyze">
-                <span class="icon">🤖</span>
-                AI Analyze
-            </button>
-            <button class="action-btn" id="smart-search">
-                <span class="icon">🔍</span>
-                Smart Search
-            </button>
-        </div>
-        
-        <div class="settings-section">
-            <div class="setting-item">
-                <label>Auto-fill passwords</label>
-                <div class="toggle active" id="autofill-toggle"></div>
-            </div>
-            <div class="setting-item">
-                <label>Voice commands</label>
-                <div class="toggle active" id="voice-toggle"></div>
-            </div>
-            <div class="setting-item">
-                <label>Smart notifications</label>
-                <div class="toggle" id="notifications-toggle"></div>
+            <div class="tb-modal-body">
+                <div class="tb-search-container">
+                    <input
+                        type="text"
+                        id="passwordSearch"
+                        class="tb-input"
+                        placeholder="Search passwords..."
+                    >
+                </div>
+                <div class="tb-password-list" id="passwordList">
+                    <div class="tb-empty-state">
+                        <span class="tb-empty-icon">🔒</span>
+                        <p>No passwords found</p>
+                        <small>Your saved passwords will appear here</small>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    
-    <div class="footer">
-        <div class="footer-text">ToolBox Extension v2.0.0</div>
-        <div class="footer-links">
-            <a href="#" class="footer-link" id="open-settings">Settings</a>
-            <a href="#" class="footer-link" id="open-help">Help</a>
-            <a href="#" class="footer-link" id="open-about">About</a>
+
+    <!-- TOTP Display -->
+    <div class="tb-totp-card" id="totpCard" style="display: none;">
+        <div class="tb-totp-header">
+            <span class="tb-totp-title">2FA Code</span>
+            <button id="closeTotpCard" class="tb-btn tb-btn-ghost">✕</button>
+        </div>
+        <div class="tb-totp-code" id="totpCode">------</div>
+        <div class="tb-totp-timer">
+            <div class="tb-totp-progress" id="totpProgress"></div>
+            <span class="tb-totp-time" id="totpTime">30s</span>
         </div>
     </div>
-    
+
     <script src="popup.js"></script>
 </body>
 </html>

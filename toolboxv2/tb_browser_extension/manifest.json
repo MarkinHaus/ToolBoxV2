@@ -1,74 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "ToolBox Browser Extension",
+  "name": "ToolBox - Voice, AI & Passwords",
   "version": "2.0.0",
-  "description": "Advanced ToolBox integration with Voice I/O, Smart Search, and ISAA-2 AI capabilities",
-    "icon": {
-      "16": "icons/tb16.png",
-      "32": "icons/tb32.png",
-      "48": "icons/tb48.png",
-      "128": "icons/tb128.png"
-    },
+  "description": "Voice search, ISAA AI assistant, and secure password management",
+
   "permissions": [
     "storage",
     "activeTab",
     "scripting",
-    "notifications",
-    "contextMenus",
-    "webNavigation",
-    "tabs",
-    "background",
-    "clipboardWrite",
-    "clipboardRead",
-    "offscreen",
-    "webRequest"
+    "notifications"
   ],
 
   "host_permissions": [
-    "<all_urls>"
+    "http://localhost:8080/*",
+    "https://simplecore.app/*"
   ],
-
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
-
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": [
-        "core/utils.js",
-        "core/isaa-plugin.js",
-        "core/voice-engine.js",
-        "core/search-engine.js",
-        "core/gesture-detector.js",
-        "core/ui-manager.js",
-        "password-manager.js",
-        "content.js"
-      ],
-      "css": ["styles.css"],
-      "run_at": "document_start"
-    }
-  ],
-
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "ToolBox Extension - Voice & AI Search",
-    "default_icon": {
-      "16": "icons/tb16.png",
-      "32": "icons/tb32.png",
-      "48": "icons/tb48.png",
-      "128": "icons/tb128.png"
-    }
-  },
-    "page_action": {
-    "default_icon": {
-      "19": "icons/page19.png",
-      "38": "icons/page38.png"
-    }
-  },
-
-  "web_accessible_resources": [
+    "web_accessible_resources": [
     {
       "resources": [
         "inject.js",
@@ -82,30 +29,41 @@
     }
   ],
 
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ToolBox - Voice, AI & Passwords",
+    "default_icon": {
+      "16": "icons/tb16.png",
+      "32": "icons/tb32.png",
+      "48": "icons/tb48.png",
+      "128": "icons/tb128.png"
+    }
+  },
+
   "commands": {
     "toggle-toolbox": {
       "suggested_key": {
         "default": "Alt+T"
       },
-      "description": "Toggle ToolBox Panel"
+      "description": "Toggle ToolBox"
     },
     "voice-command": {
       "suggested_key": {
         "default": "Ctrl+Shift+V"
       },
-      "description": "Activate Voice Commands"
-    },
-    "password-manager": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+P"
-      },
-      "description": "Open Password Manager"
-    },
-    "auto-fill": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+F"
-      },
-      "description": "Auto-fill Login Form"
+      "description": "Voice Command"
     }
   }
 }

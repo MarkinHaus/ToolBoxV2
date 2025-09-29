@@ -1,0 +1,38 @@
+{
+  "name": "toolbox-pro-extension",
+  "version": "3.0.0",
+  "description": "Advanced browser extension with gesture control, ISAA AI assistant, voice input, live search, and secure password management with 2FA support",
+  "main": "build.js",
+  "scripts": {
+    "dev": "node build.js dev",
+    "build": "node build.js build",
+    "package": "node build.js zip",
+    "clean": "rm -rf build",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "browser-extension",
+    "ai-assistant",
+    "password-manager",
+    "gesture-control",
+    "voice-input",
+    "toolbox",
+    "isaa"
+  ],
+  "author": "ToolBox Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MarkinHaus/ToolBoxV2"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "toolbox-pro@toolbox.app",
+      "strict_min_version": "109.0"
+    }
+  }
+}

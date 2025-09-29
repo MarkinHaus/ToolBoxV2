@@ -1039,12 +1039,12 @@ class Tools(MainTool, FileHandler):
         self.print(f"Built and cached FlowAgent instance: {agent_name}")
         return agent_instance
 
-    @export(api=True, version=version, request_as_kwarg=True)
+    @export(api=True, version=version, request_as_kwarg=True, mod_name="isaa")
     async def mini_task_completion(self, mini_task: str | None = None, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
-                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False, request: RequestData | None = None, form_data: dict | None = None, **kwargs):
-        if request is not None:
-            data_dict = request.request.body or form_data
+                                   stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False, request: RequestData | None = None, form_data: dict | None = None, data: dict | None = None, **kwargs):
+        if request is not None or form_data is not None or data is not None:
+            data_dict = (request.request.body if request else None) or form_data or data
             mini_task = mini_task or  data_dict.get("mini_task")
             user_task = user_task or data_dict.get("user_task")
             mode = mode or data_dict.get("mode")
@@ -1054,7 +1054,6 @@ class Tools(MainTool, FileHandler):
             use_complex = use_complex or data_dict.get("use_complex")
             kwargs = kwargs or data_dict.get("kwargs")
             message_history = message_history or data_dict.get("message_history")
-
         if mini_task is None: return None
         if agent_name is None: return None
         if mini_task == "test": return "test"
@@ -1151,14 +1150,15 @@ class Tools(MainTool, FileHandler):
         except Exception as e:
             self.print(f"Error in mini_task_completion_format: {e}")
             return None  # Or raise
-    @export(api=True, version=version)
-    async def version(self, *a,**k):
+
+    @export(api=True, version=version, name="version")
+    async def get_version(self, *a,**k):
         return self.version
 
-    @export(api=True, version=version, request_as_kwarg=True)
-    async def format_class(self, format_schema: type[BaseModel] | None = None, task: str | None = None, agent_name="TaskCompletion", auto_context=False, request: RequestData | None = None, form_data: dict | None = None, **kwargs):
-        if request is not None:
-            data_dict = request.request.body or form_data
+    @export(api=True, version=version, request_as_kwarg=True, mod_name="isaa")
+    async def format_class(self, format_schema: type[BaseModel] | None = None, task: str | None = None, agent_name="TaskCompletion", auto_context=False, request: RequestData | None = None, form_data: dict | None = None, data: dict | None = None, **kwargs):
+        if request is not None or form_data is not None or data is not None:
+            data_dict = (request.request.body if request else None) or form_data or data
             format_schema = format_schema or data_dict.get("format_schema")
             task = task or data_dict.get("task")
             agent_name = agent_name or data_dict.get("agent_name")

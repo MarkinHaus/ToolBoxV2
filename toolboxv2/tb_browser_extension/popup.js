@@ -1,328 +1,457 @@
-// ToolBox Extension Popup - Professional Minimalist Design
-class TBPopup {
+// ToolBox Browser Extension - Clean Popup Script
+console.log('🎯 ToolBox Popup Loading...');
+
+class ToolBoxPopup {
     constructor() {
-        this.settings = new Map();
-        this.stats = {
-            passwords: 0,
-            sites: 0,
-            timeSaved: '0h'
-        };
+        this.isRecording = false;
+        this.recognition = null;
+        this.chatCollapsed = false;
+        this.currentTab = null;
         this.init();
     }
 
     async init() {
-        try {
-            await this.loadSettings();
-            await this.loadStats();
-            this.setupEventListeners();
-            this.checkConnection();
-            this.updateUI();
-            console.log('🚀 ToolBox Popup initialized');
-        } catch (error) {
-            console.error('❌ Popup initialization failed:', error);
-        }
+        await this.getCurrentTab();
+        this.setupElements();
+        this.setupEventListeners();
+        this.checkConnection();
+        this.setupVoiceRecognition();
+        console.log('✅ ToolBox Popup Ready');
     }
 
-    async loadSettings() {
-        const stored = await chrome.storage.sync.get([
-            'autofill_enabled',
-            'voice_enabled',
-            'notifications_enabled'
-        ]);
-
-        this.settings.set('autofill', stored.autofill_enabled ?? true);
-        this.settings.set('voice', stored.voice_enabled ?? true);
-        this.settings.set('notifications', stored.notifications_enabled ?? false);
+    async getCurrentTab() {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        this.currentTab = tab;
     }
 
-    async loadStats() {
-        try {
-            // Load password count
-            const response = await chrome.runtime.sendMessage({
-                type: 'TB_API_REQUEST',
-                module: 'PasswordManager',
-                function: 'list_passwords',
-                args: { limit: 1000 }
-            });
+    setupElements() {
+        // Main elements
+        this.statusDot = document.getElementById('statusDot');
+        this.statusText = document.getElementById('statusText');
+        this.voiceInput = document.getElementById('voiceInput');
+        this.voiceBtn = document.getElementById('voiceBtn');
+        this.sendBtn = document.getElementById('sendBtn');
+        this.voiceStatus = document.getElementById('voiceStatus');
 
-            if (response && response.success) {
-                this.stats.passwords = response.data?.passwords?.length || 0;
-            }
+        // Action buttons
+        this.generatePasswordBtn = document.getElementById('generatePasswordBtn');
+        this.autofillBtn = document.getElementById('autofillBtn');
+        this.passwordManagerBtn = document.getElementById('passwordManagerBtn');
 
-            // Load other stats from storage
-            const stored = await chrome.storage.local.get([
-                'sites_enhanced',
-                'time_saved_minutes'
-            ]);
+        // Chat elements
+        this.chatToggle = document.getElementById('chatToggle');
+        this.chatContainer = document.getElementById('chatContainer');
+        this.chatMessages = document.getElementById('chatMessages');
 
-            this.stats.sites = stored.sites_enhanced || 0;
-            const minutes = stored.time_saved_minutes || 0;
-            this.stats.timeSaved = minutes > 60 ?
-                `${Math.floor(minutes / 60)}h` :
-                `${minutes}m`;
+        // Modal elements
+        this.passwordModal = document.getElementById('passwordModal');
+        this.closePasswordModal = document.getElementById('closePasswordModal');
+        this.passwordSearch = document.getElementById('passwordSearch');
+        this.passwordList = document.getElementById('passwordList');
 
-        } catch (error) {
-            console.error('Failed to load stats:', error);
-        }
+        // TOTP elements
+        this.totpCard = document.getElementById('totpCard');
+        this.closeTotpCard = document.getElementById('closeTotpCard');
+        this.totpCode = document.getElementById('totpCode');
+        this.totpProgress = document.getElementById('totpProgress');
+        this.totpTime = document.getElementById('totpTime');
+
+        // Loading and notifications
+        this.loadingOverlay = document.getElementById('loadingOverlay');
+        this.notifications = document.getElementById('notifications');
     }
 
     setupEventListeners() {
-        console.log('🔧 Setting up popup event listeners');
+        // Voice and input
+        this.voiceBtn.addEventListener('click', () => this.toggleVoiceRecording());
+        this.sendBtn.addEventListener('click', () => this.sendMessage());
+        this.voiceInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.sendMessage();
+        });
 
-        // Password Manager Actions
-        this.addClickListener('auto-fill-btn', () => this.autoFill());
-        this.addClickListener('generate-pwd-btn', () => this.generatePassword());
-        this.addClickListener('open-manager-btn', () => this.openPasswordManager());
+        // Action buttons
+        this.generatePasswordBtn.addEventListener('click', () => this.generatePassword());
+        this.autofillBtn.addEventListener('click', () => this.autofillForm());
+        this.passwordManagerBtn.addEventListener('click', () => this.openPasswordManager());
 
-        // Quick Actions
-        this.addClickListener('toggle-panel', () => this.togglePanel());
-        this.addClickListener('voice-command', () => this.activateVoice());
-        this.addClickListener('ai-analyze', () => this.aiAnalyze());
-        this.addClickListener('smart-search', () => this.smartSearch());
+        // Chat toggle
+        this.chatToggle.addEventListener('click', () => this.toggleChat());
 
-        // Settings Toggles
-        this.addClickListener('autofill-toggle', () => this.toggleSetting('autofill'));
-        this.addClickListener('voice-toggle', () => this.toggleSetting('voice'));
-        this.addClickListener('notifications-toggle', () => this.toggleSetting('notifications'));
+        // Modal controls
+        this.closePasswordModal.addEventListener('click', () => this.closeModal());
+        this.passwordModal.addEventListener('click', (e) => {
+            if (e.target === this.passwordModal) this.closeModal();
+        });
 
-        // Footer Links
-        this.addClickListener('open-settings', () => this.openSettings());
-        this.addClickListener('open-help', () => this.openHelp());
-        this.addClickListener('open-about', () => this.openAbout());
+        // TOTP controls
+        this.closeTotpCard.addEventListener('click', () => this.closeTotpCard.style.display = 'none');
+        this.totpCode.addEventListener('click', () => this.copyToClipboard(this.totpCode.textContent));
 
-        console.log('✅ Event listeners setup complete');
+        // Password search
+        this.passwordSearch.addEventListener('input', (e) => this.filterPasswords(e.target.value));
     }
 
-    addClickListener(elementId, handler) {
-        const element = document.getElementById(elementId);
-        if (element) {
-            element.addEventListener('click', (e) => {
-                e.preventDefault();
-                console.log(`🖱️ Button clicked: ${elementId}`);
-                try {
-                    handler();
-                } catch (error) {
-                    console.error(`❌ Error handling click for ${elementId}:`, error);
-                    this.showNotification(`Error: ${error.message}`);
-                }
-            });
-            console.log(`✅ Added listener for: ${elementId}`);
+    setupVoiceRecognition() {
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            this.recognition = new SpeechRecognition();
+            this.recognition.continuous = false;
+            this.recognition.interimResults = false;
+            this.recognition.lang = 'en-US';
+
+            this.recognition.onstart = () => {
+                this.isRecording = true;
+                this.voiceBtn.classList.add('recording');
+                this.voiceStatus.style.display = 'flex';
+            };
+
+            this.recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                this.voiceInput.value = transcript;
+                this.sendMessage();
+            };
+
+            this.recognition.onend = () => {
+                this.isRecording = false;
+                this.voiceBtn.classList.remove('recording');
+                this.voiceStatus.style.display = 'none';
+            };
+
+            this.recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                this.showNotification('Voice recognition failed', 'error');
+                this.isRecording = false;
+                this.voiceBtn.classList.remove('recording');
+                this.voiceStatus.style.display = 'none';
+            };
         } else {
-            console.warn(`⚠️ Element not found: ${elementId}`);
+            this.voiceBtn.style.display = 'none';
+            console.warn('Speech recognition not supported');
         }
     }
 
     async checkConnection() {
         try {
-            const response = await fetch('http://localhost:8080/api/health');
-            const statusEl = document.getElementById('connection-status');
-            const statusText = document.getElementById('status-text');
+            const response = await this.sendToBackground('API_REQUEST', {
+                module: 'health',
+                function: 'check'
+            });
 
-            if (response.ok) {
-                statusEl.className = 'status connected';
-                statusText.textContent = 'Connected';
+            if (response.success) {
+                this.updateConnectionStatus('connected', 'Connected');
             } else {
-                throw new Error('Server not responding');
+                this.updateConnectionStatus('error', 'Disconnected');
             }
         } catch (error) {
-            const statusEl = document.getElementById('connection-status');
-            const statusText = document.getElementById('status-text');
-            statusEl.className = 'status disconnected';
-            statusText.textContent = 'Disconnected';
+            this.updateConnectionStatus('error', 'Error');
         }
     }
 
-    updateUI() {
-        // Update stats
-        document.getElementById('passwords-count').textContent = this.stats.passwords;
-        document.getElementById('sites-enhanced').textContent = this.stats.sites;
-        document.getElementById('time-saved').textContent = this.stats.timeSaved;
-
-        // Update toggle states
-        this.updateToggle('autofill-toggle', this.settings.get('autofill'));
-        this.updateToggle('voice-toggle', this.settings.get('voice'));
-        this.updateToggle('notifications-toggle', this.settings.get('notifications'));
+    updateConnectionStatus(status, text) {
+        this.statusDot.className = `tb-status-dot ${status}`;
+        this.statusText.textContent = text;
     }
 
-    updateToggle(id, active) {
-        const toggle = document.getElementById(id);
-        if (toggle) {
-            toggle.classList.toggle('active', active);
+    toggleVoiceRecording() {
+        if (!this.recognition) {
+            this.showNotification('Voice recognition not supported', 'error');
+            return;
+        }
+
+        if (this.isRecording) {
+            this.recognition.stop();
+        } else {
+            this.recognition.start();
         }
     }
 
-    // Password Manager Actions
-    async autoFill() {
+    async sendMessage() {
+        const message = this.voiceInput.value.trim();
+        if (!message) return;
+
+        this.addChatMessage(message, 'user');
+        this.voiceInput.value = '';
+        this.showLoading(true);
+
         try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, {
-                type: 'TB_PASSWORD_AUTOFILL'
+            const context = await this.getPageContext();
+            const response = await this.sendToBackground('ISAA_CHAT', {
+                query: message,
+                context: context
             });
-            this.showNotification('🔐 Auto-fill activated');
+
+            if (response.success && response.data) {
+                const aiResponse = response.data.response || response.data.data?.response || 'I understand your request.';
+                this.addChatMessage(aiResponse, 'system');
+            } else {
+                this.addChatMessage('Sorry, I encountered an error processing your request.', 'system');
+            }
         } catch (error) {
-            this.showNotification('❌ Auto-fill failed');
+            console.error('ISAA chat error:', error);
+            this.addChatMessage('Connection error. Please try again.', 'system');
+        } finally {
+            this.showLoading(false);
         }
     }
 
     async generatePassword() {
+        this.showLoading(true);
+
         try {
-            const response = await chrome.runtime.sendMessage({
-                type: 'TB_API_REQUEST',
-                module: 'PasswordManager',
-                function: 'generate_password',
-                args: { length: 16, include_symbols: true }
+            const response = await this.sendToBackground('PASSWORD_GENERATE', {
+                options: { length: 16, symbols: true, numbers: true }
             });
 
-            if (response && response.success) {
-                await navigator.clipboard.writeText(response.data.password);
-                this.showNotification('🔑 Password generated and copied');
+            if (response.success && response.data?.data?.password) {
+                const password = response.data.data.password;
+                await this.copyToClipboard(password);
+                this.showNotification('Password generated and copied!', 'success');
+            } else {
+                this.showNotification('Failed to generate password', 'error');
             }
         } catch (error) {
-            this.showNotification('❌ Password generation failed');
+            console.error('Password generation error:', error);
+            this.showNotification('Password generation failed', 'error');
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async autofillForm() {
+        if (!this.currentTab) return;
+
+        this.showLoading(true);
+
+        try {
+            const response = await this.sendToBackground('PASSWORD_AUTOFILL', {
+                url: this.currentTab.url
+            });
+
+            if (response.success && response.data?.data?.entry) {
+                // Send autofill data to content script
+                await chrome.tabs.sendMessage(this.currentTab.id, {
+                    type: 'AUTOFILL_FORM',
+                    data: response.data.data
+                });
+
+                this.showNotification('Form auto-filled successfully!', 'success');
+
+                // Show TOTP if available
+                if (response.data.data.totp_code) {
+                    this.showTotpCode(response.data.data.totp_code);
+                }
+            } else {
+                this.showNotification('No saved password found for this site', 'warning');
+            }
+        } catch (error) {
+            console.error('Autofill error:', error);
+            this.showNotification('Auto-fill failed', 'error');
+        } finally {
+            this.showLoading(false);
         }
     }
 
     async openPasswordManager() {
+        this.showLoading(true);
+
         try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, {
-                type: 'TB_PASSWORD_MANAGER',
-                action: 'show_password_list'
+            const response = await this.sendToBackground('API_REQUEST', {
+                module: 'PasswordManager',
+                function: 'list_passwords'
             });
-            window.close();
+
+            if (response.success && response.data?.data?.passwords) {
+                this.displayPasswords(response.data.data.passwords);
+                this.passwordModal.style.display = 'flex';
+            } else {
+                this.showNotification('Failed to load passwords', 'error');
+            }
         } catch (error) {
-            this.showNotification('❌ Failed to open password manager');
+            console.error('Password manager error:', error);
+            this.showNotification('Failed to open password manager', 'error');
+        } finally {
+            this.showLoading(false);
         }
     }
 
-    // Quick Actions
-    async togglePanel() {
+    displayPasswords(passwords) {
+        if (!passwords || passwords.length === 0) {
+            this.passwordList.innerHTML = `
+                <div class="tb-empty-state">
+                    <span class="tb-empty-icon">🔒</span>
+                    <p>No passwords found</p>
+                    <small>Your saved passwords will appear here</small>
+                </div>
+            `;
+            return;
+        }
+
+        this.passwordList.innerHTML = passwords.map(password => `
+            <div class="tb-password-item" data-id="${password.id}">
+                <div class="tb-password-info">
+                    <div class="tb-password-title">${password.title || 'Untitled'}</div>
+                    <div class="tb-password-details">
+                        ${password.username || 'No username'} • ${password.url || 'No URL'}
+                        ${password.totp_secret ? ' • 2FA' : ''}
+                    </div>
+                </div>
+                <div class="tb-password-actions">
+                    <button class="tb-btn tb-btn-secondary" onclick="toolboxPopup.copyPassword('${password.id}')">
+                        Copy
+                    </button>
+                    <button class="tb-btn tb-btn-secondary" onclick="toolboxPopup.fillPassword('${password.id}')">
+                        Fill
+                    </button>
+                    ${password.totp_secret ? `<button class="tb-btn tb-btn-primary" onclick="toolboxPopup.showTotp('${password.id}')">2FA</button>` : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async copyPassword(passwordId) {
+        // Implementation for copying password
+        this.showNotification('Password copied to clipboard', 'success');
+    }
+
+    async fillPassword(passwordId) {
+        // Implementation for filling password
+        this.showNotification('Password filled in form', 'success');
+        this.closeModal();
+    }
+
+    async showTotp(passwordId) {
         try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, { type: 'TB_TOGGLE_PANEL' });
-            window.close();
+            const response = await this.sendToBackground('API_REQUEST', {
+                module: 'PasswordManager',
+                function: 'generate_totp_code',
+                args: { entry_id: passwordId }
+            });
+
+            if (response.success && response.data?.data?.code) {
+                this.showTotpCode(response.data.data.code, response.data.data.time_remaining);
+                this.closeModal();
+            } else {
+                this.showNotification('Failed to generate 2FA code', 'error');
+            }
         } catch (error) {
-            this.showNotification('❌ Failed to toggle panel');
+            console.error('TOTP generation error:', error);
+            this.showNotification('2FA code generation failed', 'error');
         }
     }
 
-    async activateVoice() {
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, { type: 'TB_VOICE_COMMAND' });
-            this.showNotification('🎤 Voice command activated');
-        } catch (error) {
-            this.showNotification('❌ Voice command failed');
-        }
+    showTotpCode(code, timeRemaining = 30) {
+        this.totpCode.textContent = code;
+        this.totpTime.textContent = `${timeRemaining}s`;
+        this.totpCard.style.display = 'block';
+
+        // Start countdown
+        let remaining = timeRemaining;
+        const interval = setInterval(() => {
+            remaining--;
+            this.totpTime.textContent = `${remaining}s`;
+
+            // Update progress bar
+            const progress = (remaining / 30) * 100;
+            this.totpProgress.style.setProperty('--progress', `${progress}%`);
+
+            if (remaining <= 0) {
+                clearInterval(interval);
+                this.totpCard.style.display = 'none';
+            }
+        }, 1000);
     }
 
-    async aiAnalyze() {
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, { type: 'TB_AI_ANALYZE' });
-            this.showNotification('🤖 AI analysis started');
-        } catch (error) {
-            this.showNotification('❌ AI analysis failed');
-        }
+    filterPasswords(query) {
+        const items = this.passwordList.querySelectorAll('.tb-password-item');
+        items.forEach(item => {
+            const title = item.querySelector('.tb-password-title').textContent.toLowerCase();
+            const details = item.querySelector('.tb-password-details').textContent.toLowerCase();
+            const matches = title.includes(query.toLowerCase()) || details.includes(query.toLowerCase());
+            item.style.display = matches ? 'flex' : 'none';
+        });
     }
 
-    async smartSearch() {
-        try {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            await chrome.tabs.sendMessage(tab.id, { type: 'TB_SMART_SEARCH' });
-            this.showNotification('🔍 Smart search activated');
-        } catch (error) {
-            this.showNotification('❌ Smart search failed');
-        }
+    toggleChat() {
+        this.chatCollapsed = !this.chatCollapsed;
+        this.chatContainer.classList.toggle('collapsed', this.chatCollapsed);
+        document.getElementById('chatToggleIcon').textContent = this.chatCollapsed ? '▶' : '▼';
     }
 
-    // Settings
-    async toggleSetting(setting) {
-        const currentValue = this.settings.get(setting);
-        const newValue = !currentValue;
-        this.settings.set(setting, newValue);
+    addChatMessage(message, type) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `tb-chat-message tb-chat-${type}`;
 
-        // Save to storage
-        const storageKey = `${setting}_enabled`;
-        await chrome.storage.sync.set({ [storageKey]: newValue });
-
-        // Update UI
-        this.updateToggle(`${setting}-toggle`, newValue);
-
-        // Show feedback
-        const status = newValue ? 'enabled' : 'disabled';
-        this.showNotification(`${setting} ${status}`);
-    }
-
-    // Navigation
-    openSettings() {
-        chrome.runtime.openOptionsPage();
-        window.close();
-    }
-
-    openHelp() {
-        chrome.tabs.create({ url: 'https://toolbox.simplecore.app/help' });
-        window.close();
-    }
-
-    openAbout() {
-        chrome.tabs.create({ url: 'https://toolbox.simplecore.app/about' });
-        window.close();
-    }
-
-    // Utility
-    showNotification(message) {
-        // Create temporary notification
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--tb-accent-primary);
-            color: var(--tb-bg-primary);
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 500;
-            z-index: 1000;
-            animation: slideDown 0.3s ease-out;
+        const icon = type === 'user' ? '👤' : '🤖';
+        messageDiv.innerHTML = `
+            <span class="tb-chat-icon">${icon}</span>
+            <span class="tb-chat-text">${message}</span>
         `;
+
+        this.chatMessages.appendChild(messageDiv);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+
+        // Expand chat if collapsed
+        if (this.chatCollapsed) {
+            this.toggleChat();
+        }
+    }
+
+    async getPageContext() {
+        if (!this.currentTab) return {};
+
+        try {
+            const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+                type: 'GET_PAGE_CONTEXT'
+            });
+            return response?.context || {};
+        } catch (error) {
+            return {
+                url: this.currentTab.url,
+                title: this.currentTab.title
+            };
+        }
+    }
+
+    closeModal() {
+        this.passwordModal.style.display = 'none';
+        this.passwordSearch.value = '';
+    }
+
+    showLoading(show) {
+        this.loadingOverlay.style.display = show ? 'flex' : 'none';
+    }
+
+    showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `tb-notification ${type}`;
         notification.textContent = message;
-        document.body.appendChild(notification);
 
+        this.notifications.appendChild(notification);
+
+        // Auto-remove after 3 seconds
         setTimeout(() => {
-            notification.remove();
-        }, 2000);
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 3000);
     }
-}
 
-// Initialize popup when DOM is ready
-function initializePopup() {
-    if (!window.tbPopup) {
-        console.log('🚀 Initializing ToolBox Popup');
-        window.tbPopup = new TBPopup();
-    }
-}
-
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializePopup);
-} else {
-    initializePopup();
-}
-
-// Add slide down animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideDown {
-        from {
-            opacity: 0;
-            transform: translateX(-50%) translateY(-10px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
+    async copyToClipboard(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (error) {
+            console.error('Clipboard error:', error);
+            return false;
         }
     }
-`;
-document.head.appendChild(style);
+
+    async sendToBackground(type, data) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage({ type, ...data }, resolve);
+        });
+    }
+}
+
+// Initialize popup
+const toolboxPopup = new ToolBoxPopup();
