@@ -62,7 +62,7 @@ from .ui import get_agent_ui_html, initialize_isaa_webui_module
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
 version = "0.2.0"  # Version bump for significant changes
-
+export = get_app("isaa.Export").tb
 pipeline_arr = [  # This seems to be for HuggingFace pipeline, keep as is for now
     'question-answering',
     'summarization',
@@ -1039,6 +1039,7 @@ class Tools(MainTool, FileHandler):
         self.print(f"Built and cached FlowAgent instance: {agent_name}")
         return agent_instance
 
+    @export(api=True, version=version)
     async def mini_task_completion(self, mini_task: str, user_task: str | None = None, mode: Any = None,  # LLMMode
                                    max_tokens_override: int | None = None, task_from="system",
                                    stream_function: Callable | None = None, message_history: list | None = None, agent_name="TaskCompletion", use_complex: bool = False, **kwargs):
@@ -1138,7 +1139,7 @@ class Tools(MainTool, FileHandler):
         except Exception as e:
             self.print(f"Error in mini_task_completion_format: {e}")
             return None  # Or raise
-
+    @export(api=True, version=version)
     async def format_class(self, format_schema: type[BaseModel], task: str, agent_name="TaskCompletion", auto_context=False):
         if format_schema is None or not task: return None
 

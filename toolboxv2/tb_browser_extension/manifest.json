@@ -38,6 +38,7 @@
       "matches": ["<all_urls>"],
       "js": [
         "core/utils.js",
+        "core/isaa-plugin.js",
         "core/voice-engine.js",
         "core/search-engine.js",
         "core/gesture-detector.js",

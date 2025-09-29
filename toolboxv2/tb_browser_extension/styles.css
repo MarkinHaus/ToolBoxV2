@@ -491,3 +491,1027 @@
 .tb-gap-2 { gap: var(--tb-space-2); }
 .tb-gap-4 { gap: var(--tb-space-4); }
 .tb-w-full { width: 100%; }
+
+/* ==================== ISAA INTEGRATED INTERFACE ==================== */
+
+.tb-isaa-section {
+    margin: var(--tb-space-4) 0;
+    padding: var(--tb-space-4);
+    background: rgba(0, 0, 0, 0.9);
+    border-radius: 12px;
+    border: 1px solid var(--tb-accent-primary);
+    backdrop-filter: blur(10px);
+}
+
+.tb-isaa-input-container {
+    display: flex;
+    gap: 8px;
+    margin-bottom: var(--tb-space-3);
+}
+
+.tb-isaa-input {
+    flex: 1;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid var(--tb-accent-primary);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-input:focus {
+    border-color: var(--tb-accent-secondary);
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 0 0 3px rgba(108, 142, 232, 0.2);
+}
+
+.tb-isaa-input::placeholder {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.tb-isaa-audio-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 50px;
+}
+
+.tb-isaa-audio-btn:hover:not(:disabled) {
+    background: rgba(108, 142, 232, 0.3);
+    border-color: var(--tb-accent-primary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-audio-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.tb-isaa-send-btn {
+    background: var(--tb-accent-primary);
+    border: none;
+    border-radius: 8px;
+    padding: 12px 20px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-send-btn:hover {
+    background: var(--tb-accent-secondary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-chat-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: var(--tb-space-3);
+    max-height: 300px;
+    overflow: hidden;
+}
+
+.tb-isaa-messages {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tb-isaa-message {
+    display: flex;
+    max-width: 85%;
+}
+
+.tb-isaa-message.tb-isaa-user {
+    align-self: flex-end;
+}
+
+.tb-isaa-message.tb-isaa-assistant {
+    align-self: flex-start;
+}
+
+.tb-isaa-message-content {
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+
+.tb-isaa-user .tb-isaa-message-content {
+    background: var(--tb-accent-primary);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.tb-isaa-assistant .tb-isaa-message-content {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-isaa-loading .tb-isaa-message-content {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.tb-isaa-welcome {
+    text-align: center;
+    padding: var(--tb-space-4);
+    color: var(--tb-text-secondary);
+}
+
+.tb-isaa-welcome .tb-icon {
+    font-size: 24px;
+    margin-bottom: var(--tb-space-2);
+}
+
+.tb-isaa-results {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: 100px;
+}
+
+.tb-isaa-chat-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.3s ease;
+}
+
+.tb-isaa-chat-container {
+    width: 90%;
+    max-width: 600px;
+    height: 80%;
+    max-height: 700px;
+    background: rgba(20, 20, 30, 0.95);
+    border: 1px solid var(--tb-accent-primary);
+    border-radius: 16px;
+    backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.tb-isaa-chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    background: rgba(108, 142, 232, 0.1);
+    border-bottom: 1px solid rgba(108, 142, 232, 0.3);
+}
+
+.tb-isaa-chat-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: white;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.tb-isaa-icon {
+    font-size: 20px;
+}
+
+.tb-isaa-chat-close {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-chat-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
+}
+
+.tb-isaa-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tb-isaa-message {
+    display: flex;
+    max-width: 80%;
+}
+
+.tb-isaa-message.tb-isaa-user {
+    align-self: flex-end;
+}
+
+.tb-isaa-message.tb-isaa-assistant {
+    align-self: flex-start;
+}
+
+.tb-isaa-message-content {
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.tb-isaa-user .tb-isaa-message-content {
+    background: var(--tb-accent-primary);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.tb-isaa-assistant .tb-isaa-message-content {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-isaa-message-content ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+
+.tb-isaa-message-content li {
+    margin: 4px 0;
+}
+
+.tb-isaa-chat-input-container {
+    display: flex;
+    padding: 16px 20px;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-isaa-chat-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-chat-input:focus {
+    border-color: var(--tb-accent-primary);
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.tb-isaa-chat-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.tb-isaa-chat-send {
+    background: var(--tb-accent-primary);
+    border: none;
+    border-radius: 8px;
+    padding: 12px 20px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-chat-send:hover {
+    background: var(--tb-accent-secondary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-quick-actions {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    background: rgba(255, 255, 255, 0.03);
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tb-isaa-quick-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-quick-btn:hover {
+    background: rgba(108, 142, 232, 0.3);
+    border-color: var(--tb-accent-primary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-isaa-action-btn {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: #10b981;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-action-btn:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.3);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.tb-isaa-chat {
+    background: linear-gradient(135deg, rgba(108, 142, 232, 0.2), rgba(26, 140, 255, 0.2));
+    border-color: var(--tb-accent-primary);
+}
+
+.tb-isaa-chat:hover {
+    background: linear-gradient(135deg, rgba(108, 142, 232, 0.3), rgba(26, 140, 255, 0.3));
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(108, 142, 232, 0.3);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ==================== ISAA PANEL INTEGRATION ==================== */
+
+.tb-isaa-section {
+    margin: var(--tb-space-4) 0;
+    padding: var(--tb-space-4);
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 12px;
+    border: 1px solid var(--tb-accent-primary);
+}
+
+.tb-isaa-input-container {
+    display: flex;
+    gap: 8px;
+    margin-bottom: var(--tb-space-3);
+}
+
+.tb-isaa-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.tb-isaa-input:focus {
+    border-color: var(--tb-accent-primary);
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 0 0 2px rgba(108, 142, 232, 0.2);
+}
+
+.tb-isaa-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.tb-isaa-audio-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tb-isaa-audio-btn:hover {
+    background: rgba(108, 142, 232, 0.3);
+    border-color: var(--tb-accent-primary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-send-btn {
+    background: var(--tb-accent-primary);
+    border: none;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 60px;
+}
+
+.tb-isaa-send-btn:hover {
+    background: var(--tb-accent-secondary);
+    transform: translateY(-1px);
+}
+
+.tb-isaa-chat-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    max-height: 300px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.tb-isaa-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 250px;
+}
+
+.tb-isaa-welcome {
+    text-align: center;
+    padding: 20px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.tb-isaa-welcome .tb-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.tb-isaa-welcome p {
+    margin: 8px 0 4px 0;
+    font-weight: 600;
+    color: white;
+}
+
+.tb-isaa-welcome small {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.tb-isaa-message {
+    display: flex;
+    max-width: 85%;
+    margin-bottom: 8px;
+}
+
+.tb-isaa-message.tb-isaa-user {
+    align-self: flex-end;
+}
+
+.tb-isaa-message.tb-isaa-assistant {
+    align-self: flex-start;
+}
+
+.tb-isaa-message-content {
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    word-wrap: break-word;
+}
+
+.tb-isaa-user .tb-isaa-message-content {
+    background: var(--tb-accent-primary);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.tb-isaa-assistant .tb-isaa-message-content {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border-bottom-left-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-isaa-message.tb-loading .tb-isaa-message-content {
+    opacity: 0.7;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+
+.tb-isaa-results {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-height: 200px;
+    padding: 16px;
+}
+
+.tb-quick-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: var(--tb-space-4);
+    flex-wrap: wrap;
+}
+
+.tb-quick-actions .tb-btn {
+    flex: 1;
+    min-width: 120px;
+    justify-content: center;
+}
+
+/* Scrollbar for ISAA messages */
+.tb-isaa-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+.tb-isaa-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tb-isaa-messages::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+}
+
+.tb-isaa-messages::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* ==================== LIVE SEARCH RESULTS ==================== */
+
+.tb-search-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.tb-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top: 3px solid var(--tb-accent-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.tb-search-results {
+    padding: 16px;
+}
+
+.tb-search-header {
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-search-header h4 {
+    margin: 0;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.tb-search-response {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tb-response-content {
+    color: white;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+}
+
+.tb-response-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tb-response-actions .tb-action-btn {
+    background: var(--tb-accent-primary);
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: white;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tb-response-actions .tb-action-btn:hover {
+    background: var(--tb-accent-secondary);
+    transform: translateY(-1px);
+}
+
+.tb-search-suggestions {
+    text-align: center;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tb-search-suggestions small {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
+}
+
+/* ==================== ENHANCED SEARCH PLACEHOLDER ==================== */
+
+.tb-search-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.tb-search-placeholder .tb-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.7;
+}
+
+.tb-search-placeholder p {
+    margin: 8px 0 4px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: white;
+}
+
+.tb-search-placeholder small {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+}
+
+/* ==================== PASSWORD MANAGEMENT ==================== */
+
+.tb-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: fadeIn 0.3s ease;
+}
+
+.tb-password-manager-modal {
+    background: rgba(20, 20, 30, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.tb-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tb-modal-header h3 {
+    margin: 0;
+    color: white;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.tb-modal-close {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.tb-modal-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.tb-modal-content {
+    padding: 24px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.tb-password-toolbar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    align-items: center;
+}
+
+.tb-search-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: white;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.tb-search-input:focus {
+    border-color: var(--tb-accent-primary);
+    background: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 0 0 2px rgba(108, 142, 232, 0.2);
+}
+
+.tb-search-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.tb-password-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tb-password-item {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s ease;
+}
+
+.tb-password-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.tb-password-info {
+    flex: 1;
+}
+
+.tb-password-title {
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.tb-password-username {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.tb-password-url {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.tb-password-2fa {
+    color: var(--tb-accent-primary);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.tb-password-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.tb-btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    font-weight: 500;
+}
+
+.tb-btn-small:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.tb-btn-danger {
+    background: rgba(255, 68, 68, 0.2) !important;
+    color: #ff4444 !important;
+}
+
+.tb-btn-danger:hover {
+    background: rgba(255, 68, 68, 0.3) !important;
+}
+
+.tb-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.tb-empty-state .tb-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.7;
+}
+
+.tb-empty-state p {
+    margin: 16px 0;
+    font-size: 16px;
+}
+
+.tb-loading, .tb-error {
+    text-align: center;
+    padding: 40px 20px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* ==================== TOTP DISPLAY ==================== */
+
+.tb-totp-display {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(20, 20, 30, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--tb-accent-primary);
+    border-radius: 12px;
+    padding: 20px;
+    min-width: 200px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    z-index: 10001;
+    animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.tb-totp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.tb-totp-issuer {
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.tb-totp-close {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.tb-totp-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.tb-totp-code {
+    font-family: 'Courier New', monospace;
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--tb-accent-primary);
+    text-align: center;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    letter-spacing: 2px;
+}
+
+.tb-totp-code:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.02);
+}
+
+.tb-totp-timer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.tb-totp-progress {
+    flex: 1;
+    height: 4px;
+    background: var(--tb-accent-primary);
+    border-radius: 2px;
+    transition: width 1s linear;
+}
+
+.tb-totp-countdown {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 20px;
+    text-align: center;
+}
+
+.tb-totp-hint {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
+}
