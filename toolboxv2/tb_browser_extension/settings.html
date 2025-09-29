@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToolBox Extension Settings</title>
+    <style>
+        /* ToolBox Professional Settings Design */
+        :root {
+            --tb-bg-primary: #181823;
+            --tb-bg-secondary: #2a2a3a;
+            --tb-text-primary: #E9F8F9;
+            --tb-text-secondary: #adb5bd;
+            --tb-text-muted: #6c757d;
+            --tb-accent-primary: #6c8ee8;
+            --tb-accent-secondary: #1a8cff;
+            --tb-glass-bg: rgba(10, 10, 15, 0.95);
+            --tb-glass-bg-light: rgba(255, 255, 255, 0.05);
+            --tb-glass-border: rgba(255, 255, 255, 0.1);
+            --tb-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --tb-success: #22c55e;
+            --tb-error: #ef4444;
+            --tb-warning: #eab308;
+            --tb-transition: 0.15s ease-in-out;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--tb-bg-primary);
+            color: var(--tb-text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--tb-glass-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--tb-glass-border);
+            border-radius: 16px;
+            box-shadow: var(--tb-glass-shadow);
+            overflow: hidden;
+        }
+
+        .header {
+            padding: 32px;
+            background: var(--tb-glass-bg-light);
+            border-bottom: 1px solid var(--tb-glass-border);
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--tb-text-secondary);
+            font-size: 16px;
+        }
+
+        .content {
+            padding: 32px;
+        }
+
+        .section {
+            margin-bottom: 32px;
+            background: var(--tb-glass-bg-light);
+            border: 1px solid var(--tb-glass-border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .section h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--tb-accent-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--tb-bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--tb-glass-border);
+        }
+
+        .setting-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-info {
+            flex: 1;
+        }
+
+        .setting-info label {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--tb-text-primary);
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .setting-info .description {
+            font-size: 12px;
+            color: var(--tb-text-muted);
+        }
+
+        .setting-control {
+            margin-left: 16px;
+        }
+
+        /* Toggle Switch */
+        .toggle {
+            position: relative;
+            width: 52px;
+            height: 28px;
+            background: var(--tb-glass-border);
+            border-radius: 14px;
+            cursor: pointer;
+            transition: background var(--tb-transition);
+        }
+
+        .toggle.active {
+            background: var(--tb-accent-primary);
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 24px;
+            height: 24px;
+            background: var(--tb-text-primary);
+            border-radius: 50%;
+            transition: transform var(--tb-transition);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle.active::after {
+            transform: translateX(24px);
+        }
+
+        /* Input Fields */
+        .input-field {
+            width: 200px;
+            padding: 8px 12px;
+            background: var(--tb-bg-primary);
+            border: 1px solid var(--tb-glass-border);
+            border-radius: 6px;
+            color: var(--tb-text-primary);
+            font-size: 14px;
+            transition: all var(--tb-transition);
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--tb-accent-primary);
+            box-shadow: 0 0 0 3px rgba(108, 142, 232, 0.1);
+        }
+
+        /* Select Dropdown */
+        .select-field {
+            width: 200px;
+            padding: 8px 12px;
+            background: var(--tb-bg-primary);
+            border: 1px solid var(--tb-glass-border);
+            border-radius: 6px;
+            color: var(--tb-text-primary);
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            background: var(--tb-accent-primary);
+            color: var(--tb-bg-primary);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--tb-transition);
+        }
+
+        .btn:hover {
+            background: var(--tb-accent-secondary);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--tb-glass-border);
+            color: var(--tb-text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--tb-text-muted);
+        }
+
+        .btn-danger {
+            background: var(--tb-error);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--tb-success);
+            color: white;
+        }
+
+        /* Voice Input Button */
+        .voice-input-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--tb-accent-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .voice-input-container {
+            position: relative;
+        }
+
+        /* Status Messages */
+        .status-message {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-success {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--tb-success);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .status-error {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--tb-error);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .footer {
+            padding: 24px 32px;
+            background: var(--tb-glass-bg-light);
+            border-top: 1px solid var(--tb-glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .version-info {
+            font-size: 12px;
+            color: var(--tb-text-muted);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section {
+            animation: fadeIn 0.3s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧰 ToolBox Settings</h1>
+            <p>Configure your ToolBox browser extension</p>
+        </div>
+
+        <div class="content">
+            <div id="status-messages"></div>
+
+            <!-- Password Manager Settings -->
+            <div class="section">
+                <h3>🔐 Password Manager</h3>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Enable Password Manager</label>
+                        <div class="description">Automatically detect and fill login forms</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle active" id="password-manager-toggle"></div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Auto-fill on Page Load</label>
+                        <div class="description">Automatically fill known login forms</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle" id="autofill-toggle"></div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>ToolBox Server URL</label>
+                        <div class="description">URL for ToolBox API server</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="voice-input-container">
+                            <input type="text" class="input-field" id="server-url" value="http://localhost:8080" placeholder="http://localhost:8080">
+                            <button class="voice-input-btn" id="server-url-voice" title="Voice Input">🎤</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Voice Settings -->
+            <div class="section">
+                <h3>🎤 Voice Commands</h3>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Enable Voice Commands</label>
+                        <div class="description">Activate voice recognition for commands</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle active" id="voice-commands-toggle"></div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Voice Language</label>
+                        <div class="description">Language for speech recognition</div>
+                    </div>
+                    <div class="setting-control">
+                        <select class="select-field" id="voice-language">
+                            <option value="en-US">English (US)</option>
+                            <option value="en-GB">English (UK)</option>
+                            <option value="de-DE">German</option>
+                            <option value="fr-FR">French</option>
+                            <option value="es-ES">Spanish</option>
+                            <option value="it-IT">Italian</option>
+                            <option value="pt-PT">Portuguese</option>
+                            <option value="ru-RU">Russian</option>
+                            <option value="ja-JP">Japanese</option>
+                            <option value="ko-KR">Korean</option>
+                            <option value="zh-CN">Chinese (Simplified)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Wake Word</label>
+                        <div class="description">Word to activate voice commands</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="voice-input-container">
+                            <input type="text" class="input-field" id="wake-word" value="ToolBox" placeholder="ToolBox">
+                            <button class="voice-input-btn" id="wake-word-voice" title="Voice Input">🎤</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Continuous Listening</label>
+                        <div class="description">Keep listening without wake word</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle" id="continuous-listening-toggle"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- UI Settings -->
+            <div class="section">
+                <h3>🎨 Interface</h3>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Show Gesture Feedback</label>
+                        <div class="description">Display notifications for gesture actions</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle active" id="gesture-feedback-toggle"></div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Panel Position</label>
+                        <div class="description">Default position for ToolBox panel</div>
+                    </div>
+                    <div class="setting-control">
+                        <select class="select-field" id="panel-position">
+                            <option value="top-right">Top Right</option>
+                            <option value="top-left">Top Left</option>
+                            <option value="bottom-right">Bottom Right</option>
+                            <option value="bottom-left">Bottom Left</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Settings -->
+            <div class="section">
+                <h3>⚙️ Advanced</h3>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>Debug Mode</label>
+                        <div class="description">Enable detailed logging for troubleshooting</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle" id="debug-mode-toggle"></div>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <label>API Timeout (seconds)</label>
+                        <div class="description">Timeout for API requests</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" class="input-field" id="api-timeout" value="10" min="5" max="60">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="version-info">
+                ToolBox Extension v2.0.0
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn-secondary" id="reset-btn">Reset to Defaults</button>
+                <button class="btn btn-success" id="save-btn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="settings.js"></script>
+</body>
+</html>

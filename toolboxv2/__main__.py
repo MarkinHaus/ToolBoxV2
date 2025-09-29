@@ -410,6 +410,10 @@ def parse_args():
 
     parser.add_argument("mcp", help="run MCP server", default=False, action='store_true')
 
+    # argument named browser called like tb browser build
+    parser.add_argument("browser", help="run browser extension installer", default=False,
+                        action='store_true')
+
     parser.add_argument("p2p", help="run rust p2p for mor infos run tb p2p -h", default=False,
                         action='store_true')
 
@@ -1200,6 +1204,7 @@ def main_runner():
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
+        "browser": lambda: __import__('toolboxv2.tb_browser_extension.install', fromlist=['main']).main(),
         "mcp": lambda: __import__('toolboxv2.mcp_server', fromlist=['main']).main(),
     }
     if len(sys.argv) >= 2 and sys.argv[1] in runner:
