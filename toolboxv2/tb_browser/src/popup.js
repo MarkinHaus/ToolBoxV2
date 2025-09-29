@@ -2,13 +2,31 @@
 // Advanced browser extension with AI, voice, and password management
 
 class ToolBoxPopup {
+
     constructor() {
         this.currentTab = 'isaa';
         this.isVoiceActive = false;
         this.recognition = null;
+        this.chatHistory = [];
         this.synthesis = null;
         this.apiBase = 'http://localhost:8080';
         this.isConnected = false;
+        this.currentPageContext = null;
+        this.lastSelectedInput = null;
+        this.voiceLanguage = 'en-US'; // Default language
+        this.supportedLanguages = {
+            'en-US': 'English (US)',
+            'en-GB': 'English (UK)',
+            'de-DE': 'German',
+            'fr-FR': 'French',
+            'es-ES': 'Spanish',
+            'it-IT': 'Italian',
+            'pt-PT': 'Portuguese',
+            'ru-RU': 'Russian',
+            'ja-JP': 'Japanese',
+            'ko-KR': 'Korean',
+            'zh-CN': 'Chinese (Simplified)'
+        };
 
         this.init();
     }
@@ -26,11 +44,13 @@ class ToolBoxPopup {
         console.log('📄 DOM ready, initializing components...');
 
         // Initialize components
+        await this.loadSettings();
         this.setupEventListeners();
         this.initializeVoiceEngine();
         this.initializeTabSystem();
         this.checkConnection();
         this.loadCurrentPageInfo();
+        this.loadPageContext();
 
         // Initialize panels
         this.initializeISAAPanel();
@@ -49,10 +69,91 @@ class ToolBoxPopup {
         console.log('✅ ToolBox Pro initialized');
     }
 
+    async loadSettings() {
+        try {
+            const settings = await chrome.storage.sync.get(['voiceLanguage']);
+            if (settings.voiceLanguage) {
+                this.voiceLanguage = settings.voiceLanguage;
+            }
+
+            // Update language selector
+            const languageSelect = document.getElementById('languageSelect');
+            if (languageSelect) {
+                languageSelect.value = this.voiceLanguage;
+            }
+        } catch (error) {
+            console.warn('Failed to load settings:', error);
+        }
+    }
+
+    async saveSettings() {
+        try {
+            await chrome.storage.sync.set({
+                voiceLanguage: this.voiceLanguage
+            });
+        } catch (error) {
+            console.warn('Failed to save settings:', error);
+        }
+    }
+
+    async loadPageContext() {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.tabs) {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (tab) {
+                    // Get page index data from content script
+                    const response = await chrome.tabs.sendMessage(tab.id, {
+                        type: 'GET_PAGE_CONTEXT'
+                    });
+
+                    if (response && response.success) {
+                        this.currentPageContext = {
+                            url: tab.url,
+                            title: tab.title,
+                            pageIndex: response.pageIndex,
+                            summary: response.summary
+                        };
+                        console.log('📄 Page context loaded:', this.currentPageContext);
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to load page context:', error);
+        }
+    }
+
     setupEventListeners() {
         // Voice button
         const voiceBtn = document.getElementById('voiceBtn');
         voiceBtn?.addEventListener('click', () => this.toggleVoice());
+
+        // Track last selected input for voice targeting
+        document.addEventListener('focusin', (e) => {
+            if (e.target.matches('input[type="text"], input[type="search"], textarea')) {
+                this.lastSelectedInput = e.target;
+                console.log('📝 Text input selected for voice targeting');
+            }
+        });
+
+        // Double-click detection for voice activation
+        document.addEventListener('dblclick', (e) => {
+            if (e.target.matches('input[type="text"], input[type="search"], textarea')) {
+                this.lastSelectedInput = e.target;
+                this.toggleVoice();
+                e.preventDefault();
+            }
+        });
+
+        // Language selector
+        const languageSelect = document.getElementById('languageSelect');
+        languageSelect?.addEventListener('change', (e) => {
+            this.voiceLanguage = e.target.value;
+            if (this.recognition) {
+                this.recognition.lang = this.voiceLanguage;
+            }
+            this.saveSettings();
+            console.log('🌐 Voice language changed to:', this.voiceLanguage);
+        });
 
         // Search input
         const searchField = document.getElementById('searchField');
@@ -94,8 +195,8 @@ class ToolBoxPopup {
         document.getElementById('indexPageBtn')?.addEventListener('click', () => this.indexCurrentPage());
 
         // Modal close buttons
-        document.querySelectorAll('.modal-close, .voice-close').forEach(btn => {
-            btn.addEventListener('click', (e) => this.closeModal(e.target.closest('.modal, .voice-overlay')));
+        document.querySelectorAll('.modal-close').forEach(btn => {
+            btn.addEventListener('click', (e) => this.closeModal(e.target.closest('.modal')));
         });
 
         // TOTP copy button
@@ -112,12 +213,11 @@ class ToolBoxPopup {
 
             this.recognition.continuous = false;
             this.recognition.interimResults = true;
-            this.recognition.lang = 'en-US';
+            this.recognition.lang = this.voiceLanguage;
 
             this.recognition.onstart = () => {
                 this.isVoiceActive = true;
                 this.updateVoiceUI(true);
-                this.showVoiceOverlay();
             };
 
             this.recognition.onresult = (event) => {
@@ -135,14 +235,12 @@ class ToolBoxPopup {
             this.recognition.onend = () => {
                 this.isVoiceActive = false;
                 this.updateVoiceUI(false);
-                this.hideVoiceOverlay();
             };
 
             this.recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
                 this.isVoiceActive = false;
                 this.updateVoiceUI(false);
-                this.hideVoiceOverlay();
             };
         }
 
@@ -231,39 +329,115 @@ class ToolBoxPopup {
 
     updateVoiceUI(active) {
         const voiceBtn = document.getElementById('voiceBtn');
-        const voiceIndicator = document.getElementById('voiceIndicator');
+        const statusDot = voiceBtn?.querySelector('.voice-status-dot');
 
         if (active) {
             voiceBtn?.classList.add('active');
-            voiceIndicator?.classList.remove('hidden');
+            if (statusDot) {
+                statusDot.classList.add('listening');
+                statusDot.classList.remove('ready');
+            }
+            this.showVoiceTranscript();
         } else {
             voiceBtn?.classList.remove('active');
-            voiceIndicator?.classList.add('hidden');
+            if (statusDot) {
+                statusDot.classList.remove('listening');
+                statusDot.classList.add('ready');
+            }
+            this.hideVoiceTranscript();
         }
     }
 
-    showVoiceOverlay() {
-        const overlay = document.getElementById('voiceOverlay');
-        overlay?.classList.remove('hidden');
+    showVoiceTranscript() {
+        // Create transcript display if it doesn't exist
+        let transcriptEl = document.getElementById('voiceTranscript');
+        if (!transcriptEl) {
+            transcriptEl = document.createElement('div');
+            transcriptEl.id = 'voiceTranscript';
+            transcriptEl.className = 'voice-transcript-display';
+            transcriptEl.innerHTML = `
+                <div class="transcript-content">
+                    <span class="transcript-label">🎤 Listening...</span>
+                    <span class="transcript-text"></span>
+                </div>
+            `;
+            document.body.appendChild(transcriptEl);
+        }
+
+        transcriptEl.classList.remove('hidden');
+        transcriptEl.classList.add('visible');
     }
 
-    hideVoiceOverlay() {
-        const overlay = document.getElementById('voiceOverlay');
-        overlay?.classList.add('hidden');
+    hideVoiceTranscript() {
+        const transcriptEl = document.getElementById('voiceTranscript');
+        if (transcriptEl) {
+            transcriptEl.classList.remove('visible');
+            transcriptEl.classList.add('hidden');
+
+            // Clear transcript after hiding
+            setTimeout(() => {
+                const textEl = transcriptEl.querySelector('.transcript-text');
+                if (textEl) textEl.textContent = '';
+            }, 300);
+        }
     }
 
     updateVoiceTranscript(transcript) {
-        const transcriptEl = document.querySelector('.voice-transcript');
-        if (transcriptEl) {
-            transcriptEl.textContent = transcript;
+        const transcriptEl = document.getElementById('voiceTranscript');
+        const textEl = transcriptEl?.querySelector('.transcript-text');
+
+        if (textEl) {
+            textEl.textContent = transcript;
+
+            // Update label based on transcript content
+            const labelEl = transcriptEl.querySelector('.transcript-label');
+            if (labelEl) {
+                if (transcript.trim()) {
+                    labelEl.textContent = '🎤 You said:';
+                } else {
+                    labelEl.textContent = '🎤 Listening...';
+                }
+            }
+        }
+
+        // Also show live transcript in target input field (if available)
+        if (this.lastSelectedInput && this.lastSelectedInput.isConnected && transcript.trim()) {
+            // Store original placeholder to restore later
+            if (!this.lastSelectedInput.dataset.originalPlaceholder) {
+                this.lastSelectedInput.dataset.originalPlaceholder = this.lastSelectedInput.placeholder || '';
+            }
+
+            // Show transcript as placeholder
+            this.lastSelectedInput.placeholder = `🎤 "${transcript}"`;
+            this.lastSelectedInput.classList.add('voice-preview');
+        }
+    }
+
+    clearVoicePreview() {
+        if (this.lastSelectedInput && this.lastSelectedInput.isConnected) {
+            // Restore original placeholder
+            if (this.lastSelectedInput.dataset.originalPlaceholder !== undefined) {
+                this.lastSelectedInput.placeholder = this.lastSelectedInput.dataset.originalPlaceholder;
+                delete this.lastSelectedInput.dataset.originalPlaceholder;
+            }
+            this.lastSelectedInput.classList.remove('voice-preview');
         }
     }
 
     async processVoiceInput(transcript) {
         console.log('Processing voice input:', transcript);
 
-        // Hide voice overlay
-        this.hideVoiceOverlay();
+        // If there's a selected text input, route voice input there
+        if (this.lastSelectedInput && this.lastSelectedInput.isConnected) {
+            this.lastSelectedInput.value = transcript;
+            this.lastSelectedInput.focus();
+
+            // Trigger input event for any listeners
+            this.lastSelectedInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+            console.log('📝 Voice input routed to text field');
+            return;
+        }
 
         // Determine intent and route to appropriate handler
         if (transcript.toLowerCase().includes('search')) {
@@ -391,6 +565,10 @@ class ToolBoxPopup {
         console.log('ISAA panel initialized');
     }
 
+    addMessageToHistory(role, content) {
+        this.chatHistory.push({ role, content });
+    }
+
     async sendChatMessage() {
         const chatInput = document.getElementById('chatInput');
         const message = chatInput?.value.trim();
@@ -406,16 +584,39 @@ class ToolBoxPopup {
         // Show typing indicator
         this.showTypingIndicator();
 
+        if (this.currentPageContext){
+            this.addMessageToHistory('system', `User is on ${JSON.stringify(this.currentPageContext)}`);
+        }
+
         try {
-            const response = await this.makeAPICall('/api/isaa/mini_task_completion', 'POST', {
+            // Prepare context with page information
+            const contextData = {
                 mini_task: message,
-                user_task: 'Browser extension chat',
+                user_task: 'Browser extension chat with page context',
                 agent_name: 'self',
-                task_from: 'browser_extension'
-            });
+                task_from: 'browser_extension',
+                message_history: JSON.stringify(this.chatHistory),
+            };
+
+            const response = await this.makeAPICall('/api/isaa/mini_task_completion', 'POST', contextData);
 
             this.hideTypingIndicator();
-            this.addChatMessage('isaa', response.result.data || 'I understand. How can I help you further?');
+
+            const responseText = response.result?.data || response.data || 'I understand. How can I help you further?';
+            this.addMessageToHistory('user', message);
+            this.addChatMessage('isaa', responseText);
+
+            // Check if this looks like an action request
+            if (this.isActionRequest(message)) {
+                try {
+                    const action = await this.executeStructuredAction(message);
+                    if (action) {
+                        this.addChatMessage('isaa', `🎯 I've planned to ${action.action_type} on "${action.target_selector}"`);
+                    }
+                } catch (actionError) {
+                    console.warn('Action execution failed:', actionError);
+                }
+            }
 
             // Handle TTS if requested
             if (response.speak) {
@@ -429,12 +630,99 @@ class ToolBoxPopup {
         }
     }
 
+    isActionRequest(message) {
+        const actionKeywords = [
+            'click', 'press', 'tap', 'select',
+            'fill', 'enter', 'type', 'input',
+            'navigate', 'go to', 'visit', 'open',
+            'scroll', 'find', 'search for',
+            'extract', 'get', 'copy', 'download',
+            // de key words
+            "klicke", "drücke", "tippe", "wähle",
+            "fülle", "gebe", "trage", "eingabe",
+            "navigiere", "gehe zu", "öffne", "besuche",
+            "scroll", "finde", "suche nach",
+            "extrahiere", "hole", "kopiere", "lade herunter"
+        ];
+
+        const lowerMessage = message.toLowerCase();
+        return actionKeywords.some(keyword => lowerMessage.includes(keyword));
+    }
+
+    async executeStructuredAction(message) {
+        try {
+            // Define action schema for format_class
+            const actionSchema = {'properties': {'action_type': {'enum': ['click',
+                            'fill_form',
+                            'navigate',
+                            'scroll',
+                            'extract_data'],
+                           'title': 'Action Type',
+                           'type': 'string'},
+                          'target_selector': {'title': 'Target Selector', 'type': 'string'},
+                          'data': {'anyOf': [{'additionalProperties': true, 'type': 'object'},
+                            {'type': 'null'}],
+                           'default': null,
+                           'title': 'Data'},
+                          'confirmation_needed': {'title': 'Confirmation Needed', 'type': 'boolean'}},
+                         'required': ['action_type', 'target_selector', 'confirmation_needed'],
+                         'title': 'ActionSchema',
+                         'type': 'object'};
+
+            const response = await this.makeAPICall('/api/isaa/format_class', 'POST', {
+                format_schema: actionSchema,
+                task: `Analyze this request and determine the web page action needed: "${message}".
+                      Current page: ${JSON.stringify(this.currentPageContext)}`,
+                agent_name: 'TaskCompletion',
+                auto_context: true
+            });
+
+            if (response.success && response.data) {
+                const action = response.data;
+                console.log('🎯 Structured action planned:', action);
+
+                // Execute the action via content script
+                await this.executePageAction(action);
+
+                return action;
+            }
+        } catch (error) {
+            console.error('Structured action error:', error);
+            throw error;
+        }
+    }
+
+    async executePageAction(action) {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.tabs) {
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+                const response = await chrome.tabs.sendMessage(tab.id, {
+                    type: 'EXECUTE_ACTION',
+                    action: action
+                });
+
+                if (response.success) {
+                    this.addChatMessage('isaa', `✅ Action completed: ${action.action_type}`);
+                } else {
+                    this.addChatMessage('isaa', `❌ Action failed: ${response.error}`);
+                }
+
+                return response;
+            }
+        } catch (error) {
+            console.error('Page action execution error:', error);
+            this.addChatMessage('isaa', `❌ Could not execute action: ${error.message}`);
+        }
+    }
+
     addChatMessage(sender, message) {
         const chatMessages = document.getElementById('chatMessages');
         const messageEl = document.createElement('div');
         messageEl.className = `chat-message ${sender}-message`;
 
         if (sender === 'isaa') {
+            this.addMessageToHistory('assistant', message);
             messageEl.innerHTML = `
                 <div class="isaa-avatar">🤖</div>
                 <div class="message-content">
@@ -834,6 +1122,7 @@ class ToolBoxPopup {
         div.textContent = text;
         return div.innerHTML;
     }
+
 }
 
 // Initialize popup when DOM is loaded

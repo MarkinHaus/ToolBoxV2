@@ -53,7 +53,14 @@
                     <span class="app-title">ToolBox Pro</span>
                 </div>
                 <div class="voice-section">
+                    <select id="languageSelect" class="language-select" title="Voice Language">
+                        <option value="en-US">🇺🇸 EN</option>
+                        <option value="de-DE">🇩🇪 DE</option>
+                        <option value="fr-FR">🇫🇷 FR</option>
+                        <option value="es-ES">🇪🇸 ES</option>
+                    </select>
                     <button id="voiceBtn" class="voice-btn" title="Voice Input (Ctrl+Shift+V)">
+                        <div class="voice-status-dot ready"></div>
                         <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
                             <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
@@ -61,10 +68,6 @@
                             <line x1="8" y1="23" x2="16" y2="23"></line>
                         </svg>
                     </button>
-                    <div id="voiceIndicator" class="voice-indicator hidden">
-                        <div class="voice-wave"></div>
-                        <span class="voice-text">Listening...</span>
-                    </div>
                 </div>
             </div>
             <div id="searchInput" class="search-input-container hidden">
@@ -213,18 +216,6 @@
     </div>
 
     <!-- Modals and Overlays -->
-    <div id="voiceOverlay" class="voice-overlay hidden">
-        <div class="voice-modal">
-            <div class="voice-animation">
-                <div class="voice-circle"></div>
-                <div class="voice-pulse"></div>
-            </div>
-            <p class="voice-status">Listening...</p>
-            <p class="voice-transcript"></p>
-            <button class="voice-close">×</button>
-        </div>
-    </div>
-
     <div id="totpModal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">

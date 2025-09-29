@@ -1054,6 +1054,9 @@ class Tools(MainTool, FileHandler):
             use_complex = use_complex or data_dict.get("use_complex")
             kwargs = kwargs or data_dict.get("kwargs")
             message_history = message_history or data_dict.get("message_history")
+            if isinstance(message_history, str):
+                message_history = json.loads(message_history)
+        print(mini_task, agent_name, use_complex, kwargs, message_history, form_data or data)
         if mini_task is None: return None
         if agent_name is None: return None
         if mini_task == "test": return "test"
@@ -1165,7 +1168,7 @@ class Tools(MainTool, FileHandler):
             auto_context = auto_context or data_dict.get("auto_context")
             kwargs = kwargs or data_dict.get("kwargs")
         if format_schema is None or not task: return None
-
+        print(task)
         agent = None
         if isinstance(agent_name, str):
             agent = await self.get_agent(agent_name)

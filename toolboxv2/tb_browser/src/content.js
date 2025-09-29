@@ -268,6 +268,25 @@ class ToolBoxContent {
                     sendResponse({ success: true });
                     break;
 
+                case 'GET_PAGE_CONTEXT':
+                    const context = await this.getPageContext();
+                    sendResponse({ success: true, ...context });
+                    break;
+
+                case 'EXECUTE_ACTION':
+                    const actionResult = await this.executeAction(message.action);
+                    sendResponse(actionResult);
+                    break;
+
+                case 'SHOW_GESTURE_FEEDBACK':
+                    this.showGestureFeedback(message.message);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'PING':
+                    sendResponse({ success: true, status: 'alive' });
+                    break;
+
                 default:
                     sendResponse({ success: false, error: 'Unknown message type' });
             }
@@ -564,6 +583,181 @@ class ToolBoxContent {
             return item.fullText || item.snippet || item.title;
         }
         return '';
+    }
+
+    async getPageContext() {
+        // Generate page summary
+        const summary = this.generatePageSummary();
+
+        // Convert pageIndex to serializable format
+        const pageIndexData = {};
+        for (const [id, item] of this.pageIndex) {
+            pageIndexData[id] = {
+                type: item.type,
+                title: item.title,
+                snippet: item.snippet,
+                // Don't include the actual DOM element
+            };
+        }
+
+        return {
+            pageIndex: pageIndexData,
+            summary: summary,
+            url: window.location.href,
+            title: document.title
+        };
+    }
+
+    generatePageSummary() {
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+            .slice(0, 5)
+            .map(h => h.textContent.trim())
+            .filter(text => text.length > 0);
+
+        const mainContent = Array.from(document.querySelectorAll('p'))
+            .slice(0, 3)
+            .map(p => p.textContent.trim())
+            .filter(text => text.length > 50)
+            .map(text => text.substring(0, 100) + '...');
+
+        return {
+            headings: headings,
+            mainContent: mainContent,
+            elementCount: this.pageIndex.size,
+            hasForm: document.querySelector('form') !== null,
+            hasImages: document.querySelector('img') !== null
+        };
+    }
+
+    async executeAction(action) {
+        try {
+            console.log('🎯 Executing action:', action);
+
+            switch (action.action_type) {
+                case 'click':
+                    return await this.executeClickAction(action);
+                case 'fill_form':
+                    return await this.executeFillFormAction(action);
+                case 'navigate':
+                    return await this.executeNavigateAction(action);
+                case 'scroll':
+                    return await this.executeScrollAction(action);
+                case 'extract_data':
+                    return await this.executeExtractDataAction(action);
+                default:
+                    return { success: false, error: `Unknown action type: ${action.action_type}` };
+            }
+        } catch (error) {
+            console.error('Action execution error:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async executeClickAction(action) {
+        const element = this.findElementBySelector(action.target_selector);
+        if (!element) {
+            return { success: false, error: `Element not found: ${action.target_selector}` };
+        }
+
+        // Highlight element briefly
+        this.highlightElement(element, [], 2000);
+
+        // Simulate click
+        element.click();
+
+        return { success: true, message: `Clicked element: ${action.target_selector}` };
+    }
+
+    async executeFillFormAction(action) {
+        const element = this.findElementBySelector(action.target_selector);
+        if (!element) {
+            return { success: false, error: `Form element not found: ${action.target_selector}` };
+        }
+
+        if (action.data && action.data.value) {
+            element.value = action.data.value;
+            element.dispatchEvent(new Event('input', { bubbles: true }));
+            element.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        return { success: true, message: `Filled form element: ${action.target_selector}` };
+    }
+
+    async executeNavigateAction(action) {
+        if (action.data && action.data.url) {
+            window.location.href = action.data.url;
+            return { success: true, message: `Navigating to: ${action.data.url}` };
+        }
+        return { success: false, error: 'No URL provided for navigation' };
+    }
+
+    async executeScrollAction(action) {
+        const element = action.target_selector ?
+            this.findElementBySelector(action.target_selector) : null;
+
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (action.data && action.data.direction) {
+            const scrollAmount = action.data.amount || 300;
+            if (action.data.direction === 'up') {
+                window.scrollBy(0, -scrollAmount);
+            } else if (action.data.direction === 'down') {
+                window.scrollBy(0, scrollAmount);
+            }
+        }
+
+        return { success: true, message: 'Scroll action completed' };
+    }
+
+    async executeExtractDataAction(action) {
+        const element = this.findElementBySelector(action.target_selector);
+        if (!element) {
+            return { success: false, error: `Element not found: ${action.target_selector}` };
+        }
+
+        const extractedData = {
+            text: element.textContent.trim(),
+            html: element.innerHTML,
+            attributes: {}
+        };
+
+        // Extract common attributes
+        ['href', 'src', 'alt', 'title', 'value'].forEach(attr => {
+            if (element.hasAttribute(attr)) {
+                extractedData.attributes[attr] = element.getAttribute(attr);
+            }
+        });
+
+        return { success: true, data: extractedData };
+    }
+
+    findElementBySelector(selector) {
+        try {
+            // Try direct CSS selector first
+            let element = document.querySelector(selector);
+            if (element) return element;
+
+            // Try finding by text content
+            const allElements = document.querySelectorAll('*');
+            for (const el of allElements) {
+                if (el.textContent.trim().toLowerCase().includes(selector.toLowerCase())) {
+                    return el;
+                }
+            }
+
+            // Try finding by indexed elements
+            for (const [id, item] of this.pageIndex) {
+                if (item.title.toLowerCase().includes(selector.toLowerCase()) ||
+                    item.snippet.toLowerCase().includes(selector.toLowerCase())) {
+                    return item.element;
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Element selection error:', error);
+            return null;
+        }
     }
 
     // Form Detection and Autofill Methods

@@ -26,10 +26,23 @@ import mcp.types as types
 
 # ToolBoxV2 imports
 from toolboxv2 import get_app, App, Result, Code, Style
-from toolboxv2.utils.extras import stram_print, quick_info, quick_success, quick_warning, quick_error, ask_question
+from toolboxv2.utils.extras import stram_print, quick_info as _quick_info, quick_success as _quick_success, quick_warning as _quick_warning, quick_error as _quick_error, ask_question as _quick_ask
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.types import CallingObject
 from toolboxv2.flows import flows_dict as flows_dict_func
+
+def quick_info(*args, **kwargs):
+    with MCPSafeIO:
+        return _quick_info(*args, **kwargs)
+def quick_success(*args, **kwargs):
+    with MCPSafeIO:
+        return _quick_success(*args, **kwargs)
+def quick_warning(*args, **kwargs):
+    with MCPSafeIO:
+        return _quick_warning(*args, **kwargs)
+def quick_error(*args, **kwargs):
+    with MCPSafeIO:
+        return _quick_error(*args, **kwargs)
 
 # Suppress stdout/stderr during critical MCP operations
 class MCPSafeIO:
