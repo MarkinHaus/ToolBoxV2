@@ -1204,7 +1204,7 @@ def main_runner():
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
-        "browser": lambda: __import__('toolboxv2.tb_browser_extension.install', fromlist=['main']).main(),
+        "browser": lambda: __import__('toolboxv2.tb_browser_extension.installer', fromlist=['main']).main(),
         "mcp": lambda: __import__('toolboxv2.mcp_server', fromlist=['main']).main(),
     }
     if len(sys.argv) >= 2 and sys.argv[1] in runner:
