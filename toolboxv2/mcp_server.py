@@ -31,18 +31,6 @@ from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.types import CallingObject
 from toolboxv2.flows import flows_dict as flows_dict_func
 
-def quick_info(*args, **kwargs):
-    with MCPSafeIO:
-        return _quick_info(*args, **kwargs)
-def quick_success(*args, **kwargs):
-    with MCPSafeIO:
-        return _quick_success(*args, **kwargs)
-def quick_warning(*args, **kwargs):
-    with MCPSafeIO:
-        return _quick_warning(*args, **kwargs)
-def quick_error(*args, **kwargs):
-    with MCPSafeIO:
-        return _quick_error(*args, **kwargs)
 
 # Suppress stdout/stderr during critical MCP operations
 class MCPSafeIO:
@@ -67,6 +55,19 @@ class MCPSafeIO:
             sys.stdout = self.original_stdout
         if self.original_stderr:
             sys.stderr = self.original_stderr
+
+def quick_info(*args, **kwargs):
+    with MCPSafeIO():
+        return _quick_info(*args, **kwargs)
+def quick_success(*args, **kwargs):
+    with MCPSafeIO():
+        return _quick_success(*args, **kwargs)
+def quick_warning(*args, **kwargs):
+    with MCPSafeIO():
+        return _quick_warning(*args, **kwargs)
+def quick_error(*args, **kwargs):
+    with MCPSafeIO():
+        return _quick_error(*args, **kwargs)
 
 @dataclass
 class MCPConfig:

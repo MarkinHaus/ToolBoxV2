@@ -67,6 +67,31 @@ class ToolBoxPopup {
         }
 
         console.log('✅ ToolBox Pro initialized');
+
+        // Add error handler for the popup
+        window.addEventListener('error', (e) => {
+            console.error('❌ Popup error:', e.error);
+            this.showErrorFallback(e.error?.message || 'Unknown error');
+        });
+    }
+
+    showErrorFallback(errorMessage) {
+        const app = document.getElementById('app');
+        if (app) {
+            app.innerHTML = `
+                <div class="error-fallback">
+                    <h2>ToolBox Pro</h2>
+                    <p>Extension loaded but encountered an error.</p>
+                    <p>Error: ${errorMessage}</p>
+                    <button id="reloadBtn" class="reload-btn">Reload</button>
+                </div>
+            `;
+
+            // Add event listener for reload button
+            document.getElementById('reloadBtn')?.addEventListener('click', () => {
+                window.location.reload();
+            });
+        }
     }
 
     async loadSettings() {
@@ -100,7 +125,10 @@ class ToolBoxPopup {
         try {
             if (typeof chrome !== 'undefined' && chrome.tabs) {
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                if (tab) {
+                if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+                    // Wait a bit for content script to be ready
+                    await this.waitForContentScript(tab.id);
+
                     // Get page index data from content script
                     const response = await chrome.tabs.sendMessage(tab.id, {
                         type: 'GET_PAGE_CONTEXT'
@@ -115,11 +143,29 @@ class ToolBoxPopup {
                         };
                         console.log('📄 Page context loaded:', this.currentPageContext);
                     }
+                } else {
+                    console.log('📄 Skipping page context for system page');
                 }
             }
         } catch (error) {
             console.warn('Failed to load page context:', error);
         }
+    }
+
+    async waitForContentScript(tabId, maxAttempts = 3) {
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                const response = await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+                if (response && response.success) {
+                    return true;
+                }
+            } catch (error) {
+                if (i < maxAttempts - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 100 * (i + 1)));
+                }
+            }
+        }
+        return false;
     }
 
     setupEventListeners() {
@@ -496,7 +542,7 @@ class ToolBoxPopup {
 
         // Initialize panel if needed
         if (tabName === 'passwords') {
-            this.loadPasswords();
+            this.loadPasswords().catch(console.error);
         }
     }
 
@@ -584,18 +630,18 @@ class ToolBoxPopup {
         // Show typing indicator
         this.showTypingIndicator();
 
-        if (this.currentPageContext){
-            this.addMessageToHistory('system', `User is on ${JSON.stringify(this.currentPageContext)}`);
+        if (this.chatHistory.length > 10) {
+            this.chatHistory.shift();
         }
 
         try {
             // Prepare context with page information
             const contextData = {
                 mini_task: message,
-                user_task: 'Browser extension chat with page context',
-                agent_name: 'self',
+                user_task: 'Browser extension chat with page context '+ `User is on ${JSON.stringify(this.currentPageContext)}`,
+                agent_name: 'speed',
                 task_from: 'browser_extension',
-                message_history: JSON.stringify(this.chatHistory),
+                message_history: this.chatHistory,
             };
 
             const response = await this.makeAPICall('/api/isaa/mini_task_completion', 'POST', contextData);
@@ -608,8 +654,9 @@ class ToolBoxPopup {
 
             // Check if this looks like an action request
             if (this.isActionRequest(message)) {
+                this.addChatMessage('isaa', "action");
                 try {
-                    const action = await this.executeStructuredAction(message);
+                    const action = await this.executeStructuredAction(message+" Last agent response: "+responseText);
                     if (action) {
                         this.addChatMessage('isaa', `🎯 I've planned to ${action.action_type} on "${action.target_selector}"`);
                     }
@@ -669,16 +716,31 @@ class ToolBoxPopup {
                          'title': 'ActionSchema',
                          'type': 'object'};
 
+            const contextInfo = this.currentPageContext ?
+                `Current page: "${JSON.stringify(this.currentPageContext)}"` :
+                'Current page: Unknown';
+
             const response = await this.makeAPICall('/api/isaa/format_class', 'POST', {
                 format_schema: actionSchema,
-                task: `Analyze this request and determine the web page action needed: "${message}".
-                      Current page: ${JSON.stringify(this.currentPageContext)}`,
-                agent_name: 'TaskCompletion',
+                task: `Analyze this user request and determine the web page action needed: "${message}".
+                      ${contextInfo}
+
+                      Action Guidelines:
+                      - For navigation: Use "navigate" action_type, put URL/path in target_selector (e.g., "/blog", "https://example.com", "about.html")
+                      - For clicking: Use "click" action_type, put element selector in target_selector
+                      - For form filling: Use "fill_form" action_type, put input selector in target_selector, value in data.value
+                      - For scrolling: Use "scroll" action_type, put direction in data.direction ("up"/"down")
+                      - For data extraction: Use "extract_data" action_type, put element selector in target_selector
+
+                      Examples:
+                      - "go to blog" → {"action_type": "navigate", "target_selector": "/blog", "confirmation_needed": false}
+                      - "click login button" → {"action_type": "click", "target_selector": "button[type='submit']", "confirmation_needed": false}`,
+                agent_name: 'speed',
                 auto_context: true
             });
 
-            if (response.success && response.data) {
-                const action = response.data;
+            if (response.result?.data || response.data) {
+                const action = response.result?.data || response.data;
                 console.log('🎯 Structured action planned:', action);
 
                 // Execute the action via content script
@@ -697,22 +759,45 @@ class ToolBoxPopup {
             if (typeof chrome !== 'undefined' && chrome.tabs) {
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
+                // Check if tab is valid for action execution
+                if (!tab || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+                    this.addChatMessage('isaa', `❌ Cannot execute actions on system pages`);
+                    return { success: false, error: 'System page not supported' };
+                }
+
+                // Wait for content script to be ready
+                const isReady = await this.waitForContentScript(tab.id);
+                if (!isReady) {
+                    this.addChatMessage('isaa', `❌ Content script not ready. Please refresh the page.`);
+                    return { success: false, error: 'Content script not ready' };
+                }
+
+                console.log('🎯 Executing action:', action);
+
                 const response = await chrome.tabs.sendMessage(tab.id, {
                     type: 'EXECUTE_ACTION',
                     action: action
                 });
 
-                if (response.success) {
-                    this.addChatMessage('isaa', `✅ Action completed: ${action.action_type}`);
+                if (response && response.success) {
+                    this.addChatMessage('isaa', `✅ ${response.message || `Action completed: ${action.action_type}`}`);
                 } else {
-                    this.addChatMessage('isaa', `❌ Action failed: ${response.error}`);
+                    this.addChatMessage('isaa', `❌ ${response?.error || 'Action failed'}`);
                 }
 
                 return response;
             }
         } catch (error) {
             console.error('Page action execution error:', error);
-            this.addChatMessage('isaa', `❌ Could not execute action: ${error.message}`);
+
+            // Provide more specific error messages
+            if (error.message.includes('Receiving end does not exist')) {
+                this.addChatMessage('isaa', `❌ Page not ready for actions. Please refresh the page and try again.`);
+            } else {
+                this.addChatMessage('isaa', `❌ Could not execute action: ${error.message}`);
+            }
+
+            return { success: false, error: error.message };
         }
     }
 
@@ -850,7 +935,7 @@ class ToolBoxPopup {
             const chatInput = document.getElementById('chatInput');
             if (chatInput) {
                 chatInput.value = `Tell me about this section: "${response.content}"`;
-                this.sendChatMessage();
+                await this.sendChatMessage();
             }
         } catch (error) {
             console.error('ISAA section query error:', error);
@@ -881,7 +966,7 @@ class ToolBoxPopup {
         const passwordList = document.getElementById('passwordList');
 
         try {
-            const response = await this.makeAPICall('/api/call/PasswordManager/list_passwords', 'POST', {});
+            const response = await this.makeAPICall('/api/PasswordManager/list_passwords', 'POST', {});
             const passwords = response.data || [];
 
             if (passwords.length === 0) {
@@ -927,7 +1012,7 @@ class ToolBoxPopup {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
             // Get password details
-            const response = await this.makeAPICall('/api/call/PasswordManager/get_password_for_autofill', 'POST', {
+            const response = await this.makeAPICall('/api/PasswordManager/get_password_for_autofill', 'POST', {
                 url: tab.url
             });
 
@@ -955,7 +1040,7 @@ class ToolBoxPopup {
     async autofillPassword() {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            const response = await this.makeAPICall('/api/call/PasswordManager/get_password_for_autofill', 'POST', {
+            const response = await this.makeAPICall('/api/PasswordManager/get_password_for_autofill', 'POST', {
                 url: tab.url
             });
 
@@ -982,7 +1067,7 @@ class ToolBoxPopup {
 
     async generatePassword() {
         try {
-            const response = await this.makeAPICall('/api/call/PasswordManager/generate_password', 'POST', {
+            const response = await this.makeAPICall('/api/PasswordManager/generate_password', 'POST', {
                 length: 16,
                 include_symbols: true,
                 include_numbers: true,
@@ -1026,7 +1111,7 @@ class ToolBoxPopup {
                 const content = await file.text();
                 const format = file.name.endsWith('.json') ? 'json' : 'chrome';
 
-                const response = await this.makeAPICall('/api/call/PasswordManager/import_passwords', 'POST', {
+                const response = await this.makeAPICall('/api/PasswordManager/import_passwords', 'POST', {
                     file_content: content,
                     file_format: format,
                     folder: 'Imported from Browser'

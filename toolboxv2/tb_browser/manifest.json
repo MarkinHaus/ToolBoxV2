@@ -25,8 +25,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/inject.js",
-        "src/core/*",
+        "src/*",
         "assets/*",
         "icons/*"
       ],

@@ -86,7 +86,7 @@ class ToolBoxContent {
         }, { passive: true });
 
         // Double-click detection
-        document.addEventListener('dblclick', (e) => this.handleDoubleClick(e));
+        // document.addEventListener('dblclick', (e) => this.handleTripleClick(e));
     }
 
     handleGestureStart(x, y, event) {
@@ -192,7 +192,7 @@ class ToolBoxContent {
         });
     }
 
-    handleDoubleClick(event) {
+    handleTripleClick(event) {
         console.log('🎯 Double-click detected, opening ToolBox popup');
 
         // Send message to background script to open popup
@@ -574,6 +574,8 @@ class ToolBoxContent {
 
             // Flash highlight
             this.highlightElement(item.element, []);
+        } else {
+            console.warn('Element not found for scrolling:', elementId);
         }
     }
 
@@ -656,16 +658,27 @@ class ToolBoxContent {
     async executeClickAction(action) {
         const element = this.findElementBySelector(action.target_selector);
         if (!element) {
-            return { success: false, error: `Element not found: ${action.target_selector}` };
+            return { success: false, error: `Element not found: ${action.target_selector}. Try being more specific or check if the element exists.` };
         }
 
         // Highlight element briefly
         this.highlightElement(element, [], 2000);
 
-        // Simulate click
-        element.click();
+        // Simulate click with proper event handling
+        try {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await new Promise(resolve => setTimeout(resolve, 500)); // Wait for scroll
 
-        return { success: true, message: `Clicked element: ${action.target_selector}` };
+            element.click();
+
+            // Also trigger mouse events for better compatibility
+            element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+            return { success: true, message: `Successfully clicked: ${element.tagName.toLowerCase()}${element.id ? '#' + element.id : ''}${element.className ? '.' + element.className.split(' ')[0] : ''}` };
+        } catch (error) {
+            return { success: false, error: `Failed to click element: ${error.message}` };
+        }
     }
 
     async executeFillFormAction(action) {
@@ -684,11 +697,33 @@ class ToolBoxContent {
     }
 
     async executeNavigateAction(action) {
+        // Check for URL in data.url or target_selector
+        let url = null;
+
         if (action.data && action.data.url) {
-            window.location.href = action.data.url;
-            return { success: true, message: `Navigating to: ${action.data.url}` };
+            url = action.data.url;
+        } else if (action.target_selector) {
+            // Handle relative URLs and absolute URLs
+            url = action.target_selector;
+
+            // If it's a relative path, make it absolute
+            if (url.startsWith('/')) {
+                const currentOrigin = window.location.origin;
+                url = currentOrigin + url;
+            } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                // If it doesn't start with protocol, assume it's relative to current page
+                const currentBase = window.location.href.split('/').slice(0, -1).join('/');
+                url = currentBase + '/' + url;
+            }
         }
-        return { success: false, error: 'No URL provided for navigation' };
+
+        if (url) {
+            console.log('🧭 Navigating to:', url);
+            window.location.href = url;
+            return { success: true, message: `Navigating to: ${url}` };
+        }
+
+        return { success: false, error: 'No URL provided for navigation. Expected URL in data.url or target_selector.' };
     }
 
     async executeScrollAction(action) {
@@ -733,15 +768,57 @@ class ToolBoxContent {
 
     findElementBySelector(selector) {
         try {
+            console.log('🔍 Finding element with selector:', selector);
+
             // Try direct CSS selector first
             let element = document.querySelector(selector);
-            if (element) return element;
+            if (element) {
+                console.log('✅ Found element via CSS selector:', element);
+                return element;
+            }
 
-            // Try finding by text content
-            const allElements = document.querySelectorAll('*');
-            for (const el of allElements) {
+            // Try common button/link selectors if selector looks like text
+            if (!selector.includes('[') && !selector.includes('#') && !selector.includes('.')) {
+                const commonSelectors = [
+                    `a[href*="${selector}"]`,
+                    `a[href="${selector}"]`,
+                    `button:contains("${selector}")`,
+                    `a:contains("${selector}")`,
+                    `[data-testid*="${selector}"]`,
+                    `[aria-label*="${selector}"]`,
+                    `[title*="${selector}"]`
+                ];
+
+                for (const sel of commonSelectors) {
+                    try {
+                        element = document.querySelector(sel);
+                        if (element) {
+                            console.log('✅ Found element via common selector:', sel, element);
+                            return element;
+                        }
+                    } catch (e) {
+                        // Ignore selector errors for :contains() etc.
+                    }
+                }
+            }
+
+            // Try finding by text content (for links and buttons)
+            const clickableElements = document.querySelectorAll('a, button, [role="button"], [onclick]');
+            for (const el of clickableElements) {
                 if (el.textContent.trim().toLowerCase().includes(selector.toLowerCase())) {
+                    console.log('✅ Found element via text content:', el);
                     return el;
+                }
+            }
+
+            // Try finding by href attribute for navigation
+            if (selector.startsWith('/') || selector.includes('http')) {
+                const links = document.querySelectorAll('a[href]');
+                for (const link of links) {
+                    if (link.href.includes(selector) || link.getAttribute('href') === selector) {
+                        console.log('✅ Found link via href:', link);
+                        return link;
+                    }
                 }
             }
 
@@ -749,10 +826,12 @@ class ToolBoxContent {
             for (const [id, item] of this.pageIndex) {
                 if (item.title.toLowerCase().includes(selector.toLowerCase()) ||
                     item.snippet.toLowerCase().includes(selector.toLowerCase())) {
+                    console.log('✅ Found element via page index:', item.element);
                     return item.element;
                 }
             }
 
+            console.log('❌ Element not found for selector:', selector);
             return null;
         } catch (error) {
             console.error('Element selection error:', error);

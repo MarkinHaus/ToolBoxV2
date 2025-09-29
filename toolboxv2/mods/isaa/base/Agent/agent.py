@@ -10323,8 +10323,8 @@ tool_complexity: low/medium/high
         if session_id and self.active_session != session_id:
             self.active_session = session_id
         # Generate schema documentation
-        schema = pydantic_model.model_json_schema() if issubclass(pydantic_model, BaseModel) else json.loads(pydantic_model)
-        model_name = pydantic_model.__name__ if hasattr(pydantic_model, "__name__") else "UnknownModel"
+        schema = pydantic_model.model_json_schema() if issubclass(pydantic_model, BaseModel) else (json.loads(pydantic_model) if isinstance(pydantic_model, str) else pydantic_model)
+        model_name = pydantic_model.__name__ if hasattr(pydantic_model, "__name__") else (pydantic_model.get("title", "UnknownModel") if isinstance(pydantic_model, dict) else "UnknownModel")
 
         # Create enhanced prompt with schema
         enhanced_prompt = f"""
@@ -10401,8 +10401,11 @@ Respond in YAML format only:
 
                 # Validate against Pydantic model
                 try:
-                    validated_instance = pydantic_model.model_validate(parsed_data)
-                    validated_data = validated_instance.model_dump()
+                    if isinstance(pydantic_model, BaseModel):
+                        validated_instance = pydantic_model.model_validate(parsed_data)
+                        validated_data = validated_instance.model_dump()
+                    else:
+                        validated_data = parsed_data
 
                     rprint(f"✅ Successfully formatted {model_name} on attempt {attempt + 1}")
                     return validated_data

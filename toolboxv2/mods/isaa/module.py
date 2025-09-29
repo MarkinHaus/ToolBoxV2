@@ -1049,8 +1049,8 @@ class Tools(MainTool, FileHandler):
             user_task = user_task or data_dict.get("user_task")
             mode = mode or data_dict.get("mode")
             max_tokens_override = max_tokens_override or data_dict.get("max_tokens_override")
-            task_from = task_from or data_dict.get("task_from")
-            agent_name = agent_name or data_dict.get("agent_name")
+            task_from = data_dict.get("task_from") or task_from
+            agent_name = data_dict.get("agent_name") or agent_name
             use_complex = use_complex or data_dict.get("use_complex")
             kwargs = kwargs or data_dict.get("kwargs")
             message_history = message_history or data_dict.get("message_history")
@@ -1164,11 +1164,10 @@ class Tools(MainTool, FileHandler):
             data_dict = (request.request.body if request else None) or form_data or data
             format_schema = format_schema or data_dict.get("format_schema")
             task = task or data_dict.get("task")
-            agent_name = agent_name or data_dict.get("agent_name")
+            agent_name = data_dict.get("agent_name") or agent_name
             auto_context = auto_context or data_dict.get("auto_context")
             kwargs = kwargs or data_dict.get("kwargs")
         if format_schema is None or not task: return None
-        print(task)
         agent = None
         if isinstance(agent_name, str):
             agent = await self.get_agent(agent_name)
