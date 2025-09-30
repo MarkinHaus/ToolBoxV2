@@ -120,6 +120,59 @@ body {
   z-index: 10;
 }
 
+.settings-toggle {
+  display: flex;
+  align-items: center;
+    opacity: 0;
+  transform: translateX(50px);
+  pointer-events: none; /* Use pointer-events for better performance */
+  transition: transform 0.3s ease, position 0.3s ease, background-color 0.3s ease;
+}
+
+
+/* Beim Hover über den Header-Bereich sichtbar */
+.voice-section:hover .settings-toggle {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto; /* Make the element interactive on hover */
+  display: flex;
+}
+
+.settings-button {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    position: relative;
+    width: min-content;
+    height: min-content;
+    border-radius: 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.settings-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.settings-button:hover {
+  background-color: var(--glass-hover);
+  color: var(--marine-blue);
+  transform: scale(1.1);
+}
+
+.settings-button:active {
+  transform: scale(0.95);
+}
+
+.settings-button:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
 .agent-mode-toggle {
     display: flex;
     align-items: center;
@@ -181,32 +234,49 @@ body {
     left: 8px; /* Bewegt den Text nach links */
     right: auto;
 }
-
 .language-select {
-    background: transparent;
+  /* Wichtig: Standard-Browser-Aussehen entfernen */
+  -webkit-appearance: none;
+  appearance: none;
+
+  /* Eigene Stile für das Dropdown-Feld */
+  background-color: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  padding: 4px 8px;
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  padding: 6px 32px 6px 12px; /* Rechts mehr Platz für den Pfeil */
+  transition: all 0.3s ease;
   outline: none;
+
+  /* Eigener Dropdown-Pfeil (als SVG) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238A9199' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
 }
 
+/* Hover-Effekt: Rahmen und Pfeil hervorheben */
+.language-select:hover {
+  border-color: var(--marine-blue);
+  color: var(--text-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%232E86AB' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+/* Fokus-Effekt für Barrierefreiheit */
 .language-select:focus {
   border-color: var(--marine-blue);
   box-shadow: 0 0 0 2px var(--accent-blue);
 }
 
-.language-select:hover {
-  border-color: var(--marine-blue);
-  color: var(--text-primary);
-}
-
+/* Stile für die <option>-Elemente im Dropdown-Menü */
+/* Wichtig: Wir setzen hier bewusst KEINE Hintergrundfarbe,
+   damit das Betriebssystem die beste Lesbarkeit gewährleisten kann. */
 .language-select option {
-  background: #1a1a1a;
-  color: white;
+  background: #1e1e1e; /* Dunkler Hintergrund für Browser, die es unterstützen */
+  color: #ffffff;      /* Helle Schriftfarbe als Kontrast */
+  padding: 8px;
 }
 
 .voice-btn {
@@ -599,7 +669,6 @@ textarea.voice-preview::placeholder {
 }
 
 .user-content {
-    background: linear-gradient(135deg, rgba(33, 150, 243, 0.1), rgba(156, 39, 176, 0.1));
     border-color: var(--marine-blue);
     margin-left: auto;
 }
@@ -776,6 +845,39 @@ textarea.voice-preview::placeholder {
 }
 
 /* Bereich, der die Eingabeleiste enthält */
+.search-header {
+
+}
+
+.chat-input {
+  flex: 1;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.chat-input:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.chat-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-options {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+
 .chat-input-area {
     padding: var(--spacing-sm) var(--spacing-md);
     background: transparent;
@@ -784,33 +886,42 @@ textarea.voice-preview::placeholder {
 
 /* Container für Eingabefeld und Senden-Button */
 .chat-input-container {
+    border-bottom: 1px solid var(--glass-border);
     display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
     gap: var(--spacing-sm);
-    border: 3px solid var(--glass-border);
-    padding: var(--spacing-xs);
-    transition: all 0.3s ease;
 }
 
-/* Stil für den Fokus-Zustand */
-.chat-input-container:focus-within {
-    border-color: var(--marine-blue);
-    box-shadow: 0 0 0 2px var(--accent-blue);
+
+/* Senden-Button */
+.chat-send-btn {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  white-space: nowrap;
 }
 
-/* Eingabefeld selbst */
-.chat-input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    padding: var(--spacing-sm) var(--spacing-md);
-    color: var(--text-primary);
-    font-size: 14px;
-    outline: none;
+.chat-send-btn:hover {
+  background: var(--glass-hover);
+  border-color: var(--marine-blue);
 }
 
-.chat-input::placeholder {
-    color: var(--text-muted);
+.chat-send-btn svg {
+    width: 16px;
+    height: 16px;
+    scale: 1.05;
 }
+
 
 /* Voice-Bereich, jetzt im Footer */
 /* Alle Elemente außer Voice-Button standardmäßig verstecken */
@@ -928,38 +1039,6 @@ input.voice-preview::placeholder {
 /* --- ENDE: ÜBERARBEITETER EINGABE- & FOOTER-BEREICH --- */
 
 
-.chat-input:focus {
-  border-color: var(--marine-blue);
-  box-shadow: 0 0 0 2px var(--accent-blue);
-}
-
-/* Senden-Button */
-.chat-send-btn {
-    width: 36px;
-    height: 36px;
-    background: var(--marine-blue);
-    border: none;
-    border-radius: 50%; /* Perfekt rund */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    color: white;
-    flex-shrink: 0;
-}
-
-.chat-send-btn:hover {
-    background: var(--marine-blue-light);
-    transform: scale(1.05);
-}
-
-.chat-send-btn svg {
-    width: 16px;
-    height: 16px;
-}
-
-
 /* Chat Message Styles */
 
 
@@ -1065,10 +1144,6 @@ input.voice-preview::placeholder {
   border-color: var(--marine-blue);
 }
 
-.option-btn:hover {
-  background: var(--glass-hover);
-  color: var(--marine-blue);
-}
 
 .option-btn svg {
   width: 14px;
@@ -1136,8 +1211,6 @@ input.voice-preview::placeholder {
 }
 
 
-
-
 /* Password Manager Styles */
 /* Password Manager Styles */
 .password-container {
@@ -1154,6 +1227,7 @@ input.voice-preview::placeholder {
   display: flex;
   gap: var(--spacing-sm);
   flex-shrink: 0;
+  padding: var(--spacing-sm);
 }
 
 .password-form {
@@ -1215,20 +1289,24 @@ input.voice-preview::placeholder {
 .action-btn {
     flex: 1;
     background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
     margin-bottom: -1px;
     flex-direction: row;
     justify-content: center;
     align-items: center;
-    padding: 12px 0;
-    gap: var(--spacing-sm);
     cursor: pointer;
     transition: all 0.2s ease-in-out;
-    color: var(--text-muted);
-    font-size: 13px;
     font-weight: 500;
     position: relative;
+
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    color: var(--text-secondary);
+    font-size: 12px;
+    display: flex;
+    gap: var(--spacing-xs);
+    white-space: nowrap;
 }
 
 .action-btn:hover {
@@ -1483,8 +1561,8 @@ input.voice-preview::placeholder {
   border-radius: var(--radius-lg);
   width: 90%;
   max-width: 360px;
-  max-height: 80%;
-  overflow: hidden;
+  max-height: 100vh;
+    overflow-y: auto;
 }
 
 .modal-header {
@@ -1525,7 +1603,6 @@ input.voice-preview::placeholder {
 
 .modal-body {
   padding: var(--spacing-lg);
-  overflow-y: auto;
   flex: 1;
 }
 
@@ -1726,4 +1803,130 @@ input.voice-preview::placeholder {
 
 .app-container {
   animation: slideInFromRight 0.3s ease-out;
+}
+
+/* Settings Modal Styles */
+.settings-section {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+}
+
+.settings-section h4 {
+    margin: 0 0 var(--spacing-md) 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-select,
+.settings-input {
+    width: 100%;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: all 0.3s ease;
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Spezifische Anpassungen NUR für das Select-Dropdown */
+.settings-select {
+  /* Standard-Browser-Aussehen entfernen, um eigenes Styling zu ermöglichen */
+  -webkit-appearance: none;
+  appearance: none;
+
+  /* Rechts mehr Platz für den benutzerdefinierten Pfeil schaffen */
+  padding-right: 40px;
+
+  /* Eigener Dropdown-Pfeil (SVG als Hintergrundbild) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w.w3.org/2000/svg' width='16' height='16' fill='%238A9199' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+
+/* Hover-Effekt für das Select-Dropdown (Pfeil wird farbig) */
+.settings-select:hover {
+  border-color: var(--marine-blue);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%232E86AB' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+/* Fokus-Effekt für beide Element-Typen */
+.settings-select:focus,
+.settings-input:focus {
+    border-color: var(--marine-blue);
+    box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+/*
+ * WICHTIG: Stile für die <option>-Elemente selbst.
+ * Dieser Block gilt global für ALLE Dropdowns.
+ * Falls Sie den Code aus der vorherigen Antwort schon haben, brauchen Sie diesen nicht erneut einfügen.
+*/
+option {
+  background: #1e1e1e; /* Dunkler Standard-Hintergrund */
+  color: #ffffff;      /* Helle Schriftfarbe für Lesbarkeit */
+}
+
+.auth-status {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: var(--glass-bg);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.auth-status .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--error);
+}
+
+.auth-status.authenticated .status-dot {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+}
+
+.divider {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: var(--spacing-md) 0;
+    position: relative;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 40%;
+    height: 1px;
+    background: var(--glass-border);
+}
+
+.divider::before {
+    left: 0;
+}
+
+.divider::after {
+    right: 0;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
 }

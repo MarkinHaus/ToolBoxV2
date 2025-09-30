@@ -30,6 +30,14 @@ class ToolBoxPopup {
             'zh-CN': 'Chinese (Simplified)'
         };
 
+        this.settings = {
+            backend: 'local',
+            customBackendUrl: '',
+            username: null,
+            jwt: null,
+            isAuthenticated: false
+        };
+
         this.init();
     }
 
@@ -47,6 +55,7 @@ class ToolBoxPopup {
 
         // Initialize components
         await this.loadSettings();
+        await this.checkAuthStatus();
         this.setupEventListeners();
         this.initializeVoiceEngine();
         this.initializeTabSystem();
@@ -96,7 +105,7 @@ class ToolBoxPopup {
         }
     }
 
-    async loadSettings() {
+    async loadSettingsLang() {
         try {
             const settings = await chrome.storage.sync.get(['voiceLanguage']);
             if (settings.voiceLanguage) {
@@ -113,7 +122,7 @@ class ToolBoxPopup {
         }
     }
 
-    async saveSettings() {
+    async saveSettingsLang() {
         try {
             await chrome.storage.sync.set({
                 voiceLanguage: this.voiceLanguage
@@ -122,6 +131,133 @@ class ToolBoxPopup {
             console.warn('Failed to save settings:', error);
         }
     }
+
+    async loadSettings() {
+    try {
+        await this.loadSettingsLang()
+        const stored = await chrome.storage.sync.get(['toolboxSettings']);
+        if (stored.toolboxSettings) {
+            this.settings = { ...this.settings, ...stored.toolboxSettings };
+            this.applySettings();
+        }
+    } catch (error) {
+        console.warn('Failed to load settings:', error);
+    }
+}
+
+async saveSettings() {
+    try {
+        await this.saveSettingsLang()
+         await chrome.storage.sync.set({ toolboxSettings: this.settings });
+         this.applySettings();
+
+        // Background Worker über Änderungen informieren
+        chrome.runtime.sendMessage({
+            type: 'RELOAD_SETTINGS'
+        }, (response) => {
+            if (response?.success) {
+                console.log('Background updated to:', response.apiBase);
+            }
+        });
+    } catch (error) {
+        console.warn('Failed to save settings:', error);
+    }
+}
+
+applySettings() {
+    // Update apiBase based on backend selection
+    switch (this.settings.backend) {
+        case 'local':
+            this.apiBase = 'http://localhost:8080';
+            break;
+        case 'remote':
+            this.apiBase = 'https://simplecore.app';
+            break;
+        case 'custom':
+            this.apiBase = this.settings.customBackendUrl || 'http://localhost:8080';
+            break;
+    }
+
+    // Update UI if settings modal is open
+    const backendSelector = document.getElementById('backendSelector');
+    const customUrlInput = document.getElementById('customBackendUrl');
+
+    if (backendSelector) {
+        backendSelector.value = this.settings.backend;
+        if (customUrlInput) {
+            customUrlInput.classList.toggle('hidden', this.settings.backend !== 'custom');
+            customUrlInput.value = this.settings.customBackendUrl || '';
+        }
+    }
+
+    this.updateAuthUI();
+}
+
+async checkAuthStatus() {
+    if (!this.settings.username || !this.settings.jwt) {
+        this.settings.isAuthenticated = false;
+        await this.saveSettings();
+        return;
+    }
+
+    try {
+        const response = await this.makeAPICall('/IsValidSession', 'GET', null);
+        this.settings.isAuthenticated = response.result?.data_info === 'Valid Session';
+
+        if (!this.settings.isAuthenticated) {
+            // Try to re-authenticate
+            await this.attemptReAuth();
+        }
+    } catch (error) {
+        console.warn('Auth check failed:', error);
+        this.settings.isAuthenticated = false;
+    }
+
+    await this.saveSettings();
+    this.updateAuthUI();
+}
+
+async attemptReAuth() {
+    if (!this.settings.username) return false;
+
+    try {
+        const response = await this.makeAPICall('/validateSession', 'POST', {
+            Username: this.settings.username,
+            Jwt_claim: this.settings.jwt
+        });
+
+        if (response.result?.data_info === 'Valid Session') {
+            this.settings.isAuthenticated = true;
+            await this.saveSettings();
+            return true;
+        }
+    } catch (error) {
+        console.warn('Re-auth failed:', error);
+    }
+
+    return false;
+}
+
+updateAuthUI() {
+    const authStatus = document.getElementById('authStatus');
+    const authStatusText = document.getElementById('authStatusText');
+    const loginForm = document.getElementById('loginForm');
+    const loggedInInfo = document.getElementById('loggedInInfo');
+    const currentUsername = document.getElementById('currentUsername');
+
+    if (this.settings.isAuthenticated && this.settings.username) {
+        authStatus?.classList.add('authenticated');
+        if (authStatusText) authStatusText.textContent = 'Authenticated';
+        loginForm?.classList.add('hidden');
+        loggedInInfo?.classList.remove('hidden');
+        if (currentUsername) currentUsername.textContent = this.settings.username;
+    } else {
+        authStatus?.classList.remove('authenticated');
+        if (authStatusText) authStatusText.textContent = 'Not authenticated';
+        loginForm?.classList.remove('hidden');
+        loggedInInfo?.classList.add('hidden');
+    }
+}
 
     async loadPageContext() {
         this.currentPageContext = await this.getFreshPageContext();
@@ -209,12 +345,28 @@ class ToolBoxPopup {
         // Language selector
         const languageSelect = document.getElementById('languageSelect');
         languageSelect?.addEventListener('change', (e) => {
+            const wasActive = this.isVoiceActive;
+
+            // Stop current recognition
+            if (wasActive) {
+                this.stopVoice();
+            }
+
+            // Update language
             this.voiceLanguage = e.target.value;
+
+            // Reinitialize recognition with new language
             if (this.recognition) {
                 this.recognition.lang = this.voiceLanguage;
             }
-            this.saveSettings();
+
+            this.saveSettingsLang();
             console.log('🌐 Voice language changed to:', this.voiceLanguage);
+
+            // Restart if it was active
+            if (wasActive) {
+                setTimeout(() => this.startVoice(), 100);
+            }
         });
 
         // Search input
@@ -313,7 +465,138 @@ class ToolBoxPopup {
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
 
+        // Settings modal controls
+        document.getElementById('backendSelector')?.addEventListener('change', (e) => {
+            this.settings.backend = e.target.value;
+            const customUrlInput = document.getElementById('customBackendUrl');
+            customUrlInput?.classList.toggle('hidden', e.target.value !== 'custom');
+            this.saveSettings();
+        });
 
+        document.getElementById('customBackendUrl')?.addEventListener('blur', (e) => {
+            this.settings.customBackendUrl = e.target.value.trim();
+            this.saveSettings();
+        });
+
+        document.getElementById('loginBtn')?.addEventListener('click', () => this.handleSettingsLogin());
+        document.getElementById('magicLinkBtn')?.addEventListener('click', () => this.handleMagicLinkLogin());
+        document.getElementById('logoutBtn')?.addEventListener('click', () => this.handleSettingsLogout());
+
+        document.getElementById('openSettingsBtn')?.addEventListener('click', () => {
+          const modal = document.getElementById('settingsModal');
+          modal?.classList.remove('hidden');
+        });
+
+        document.getElementById('closeSettingsModal')?.addEventListener('click', () => {
+          const modal = document.getElementById('settingsModal');
+          modal?.classList.add('hidden');
+        });
+
+        // Optional: Klick außerhalb des Modals schließt es auch
+        window.addEventListener('click', (event) => {
+          const modal = document.getElementById('settingsModal');
+          if (event.target === modal) {
+            modal.classList.add('hidden');
+          }
+        });
+
+    }
+
+    async handleSettingsLogin() {
+        const usernameInput = document.getElementById('settings-username');
+        const jwtInput = document.getElementById('settings-jwt');
+        const feedbackEl = document.getElementById('settingsFeedback');
+
+        const username = usernameInput?.value.trim();
+        const jwt = jwtInput?.value.trim();
+
+        if (!username) {
+            this.showSettingsFeedback('Username is required', true);
+            return;
+        }
+
+        feedbackEl.textContent = '';
+        feedbackEl.className = 'form-feedback';
+
+        try {
+            const payload = { Username: username };
+            if (jwt) payload.Jwt_claim = jwt;
+
+            const response = await this.makeAPICall('/validateSession', 'POST', payload);
+
+            if (response.result?.data_info === 'Valid Session') {
+                this.settings.username = username;
+                this.settings.jwt = jwt || null;
+                this.settings.isAuthenticated = true;
+                await this.saveSettings();
+                this.showSettingsFeedback('Login successful!', false);
+            } else {
+                this.showSettingsFeedback(response.error || 'Login failed', true);
+            }
+        } catch (error) {
+            this.showSettingsFeedback(error.message || 'Connection failed', true);
+        }
+    }
+
+    async handleMagicLinkLogin() {
+        const magicLinkInput = document.getElementById('magicLinkKey');
+        const usernameInput = document.getElementById('settings-username');
+
+        const key = magicLinkInput?.value.trim();
+        const username = usernameInput?.value.trim();
+
+        if (!key || !username) {
+            this.showSettingsFeedback('Username and Magic Link key are required', true);
+            return;
+        }
+
+        try {
+            // Simulate magic link processing (adapt to your tbjs logic)
+            const response = await this.makeAPICall('/api/CloudM.AuthManager/add_user_device', 'POST', {
+                name: username,
+                invitation: key,
+                web_data: true
+            });
+
+            if (response.result?.status === 'ok') {
+                this.settings.username = username;
+                this.settings.isAuthenticated = true;
+                await this.saveSettings();
+                await this.checkAuthStatus();
+                this.showSettingsFeedback('Magic Link login successful!', false);
+            } else {
+                this.showSettingsFeedback(response.info || 'Magic Link invalid', true);
+            }
+        } catch (error) {
+            this.showSettingsFeedback(error.message || 'Magic Link failed', true);
+        }
+    }
+
+    async handleSettingsLogout() {
+        try {
+            await this.makeAPICall('/web/logoutS', 'POST', {});
+        } catch (error) {
+            console.warn('Server logout failed:', error);
+        }
+
+        this.settings.username = null;
+        this.settings.jwt = null;
+        this.settings.isAuthenticated = false;
+        await this.saveSettings();
+        this.showSettingsFeedback('Logged out successfully', false);
+    }
+
+    showSettingsFeedback(message, isError) {
+        const feedbackEl = document.getElementById('settingsFeedback');
+        if (!feedbackEl) return;
+
+        feedbackEl.textContent = message;
+        feedbackEl.className = 'form-feedback ' + (isError ? 'error' : 'success');
+
+        setTimeout(() => {
+            feedbackEl.textContent = '';
+            feedbackEl.className = 'form-feedback';
+        }, 3000);
     }
 
     async handleAddNewPassword() {
@@ -448,34 +731,68 @@ class ToolBoxPopup {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             this.recognition = new SpeechRecognition();
 
-            this.recognition.continuous = false;
+            this.recognition.continuous = true;
             this.recognition.interimResults = true;
             this.recognition.lang = this.voiceLanguage;
+            console.log('Voice recognition initialized with language:', this.voiceLanguage);
 
             this.recognition.onstart = () => {
                 this.isVoiceActive = true;
+                this.finalTranscript = '';
                 this.updateVoiceUI(true);
+                console.log('🎤 Voice recognition started');
             };
 
             this.recognition.onresult = (event) => {
-                const transcript = Array.from(event.results)
-                    .map(result => result[0].transcript)
-                    .join('');
+                let interimTranscript = '';
 
-                this.updateVoiceTranscript(transcript);
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript;
+                        if (event.results[i].isFinal) {
+                            this.finalTranscript += transcript + ' ';
+                        } else {
+                            interimTranscript += transcript;
+                        }
+                    }
 
-                if (event.results[event.results.length - 1].isFinal) {
-                    this.processVoiceInput(transcript);
-                }
-            };
+                    const displayTranscript = this.finalTranscript + interimTranscript;
+                    this.updateVoiceTranscript(displayTranscript);
+
+                    // Reset silence timer
+                    clearTimeout(this.silenceTimeout);
+                    this.silenceTimeout = setTimeout(() => {
+                        if (this.finalTranscript.trim()) {
+                            this.processVoiceInput(this.finalTranscript.trim());
+                            this.stopVoice();
+                        }
+                    }, 1500); // Stop after 1.5 seconds of silence
+                };
 
             this.recognition.onend = () => {
+                console.log('🎤 Voice recognition ended');
+                clearTimeout(this.silenceTimeout);
                 this.isVoiceActive = false;
                 this.updateVoiceUI(false);
+
+                // Process any remaining transcript
+                if (this.finalTranscript.trim()) {
+                    this.processVoiceInput(this.finalTranscript.trim());
+                }
             };
 
             this.recognition.onerror = (event) => {
                 console.error('Voice recognition error:', event.error);
+                clearTimeout(this.silenceTimeout);
+
+                // Handle specific errors
+                if (event.error === 'no-speech') {
+                    console.log('No speech detected');
+                } else if (event.error === 'audio-capture') {
+                    alert('Microphone access error. Please check permissions.');
+                } else if (event.error === 'not-allowed') {
+                    alert('Microphone permission denied.');
+                }
+
                 this.isVoiceActive = false;
                 this.updateVoiceUI(false);
             };
@@ -560,6 +877,7 @@ class ToolBoxPopup {
 
     stopVoice() {
         if (this.recognition && this.isVoiceActive) {
+             clearTimeout(this.silenceTimeout);
             this.recognition.stop();
         }
     }
@@ -856,8 +1174,8 @@ class ToolBoxPopup {
              const freshContext = await this.getFreshPageContext();
 
                 const contextData = {
-                    mini_task: message,
-                    user_task: 'Browser extension chat with page context in lang must response in '+this.voiceLanguage + ` User is on ${JSON.stringify(freshContext)}`,
+                    mini_task: 'Browser extension chat with page context. Must answer in ' + JSON.stringify(this.voiceLanguage) + ` language! Browser context: ${JSON.stringify(freshContext)}`,
+                    user_task:message ,
                     agent_name: 'speed',
                     task_from: 'browser_extension',
                     message_history: this.chatHistory,
@@ -1570,18 +1888,6 @@ class ToolBoxPopup {
         } catch (error) {
             console.error('Password generation error:', error);
         }
-    }
-
-    async importPasswords() {
-        //const modal = document.getElementById('importHelperModal');
-        //modal?.classList.remove('hidden');
-
-        //// Der eigentliche Datei-Dialog wird nun vom Button im Modal ausgelöst
-        //document.getElementById('openImportDialogBtn')?.addEventListener('click', () => {
-        //     modal?.classList.add('hidden');
-        //     this.triggerImportFileDialog();
-        //});
-        console.log("Import-Prozess wird über UI-Events gesteuert.");
     }
 
     triggerImportFileDialog() {

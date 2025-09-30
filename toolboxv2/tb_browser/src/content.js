@@ -112,7 +112,13 @@ class ToolBoxContent {
                     const results = await this.searchPage(message.query);
                     sendResponse({ success: true, results });
                     break;
-
+                case 'OPEN_SETTINGS_MODAL':
+                    const settingsModal = document.getElementById('settingsModal');
+                    if (settingsModal) {
+                        settingsModal.classList.remove('hidden');
+                    }
+                    sendResponse({ success: true });
+                    break;
                 case 'INDEX_PAGE':
                     await this.indexPage();
                     sendResponse({ success: true });

@@ -14,17 +14,53 @@ class ToolBoxBackground {
     init() {
         console.log('🚀 ToolBox Pro background service worker starting...');
 
-        // Setup event listeners
-        this.setupEventListeners();
+         this.loadBackendSettings().then(() => {
+            // Setup event listeners
+            this.setupEventListeners();
 
-        // Check API connection
-        this.checkConnection();
+            // Check API connection
+            this.checkConnection();
 
-        // Setup periodic tasks
-        this.setupPeriodicTasks();
+            // Setup periodic tasks
+            this.setupPeriodicTasks();
 
-        console.log('✅ ToolBox Pro background service worker initialized');
+
+            console.log('✅ ToolBox Pro background service worker initialized');
+        });
     }
+
+    async loadBackendSettings() {
+    try {
+        const stored = await chrome.storage.sync.get(['toolboxSettings']);
+        if (stored.toolboxSettings) {
+            const settings = stored.toolboxSettings;
+
+            // Backend-URL setzen
+            switch (settings.backend) {
+                case 'local':
+                    this.apiBase = 'http://localhost:8080';
+                    break;
+                case 'remote':
+                    this.apiBase = 'https://simplecore.app';
+                    break;
+                case 'custom':
+                    this.apiBase = settings.customBackendUrl || 'http://localhost:8080';
+                    break;
+            }
+
+            // Auth-Daten übernehmen
+            this.authData = {
+                username: settings.username || null,
+                jwt: settings.jwt || null,
+                isAuthenticated: settings.isAuthenticated || false
+            };
+
+            console.log('Backend configured:', this.apiBase);
+        }
+    } catch (error) {
+        console.warn('Failed to load backend settings:', error);
+    }
+}
 
     setupEventListeners() {
         // Extension installation
@@ -58,11 +94,6 @@ class ToolBoxBackground {
             this.handleCommand(command);
         });
 
-        // Context menu clicks
-        chrome.contextMenus.onClicked.addListener((info, tab) => {
-            this.handleContextMenu(info, tab);
-        });
-
         // Web navigation events
         chrome.webNavigation.onCompleted.addListener((details) => {
             this.handleNavigationCompleted(details);
@@ -78,6 +109,7 @@ class ToolBoxBackground {
                 chrome.notifications.clear(notificationId);
             }
         });
+
     }
 
     async checkForSavedCredentials(tabId) {
@@ -110,9 +142,6 @@ class ToolBoxBackground {
     async handleInstallation(details) {
         console.log('📦 Extension installed/updated:', details.reason);
 
-        // Setup context menus
-        this.setupContextMenus();
-
         // Initialize storage
         await this.initializeStorage();
 
@@ -121,49 +150,6 @@ class ToolBoxBackground {
             console.log('🎉 ToolBox Pro installed successfully!');
         }
     }
-
-    setupContextMenus() {
-        chrome.contextMenus.removeAll(() => {
-            // Main ToolBox menu
-            chrome.contextMenus.create({
-                id: 'toolbox-main',
-                title: 'ToolBox Pro',
-                contexts: ['all']
-            });
-
-            // ISAA AI submenu
-            chrome.contextMenus.create({
-                id: 'isaa-analyze',
-                parentId: 'toolbox-main',
-                title: 'Ask ISAA about this',
-                contexts: ['selection', 'page']
-            });
-
-            // Password management
-            chrome.contextMenus.create({
-                id: 'password-autofill',
-                parentId: 'toolbox-main',
-                title: 'Auto-fill password',
-                contexts: ['editable']
-            });
-
-            chrome.contextMenus.create({
-                id: 'password-generate',
-                parentId: 'toolbox-main',
-                title: 'Generate password',
-                contexts: ['editable']
-            });
-
-            // Search functionality
-            chrome.contextMenus.create({
-                id: 'search-page',
-                parentId: 'toolbox-main',
-                title: 'Search this page',
-                contexts: ['page']
-            });
-        });
-    }
-
     async initializeStorage() {
         const defaultSettings = {
             gestureSettings: {
@@ -215,10 +201,10 @@ class ToolBoxBackground {
 
     async checkConnection() {
         try {
-            const response = await fetch(this.apiBase);
+            // Verwende jetzt das konfigurierte Backend
+            const response = await fetch(`${this.apiBase}/api/CloudM/Version`);
             this.isConnected = response.ok;
 
-            // Update badge
             chrome.action.setBadgeText({
                 text: this.isConnected ? '' : '!'
             });
@@ -274,7 +260,18 @@ class ToolBoxBackground {
                     const tabInfo = await this.getTabInfo(sender.tab.id);
                     sendResponse({ success: true, data: tabInfo });
                     break;
+                case 'RELOAD_SETTINGS':
+                    await this.loadBackendSettings();
+                    sendResponse({ success: true, apiBase: this.apiBase });
+                    break;
 
+                case 'GET_AUTH_STATUS':
+                    sendResponse({
+                        success: true,
+                        isAuthenticated: this.authData.isAuthenticated,
+                        username: this.authData.username
+                    });
+                    break;
                 default:
                     sendResponse({ success: false, error: 'Unknown message type' });
             }
@@ -306,26 +303,6 @@ class ToolBoxBackground {
 
             case 'password-autofill':
                 await this.triggerPasswordAutofill(activeTab);
-                break;
-        }
-    }
-
-    async handleContextMenu(info, tab) {
-        switch (info.menuItemId) {
-            case 'isaa-analyze':
-                await this.analyzeWithISAA(info, tab);
-                break;
-
-            case 'password-autofill':
-                await this.triggerPasswordAutofill(tab);
-                break;
-
-            case 'password-generate':
-                await this.generatePasswordForField(tab);
-                break;
-
-            case 'search-page':
-                await this.activateQuickSearch(tab);
                 break;
         }
     }
@@ -416,6 +393,7 @@ class ToolBoxBackground {
     }
     */
 
+
     async activateVoiceCommand(tab) {
         try {
             await chrome.tabs.sendMessage(tab.id, {
@@ -427,7 +405,7 @@ class ToolBoxBackground {
     }
 
     async activateQuickSearch(tab) {
-        chrome.action.openPopup();
+        chrome.sidePanel.open({ windowId: tab.windowId });
         // The popup will handle switching to search tab
     }
 
@@ -453,41 +431,6 @@ class ToolBoxBackground {
         }
     }
 
-    async generatePasswordForField(tab) {
-        try {
-            const response = await this.makeAPICall('/api/call/PasswordManager/generate_password', 'POST', {
-                length: 16,
-                include_symbols: true,
-                include_numbers: true,
-                include_uppercase: true,
-                include_lowercase: true
-            });
-
-            if (response.data && response.data.password) {
-                await chrome.tabs.sendMessage(tab.id, {
-                    type: 'FILL_GENERATED_PASSWORD',
-                    password: response.data.password
-                });
-            }
-        } catch (error) {
-            console.error('Password generation error:', error);
-        }
-    }
-
-    async analyzeWithISAA(info, tab) {
-        const text = info.selectionText || 'current page';
-        chrome.action.openPopup();
-
-        // Store the analysis request for the popup to pick up
-        await chrome.storage.local.set({
-            pendingISAARequest: {
-                text: text,
-                url: tab.url,
-                timestamp: Date.now()
-            }
-        });
-    }
-
     async getTabInfo(tabId) {
         const tab = await chrome.tabs.get(tabId);
         return {
@@ -498,26 +441,114 @@ class ToolBoxBackground {
         };
     }
 
-    async makeAPICall(endpoint, method = 'POST', data = null) {
+    async makeAPICall(endpoint, method = 'POST', data = null, includeAuth = true) {
+        // Stelle sicher, dass Settings geladen sind
+        if (!this.apiBase || this.apiBase === 'http://localhost:8080') {
+            await this.loadBackendSettings();
+        }
+
         const url = `${this.apiBase}${endpoint}`;
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+
+        // Auth-Header hinzufügen, wenn verfügbar und gewünscht
+        if (includeAuth && this.authData.isAuthenticated) {
+            if (this.authData.jwt) {
+                headers['Authorization'] = `Bearer ${this.authData.jwt}`;
+            }
+            // Username als Custom Header (falls dein Backend das erwartet)
+            if (this.authData.username) {
+                headers['X-Username'] = this.authData.username;
+            }
+        }
+
         const options = {
             method,
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers,
+            credentials: 'include' // Für Session-Cookies
         };
 
         if (data && method !== 'GET') {
             options.body = JSON.stringify(data);
         }
 
-        const response = await fetch(url, options);
-        if (!response.ok) {
-            throw new Error(`API call failed: ${response.status}`);
+        try {
+            const response = await fetch(url, options);
+
+            // 401 = Session abgelaufen
+            if (response.status === 401 && includeAuth) {
+                console.warn('Session expired, attempting re-auth...');
+                const reAuthSuccess = await this.attemptReAuth();
+
+                if (reAuthSuccess) {
+                    // Retry mit neuem Token
+                    return this.makeAPICall(endpoint, method, data, includeAuth);
+                } else {
+                    throw new Error('Session expired and re-authentication failed');
+                }
+            }
+
+            if (!response.ok) {
+                throw new Error(`API call failed: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error(`API call to ${endpoint} failed:`, error);
+            throw error;
+        }
+    }
+
+    async attemptReAuth() {
+    if (!this.authData.username) {
+        console.warn('Cannot re-auth without username');
+        return false;
+    }
+
+    try {
+        const payload = {
+            Username: this.authData.username
+        };
+
+        if (this.authData.jwt) {
+            payload.Jwt_claim = this.authData.jwt;
         }
 
-        return await response.json();
+        const response = await this.makeAPICall(
+            '/validateSession',
+            'POST',
+            payload,
+            false // Keine Auth-Header beim Re-Auth
+        );
+
+        if (response.result?.data_info === 'Valid Session') {
+            this.authData.isAuthenticated = true;
+
+            // Settings aktualisieren
+            const stored = await chrome.storage.sync.get(['toolboxSettings']);
+            if (stored.toolboxSettings) {
+                stored.toolboxSettings.isAuthenticated = true;
+                await chrome.storage.sync.set({ toolboxSettings: stored.toolboxSettings });
+            }
+
+            console.log('Re-authentication successful');
+            return true;
+        }
+    } catch (error) {
+        console.error('Re-authentication failed:', error);
     }
+
+    // Bei Fehlschlag: Logout
+    this.authData.isAuthenticated = false;
+    const stored = await chrome.storage.sync.get(['toolboxSettings']);
+    if (stored.toolboxSettings) {
+        stored.toolboxSettings.isAuthenticated = false;
+        await chrome.storage.sync.set({ toolboxSettings: stored.toolboxSettings });
+    }
+
+    return false;
+}
 
     showNotification(title, message) {
         try {

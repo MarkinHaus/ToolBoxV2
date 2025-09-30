@@ -9,6 +9,9 @@ class TBGestureDetector {
         this.lastPoint = null;
         this.isEnabled = true;
 
+        this.mouseMoved = false;
+        this.mouseMovedCounter = 0;
+
         // Gesture settings
         this.settings = {
             minSwipeDistance: 100,
@@ -81,25 +84,45 @@ class TBGestureDetector {
 
         // Mouse events for desktop - RIGHT BUTTON ONLY
         if (this.settings.enableMouse) {
-            document.addEventListener('mousedown', (e) => {
-                // Only handle right mouse button (button === 2)
+           document.addEventListener('mousedown', (e) => {
                 if (e.button === 2) {
-                    //e.preventDefault(); // Prevent context menu
+                    // Setzen Sie mouseMoved zurück, wenn die rechte Maustaste gedrückt wird.
+                    if (this.mouseMovedCounter > 2) {
+                        this.mouseMovedCounter = 0;
+                        this.mouseMoved = false;
+                    }
+                    this.mouseMovedCounter ++;
+                    console.log('mousedown', e.button, this.mouseMoved);
                     this.handleMouseDown(e);
                 }
             });
 
             document.addEventListener('mousemove', (e) => {
-                // Only handle move if right button is held down
-                this.handleMouseMove(e);
+                // Wenn die rechte Maustaste gedrückt ist und sich die Maus bewegt,
+                // setzen Sie mouseMoved auf true.
+                if (this.isTracking) { // isTracking sollte in handleMouseDown gesetzt werden
+                    this.mouseMoved = true;
+                    console.log('mousemove', e.button, this.mouseMoved);
+                    this.handleMouseMove(e);
+                }
             });
 
             document.addEventListener('mouseup', (e) => {
-                // Only handle right mouse button release
                 if (e.button === 2) {
                     this.handleMouseUp(e);
                 }
             });
+
+            // Verhindern Sie das Kontextmenü nur, wenn eine Geste ausgeführt wurde.
+            document.addEventListener('contextmenu', (e) => {
+                console.log('contextmenu', e.button, this.mouseMoved);
+                if (this.mouseMoved) {
+                   e.preventDefault();
+                }
+                // Setzen Sie mouseMoved nach dem Ereignis zurück.
+                this.mouseMoved = false;
+            });
+
 
             // Remove click handler or filter for right button if needed
             document.addEventListener('click', (e) => {
@@ -108,10 +131,6 @@ class TBGestureDetector {
                 this.handleClick(e);
             });
 
-            // Optional: Prevent context menu on right-click
-            document.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-            });
         }
 
         // Wheel events for scroll gestures
@@ -154,6 +173,7 @@ class TBGestureDetector {
 
     // Mouse Event Handlers
     handleMouseDown(e) {
+
         this.startGesture(e.clientX, e.clientY);
     }
 
