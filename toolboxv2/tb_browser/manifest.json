@@ -13,7 +13,8 @@
     "webNavigation",
     "tabs",
     "clipboardWrite",
-    "clipboardRead"
+    "clipboardRead",
+    "sidePanel"
   ],
 
   "host_permissions": [
@@ -41,7 +42,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/content.js"],
+      "js": ["src/gesture-detector.js","src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle",
       "all_frames": false
@@ -49,7 +50,6 @@
   ],
 
   "action": {
-    "default_popup": "src/popup.html",
     "default_title": "ToolBox Pro - AI Assistant & Password Manager",
     "default_icon": {
       "16": "icons/tb16.png",
@@ -57,6 +57,10 @@
       "48": "icons/tb48.png",
       "128": "icons/tb128.png"
     }
+  },
+
+    "side_panel": {
+    "default_path": "src/popup.html"
   },
 
   "commands": {

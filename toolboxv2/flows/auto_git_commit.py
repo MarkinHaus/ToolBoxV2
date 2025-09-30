@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-from toolboxv2 import Spinner, remove_styles
+from toolboxv2 import Spinner, remove_styles, ApiResult
 from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
 
 NAME = "AutoGitCommit"
@@ -105,6 +105,8 @@ async def run(app, args_sto, tags: str | None = None, summarize: bool = False, *
                 user_task="Generate a git commit message based on the following file content changes. with key details!",
                 agent_name="GitCommitMessageGenerator"
             )
+        if isinstance(commit_message, ApiResult):
+            commit_message = commit_message.as_result().get()
 
         # Clean up the commit message
         commit_message = commit_message.strip()

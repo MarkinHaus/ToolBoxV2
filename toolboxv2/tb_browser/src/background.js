@@ -32,6 +32,11 @@ class ToolBoxBackground {
             this.handleInstallation(details);
         });
 
+        // Hinzufügen des Action-Listeners für das Side Panel
+        chrome.action.onClicked.addListener((tab) => {
+            chrome.sidePanel.open({ windowId: tab.windowId });
+        });
+
         // Tab updates
         chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
             this.handleTabUpdate(tabId, changeInfo, tab);
@@ -61,7 +66,45 @@ class ToolBoxBackground {
         // Web navigation events
         chrome.webNavigation.onCompleted.addListener((details) => {
             this.handleNavigationCompleted(details);
+            this.checkForSavedCredentials(details.tabId);
         });
+
+        chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+            if (notificationId.startsWith('save-password-')) {
+                const credentials = JSON.parse(notificationId.replace('save-password-', ''));
+                if (buttonIndex === 0) { // "Speichern"-Button
+                    this.makeAPICall('/api/PasswordManager/add_password', 'POST', credentials);
+                }
+                chrome.notifications.clear(notificationId);
+            }
+        });
+    }
+
+    async checkForSavedCredentials(tabId) {
+        const result = await chrome.storage.session.get('potential_credentials_to_save');
+        const credentials = result.potential_credentials_to_save;
+
+        if (credentials) {
+            // Lösche die temporären Daten
+            await chrome.storage.session.remove('potential_credentials_to_save');
+
+            // Prüfe, ob diese Anmeldeinformationen bereits existieren
+            const checkResult = await this.makeAPICall('/api/PasswordManager/get_password_by_url_username', 'POST', {
+                url: credentials.url,
+                username: credentials.username
+            });
+
+            // Zeige die Benachrichtigung nur an, wenn die Daten noch nicht existieren
+            if (checkResult && checkResult.status === 'error') {
+                 chrome.notifications.create(`save-password-${JSON.stringify(credentials)}`, {
+                    type: 'basic',
+                    iconUrl: 'icons/tb48.png',
+                    title: 'Passwort speichern?',
+                    message: `Möchten Sie das Passwort für ${credentials.username} auf dieser Seite speichern?`,
+                    buttons: [{ title: 'Speichern' }, { title: 'Niemals' }]
+                });
+            }
+        }
     }
 
     async handleInstallation(details) {
@@ -202,6 +245,18 @@ class ToolBoxBackground {
                     );
                     sendResponse({ success: true, data: result });
                     break;
+                case 'MANUAL_SAVE_PASSWORD':
+                    this.makeAPICall('/api/PasswordManager/add_password', 'POST', message.credentials)
+                        .then(() => sendResponse({ success: true }))
+                        .catch(err => sendResponse({ success: false, error: err.message }));
+                    break;
+
+                case 'POTENTIAL_CREDENTIALS_DETECTED':
+                // Speichere die Daten im Session Storage, da der background script die Berechtigung hat
+                    chrome.storage.session.set({ 'potential_credentials_to_save': message.credentials })
+                        .then(() => sendResponse({ success: true }))
+                        .catch(err => sendResponse({ success: false, error: err.message }));
+                    break;
 
                 case 'GESTURE_DETECTED':
                     this.handleGesture(message.gesture, sender.tab);
@@ -209,7 +264,9 @@ class ToolBoxBackground {
                     break;
 
                 case 'OPEN_POPUP':
-                    await this.openPopup(message.position);
+                     if (sender.tab) {
+                        await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+                    }
                     sendResponse({ success: true });
                     break;
 
@@ -234,7 +291,9 @@ class ToolBoxBackground {
 
         switch (command) {
             case 'toggle-toolbox':
-                chrome.action.openPopup();
+                if (activeTab) {
+                    await chrome.sidePanel.open({ windowId: activeTab.windowId });
+                }
                 break;
 
             case 'voice-command':
@@ -350,10 +409,12 @@ class ToolBoxBackground {
         }
     }
 
+        /* Veraltet: Diese Funktion wird nicht mehr benötigt
     async openPopup(position) {
         // Open extension popup
         chrome.action.openPopup();
     }
+    */
 
     async activateVoiceCommand(tab) {
         try {

@@ -8,10 +8,6 @@
     <style>
         /* Fallback styles in case CSS doesn't load */
         body {
-            margin: 0;
-            padding: 0;
-            width: 420px;
-            height: 600px;
             background: #1a1a1a;
             color: white;
             font-family: Arial, sans-serif;
@@ -46,41 +42,6 @@
 <body>
     <div id="app" class="app-container">
         <!-- Header with Voice Input -->
-        <header class="app-header">
-            <div class="header-content">
-                <div class="logo-section">
-                    <img src="../icons/tb32.png" alt="ToolBox" class="logo">
-                    <span class="app-title">ToolBox Pro</span>
-                </div>
-                <div class="voice-section">
-                    <select id="languageSelect" class="language-select" title="Voice Language">
-                        <option value="en-US">🇺🇸 EN</option>
-                        <option value="de-DE">🇩🇪 DE</option>
-                        <option value="fr-FR">🇫🇷 FR</option>
-                        <option value="es-ES">🇪🇸 ES</option>
-                    </select>
-                    <button id="voiceBtn" class="voice-btn" title="Voice Input (Ctrl+Shift+V)">
-                        <div class="voice-status-dot ready"></div>
-                        <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                            <line x1="12" y1="19" x2="12" y2="23"></line>
-                            <line x1="8" y1="23" x2="16" y2="23"></line>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-            <div id="searchInput" class="search-input-container hidden">
-                <input type="text" id="searchField" placeholder="Ask ISAA or search page..." class="search-field">
-                <button id="searchSubmit" class="search-submit">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"></circle>
-                        <path d="m21 21-4.35-4.35"></path>
-                    </svg>
-                </button>
-            </div>
-        </header>
-
         <!-- Tab Navigation -->
         <nav class="tab-navigation">
             <button class="tab-btn active" data-tab="isaa">
@@ -109,6 +70,7 @@
         <!-- Main Content Area -->
         <main class="main-content">
             <!-- ISAA Chat Panel -->
+
             <div id="isaaPanelContent" class="panel-content active">
                 <div class="chat-container">
                     <div id="chatMessages" class="chat-messages">
@@ -141,6 +103,12 @@
             <!-- Live Search Panel -->
             <div id="searchPanelContent" class="panel-content">
                 <div class="search-container">
+
+                    <div id="searchResults" class="search-results">
+                        <div class="no-results">
+                            <p>Start typing to search the current page...</p>
+                        </div>
+                    </div>
                     <div class="search-header">
                         <input type="text" id="liveSearchInput" placeholder="Search current page..." class="live-search-input">
                         <div class="search-options">
@@ -153,17 +121,18 @@
                             </button>
                         </div>
                     </div>
-                    <div id="searchResults" class="search-results">
-                        <div class="no-results">
-                            <p>Start typing to search the current page...</p>
-                        </div>
-                    </div>
                 </div>
             </div>
 
             <!-- Password Manager Panel -->
             <div id="passwordsPanelContent" class="panel-content">
                 <div class="password-container">
+                    <div id="passwordList" class="password-list">
+                        <div class="loading-passwords">
+                            <div class="spinner"></div>
+                            <p>Loading passwords...</p>
+                        </div>
+                    </div>
                     <div class="password-header">
                         <div class="password-actions">
                             <button id="autofillBtn" class="action-btn primary">
@@ -180,6 +149,13 @@
                                 </svg>
                                 Generate
                             </button>
+                             <button id="addPasswordBtn" class="action-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Hinzufügen
+                            </button>
                             <button id="importBtn" class="action-btn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -191,13 +167,30 @@
                             </button>
                         </div>
                     </div>
-                    <div id="passwordList" class="password-list">
-                        <div class="loading-passwords">
-                            <div class="spinner"></div>
-                            <p>Loading passwords...</p>
-                        </div>
-                    </div>
                 </div>
+            </div>
+            <div class="voice-section" style="display: flex; align-items: center;">
+                <div class="agent-mode-toggle" title="Toggle Agent Mode">
+                    <input type="checkbox" id="agentModeSwitch" class="toggle-checkbox">
+                    <label for="agentModeSwitch" class="toggle-label">
+                        <span class="toggle-text">Agent</span>
+                    </label>
+                </div>
+                <select id="languageSelect" class="language-select" title="Voice Language">
+                    <option value="en-US">🇺🇸 EN</option>
+                    <option value="de-DE">🇩🇪 DE</option>
+                    <option value="fr-FR">🇫🇷 FR</option>
+                    <option value="es-ES">🇪🇸 ES</option>
+                </select>
+                <button id="voiceBtn" class="voice-btn" title="Voice Input (Ctrl+Shift+V)">
+                    <div class="voice-status-dot ready"></div>
+                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="23"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                </button>
             </div>
         </main>
 
@@ -238,23 +231,82 @@
         </div>
     </div>
 
-    <script>
-        // Debug logging
-        console.log('🔧 ToolBox popup HTML loaded');
-
-        // Fallback if main script fails
-        window.addEventListener('error', function(e) {
-            console.error('❌ Popup error:', e.error);
-            document.body.innerHTML = `
-                <div style="padding: 20px; color: white; background: #1a1a1a; width: 420px; height: 600px; box-sizing: border-box;">
-                    <h2 style="color: #2E86AB;">ToolBox Pro</h2>
-                    <p>Extension loaded but encountered an error.</p>
-                    <p>Error: ${e.error?.message || 'Unknown error'}</p>
-                    <button onclick="location.reload()" style="background: #2E86AB; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">Reload</button>
+     <div id="importHelperModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Passwörter importieren</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p>ToolBox Pro kann aus Sicherheitsgründen nicht direkt auf Ihre Browser-Passwörter zugreifen. Bitte exportieren Sie sie zuerst:</p>
+                <div class="import-guide">
+                    <h4>Anleitung für Chrome</h4>
+                    <ol>
+                        <li>Öffnen Sie die Chrome-Einstellungen oder geben Sie <strong>chrome://settings/passwords</strong> in die Adressleiste ein.</li>
+                        <li>Klicken Sie auf das Drei-Punkte-Menü (⋮) neben "Gespeicherte Passwörter".</li>
+                        <li>Wählen Sie <strong>"Passwörter exportieren..."</strong> und speichern Sie die <code>.csv</code>-Datei.</li>
+                        <li>Schließen Sie dieses Fenster und klicken Sie unten auf "Datei auswählen", um die exportierte Datei hochzuladen.</li>
+                    </ol>
                 </div>
-            `;
-        });
-    </script>
+                 <button id="openImportDialogBtn" class="action-btn primary">Datei auswählen</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="addPasswordModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Neues Passwort hinzufügen</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="addPasswordForm" class="password-form">
+                    <input type="text" id="add-title" placeholder="Titel (z.B. Google)" required>
+                    <input type="url" id="add-url" placeholder="URL (https://...)" required>
+                    <input type="text" id="add-username" placeholder="Benutzername" required>
+                    <input type="password" id="add-password" placeholder="Passwort" required>
+
+                     <div id="addPasswordFeedback" class="form-feedback"></div>
+                    <button type="submit" class="action-btn primary">Speichern</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="addTotpModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>2FA für <span id="totp-modal-title"></span> hinzufügen</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="addTotpForm" class="password-form">
+                    <p>Geben Sie den geheimen Schlüssel (Secret Key) ein, den Sie von der Webseite erhalten haben.</p>
+                    <input type="hidden" id="totp-entry-id">
+                    <input type="text" id="totp-secret-input" placeholder="Geheimer Schlüssel" required>
+                    <div id="addTotpFeedback" class="form-feedback"></div>
+                    <button type="submit" id="addTotpSubmitBtn" class="action-btn primary">2FA Aktivieren</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirmationModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="confirmationTitle">Bestätigung erforderlich</h3>
+                <button class="modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirmationMessage">Sind Sie sicher?</p>
+                <div class="confirmation-actions">
+                    <button id="confirmBtn-cancel" class="action-btn">Abbrechen</button>
+                    <button id="confirmBtn-confirm" class="action-btn btn-danger">Bestätigen</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="popup.js"></script>
 </body>
 </html>

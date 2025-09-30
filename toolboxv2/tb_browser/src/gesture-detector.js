@@ -31,10 +31,12 @@ class TBGestureDetector {
     }
 
     async init() {
+
         try {
             await this.loadSettings();
             this.setupEventListeners();
             console.log('🎯 Gesture detector initialized');
+            // play sound
         } catch (error) {
             console.error('Gesture detector initialization failed:', error);
         }
@@ -82,16 +84,14 @@ class TBGestureDetector {
             document.addEventListener('mousedown', (e) => {
                 // Only handle right mouse button (button === 2)
                 if (e.button === 2) {
-                    e.preventDefault(); // Prevent context menu
+                    //e.preventDefault(); // Prevent context menu
                     this.handleMouseDown(e);
                 }
             });
 
             document.addEventListener('mousemove', (e) => {
                 // Only handle move if right button is held down
-                if (e.buttons === 2) {
-                    this.handleMouseMove(e);
-                }
+                this.handleMouseMove(e);
             });
 
             document.addEventListener('mouseup', (e) => {
@@ -154,8 +154,6 @@ class TBGestureDetector {
 
     // Mouse Event Handlers
     handleMouseDown(e) {
-        if (!this.isEnabled || e.button !== 0) return; // Only left mouse button
-
         this.startGesture(e.clientX, e.clientY);
     }
 
@@ -173,7 +171,7 @@ class TBGestureDetector {
 
     handleClick(e) {
         const currentTime = Date.now();
-
+        console.log('click', e.button, currentTime - this.lastClickTime < this.settings.doubleClickDelay, this.clickCount);
         // Double-click detection
         if (currentTime - this.lastClickTime < this.settings.doubleClickDelay) {
             this.clickCount++;

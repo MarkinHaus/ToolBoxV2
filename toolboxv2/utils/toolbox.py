@@ -801,6 +801,24 @@ class App(AppType, metaclass=Singleton):
                                                                                                            []):
                     kwargs["request"].form_data = kwargs["request"].body = kwargs['form_data']
                     del kwargs['form_data']
+            else:
+                params = self.functions.get(mn, {}).get(fn, {}).get('params', [])
+                # auto pars data and form_data to kwargs by key
+                do = False
+                data = {}
+                if 'data' in kwargs and 'data' not in params:
+                    do = True
+                    data = kwargs['data']
+                    del kwargs['data']
+                if 'form_data' in kwargs and 'form_data' not in params:
+                    do = True
+                    data = kwargs['form_data']
+                    del kwargs['form_data']
+                if do:
+                    for k in params:
+                        if k in data:
+                            kwargs[k] = data[k]
+                            del data[k]
 
         # Create the coroutine
         coro = running_function_coro or self.a_run_any(*args, **kwargs)

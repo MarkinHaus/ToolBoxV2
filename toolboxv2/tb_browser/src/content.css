@@ -1,23 +1,64 @@
 /* ToolBox Pro - Content Script Styles */
 /* Styles for page interaction elements */
 
+/* Wrapper für Formular-Indikatoren (neu) */
+.tb-form-indicator-wrapper {
+    position: absolute !important;
+    top: -12px !important;
+    right: -12px !important;
+    z-index: 10000 !important;
+    display: flex !important;
+    gap: 4px !important;
+    opacity: 0.7 !important;
+    transition: opacity 0.3s ease !important;
+}
+
+form:hover .tb-form-indicator-wrapper {
+    opacity: 1 !important;
+}
+
+
+/* Neuer "Speichern"-Button im Formular */
+.tb-form-save-btn {
+    all: unset; /* Setzt alle Browser-Styles zurück */
+    width: 24px !important;
+    height: 24px !important;
+    background: #4CAF50 !important; /* Grüne Farbe für Speichern */
+    color: white !important;
+    border-radius: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    transition: transform 0.2s ease, background-color 0.2s ease !important;
+}
+
+.tb-form-save-btn:hover {
+    transform: scale(1.1) !important;
+    background: #66BB6A !important;
+}
+
 /* Form indicators */
 .tb-form-indicator {
-    position: absolute !important;
-    top: -10px !important;
-    right: -10px !important;
-    width: 20px !important;
-    height: 20px !important;
+    position: static !important; /* Wird jetzt vom Wrapper positioniert */
+    width: 24px !important;
+    height: 24px !important;
     background: #2E86AB !important;
     border-radius: 50% !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 10px !important;
+    font-size: 12px !important;
+    cursor: default !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+
+    top: -10px !important;
+    right: -10px !important;
     z-index: 10000 !important;
     opacity: 0.7 !important;
     transition: opacity 0.3s ease !important;
-    box-shadow: 0 2px 8px rgba(46, 134, 171, 0.3) !important;
 }
 
 .tb-form-indicator:hover {
@@ -174,84 +215,84 @@
 
 /* Animations */
 @keyframes tbHighlightPulse {
-    0%, 100% { 
-        opacity: 0.3; 
-        transform: scale(1); 
+    0%, 100% {
+        opacity: 0.3;
+        transform: scale(1);
     }
-    50% { 
-        opacity: 0.6; 
-        transform: scale(1.02); 
+    50% {
+        opacity: 0.6;
+        transform: scale(1.02);
     }
 }
 
 @keyframes tbAutofillSuccess {
-    0% { 
-        opacity: 0; 
-        transform: translateX(-50%) translateY(-10px); 
+    0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-10px);
     }
-    20% { 
-        opacity: 1; 
-        transform: translateX(-50%) translateY(0); 
+    20% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
     }
-    80% { 
-        opacity: 1; 
-        transform: translateX(-50%) translateY(0); 
+    80% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
     }
-    100% { 
-        opacity: 0; 
-        transform: translateX(-50%) translateY(-10px); 
+    100% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-10px);
     }
 }
 
 @keyframes tbGestureFeedback {
-    0% { 
-        opacity: 0; 
-        transform: translate(-50%, -50%) scale(0.8); 
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.8);
     }
-    20% { 
-        opacity: 1; 
-        transform: translate(-50%, -50%) scale(1); 
+    20% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
     }
-    80% { 
-        opacity: 1; 
-        transform: translate(-50%, -50%) scale(1); 
+    80% {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
     }
-    100% { 
-        opacity: 0; 
-        transform: translate(-50%, -50%) scale(0.8); 
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.8);
     }
 }
 
 @keyframes tbSlideIn {
-    0% { 
-        opacity: 0; 
-        transform: translateX(100%); 
+    0% {
+        opacity: 0;
+        transform: translateX(100%);
     }
-    100% { 
-        opacity: 1; 
-        transform: translateX(0); 
+    100% {
+        opacity: 1;
+        transform: translateX(0);
     }
 }
 
 @keyframes tbSlideUp {
-    0% { 
-        opacity: 0; 
-        transform: translateY(100%); 
+    0% {
+        opacity: 0;
+        transform: translateY(100%);
     }
-    100% { 
-        opacity: 1; 
-        transform: translateY(0); 
+    100% {
+        opacity: 1;
+        transform: translateY(0);
     }
 }
 
 @keyframes tbSlideDown {
-    0% { 
-        opacity: 0; 
-        transform: translateX(-50%) translateY(-100%); 
+    0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-100%);
     }
-    100% { 
-        opacity: 1; 
-        transform: translateX(-50%) translateY(0); 
+    100% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
     }
 }
 
@@ -268,13 +309,13 @@
 }
 
 @keyframes tbVoiceWave {
-    0%, 100% { 
-        transform: scale(1); 
-        opacity: 1; 
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
     }
-    50% { 
-        transform: scale(1.2); 
-        opacity: 0.7; 
+    50% {
+        transform: scale(1.2);
+        opacity: 0.7;
     }
 }
 
@@ -290,12 +331,12 @@
         height: 16px !important;
         font-size: 8px !important;
     }
-    
+
     .tb-autofill-success {
         font-size: 11px !important;
         padding: 6px 12px !important;
     }
-    
+
     .tb-voice-overlay,
     .tb-indexing-indicator,
     .tb-nav-feedback {
@@ -310,7 +351,7 @@
         outline-width: 3px !important;
         background: rgba(46, 134, 171, 0.3) !important;
     }
-    
+
     .tb-form-indicator {
         border: 2px solid white !important;
     }
@@ -330,7 +371,7 @@
         animation: none !important;
         transition: none !important;
     }
-    
+
     .tb-voice-wave,
     .tb-indexing-spinner {
         animation: none !important;

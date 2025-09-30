@@ -3,11 +3,10 @@
 
 class ToolBoxContent {
     constructor() {
-        this.gestureDetector = null;
         this.pageIndex = new Map();
         this.highlightedElements = [];
         this.isInitialized = false;
-
+        this.lastFocusedInput = null;
         this.init();
     }
 
@@ -17,8 +16,6 @@ class ToolBoxContent {
         console.log('🚀 ToolBox Pro content script initializing...');
 
         try {
-            // Load gesture detector
-            await this.loadGestureDetector();
 
             // Setup message listeners
             this.setupMessageListeners();
@@ -26,8 +23,12 @@ class ToolBoxContent {
             // Initialize page indexing
             this.initializePageIndexing();
 
+            this.monitorLoginFormSubmissions();
+
             // Setup form detection
             this.setupFormDetection();
+
+            this.trackLastFocusedInput();
 
             this.isInitialized = true;
             console.log('✅ ToolBox Pro content script initialized');
@@ -37,174 +38,43 @@ class ToolBoxContent {
         }
     }
 
-    async loadGestureDetector() {
-        try {
-            // Initialize gesture detection directly in content script
-            this.initializeGestureDetection();
-            console.log('✅ Gesture detector loaded');
-        } catch (error) {
-            console.error('Failed to load gesture detector:', error);
-        }
-    }
-
-    initializeGestureDetection() {
-        this.gestureState = {
-            isTracking: false,
-            startX: 0,
-            startY: 0,
-            currentX: 0,
-            currentY: 0,
-            startTime: 0,
-            lastClickTime: 0
-        };
-
-        // Mouse events
-        document.addEventListener('mousedown', (e) => this.handleGestureStart(e.clientX, e.clientY, e));
-        document.addEventListener('mousemove', (e) => this.handleGestureMove(e.clientX, e.clientY, e));
-        document.addEventListener('mouseup', (e) => this.handleGestureEnd(e.clientX, e.clientY, e));
-
-        // Touch events
-        document.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 1) {
-                const touch = e.touches[0];
-                this.handleGestureStart(touch.clientX, touch.clientY, e);
-            }
-        }, { passive: true });
-
-        document.addEventListener('touchmove', (e) => {
-            if (e.touches.length === 1) {
-                const touch = e.touches[0];
-                this.handleGestureMove(touch.clientX, touch.clientY, e);
-            }
-        }, { passive: true });
-
-        document.addEventListener('touchend', (e) => {
-            if (e.changedTouches.length === 1) {
-                const touch = e.changedTouches[0];
-                this.handleGestureEnd(touch.clientX, touch.clientY, e);
-            }
-        }, { passive: true });
-
-        // Double-click detection
-        // document.addEventListener('dblclick', (e) => this.handleTripleClick(e));
-    }
-
-    handleGestureStart(x, y, event) {
-        this.gestureState.isTracking = true;
-        this.gestureState.startX = x;
-        this.gestureState.startY = y;
-        this.gestureState.currentX = x;
-        this.gestureState.currentY = y;
-        this.gestureState.startTime = Date.now();
-    }
-
-    handleGestureMove(x, y, event) {
-        if (!this.gestureState.isTracking) return;
-
-        this.gestureState.currentX = x;
-        this.gestureState.currentY = y;
-    }
-
-    handleGestureEnd(x, y, event) {
-        if (!this.gestureState.isTracking) return;
-
-        this.gestureState.isTracking = false;
-
-        const deltaX = x - this.gestureState.startX;
-        const deltaY = y - this.gestureState.startY;
-        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-        const duration = Date.now() - this.gestureState.startTime;
-
-        // Minimum distance and maximum duration for gesture recognition
-        if (distance > 100 && duration < 1000) {
-            const gesture = this.recognizeGesture(deltaX, deltaY, distance);
-            if (gesture) {
-                this.executeGesture(gesture);
-            }
-        }
-    }
-
-    recognizeGesture(deltaX, deltaY, distance) {
-        const absX = Math.abs(deltaX);
-        const absY = Math.abs(deltaY);
-
-        // Determine primary direction
-        if (absX > absY) {
-            // Horizontal gesture
-            if (deltaX > 0) {
-                return 'swipe-right';
-            } else {
-                return 'swipe-left';
-            }
-        } else {
-            // Vertical gesture
-            if (deltaY > 0) {
-                return 'swipe-down';
-            } else {
-                return 'swipe-up';
-            }
-        }
-    }
-
-    executeGesture(gesture) {
-        console.log('🎯 Executing gesture:', gesture);
-
-        switch (gesture) {
-            case 'swipe-left':
-                window.history.back();
-                this.showGestureFeedback('← Back');
-                break;
-            case 'swipe-right':
-                window.history.forward();
-                this.showGestureFeedback('→ Forward');
-                break;
-            case 'swipe-up':
-                this.scrollUp();
-                this.showGestureFeedback('↑ Scroll Up');
-                break;
-            case 'swipe-down':
-                this.scrollDown();
-                this.showGestureFeedback('↓ Scroll Down');
-                break;
-        }
-
-        // Send to background script
-        chrome.runtime.sendMessage({
-            type: 'GESTURE_DETECTED',
-            gesture: gesture,
-            timestamp: Date.now()
-        });
-    }
-
-    scrollUp() {
-        const scrollAmount = Math.min(window.innerHeight * 0.8, 500);
-        window.scrollBy({
-            top: -scrollAmount,
-            behavior: 'smooth'
-        });
-    }
-
-    scrollDown() {
-        const scrollAmount = Math.min(window.innerHeight * 0.8, 500);
-        window.scrollBy({
-            top: scrollAmount,
-            behavior: 'smooth'
-        });
-    }
-
-    handleTripleClick(event) {
-        console.log('🎯 Double-click detected, opening ToolBox popup');
-
-        // Send message to background script to open popup
-        chrome.runtime.sendMessage({
-            type: 'OPEN_POPUP',
-            position: {
-                x: event.clientX,
-                y: event.clientY
+    trackLastFocusedInput() {
+        document.addEventListener('focusin', (e) => {
+            if (e.target.matches('input[type="text"], input[type="search"], textarea, input[type="email"], input[type="password"]')) {
+                this.lastFocusedInput = e.target;
+                console.log('🎯 ToolBox focused on input:', this.lastFocusedInput);
             }
         });
 
-        this.showGestureFeedback('ToolBox Opening...');
+        document.addEventListener('mousedown', (e) => {
+            // Check if click is NOT on the currently focused input
+            if (this.lastFocusedInput && !this.lastFocusedInput.contains(e.target)) {
+                console.log('🎯 Click outside input - resetting');
+                this.lastFocusedInput = null;
+            }
+        });
+
+    }
+
+    monitorLoginFormSubmissions() {
+        document.addEventListener('submit', (e) => {
+            const form = e.target.closest('form[data-tb-form-type="login"]');
+            if (!form) return;
+
+            const usernameField = form.querySelector('input[type="email"], input[name*="email"], input[name*="username"], input[name*="login"], input[type="text"]');
+            const passwordField = form.querySelector('input[type="password"]');
+
+            if (usernameField && passwordField && passwordField.value) {
+                const credentials = {
+                    url: window.location.href,
+                    username: usernameField.value,
+                    password: passwordField.value
+                };
+
+                // Sende eine Nachricht an den background script, um die Daten zu speichern
+                chrome.runtime.sendMessage({ type: 'POTENTIAL_CREDENTIALS_DETECTED', credentials });
+            }
+        }, true);
     }
 
     showGestureFeedback(message) {
@@ -281,6 +151,14 @@ class ToolBoxContent {
                 case 'SHOW_GESTURE_FEEDBACK':
                     this.showGestureFeedback(message.message);
                     sendResponse({ success: true });
+                    break;
+                case 'INSERT_TEXT_INTO_FOCUSED_INPUT':
+                    if (this.lastFocusedInput) {
+                        this.fillField(this.lastFocusedInput, message.text);
+                        sendResponse({ success: true, message: `Text inserted into ${this.lastFocusedInput.tagName}` });
+                    } else {
+                        sendResponse({ success: false, error: 'No active input field found on the page.' });
+                    }
                     break;
 
                 case 'PING':
@@ -877,42 +755,54 @@ class ToolBoxContent {
     }
 
     setupFormAutofill(form) {
-        // Add subtle indicator for ToolBox-enabled forms
+        // Wrapper für unsere Indikatoren erstellen
+        const wrapper = document.createElement('div');
+        wrapper.className = 'tb-form-indicator-wrapper';
+        wrapper.style.cssText = `position: absolute; top: -12px; right: -12px; z-index: 1000; display: flex; gap: 4px;`;
+
+        // Bestehender Indikator
         const indicator = document.createElement('div');
         indicator.className = 'tb-form-indicator';
+        indicator.title = 'ToolBox Pro hat dieses Formular erkannt';
         indicator.innerHTML = '🔐';
-        indicator.style.cssText = `
-            position: absolute;
-            top: -10px;
-            right: -10px;
-            width: 20px;
-            height: 20px;
-            background: #2E86AB;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            z-index: 1000;
-            opacity: 0.7;
-            transition: opacity 0.3s ease;
-        `;
 
-        // Position relative to form
-        if (form.style.position !== 'relative') {
+        // NEUER "Speichern"-Button
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'tb-form-save-btn';
+        saveBtn.title = 'Anmeldeinformationen manuell speichern';
+        saveBtn.innerHTML = '💾'; // Save icon
+        saveBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.handleManualSave(form);
+        };
+
+        wrapper.appendChild(indicator);
+        wrapper.appendChild(saveBtn);
+
+        if (getComputedStyle(form).position === 'static') {
             form.style.position = 'relative';
         }
+        form.appendChild(wrapper);
+    }
 
-        form.appendChild(indicator);
+    handleManualSave(form) {
+        const usernameField = form.querySelector('input[type="email"], input[name*="email"], input[name*="username"], input[name*="login"], input[type="text"]');
+        const passwordField = form.querySelector('input[type="password"]');
 
-        // Show on hover
-        form.addEventListener('mouseenter', () => {
-            indicator.style.opacity = '1';
-        });
+        if (usernameField && passwordField && usernameField.value && passwordField.value) {
+            const credentials = {
+                url: window.location.href,
+                username: usernameField.value,
+                password: passwordField.value,
+                title: new URL(window.location.href).hostname // Simple title
+            };
 
-        form.addEventListener('mouseleave', () => {
-            indicator.style.opacity = '0.7';
-        });
+            chrome.runtime.sendMessage({ type: 'MANUAL_SAVE_PASSWORD', credentials });
+            this.showGestureFeedback('Gespeichert!');
+        } else {
+            this.showGestureFeedback('Bitte füllen Sie Benutzername und Passwort aus.');
+        }
     }
 
     async autofillPassword(data) {

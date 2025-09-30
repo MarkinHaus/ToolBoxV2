@@ -59,6 +59,29 @@ def print_info(text):
     """Print info message"""
     print_colored(f"ℹ️  {text}", Colors.BLUE)
 
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
+
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
+
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
+
+    return "/bin/sh", "-c"
 
 class ToolBoxInstaller:
     def __init__(self):
@@ -74,7 +97,8 @@ class ToolBoxInstaller:
         print_header("Checking Requirements")
 
         try:
-            result = subprocess.run(['node', '--version'],
+            a,b =detect_shell()
+            result = subprocess.run([a,b,'node', '--version'],
                                     capture_output=True,
                                     text=True,
                                     check=True)
@@ -82,7 +106,7 @@ class ToolBoxInstaller:
             print_success(f"Node.js found: {node_version}")
 
             # Check npm
-            npm_result = subprocess.run(['npm', '--version'],
+            npm_result = subprocess.run([a,b,'npm', '--version'],
                                         capture_output=True,
                                         text=True,
                                         check=True)
@@ -91,9 +115,10 @@ class ToolBoxInstaller:
             return True
 
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print_error("Node.js is not installed!")
             print_info("Please install Node.js from: https://nodejs.org/")
             print_info("Minimum required version: 14.0.0")
+            # import webbrowser
+            # webbrowser.open("https://nodejs.org/")
             return False
 
     def detect_platform(self):
@@ -127,7 +152,9 @@ class ToolBoxInstaller:
 
         try:
             # Run npm build command
-            cmd = ['node', str(self.build_script), mode]
+
+            a,b =detect_shell()
+            cmd = [a,b,'node', str(self.build_script), mode]
             print_info(f"Executing: {' '.join(cmd)}")
 
             result = subprocess.run(cmd,
@@ -345,12 +372,14 @@ class ToolBoxInstaller:
 
             elif choice == '5':
                 if self.build_dir.exists():
+
+                    a, b = detect_shell()
                     if self.system == 'darwin':
-                        subprocess.run(['open', str(self.build_dir)])
+                        subprocess.run([a,b,'open', str(self.build_dir)])
                     elif self.system == 'windows':
                         os.startfile(str(self.build_dir))
                     elif self.system == 'linux':
-                        subprocess.run(['xdg-open', str(self.build_dir)])
+                        subprocess.run([a,b,'xdg-open', str(self.build_dir)])
                     print_success(f"Opened: {self.build_dir}")
                 else:
                     print_warning("Build folder doesn't exist yet. Build first!")
