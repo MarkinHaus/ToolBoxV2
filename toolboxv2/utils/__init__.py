@@ -13,6 +13,10 @@ from .system.main_tool import MainTool
 from .system.tb_logger import get_logger, setup_logging
 from .system.types import ApiResult, AppArgs, Result
 from .toolbox import App
+from .tbx import  install_support, setup as tbx_setup, test_tb_lang
+from .tbx.install_support import function_runner as system_tbx_support
+from .tbx.setup import function_runner as language_ide_extension
+from .tbx.test_tb_lang import function_runner as test_tbx_examples
 
 __all__ = [
     "App",
@@ -31,4 +35,10 @@ __all__ = [
     "Result",
     "ApiResult",
     "Code",
+    "install_support",
+    "tbx_setup",
+    "test_tb_lang",
+    "language_ide_extension",
+    "system_tbx_support",
+    "test_tbx_examples",
 ]

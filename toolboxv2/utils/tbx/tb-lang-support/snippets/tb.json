@@ -1,0 +1,67 @@
+{
+  "Function Definition": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params}) -> ${3:type} {",
+      "\t${4:body}",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+  "Main Function": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "\t$0",
+      "}",
+      "",
+      "main()"
+    ],
+    "description": "Main function"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "If statement"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:iterable} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "For loop"
+  },
+  "Config Block": {
+    "prefix": "@config",
+    "body": [
+      "@config {",
+      "\tmode: \"${1:jit}\"",
+      "\ttype_mode: \"${2:static}\"",
+      "\toptimize: ${3:true}",
+      "}"
+    ],
+    "description": "Configuration block"
+  },
+  "Shared Block": {
+    "prefix": "@shared",
+    "body": [
+      "@shared {",
+      "\t${1:key}: ${2:value}",
+      "}"
+    ],
+    "description": "Shared variables block"
+  },
+  "Pipeline": {
+    "prefix": "pipe",
+    "body": [
+      "${1:value} |> ${2:function1} |> ${3:function2}"
+    ],
+    "description": "Pipeline expression"
+  }
+}

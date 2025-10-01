@@ -1,0 +1,20 @@
+#!tb
+@config {
+    mode: "jit"
+    type_mode: "static"
+}
+
+fn main() {
+    let x = 10
+    let y = 20
+
+    echo "x = $x"
+    echo "y = $y"
+    echo "x + y = $(x + y)"
+    echo "x * y = $(x * y)"
+
+    let result = (x + y) * 2
+    echo "Result: $result"
+}
+
+main()

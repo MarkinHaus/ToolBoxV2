@@ -124,6 +124,12 @@ except Exception as e:
     print(f"WARNING ERROR IN LIBRARY MODULE´S details : {e}")
     MODS_ERROR = e
 
+try:
+    TBX = None
+    from .utils.tbx.setup import TBxSetup
+except ImportError as e:
+    TBX = e
+
 __author__ = """Markin Hausmanns"""
 __email__ = 'Markinhausmanns@gmail.com'
 
@@ -155,9 +161,9 @@ __all__ = [
     "TBEF",
     "Result",
     "ApiResult",
-    "RequestData",  # ADD
+    "RequestData",
     "Code",
-    "show_console",  # ADD
+    "show_console",
     "init_cwd",
     "tb_root_dir",
 
@@ -169,4 +175,5 @@ __all__ = [
     "ToolBoxInfo",
     "ToolBoxResultBM",
     "__init_cwd__",
+    "TBxSetup",
 ]

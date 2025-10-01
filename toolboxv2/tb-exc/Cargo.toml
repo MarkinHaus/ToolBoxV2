@@ -1,0 +1,40 @@
+[package]
+name = "tb-exc"
+version = "0.1.0"
+edition = "2021"
+authors = ["TB Team"]
+description = "TB - A unified multi-language programming environment"
+license = "MIT"
+
+[lib]
+name = "tb_lang"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tbx"
+path = "src/main.rs"
+
+[dependencies]
+uuid = "1.18.1"
+# No external dependencies for minimal core!
+# Everything is implemented in pure Rust std
+
+[dev-dependencies]
+# For testing only
+
+[features]
+default = []
+streaming = []
+jit-cache = []
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 1

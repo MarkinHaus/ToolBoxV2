@@ -1,0 +1,28 @@
+<!-- file: tb-lang-pycharm/pycharm_external_tool.xml -->
+<!-- Import this in PyCharm: Settings → Tools → External Tools → Import -->
+
+<toolSet name="TB Language">
+  <tool name="Run TB Program" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="true">
+    <exec>
+      <option name="COMMAND" value="$PyInterpreterDirectory$/python" />
+      <option name="PARAMETERS" value="$ProjectFileDir$/toolbox-exec/tb_lang_cli.py run $FilePath$" />
+      <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
+    </exec>
+  </tool>
+
+  <tool name="Check TB Program" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="false">
+    <exec>
+      <option name="COMMAND" value="$PyInterpreterDirectory$/python" />
+      <option name="PARAMETERS" value="$ProjectFileDir$/toolbox-exec/tb_lang_cli.py check $FilePath$" />
+      <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
+    </exec>
+  </tool>
+
+  <tool name="Compile TB Program" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="true">
+    <exec>
+      <option name="COMMAND" value="$PyInterpreterDirectory$/python" />
+      <option name="PARAMETERS" value="$ProjectFileDir$/toolbox-exec/tb_lang_cli.py compile $FilePath$ $FileNameWithoutExtension$" />
+      <option name="WORKING_DIRECTORY" value="$FileDir$" />
+    </exec>
+  </tool>
+</toolSet>

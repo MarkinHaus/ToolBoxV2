@@ -1,0 +1,17 @@
+name: "bash_utils"
+language: "bash"
+functions:
+  - name: "ls"
+    code: "ls"
+
+  - name: "pwd"
+    code: "pwd"
+
+  - name: "date"
+    code: "date"
+
+  - name: "whoami"
+    code: "whoami"
+
+  - name: "echo"
+    code: "echo"
