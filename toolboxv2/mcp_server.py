@@ -339,7 +339,7 @@ try:
     import aiohttp_cors
 
     AIOHTTP_AVAILABLE = True
-except ImportError:
+except ImportError and ModuleNotFoundError:
     AIOHTTP_AVAILABLE = False
     import traceback
     print(traceback.format_exc())
