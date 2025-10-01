@@ -1978,7 +1978,7 @@ def main_runner():
         except KeyboardInterrupt:
             pass
 
-        if runner_name is None:
+        if runner_name is None and len(sys.argv) < 2:
             runner_name = "default"
         # Wenn Runner angegeben
         if runner_name:
