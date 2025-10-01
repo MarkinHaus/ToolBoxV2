@@ -3635,6 +3635,13 @@ handleOutlineCreatedInChat(payload) {
                 const wsUrl = `${wsProtocol}://${window.location.host}/ws/registry/ui_connect`;
                 this.ws = new WebSocket(wsUrl);
 
+                // Heartbeat mechanism
+                this.heartbeatInterval = setInterval(() => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({event: 'ping', data: {}}));
+                    }
+                }, 25000); // Send ping every 25 seconds
+
                 this.ws.onopen = () => {
                     this.isConnected = true;
                     this.reconnectAttempts = 0;
@@ -3645,14 +3652,21 @@ handleOutlineCreatedInChat(payload) {
                 this.ws.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
+                        if (data.event === 'pong') {
+                            // Handle pong response
+                            return;
+                        }
                         this.handleWebSocketMessage(data);
                     } catch (error) {
                         console.error('Message parse error:', error);
                     }
                 };
 
-                this.ws.onclose = () => {
+                this.ws.onclose = (event) => {
                     this.isConnected = false;
+                    if (this.heartbeatInterval) {
+                        clearInterval(this.heartbeatInterval);
+                    }
                     this.updateConnectionStatus('disconnected', 'Disconnected');
                     this.scheduleReconnection();
                 };

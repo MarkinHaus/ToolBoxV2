@@ -95,12 +95,31 @@ class WebSocketPool:
             ws_message = WebSocketMessage.from_json(message)
             action = ws_message.event
 
+            # Handle ping/pong
+            if action == 'ping':
+                pong_message = WebSocketMessage(event='pong', data={})
+                await self.send_to_connection(connection_id, pong_message.to_json())
+                return
+
             # Try global actions first
             if action in self.global_actions:
-                await self.global_actions[action](self.pool_id, connection_id, ws_message)
+                # Run in executor to prevent blocking
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: asyncio.create_task(
+                        self.global_actions[action](self.pool_id, connection_id, ws_message)
+                    )
+                )
             # Then try connection-specific actions
             elif connection_id in self.actions and action in self.actions[connection_id]:
-                await self.actions[connection_id][action](self.pool_id, connection_id, ws_message)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: asyncio.create_task(
+                        self.actions[connection_id][action](self.pool_id, connection_id, ws_message)
+                    )
+                )
             else:
                 self.logger.warning(f"No handler for action '{action}' from {connection_id}")
 
@@ -246,13 +265,18 @@ class WebSocketClient:
         """Main message listening loop."""
         while self.should_reconnect and self.ws:
             try:
-                message_raw = await asyncio.wait_for(self.ws.recv(), timeout=5.0)
+                # Kürzere Timeouts für bessere Responsivität
+                message_raw = await asyncio.wait_for(self.ws.recv(), timeout=1.0)
 
-                # Handle the message in background
+                # Handle message in background task to prevent blocking
                 asyncio.create_task(self._handle_message(message_raw))
 
             except asyncio.TimeoutError:
-                continue  # Normal timeout
+                # Check connection health during timeout
+                if self.ws and self.ws.closed:
+                    self.logger.warning("Connection closed during timeout")
+                    break
+                continue
             except ConnectionClosed:
                 self.logger.warning("Connection closed by server")
                 break
@@ -289,6 +313,9 @@ class WebSocketClient:
                 else:
                     break
 
+            except asyncio.TimeoutError:
+                self.logger.error("Ping timeout - connection may be dead")
+                break
             except Exception as e:
                 self.logger.error(f"Ping failed: {e}")
                 break
@@ -356,14 +383,29 @@ class WebSocketServer:
         self.logger.info(f"New connection {connection_id} in pool {pool_id}")
 
         try:
+            # Ping-Task für diese Verbindung starten
+            ping_task = asyncio.create_task(self._connection_ping_loop(websocket, connection_id))
+
             async for message in websocket:
-                await pool.handle_message(connection_id, message)
+                # Message handling in background to prevent blocking
+                asyncio.create_task(pool.handle_message(connection_id, message))
+
         except ConnectionClosed:
-            pass
+            self.logger.info(f"Connection {connection_id} closed normally")
         except Exception as e:
-            self.logger.error(f"Connection error: {e}")
+            self.logger.error(f"Connection error for {connection_id}: {e}")
         finally:
+            ping_task.cancel()
             await pool.remove_connection(connection_id)
+
+    async def _connection_ping_loop(self, websocket, connection_id: str):
+        """Ping loop for individual connection."""
+        try:
+            while not websocket.closed:
+                await asyncio.sleep(30)  # Ping every 30 seconds
+                await websocket.ping()
+        except Exception as e:
+            self.logger.debug(f"Ping loop ended for {connection_id}: {e}")
 
     async def start(self, non_blocking: bool = False) -> None:
         """Start the WebSocket server."""

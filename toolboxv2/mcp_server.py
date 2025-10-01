@@ -69,6 +69,7 @@ def quick_error(*args, **kwargs):
     with MCPSafeIO():
         return _quick_error(*args, **kwargs)
 
+
 @dataclass
 class MCPConfig:
     """Production MCP Server configuration with smart defaults"""
@@ -87,6 +88,17 @@ class MCPConfig:
     use_cached_index: bool = True
     rich_notifications: bool = True
     performance_mode: bool = True
+
+    # NEU: Server-Modus Konfiguration
+    server_mode: str = "stdio"  # "stdio" oder "http"
+    http_host: str = "0.0.0.0"
+    http_port: int = 8765
+    require_auth: bool = True
+
+    # NEU: Logging-Steuerung
+    silent_mode: bool = False  # Für Agent-Modus
+    log_file: Optional[str] = None  # Log in Datei statt stdout
+
 
 class SmartInitManager:
     """Manages smart initialization with caching and notifications"""
@@ -208,6 +220,10 @@ class UnifiedAPIKeyManager:
             quick_warning("API Keys", f"Could not load keys file: {e}")
         return {}
 
+    def list_keys(self) -> Dict[str, Dict]:
+        """List all API keys with usage stats"""
+        return self.keys
+
     def _save_keys(self):
         """Save API keys with error handling"""
         try:
@@ -315,6 +331,370 @@ class EnhancedFlowSessionManager:
             del self.sessions[sid]
         return len(expired)
 
+
+# Neue Klasse einfügen vor ToolBoxV2MCPServer (ca. Zeile ~300)
+
+try:
+    from aiohttp import web
+    import aiohttp_cors
+
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+    import traceback
+    print(traceback.format_exc())
+
+
+
+# Einfügen nach MCPSafeIO Klasse (Zeile ~68)
+
+class SmartLogger:
+    """Intelligentes Logging-System das zwischen User- und Agent-Modus unterscheidet"""
+
+    def __init__(self, config: 'MCPConfig' = None):
+        self.config = config
+        self.silent = os.environ.get('MCP_SILENT_MODE', '0') == '1' or (config and config.silent_mode)
+        self.log_file = config.log_file if config else None
+
+        # Setup file logging wenn konfiguriert
+        if self.log_file:
+            self._setup_file_logging()
+
+    def _setup_file_logging(self):
+        """Setup file-based logging"""
+        log_path = Path(self.log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        logging.basicConfig(
+            filename=str(log_path),
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+
+    def info(self, category: str, message: str):
+        """Log info message"""
+        if self.silent:
+            if self.log_file:
+                logging.info(f"[{category}] {message}")
+            return
+
+        with MCPSafeIO():
+            _quick_info(category, message)
+
+    def success(self, category: str, message: str):
+        """Log success message"""
+        if self.silent:
+            if self.log_file:
+                logging.info(f"[{category}] SUCCESS: {message}")
+            return
+
+        with MCPSafeIO():
+            _quick_success(category, message)
+
+    def warning(self, category: str, message: str):
+        """Log warning message"""
+        if self.silent:
+            if self.log_file:
+                logging.warning(f"[{category}] {message}")
+            return
+
+        with MCPSafeIO():
+            _quick_warning(category, message)
+
+    def error(self, category: str, message: str):
+        """Log error message"""
+        if self.silent:
+            if self.log_file:
+                logging.error(f"[{category}] {message}")
+            return
+
+        with MCPSafeIO():
+            _quick_error(category, message)
+
+
+# Globaler Logger - wird später initialisiert
+_smart_logger: Optional[SmartLogger] = None
+
+
+def get_logger() -> SmartLogger:
+    """Get global smart logger instance"""
+    global _smart_logger
+    if _smart_logger is None:
+        _smart_logger = SmartLogger()
+    return _smart_logger
+class MCPHTTPTransport:
+    """HTTP/REST Transport für MCP Server mit API-Key Authentifizierung"""
+
+    def __init__(self, server: 'ToolBoxV2MCPServer', config: MCPConfig):
+        self.server = server
+        self.config = config
+        self.app = web.Application()
+        self.sessions: Dict[str, Dict] = {}
+
+        if not AIOHTTP_AVAILABLE:
+            raise ImportError("aiohttp required for HTTP mode: pip install aiohttp aiohttp-cors")
+
+        self._setup_routes()
+        self._setup_cors()
+
+    def _setup_cors(self):
+        """Setup CORS for web clients"""
+        cors = aiohttp_cors.setup(self.app, defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                allow_credentials=True,
+                expose_headers="*",
+                allow_headers="*",
+                allow_methods="*"
+            )
+        })
+
+        for route in list(self.app.router.routes()):
+            cors.add(route)
+
+    def _setup_routes(self):
+        """Setup HTTP routes"""
+        self.app.router.add_post('/mcp/initialize', self._handle_initialize)
+        self.app.router.add_post('/mcp/tools/list', self._handle_list_tools)
+        self.app.router.add_post('/mcp/tools/call', self._handle_call_tool)
+        self.app.router.add_post('/mcp/resources/list', self._handle_list_resources)
+        self.app.router.add_post('/mcp/resources/read', self._handle_read_resource)
+        self.app.router.add_get('/health', self._handle_health)
+        self.app.router.add_get('/api/keys', self._handle_list_keys)
+
+    def _authenticate(self, request: web.Request) -> Optional[Dict]:
+        """Authenticate request via API key"""
+        if not self.config.require_auth:
+            return {"permissions": ["read", "write", "execute", "admin"]}
+
+        # Check Authorization header
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            api_key = auth_header[7:]
+        else:
+            # Check X-API-Key header
+            api_key = request.headers.get('X-API-Key', '')
+
+        if not api_key:
+            return None
+
+        # Validate with API key manager
+        key_info = self.server.api_key_manager.validate_key(api_key)
+        return key_info
+
+    def _check_permission(self, key_info: Dict, required: str) -> bool:
+        """Check if key has required permission"""
+        if not key_info:
+            return False
+        return required in key_info.get('permissions', [])
+
+    async def _handle_health(self, request: web.Request) -> web.Response:
+        """Health check endpoint"""
+        return web.json_response({
+            "status": "healthy",
+            "version": self.config.server_version,
+            "mode": "http",
+            "uptime": time.time() - self.server.performance_metrics.get("init_time", 0)
+        })
+
+    async def _handle_initialize(self, request: web.Request) -> web.Response:
+        """MCP initialize endpoint"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {
+            "key_info": key_info,
+            "created": time.time()
+        }
+
+        return web.json_response({
+            "session_id": session_id,
+            "server_name": self.config.server_name,
+            "server_version": self.config.server_version,
+            "capabilities": {
+                "tools": True,
+                "resources": True,
+                "permissions": key_info.get('permissions', [])
+            }
+        })
+
+    async def _handle_list_tools(self, request: web.Request) -> web.Response:
+        """List available tools based on permissions"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        # Get all tools via handler
+        handler = self.server.server._request_handlers.get('tools/list')
+        if not handler:
+            return web.json_response({"error": "Handler not found"}, status=500)
+
+        try:
+            tools = await handler()
+
+            # Filter tools based on permissions
+            permissions = key_info.get('permissions', [])
+            filtered_tools = []
+
+            for tool in tools:
+                tool_name = tool.name
+
+                # Permission checks
+                if 'python' in tool_name and 'execute' not in permissions:
+                    continue
+                if 'docs_writer' in tool_name and 'write' not in permissions:
+                    continue
+                if 'module_manage' in tool_name and 'admin' not in permissions:
+                    continue
+
+                filtered_tools.append({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.inputSchema
+                })
+
+            return web.json_response({"tools": filtered_tools})
+
+        except Exception as e:
+            get_logger().error("HTTP", f"List tools failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_call_tool(self, request: web.Request) -> web.Response:
+        """Call a tool with permission checks"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        try:
+            data = await request.json()
+            tool_name = data.get('name')
+            arguments = data.get('arguments', {})
+
+            # Permission checks
+            permissions = key_info.get('permissions', [])
+
+            if 'python' in tool_name and 'execute' not in permissions:
+                return web.json_response({"error": "Permission denied"}, status=403)
+            if 'docs_writer' in tool_name and 'write' not in permissions:
+                return web.json_response({"error": "Permission denied"}, status=403)
+            if 'module_manage' in tool_name and 'admin' not in permissions:
+                return web.json_response({"error": "Permission denied"}, status=403)
+
+            # Execute tool via handler
+            handler = self.server.server._request_handlers.get('tools/call')
+            if not handler:
+                return web.json_response({"error": "Handler not found"}, status=500)
+
+            result = await handler(tool_name, arguments)
+
+            # Convert result to JSON
+            result_data = []
+            for item in result:
+                result_data.append({
+                    "type": item.type,
+                    "text": item.text
+                })
+
+            return web.json_response({"result": result_data})
+
+        except Exception as e:
+            get_logger().error("HTTP", f"Call tool failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_list_resources(self, request: web.Request) -> web.Response:
+        """List available resources"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        if not self._check_permission(key_info, 'read'):
+            return web.json_response({"error": "Permission denied"}, status=403)
+
+        try:
+            handler = self.server.server._request_handlers.get('resources/list')
+            if not handler:
+                return web.json_response({"error": "Handler not found"}, status=500)
+
+            resources = await handler()
+
+            resources_data = []
+            for resource in resources:
+                resources_data.append({
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "description": resource.description,
+                    "mimeType": resource.mimeType
+                })
+
+            return web.json_response({"resources": resources_data})
+
+        except Exception as e:
+            get_logger().error("HTTP", f"List resources failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_read_resource(self, request: web.Request) -> web.Response:
+        """Read a resource"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        if not self._check_permission(key_info, 'read'):
+            return web.json_response({"error": "Permission denied"}, status=403)
+
+        try:
+            data = await request.json()
+            uri = data.get('uri')
+
+            handler = self.server.server._request_handlers.get('resources/read')
+            if not handler:
+                return web.json_response({"error": "Handler not found"}, status=500)
+
+            content = await handler(uri)
+
+            return web.json_response({"content": content})
+
+        except Exception as e:
+            get_logger().error("HTTP", f"Read resource failed: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_list_keys(self, request: web.Request) -> web.Response:
+        """List API keys (admin only)"""
+        key_info = self._authenticate(request)
+        if not key_info:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+
+        if not self._check_permission(key_info, 'admin'):
+            return web.json_response({"error": "Permission denied"}, status=403)
+
+        keys = self.server.api_key_manager.list_keys()
+
+        # Don't expose actual keys, just metadata
+        keys_info = []
+        for key_hash, info in keys.items():
+            keys_info.append({
+                "name": info['name'],
+                "permissions": info['permissions'],
+                "created": info['created'],
+                "last_used": info['last_used'],
+                "usage_count": info['usage_count']
+            })
+
+        return web.json_response({"keys": keys_info})
+
+    async def start(self):
+        """Start HTTP server"""
+        runner = web.AppRunner(self.app)
+        await runner.setup()
+
+        site = web.TCPSite(runner, self.config.http_host, self.config.http_port)
+        await site.start()
+
+        get_logger().success("HTTP Server",
+                             f"Started on http://{self.config.http_host}:{self.config.http_port}")
+        get_logger().info("HTTP Server",
+                          "Endpoints: /mcp/*, /health, /api/keys")
+
 class ToolBoxV2MCPServer:
     """Production-ready unified MCP Server with smart features"""
 
@@ -359,7 +739,7 @@ class ToolBoxV2MCPServer:
                 self.tb_app = get_app(from_="MCP-Server", name="mcp")
 
                 # Override print functions for clean MCP communication
-                def _silent_print(*args, **kwargs): pass
+                def _silent_print(*args, **kwargs): return False
                 self.tb_app.print = _silent_print
                 self.tb_app.sprint = _silent_print
 
@@ -1392,33 +1772,67 @@ class ProductionMCPInterface:
             }
         }
 
-    async def start_server(self):
+    async def start_server(self, mode: str = None):
         """Start the production server with full initialization"""
         try:
-            quick_info("MCP Server", f"🚀 Starting {self.config.server_name} v{self.config.server_version}")
+            # Override mode if specified
+            if mode:
+                self.config.server_mode = mode
+
+            # Initialize smart logger
+            global _smart_logger
+            _smart_logger = SmartLogger(self.config)
+
+            get_logger().info("MCP Server",
+                              f"🚀 Starting {self.config.server_name} v{self.config.server_version}")
+            get_logger().info("MCP Server", f"Mode: {self.config.server_mode.upper()}")
 
             if self.server_instance is None:
                 self.server_instance = ToolBoxV2MCPServer(self.config)
 
-            # Run server with stdio transport
-            async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-                await self.server_instance.server.run(
-                    read_stream,
-                    write_stream,
-                    InitializationOptions(
-                        server_name=self.config.server_name,
-                        server_version=self.config.server_version,
-                        capabilities=self.server_instance.server.get_capabilities(
-                            notification_options=NotificationOptions(),
-                            experimental_capabilities={}
+            if self.config.server_mode == "http":
+                # HTTP mode
+                if not AIOHTTP_AVAILABLE:
+                    get_logger().error("MCP Server",
+                                       "HTTP mode requires aiohttp: pip install aiohttp aiohttp-cors")
+                    raise ImportError("aiohttp not available")
+
+                http_transport = MCPHTTPTransport(self.server_instance, self.config)
+                await http_transport.start()
+
+                # Keep running
+                try:
+                    while True:
+                        await asyncio.sleep(1)
+                except KeyboardInterrupt:
+                    get_logger().info("MCP Server", "🛑 Server stopped by user")
+
+            else:
+                # stdio mode (default)
+                get_logger().info("MCP Server", "Using stdio transport")
+
+                async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+                    await self.server_instance.server.run(
+                        read_stream,
+                        write_stream,
+                        InitializationOptions(
+                            server_name=self.config.server_name,
+                            server_version=self.config.server_version,
+                            capabilities=self.server_instance.server.get_capabilities(
+                                notification_options=NotificationOptions(),
+                                experimental_capabilities={}
+                            )
                         )
                     )
-                )
+
         except KeyboardInterrupt:
-            quick_info("MCP Server", "🛑 Server stopped by user")
+            get_logger().info("MCP Server", "🛑 Server stopped by user")
         except Exception as e:
-            quick_error("MCP Server", f"Server error: {e}")
+            get_logger().error("MCP Server", f"Server error: {e}")
             raise
+
+
+# Ersetze die main() Funktion (ca. Zeile ~980)
 
 def main():
     """Production main entry point with comprehensive CLI"""
@@ -1427,63 +1841,214 @@ def main():
     parser = argparse.ArgumentParser(
         description="ToolBoxV2 MCP Server - Production Ready",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        prog='tb mcp',
         epilog="""
 Examples:
-  %(prog)s                    # Start server
-  %(prog)s --generate-key admin  # Generate admin API key
-  %(prog)s --config            # Show configuration
-  %(prog)s --setup             # Setup server with wizard
+  # STDIO Mode (für Claude Desktop, etc.)
+  %(prog)s                              # Start im stdio Modus
+
+  # HTTP Mode (für Web/REST Clients)
+  %(prog)s --mode http                  # Start HTTP server
+  %(prog)s --mode http --port 8080      # Custom port
+  %(prog)s --mode http --no-auth        # Ohne Authentifizierung
+
+  # API Key Management
+  %(prog)s --generate-key admin         # Generate admin API key
+  %(prog)s --generate-key agent --permissions read execute
+  %(prog)s --list-keys                  # List all API keys
+
+  # Configuration
+  %(prog)s --config                     # Show configuration
+  %(prog)s --setup                      # Setup wizard
+  %(prog)s --performance                # Performance guide
         """
     )
 
-    parser.add_argument("--generate-key", type=str, help="Generate new API key with given name")
-    parser.add_argument("--list-keys", action="store_true", help="List all API keys")
-    parser.add_argument("--revoke-key", type=str, help="Revoke API key")
-    parser.add_argument("--config", action="store_true", help="Show server configuration")
-    parser.add_argument("--setup", action="store_true", help="Run setup wizard")
-    parser.add_argument("--performance", action="store_true", help="Show performance guide")
+    # Server mode
+    parser.add_argument("--mode", choices=["stdio", "http"], default="stdio",
+                        help="Server mode: stdio (default) or http")
+    parser.add_argument("--show", action="store_false",
+                        help="Show console output", default=True)
+    parser.add_argument("--log-file", type=str,
+                        help="Log to file instead of stdout")
+
+    # HTTP mode options
+    parser.add_argument("--host", type=str, default="0.0.0.0",
+                        help="HTTP server host (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8765,
+                        help="HTTP server port (default: 8765)")
+    parser.add_argument("--no-auth", action="store_true",
+                        help="Disable API key authentication (NOT RECOMMENDED)")
+
+    # Management commands
+    parser.add_argument("--generate-key", type=str, metavar="NAME",
+                        help="Generate new API key with given name")
+    parser.add_argument("--permissions", nargs="+",
+                        choices=["read", "write", "execute", "admin"],
+                        help="Permissions for generated key (default: all)")
+    parser.add_argument("--list-keys", action="store_true",
+                        help="List all API keys")
+    parser.add_argument("--revoke-key", type=str, metavar="NAME",
+                        help="Revoke API key by name")
+    parser.add_argument("--config", action="store_true",
+                        help="Show server configuration")
+    parser.add_argument("--setup", action="store_true",
+                        help="Run setup wizard")
+    parser.add_argument("--performance", action="store_true",
+                        help="Show performance guide")
 
     args = parser.parse_args()
 
-    interface = ProductionMCPInterface()
+    # Setup config
+    config = MCPConfig()
+    config.server_mode = args.mode
+    config.silent_mode = args.show or (os.environ.get('MCP_SILENT_MODE') == '1')
+    config.log_file = args.log_file
+    config.http_host = args.host
+    config.http_port = args.port
+    config.require_auth = not args.no_auth
 
+    interface = ProductionMCPInterface()
+    interface.config = config
+
+    # Handle management commands (diese sollten nicht silent sein)
     if args.setup:
-        # Setup wizard
-        print("🧙 ToolBoxV2 MCP Server Setup Wizard")
-        print("=" * 50)
+        # Temporär silent mode deaktivieren für Setup
+        config.silent_mode = False
+        _smart_logger = SmartLogger(config)
+
+        print(f"\n{Style.CYAN('┌─')} 🧙 ToolBoxV2 MCP Server Setup Wizard ")
+        print(Style.CYAN('│') )
 
         # Generate initial key if needed
         keys = interface.api_key_manager.list_keys()
         if not keys:
-            print("\n📝 No API keys found. Generating default admin key...")
+            print(Style.CYAN('│') + "  📝 No API keys found. Generating default admin key...")
             result = interface.generate_api_key("default_admin")
-            print(f"\n🔑 Your API Key: {result['api_key']}")
-            print("⚠️  Save this key securely!")
+            print(Style.CYAN('│') + f"  🔑 Your API Key: {Style.YELLOW(result['api_key'])}")
+            print(Style.CYAN('│') + "  " + Style.RED("⚠️  Save this key securely!"))
 
-        config = interface.get_server_config()
-        print(f"\n📋 Server Configuration:\n{json.dumps(config, indent=2)}")
+        print(Style.CYAN('│'))
 
-        print(f"\n✅ Setup complete! Run without --setup to start the server.")
+        config_data = interface.get_server_config()
+        print(Style.CYAN('│') + f"  📋 Server Configuration:")
+        print(Style.CYAN('│') + f"     • Name: {config_data['server_info']['name']}")
+        print(Style.CYAN('│') + f"     • Version: {config_data['server_info']['version']}")
+        print(Style.CYAN('│') + f"     • Default Mode: {Style.GREEN('stdio')}")
+        print(Style.CYAN('│') + f"     • HTTP Available: {Style.GREEN('Yes')}")
+        print(Style.CYAN('│') )
+
+        print(Style.CYAN('│') + "  " + Style.GREEN("✅ Setup complete!"))
+        print(Style.CYAN('│') + f"  Run {Style.YELLOW('tb mcp')} to start the server.")
+        print(Style.CYAN('│') )
+        print(Style.CYAN('└─') + '─' * 50 + Style.CYAN('\n'))
         return
 
     if args.generate_key:
-        result = interface.generate_api_key(args.generate_key)
-        print(json.dumps(result, indent=2))
+        config.silent_mode = False
+        _smart_logger = SmartLogger(config)
+
+        permissions = args.permissions if args.permissions else ["read", "write", "execute", "admin"]
+        result = interface.generate_api_key(args.generate_key, permissions)
+
+        print(f"\n{Style.GREEN('✓')} API Key Generated:")
+        print(f"  {Style.CYAN('Name:')} {result['name']}")
+        print(f"  {Style.CYAN('Key:')} {Style.YELLOW(result['api_key'])}")
+        print(f"  {Style.CYAN('Permissions:')} {', '.join(result['permissions'])}")
+        print(f"\n{Style.RED('⚠')}  {result['security_note']}\n")
+
+        # STDIO Configuration
+        print(f"{Style.CYAN('📋 STDIO Configuration (Claude Desktop, etc.):')}")
+        print(json.dumps({
+            "mcpServers": {
+                "toolboxv2": {
+                    "command": "tb",
+                    "args": [
+                        "mcp"
+                    ],
+                    "env": {
+                        "MCP_API_KEY": result['api_key']
+                    }
+                }
+            }
+        }, indent=2))
+
+        # HTTP Configuration
+        print(f"\n{Style.CYAN('🌐 HTTP Configuration (URL Access):')}")
+        print(json.dumps({
+            "mcpServers": {
+                "toolboxv2-http": {
+                    "url": f"http://{config.http_host}:{config.http_port}/mcp",
+                    "transport": "http",
+                    "headers": {
+                        "Authorization": f"Bearer {result['api_key']}"
+                    }
+                }
+            }
+        }, indent=2))
+
+        print(f"\n{Style.YELLOW('💡 Usage:')}")
+        print(f"  • STDIO: Add first config to your MCP client")
+        print(f"  • HTTP: Start server with 'tb mcp --mode http' then use second config")
         return
 
     if args.list_keys:
+        config.silent_mode = False
+        _smart_logger = SmartLogger(config)
+
         keys = interface.api_key_manager.list_keys()
-        print(f"📋 Found {len(keys)} API keys:")
-        print(json.dumps(keys, indent=2))
+        print(f"\n📋 Found {len(keys)} API keys:\n")
+
+        for key_hash, info in keys.items():
+            print(f"  • {Style.CYAN(info['name'])}")
+            print(f"    Permissions: {', '.join(info['permissions'])}")
+            print(f"    Created: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['created']))}")
+            print(f"    Usage: {info['usage_count']} calls")
+            print()
         return
 
     if args.config:
-        config = interface.get_server_config()
-        print("📋 Server Configuration:")
-        print(json.dumps(config, indent=2))
+        config.silent_mode = False
+        _smart_logger = SmartLogger(config)
+
+        config_data = interface.get_server_config()
+        print("\n📋 Server Configuration:")
+        print(json.dumps(config_data, indent=2))
+        print()
+        print(json.dumps({
+            "mcpServers": {
+                "toolboxv2": {
+                    "command": "tb",
+                    "args": [
+                        "mcp"
+                    ],
+                    "env": {
+                        "MCP_API_KEY": "<['api_key']>"
+                    }
+                }
+            }
+        }, indent=2))
+
+        # HTTP Configuration
+        print(f"\n{Style.CYAN('🌐 HTTP Configuration (URL Access):')}")
+        print(json.dumps({
+            "mcpServers": {
+                "toolboxv2-http": {
+                    "url": f"http://{config.http_host}:{config.http_port}/mcp",
+                    "transport": "http",
+                    "headers": {
+                        "Authorization": f"Bearer <['api_key']>"
+                    }
+                }
+            }
+        }, indent=2))
+
         return
 
     if args.performance:
+        config.silent_mode = False
+        _smart_logger = SmartLogger(config)
+
         print("""
 🚀 ToolBoxV2 MCP Server - Performance Guide
 
@@ -1494,26 +2059,54 @@ Examples:
 - Rich progress notifications
 - Memory-efficient session management
 
-## Optimization Tips:
-1. Use section_id for direct documentation access (fastest)
-2. Set appropriate max_results limits
-3. Enable caching with use_cache=true
-4. Use specific queries over broad searches
-5. Monitor performance metrics via toolbox_status
+## Server Modes:
 
-## Cache Settings:
-- Documentation queries: 5 minutes
-- Session timeout: 1 hour
-- Max cache entries: 100
-- Auto-cleanup: Every 5 minutes
+### STDIO Mode (Default)
+- Direct communication via stdin/stdout
+- Perfect for Claude Desktop, Cline, etc.
+- Zero network overhead
+- Usage: tb mcp
+
+### HTTP Mode
+- REST API with SSE support
+- Multi-client access
+- API key authentication
+- Usage: tb mcp --mode http --port 8765
+
+## HTTP Endpoints:
+- POST /mcp/initialize - Initialize session
+- POST /mcp/tools/list - List available tools
+- POST /mcp/tools/call - Execute tool
+- POST /mcp/resources/list - List resources
+- POST /mcp/resources/read - Read resource
+- GET /health - Health check
+- GET /api/keys - List API keys (admin)
+
+## Authentication:
+Include API key in requests:
+  Authorization: Bearer YOUR_API_KEY
+  or
+  X-API-Key: YOUR_API_KEY
         """)
         return
 
     # Start the server
+    if not config.silent_mode:
+        print(f"\n{Style.CYAN('═' * 70)}")
+        print(f"  {Style.GREEN('🚀 ToolBoxV2 MCP Server')}")
+        print(f"  Mode: {Style.YELLOW(args.mode.upper())}")
+        if args.mode == "http":
+            print(f"  URL: {Style.CYAN(f'http://{args.host}:{args.port}')}")
+            auth_status = Style.GREEN("Enabled") if config.require_auth else Style.RED("Disabled")
+            print(f"  Auth: {auth_status}")
+        print(f"{Style.CYAN('═' * 70)}\n")
+
     try:
-        asyncio.run(interface.start_server())
+        asyncio.run(interface.start_server(args.mode))
     except Exception as e:
-        quick_error("Main", f"Failed to start server: {e}")
+        get_logger().error("Main", f"Failed to start server: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -63,7 +63,7 @@ class NotificationSystem(metaclass=Singleton):
         self.platform = sys.platform.lower()
         self.fallback_to_tkinter = True
         self.sound_enabled = False
-        self.default_timeout = 2500 # Add default timeout in milliseconds
+        self.default_timeout = 1500 # Add default timeout in milliseconds
         self.max_timeout = 30000
         self.default_position = NotificationPosition.TOP_RIGHT
         self._test_os_notifications()

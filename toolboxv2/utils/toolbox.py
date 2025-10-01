@@ -129,12 +129,12 @@ class App(AppType, metaclass=Singleton):
         if not os.path.exists(self.info_dir):
             os.makedirs(self.info_dir, exist_ok=True)
 
-        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 
-        print("Logger " + logger_info_str)
-        print("================================")
+        self.print("Logger " + logger_info_str)
+        self.print("================================")
         self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Application instance"))
         if args.init and args.init is not None and self.start_dir not in sys.path:
@@ -196,7 +196,7 @@ class App(AppType, metaclass=Singleton):
         self.session: Session = Session(self.get_username())
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
-        from .system.db_cli_manager import ClusterManager, get_executable_path
+        from toolboxv2.utils.clis.db_cli_manager import ClusterManager, get_executable_path
         self.cluster_manager = ClusterManager()
         online_list, server_list = self.cluster_manager.status_all(silent=True)
         if not server_list:
@@ -405,7 +405,7 @@ class App(AppType, metaclass=Singleton):
                 self.debug_rains(e)
                 return None
         else:
-            self.print(f"module {loc + mod_name} is not valid")
+            self.sprint(f"module {loc + mod_name} is not valid")
             return None
         if hasattr(modular_file_object, "Tools"):
             tools_class = modular_file_object.Tools
@@ -982,7 +982,8 @@ class App(AppType, metaclass=Singleton):
                         else:
                             self.print('Opened :', result.name)
                 else:
-                    self.print('Opened :', result)
+                    if result:
+                        self.print('Opened :', result)
             except Exception as e:
                 self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
                 self.debug_rains(e)
@@ -1407,6 +1408,13 @@ class App(AppType, metaclass=Singleton):
         self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
+            try:
+                return asyncio.run(self.a_fuction_runner(function, function_data, args, kwargs, t0))
+            except RuntimeError:
+                try:
+                    return self.loop.run_until_complete(self.a_fuction_runner(function, function_data, args, kwargs, t0))
+                except RuntimeError:
+                    pass
             raise ValueError(f"Fuction {function_name} is Async use a_run_any")
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
@@ -1777,14 +1785,15 @@ class App(AppType, metaclass=Singleton):
             print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         print(text, *args, **kwargs, flush=flush)
 
-    def sprint(self, text="", *args, **kwargs):
+    def sprint(self, text="", show_system=True, *args, **kwargs):
         if text is None:
             return True
         if 'live' in self.id:
             return
         flush = kwargs.pop('flush', True)
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+        if show_system:
+            print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
             print()

@@ -803,7 +803,7 @@ body {
                 const contentDiv = document.getElementById(targetDivId);
                 if (!contentDiv) return;
                 try {
-                    const response = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
+                    const response = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances_with_cli', null, 'GET');
                     if (response.error === TB.ToolBoxError.none) {
                         renderMyInstancesAndModules(response.get(), contentDiv);
                     } else {
@@ -816,17 +816,63 @@ body {
 
             function renderMyInstancesAndModules(instances, contentDiv) {
                 if (!instances || instances.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">You have no active instances. Modules can be activated once an instance is present.</p>'; return;
+                    contentDiv.innerHTML = '<p class="tb-text-gray-500">You have no active instances.</p>'; return;
                 }
-                // Assuming one primary instance for now for module management simplicity
+
                 const primaryInstance = instances[0];
-                let html = `<div class="instance-card">
-                                <h4>Primary Instance (Session ID: ${TB.utils.escapeHtml(primaryInstance.SiID)})</h4>
-                                <p class="tb-text-sm">WebSocket ID: ${TB.utils.escapeHtml(primaryInstance.webSocketID)}</p>
-                                <button class="tb-btn tb-btn-danger tb-mt-2" data-instance-siid="${primaryInstance.SiID}"><span class="material-symbols-outlined tb-mr-1">close</span>Close This Instance</button>
-                            </div>
-                            <h3 class="tb-text-lg tb-font-semibold tb-mt-4 tb-mb-2">Available Modules</h3>
-                            <div class="settings-grid">`;
+                let html = `
+                    <div class="instance-card">
+                        <h4>Web Instance (Session ID: ${TB.utils.escapeHtml(primaryInstance.SiID)})</h4>
+                        <p class="tb-text-sm">WebSocket ID: ${TB.utils.escapeHtml(primaryInstance.webSocketID)}</p>
+                        <button class="tb-btn tb-btn-danger tb-mt-2" data-instance-siid="${primaryInstance.SiID}">
+                            <span class="material-symbols-outlined tb-mr-1">close</span>Close Web Instance
+                        </button>
+                    </div>`;
+
+                // CLI Sessions Section
+                if (primaryInstance.cli_sessions && primaryInstance.cli_sessions.length > 0) {
+                    html += `
+                        <div class="cli-sessions-card tb-mt-4">
+                            <h4>Active CLI Sessions (${primaryInstance.active_cli_sessions})</h4>
+                            <div class="cli-sessions-list">`;
+
+                    primaryInstance.cli_sessions.forEach(session => {
+                        const createdAt = new Date(session.created_at * 1000).toLocaleString();
+                        const lastActivity = new Date(session.last_activity * 1000).toLocaleString();
+                        const statusColor = session.status === 'active' ? 'tb-text-green-600' : 'tb-text-gray-500';
+
+                        html += `
+                            <div class="cli-session-item tb-p-3 tb-border tb-rounded tb-mb-2">
+                                <div class="tb-flex tb-justify-between tb-items-center">
+                                    <div>
+                                        <span class="tb-font-medium">CLI Session</span>
+                                        <span class="tb-text-sm ${statusColor}">${session.status}</span>
+                                    </div>
+                                    <button class="tb-btn tb-btn-sm tb-btn-danger"
+                                            onclick="closeCLISession('${session.cli_session_id}')">
+                                        <span class="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                                <div class="tb-text-xs tb-text-gray-600 tb-mt-1">
+                                    <div>Created: ${createdAt}</div>
+                                    <div>Last Activity: ${lastActivity}</div>
+                                </div>
+                            </div>`;
+                    });
+
+                    html += `</div></div>`;
+                } else {
+                    html += `
+                        <div class="cli-sessions-card tb-mt-4">
+                            <h4>CLI Sessions</h4>
+                            <p class="tb-text-gray-500">No active CLI sessions</p>
+                        </div>`;
+                }
+
+                // Modules section
+                html += `
+                    <h3 class="tb-text-lg tb-font-semibold tb-mt-4 tb-mb-2">Available Modules</h3>
+                    <div class="settings-grid">`;
 
                 const activeModuleNames = primaryInstance.live_modules.map(m => m.name);
 
@@ -844,6 +890,7 @@ body {
                 html += '</div>';
                 contentDiv.innerHTML = html;
 
+                // Event listeners
                 contentDiv.querySelector(`button[data-instance-siid="${primaryInstance.SiID}"]`)?.addEventListener('click', async (e) => {
                     // Same close instance logic as before
                     const siidToClose = e.currentTarget.dataset.instanceSiid;
@@ -893,6 +940,31 @@ body {
                             e.target.checked = !activate; // Revert toggle on error
                         }
                     });
+                });
+            }
+
+            async function closeCLISession(cliSessionId) {
+                TB.ui.Modal.show({
+                    title: "Close CLI Session",
+                    content: `<p>Are you sure you want to close this CLI session?</p>`,
+                    buttons: [
+                        { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
+                        { text: 'Close Session', variant: 'danger', action: async m => {
+                            TB.ui.Loader.show("Closing CLI session...");
+                            const closeRes = await TB.api.request('CloudM.UserDashboard', 'close_cli_session',
+                                { cli_session_id: cliSessionId }, 'POST');
+
+                            if (closeRes.error === TB.ToolBoxError.none) {
+                                TB.ui.Loader.hide();
+                                TB.ui.showToast('CLI session closed successfully', 'success');
+                                loadMyInstancesAndModulesSection(); // Refresh the view
+                            } else {
+                                TB.ui.Loader.hide();
+                                TB.ui.showToast('Failed to close CLI session: ' + closeRes.info.help_text, 'error');
+                            }
+                            m.close();
+                        }}
+                    ]
                 });
             }
 
@@ -1329,3 +1401,180 @@ async def update_my_appearance_settings(app: App, request: RequestData, data: di
 
     return Result.ok(info="Appearance settings saved successfully.",
                      data=current_user.settings)  # Return updated settings
+
+
+# ///
+import jwt
+import time
+
+
+@export(mod_name=Name, version=version, api=True)
+def configure_jwt_settings(app: App = None, ttl_hours: int = 24, allowed_mods: list = None):
+    """Configure JWT settings for CLI sessions"""
+    if app is None:
+        app = get_app("CloudM.configure_jwt_settings")
+
+    if allowed_mods is None:
+        allowed_mods = ["CloudM", "DB", "FileHandler"]
+
+    jwt_config = {
+        'ttl_hours': ttl_hours,
+        'allowed_mods': allowed_mods,
+        'secret_key': app.config_fh.get_file_handler("jwt_secret") or _generate_jwt_secret(app),
+        'algorithm': 'HS256'
+    }
+
+    app.config_fh.add_to_save_file_handler("jwt_config", jwt_config)
+    return Result.ok("JWT configuration updated", data=jwt_config)
+
+
+def _generate_jwt_secret(app: App) -> str:
+    """Generate and store JWT secret key"""
+    from toolboxv2 import Code
+    secret = Code.generate_random_string(64)
+    app.config_fh.add_to_save_file_handler("jwt_secret", secret)
+    return secret
+
+
+@export(mod_name=Name, version=version, api=True)
+def generate_cli_jwt(app: App = None, username: str = None, custom_ttl: int = None):
+    """Generate JWT token for CLI access"""
+    if app is None:
+        app = get_app("CloudM.generate_cli_jwt")
+
+    if not username:
+        return Result.default_user_error("Username required")
+
+    jwt_config = app.config_fh.get_file_handler("jwt_config")
+    if not jwt_config:
+        # Use default configuration
+        configure_jwt_settings(app)
+        jwt_config = app.config_fh.get_file_handler("jwt_config")
+
+    ttl_hours = custom_ttl or jwt_config.get('ttl_hours', 24)
+
+    payload = {
+        'username': username,
+        'iat': int(time.time()),
+        'exp': int(time.time()) + (ttl_hours * 3600),
+        'type': 'cli_access',
+        'allowed_mods': jwt_config.get('allowed_mods', [])
+    }
+
+    token = jwt.encode(
+        payload,
+        jwt_config['secret_key'],
+        algorithm=jwt_config['algorithm']
+    )
+
+    return Result.ok("JWT generated", data={'token': token, 'expires_in': ttl_hours * 3600})
+
+
+@export(mod_name=Name, version=version, api=True)
+def validate_cli_jwt(app: App = None, token: str = None):
+    """Validate CLI JWT token"""
+    if app is None:
+        app = get_app("CloudM.validate_cli_jwt")
+
+    if not token:
+        return Result.default_user_error("Token required")
+
+    jwt_config = app.config_fh.get_file_handler("jwt_config")
+    if not jwt_config:
+        return Result.default_internal_error("JWT configuration not found")
+
+    try:
+        payload = jwt.decode(
+            token,
+            jwt_config['secret_key'],
+            algorithms=[jwt_config['algorithm']]
+        )
+
+        # Check if token is for CLI access
+        if payload.get('type') != 'cli_access':
+            return Result.default_user_error("Invalid token type")
+
+        return Result.ok("Token valid", data=payload)
+
+    except jwt.ExpiredSignatureError:
+        return Result.default_user_error("Token expired")
+    except jwt.InvalidTokenError:
+        return Result.default_user_error("Invalid token")
+
+
+@export(mod_name=Name, version=version, api=True)
+def get_jwt_dashboard(app: App = None):
+    """Get JWT management dashboard data"""
+    if app is None:
+        app = get_app("CloudM.get_jwt_dashboard")
+
+    jwt_config = app.config_fh.get_file_handler("jwt_config")
+
+    dashboard_data = {
+        'jwt_configured': jwt_config is not None,
+        'current_config': jwt_config or {},
+        'active_sessions': _get_active_sessions(app),
+        'default_ttl': jwt_config.get('ttl_hours', 24) if jwt_config else 24
+    }
+
+    return Result.ok("Dashboard data", data=dashboard_data)
+
+
+def _get_active_sessions(app: App) -> list:
+    """Get list of active CLI sessions"""
+    # This would typically query a session store
+    # For now, return empty list
+    return []
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def get_my_active_instances_with_cli(app: App, request: RequestData):
+    """Get active instances including CLI sessions"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+
+    # Get enhanced instance data with CLI sessions
+    from .UserInstances import get_user_instance_with_cli_sessions, get_user_cli_sessions
+
+    instance_data_result = get_user_instance_with_cli_sessions(current_user.uid, hydrate=True)
+    cli_sessions = get_user_cli_sessions(current_user.uid)
+
+    active_instances_output = []
+    if instance_data_result and isinstance(instance_data_result, dict):
+        live_modules_info = []
+        if instance_data_result.get("live"):
+            for mod_name, spec_val in instance_data_result.get("live").items():
+                live_modules_info.append({"name": mod_name, "spec": str(spec_val)})
+
+        instance_summary = {
+            "SiID": instance_data_result.get("SiID"),
+            "VtID": instance_data_result.get("VtID"),
+            "webSocketID": instance_data_result.get("webSocketID"),
+            "live_modules": live_modules_info,
+            "saved_modules": instance_data_result.get("save", {}).get("mods", []),
+            "cli_sessions": cli_sessions,
+            "active_cli_sessions": len([s for s in cli_sessions if s.get('status') == 'active'])
+        }
+        active_instances_output.append(instance_summary)
+
+    return Result.ok("Active instances with CLI sessions retrieved", data=active_instances_output)
+
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def close_cli_session(app: App, request: RequestData, cli_session_id: str):
+    """Close a specific CLI session"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+
+    from .UserInstances import close_cli_session as close_cli_session_internal, UserInstances
+
+    # Verify session belongs to current user
+    if cli_session_id in UserInstances().cli_sessions:
+        session_data = UserInstances().cli_sessions[cli_session_id]
+        if session_data['uid'] != current_user.uid:
+            return Result.default_user_error(info="Unauthorized to close this session.")
+
+    result = close_cli_session_internal(cli_session_id)
+    return Result.ok("CLI session closed", data={"message": result})

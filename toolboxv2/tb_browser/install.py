@@ -13,53 +13,127 @@ import json
 from pathlib import Path
 import zipfile
 import webbrowser
+from typing import Tuple, Optional
+
+# =================== ToolBox Style Integration ===================
+
+try:
+    from toolboxv2.utils.extras.Style import Style, Spinner
+
+    TOOLBOX_AVAILABLE = True
+except ImportError:
+    # Fallback wenn ToolBox nicht verfügbar
+    TOOLBOX_AVAILABLE = False
 
 
-class Colors:
-    """ANSI color codes for terminal output"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    END = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    class Style:
+        """Fallback Style-Klasse wenn ToolBox nicht verfügbar"""
+
+        @staticmethod
+        def RED(text): return f"\033[91m{text}\033[0m"
+
+        @staticmethod
+        def GREEN(text): return f"\033[92m{text}\033[0m"
+
+        @staticmethod
+        def YELLOW(text): return f"\033[93m{text}\033[0m"
+
+        @staticmethod
+        def BLUE(text): return f"\033[94m{text}\033[0m"
+
+        @staticmethod
+        def CYAN(text): return f"\033[96m{text}\033[0m"
+
+        @staticmethod
+        def VIOLET(text): return f"\033[95m{text}\033[0m"
+
+        @staticmethod
+        def WHITE(text): return f"\033[97m{text}\033[0m"
+
+        @staticmethod
+        def GREY(text): return f"\033[90m{text}\033[0m"
+
+        @staticmethod
+        def Bold(text): return f"\033[1m{text}\033[0m"
+
+        @staticmethod
+        def Underline(text): return f"\033[4m{text}\033[0m"
+
+        @staticmethod
+        def GREEN2(text): return f"\033[92m{text}\033[0m"
+
+        @staticmethod
+        def RED2(text): return f"\033[91m{text}\033[0m"
+
+        @staticmethod
+        def VIOLET2(text): return f"\033[95m{text}\033[0m"
 
 
-def print_colored(text, color=Colors.END):
-    """Print colored text to terminal"""
-    print(f"{color}{text}{Colors.END}")
+    class Spinner:
+        """Fallback Spinner wenn ToolBox nicht verfügbar"""
+
+        def __init__(self, message, **kwargs):
+            self.message = message
+
+        def __enter__(self):
+            print(f"⟳ {self.message}...", flush=True)
+            return self
+
+        def __exit__(self, *args):
+            pass
 
 
-def print_header(text):
-    """Print section header"""
-    print_colored(f"\n{'=' * 60}", Colors.CYAN)
-    print_colored(f"  {text}", Colors.BOLD + Colors.HEADER)
-    print_colored(f"{'=' * 60}", Colors.CYAN)
+# =================== Helper Functions ===================
+
+def print_status(status: str, message: str):
+    """Print colored status message."""
+    icons = {
+        'success': '✅',
+        'error': '❌',
+        'warning': '⚠️',
+        'info': 'ℹ️',
+        'running': '⟳'
+    }
+
+    colors = {
+        'success': Style.GREEN,
+        'error': Style.RED,
+        'warning': Style.YELLOW,
+        'info': Style.BLUE,
+        'running': Style.CYAN
+    }
+
+    icon = icons.get(status, '•')
+    color_fn = colors.get(status, Style.WHITE)
+
+    print(color_fn(f"{icon} {message}"))
 
 
-def print_success(text):
-    """Print success message"""
-    print_colored(f"✅ {text}", Colors.GREEN)
+def print_header(title: str):
+    """Print section header with box."""
+    width = 70
+    print()
+    print(Style.CYAN('╔' + '═' * width + '╗'))
+    print(Style.CYAN('║') + Style.Bold(Style.WHITE(title.center(width))) + Style.CYAN('║'))
+    print(Style.CYAN('╚' + '═' * width + '╝'))
+    print()
 
 
-def print_error(text):
-    """Print error message"""
-    print_colored(f"❌ {text}", Colors.FAIL)
+def print_box(lines: list, color_fn=Style.WHITE):
+    """Print content in a box."""
+    if not lines:
+        return
+
+    width = max(len(line) for line in lines) + 4
+
+    print(color_fn('┌' + '─' * width + '┐'))
+    for line in lines:
+        padding = width - len(line) - 2
+        print(color_fn('│') + f"  {line}" + ' ' * padding + color_fn('│'))
+    print(color_fn('└' + '─' * width + '┘'))
 
 
-def print_warning(text):
-    """Print warning message"""
-    print_colored(f"⚠️  {text}", Colors.WARNING)
-
-
-def print_info(text):
-    """Print info message"""
-    print_colored(f"ℹ️  {text}", Colors.BLUE)
-
-def detect_shell() -> tuple[str, str]:
+def detect_shell() -> Tuple[str, str]:
     """
     Detects the best available shell and the argument to execute a command.
     Returns:
@@ -83,6 +157,9 @@ def detect_shell() -> tuple[str, str]:
 
     return "/bin/sh", "-c"
 
+
+# =================== Main Installer Class ===================
+
 class ToolBoxInstaller:
     def __init__(self):
         self.project_dir = Path(__file__).parent.absolute()
@@ -92,36 +169,42 @@ class ToolBoxInstaller:
         self.system = platform.system().lower()
         self.machine = platform.machine().lower()
 
-    def check_requirements(self):
-        """Check if Node.js is installed"""
+    def check_requirements(self) -> bool:
+        """Check if Node.js and npm are installed"""
         print_header("Checking Requirements")
 
         try:
-            a,b =detect_shell()
-            result = subprocess.run([a,b,'node', '--version'],
-                                    capture_output=True,
-                                    text=True,
-                                    check=True)
+            shell_exec, shell_arg = detect_shell()
+
+            # Check Node.js
+            result = subprocess.run(
+                [shell_exec, shell_arg, 'node --version'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
             node_version = result.stdout.strip()
-            print_success(f"Node.js found: {node_version}")
+            print_status('success', f"Node.js found: {node_version}")
 
             # Check npm
-            npm_result = subprocess.run([a,b,'npm', '--version'],
-                                        capture_output=True,
-                                        text=True,
-                                        check=True)
+            npm_result = subprocess.run(
+                [shell_exec, shell_arg, 'npm --version'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
             npm_version = npm_result.stdout.strip()
-            print_success(f"npm found: v{npm_version}")
+            print_status('success', f"npm found: v{npm_version}")
+
             return True
 
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print_info("Please install Node.js from: https://nodejs.org/")
-            print_info("Minimum required version: 14.0.0")
-            # import webbrowser
-            # webbrowser.open("https://nodejs.org/")
+            print_status('error', "Node.js not found")
+            print_status('info', "Please install Node.js from: https://nodejs.org/")
+            print_status('info', "Minimum required version: 14.0.0")
             return False
 
-    def detect_platform(self):
+    def detect_platform(self) -> str:
         """Detect operating system and architecture"""
         print_header("Detecting Platform")
 
@@ -132,50 +215,52 @@ class ToolBoxInstaller:
         }
 
         os_name = os_info.get(self.system, self.system)
-        print_success(f"Operating System: {os_name}")
-        print_success(f"Architecture: {self.machine}")
+        print_status('success', f"Operating System: {os_name}")
+        print_status('success', f"Architecture: {self.machine}")
 
         # Detect if mobile (simplified detection)
         is_mobile = 'arm' in self.machine or 'aarch64' in self.machine
         if is_mobile:
-            print_info("Mobile/ARM architecture detected")
+            print_status('info', "Mobile/ARM architecture detected")
 
         return os_name
 
-    def run_build(self, mode='build'):
+    def run_build(self, mode: str = 'build') -> bool:
         """Run the Node.js build script"""
         print_header(f"Running {mode.upper()} Build")
 
         if not self.build_script.exists():
-            print_error(f"Build script not found: {self.build_script}")
+            print_status('error', f"Build script not found: {self.build_script}")
             return False
 
         try:
-            # Run npm build command
+            shell_exec, shell_arg = detect_shell()
+            cmd = [shell_exec, shell_arg, f'node {str(self.build_script)} {mode}']
 
-            a,b =detect_shell()
-            cmd = [a,b,'node', str(self.build_script), mode]
-            print_info(f"Executing: {' '.join(cmd)}")
+            print_status('info', f"Executing: node {self.build_script} {mode}")
 
-            result = subprocess.run(cmd,
-                                    cwd=str(self.project_dir),
-                                    capture_output=False,
-                                    text=True,
-                                    check=True)
+            with Spinner(f"Building extension ({mode} mode)", symbols="d" if TOOLBOX_AVAILABLE else None):
+                result = subprocess.run(
+                    cmd,
+                    cwd=str(self.project_dir),
+                    capture_output=False,
+                    text=True,
+                    check=True
+                )
 
-            print_success(f"Build completed successfully!")
+            print_status('success', f"Build completed successfully!")
             return True
 
         except subprocess.CalledProcessError as e:
-            print_error(f"Build failed with error code {e.returncode}")
+            print_status('error', f"Build failed with error code {e.returncode}")
             return False
 
-    def create_package(self):
+    def create_package(self) -> Optional[Path]:
         """Create distributable package"""
         print_header("Creating Distribution Package")
 
         if not self.build_dir.exists():
-            print_error("Build directory not found. Please run build first.")
+            print_status('error', "Build directory not found. Please run build first.")
             return None
 
         # Read version from package.json
@@ -191,25 +276,27 @@ class ToolBoxInstaller:
         zip_path = self.project_dir / zip_name
 
         try:
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(self.build_dir):
-                    for file in files:
-                        file_path = Path(root) / file
-                        arcname = file_path.relative_to(self.build_dir)
-                        zipf.write(file_path, arcname)
+            with Spinner("Creating ZIP package", symbols="t" if TOOLBOX_AVAILABLE else None):
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(self.build_dir):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = file_path.relative_to(self.build_dir)
+                            zipf.write(file_path, arcname)
 
-            print_success(f"Package created: {zip_name}")
+            print_status('success', f"Package created: {zip_name}")
             return zip_path
 
         except Exception as e:
-            print_error(f"Failed to create package: {e}")
+            print_status('error', f"Failed to create package: {e}")
             return None
 
-    def print_browser_instructions(self, browser):
+    def print_browser_instructions(self, browser: str):
         """Print installation instructions for specific browser"""
         instructions = {
             'chrome': {
                 'name': 'Google Chrome / Chromium',
+                'icon': '🌐',
                 'desktop': [
                     "1. Open Chrome and navigate to: chrome://extensions/",
                     "2. Enable 'Developer mode' (toggle in top-right corner)",
@@ -228,6 +315,7 @@ class ToolBoxInstaller:
             },
             'firefox': {
                 'name': 'Mozilla Firefox',
+                'icon': '🦊',
                 'desktop': [
                     "1. Open Firefox and navigate to: about:debugging#/runtime/this-firefox",
                     "2. Click 'Load Temporary Add-on'",
@@ -244,6 +332,7 @@ class ToolBoxInstaller:
             },
             'edge': {
                 'name': 'Microsoft Edge',
+                'icon': '🌊',
                 'desktop': [
                     "1. Open Edge and navigate to: edge://extensions/",
                     "2. Enable 'Developer mode' (toggle in bottom-left)",
@@ -254,6 +343,7 @@ class ToolBoxInstaller:
             },
             'safari': {
                 'name': 'Safari',
+                'icon': '🧭',
                 'desktop': [
                     "Safari extensions require Xcode conversion:",
                     "1. Install Xcode from Mac App Store",
@@ -272,6 +362,7 @@ class ToolBoxInstaller:
             },
             'opera': {
                 'name': 'Opera / Opera GX',
+                'icon': '🎭',
                 'desktop': [
                     "1. Open Opera and navigate to: opera://extensions/",
                     "2. Enable 'Developer mode'",
@@ -282,6 +373,7 @@ class ToolBoxInstaller:
             },
             'brave': {
                 'name': 'Brave Browser',
+                'icon': '🦁',
                 'desktop': [
                     "1. Open Brave and navigate to: brave://extensions/",
                     "2. Enable 'Developer mode' (toggle in top-right)",
@@ -293,28 +385,40 @@ class ToolBoxInstaller:
         }
 
         if browser not in instructions:
-            print_warning(f"Instructions for {browser} not available")
+            print_status('warning', f"Instructions for {browser} not available")
             return
 
         info = instructions[browser]
-        print_colored(f"\n📱 {info['name']}", Colors.BOLD + Colors.CYAN)
+
+        # Print browser header
+        print(f"\n{info['icon']} {Style.Bold(Style.CYAN(info['name']))}")
+        print(Style.GREY('─' * 70))
 
         # Desktop instructions
         if 'desktop' in info and self.system in ['darwin', 'linux', 'windows']:
-            print_colored("\n  Desktop Installation:", Colors.BOLD)
+            print(f"\n  {Style.Bold(Style.WHITE('Desktop Installation:'))}")
             for step in info['desktop']:
-                print(f"    {step}")
+                if step.startswith(('1.', '2.', '3.', '4.', '5.')):
+                    print(f"    {Style.CYAN(step)}")
+                else:
+                    print(f"    {Style.WHITE(step)}")
 
         # Mobile instructions
         if 'android' in info and self.system == 'linux':
-            print_colored("\n  Android Installation:", Colors.BOLD)
+            print(f"\n  {Style.Bold(Style.WHITE('Android Installation:'))}")
             for step in info['android']:
-                print(f"    {step}")
+                if step.startswith(('1.', '2.', '3.', '4.')):
+                    print(f"    {Style.CYAN(step)}")
+                else:
+                    print(f"    {Style.YELLOW(step)}")
 
         if 'ios' in info and self.system == 'darwin':
-            print_colored("\n  iOS Installation:", Colors.BOLD)
+            print(f"\n  {Style.Bold(Style.WHITE('iOS Installation:'))}")
             for step in info['ios']:
-                print(f"    {step}")
+                if step.startswith(('1.', '2.', '3.')):
+                    print(f"    {Style.CYAN(step)}")
+                else:
+                    print(f"    {Style.YELLOW(step)}")
 
     def show_all_instructions(self):
         """Display installation instructions for all browsers"""
@@ -324,74 +428,89 @@ class ToolBoxInstaller:
 
         for browser in browsers:
             self.print_browser_instructions(browser)
-            print()  # Add spacing
 
     def interactive_menu(self):
         """Display interactive menu"""
-        print_colored("""
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║          🧰 ToolBox Pro Extension Installer              ║
-║                                                          ║
-║          Universal Browser Extension Builder             ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
-        """, Colors.CYAN + Colors.BOLD)
+        print(Style.CYAN("""
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║          🧰 ToolBox Pro Extension Installer                          ║
+║                                                                      ║
+║          Universal Browser Extension Builder                         ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+        """))
 
         while True:
-            print_colored("\nWhat would you like to do?\n", Colors.BOLD)
-            print("  1. 🔨 Build Extension (Development)")
-            print("  2. 📦 Build Extension (Production)")
-            print("  3. 🗜️  Build + Create ZIP Package")
-            print("  4. 📖 Show Installation Instructions")
-            print("  5. 🌐 Open Extension Folder")
-            print("  6. ❌ Exit")
+            print(
+                f"\n{Style.Bold(Style.WHITE('┌─ 🎯 MAIN MENU ───────────────────────────────────────────────────────┐'))}")
+            print(Style.WHITE('│') + ' ' * 70 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('1.')} {Style.WHITE('🔨 Build Extension (Development)')}" + ' ' * 33 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('2.')} {Style.WHITE('📦 Build Extension (Production)')}" + ' ' * 34 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('3.')} {Style.WHITE('🗜️  Build + Create ZIP Package')}" + ' ' * 35 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('4.')} {Style.WHITE('📖 Show Installation Instructions')}" + ' ' * 32 + Style.WHITE('│'))
+            print(Style.WHITE(
+                '│') + f"  {Style.CYAN('5.')} {Style.WHITE('🌐 Open Extension Folder')}" + ' ' * 41 + Style.WHITE('│'))
+            print(Style.WHITE('│') + f"  {Style.CYAN('0.')} {Style.WHITE('❌ Exit')}" + ' ' * 58 + Style.WHITE('│'))
+            print(Style.WHITE('│') + ' ' * 70 + Style.WHITE('│'))
+            print(Style.Bold(Style.WHITE('└──────────────────────────────────────────────────────────────────────┘')))
 
-            choice = input(f"\n{Colors.CYAN}Enter your choice (1-6): {Colors.END}").strip()
+            choice = input(f"\n{Style.CYAN('❯')} {Style.WHITE('Enter your choice (0-5):')} ").strip()
 
             if choice == '1':
                 if self.run_build('dev'):
-                    print_success("Development build ready!")
-                    print_info(f"Location: {self.build_dir}")
+                    print_status('success', "Development build ready!")
+                    print_status('info', f"Location: {self.build_dir}")
                     self.show_all_instructions()
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
 
             elif choice == '2':
                 if self.run_build('build'):
-                    print_success("Production build ready!")
-                    print_info(f"Location: {self.build_dir}")
+                    print_status('success', "Production build ready!")
+                    print_status('info', f"Location: {self.build_dir}")
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
 
             elif choice == '3':
                 if self.run_build('build'):
                     zip_path = self.create_package()
                     if zip_path:
-                        print_success(f"Package ready: {zip_path}")
-                        print_info("You can now distribute this ZIP file")
+                        print_status('success', f"Package ready: {zip_path}")
+                        print_status('info', "You can now distribute this ZIP file")
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
 
             elif choice == '4':
                 self.show_all_instructions()
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
 
             elif choice == '5':
                 if self.build_dir.exists():
-
-                    a, b = detect_shell()
-                    if self.system == 'darwin':
-                        subprocess.run([a,b,'open', str(self.build_dir)])
-                    elif self.system == 'windows':
-                        os.startfile(str(self.build_dir))
-                    elif self.system == 'linux':
-                        subprocess.run([a,b,'xdg-open', str(self.build_dir)])
-                    print_success(f"Opened: {self.build_dir}")
+                    shell_exec, shell_arg = detect_shell()
+                    try:
+                        if self.system == 'darwin':
+                            subprocess.run([shell_exec, shell_arg, f'open {str(self.build_dir)}'])
+                        elif self.system == 'windows':
+                            os.startfile(str(self.build_dir))
+                        elif self.system == 'linux':
+                            subprocess.run([shell_exec, shell_arg, f'xdg-open {str(self.build_dir)}'])
+                        print_status('success', f"Opened: {self.build_dir}")
+                    except Exception as e:
+                        print_status('error', f"Failed to open folder: {e}")
                 else:
-                    print_warning("Build folder doesn't exist yet. Build first!")
+                    print_status('warning', "Build folder doesn't exist yet. Build first!")
+                input(f"\n{Style.GREY('Press Enter to continue...')}")
 
-            elif choice == '6':
-                print_colored("\n👋 Thanks for using ToolBox Pro!", Colors.GREEN)
+            elif choice == '0':
+                print(f"\n{Style.GREEN('👋 Thanks for using ToolBox Pro!')}")
                 sys.exit(0)
 
             else:
-                print_warning("Invalid choice. Please select 1-6.")
+                print_status('warning', "Invalid choice. Please select 0-5.")
 
-    def quick_install(self):
+    def quick_install(self) -> bool:
         """Quick automated installation"""
         print_header("Quick Install Mode")
 
@@ -409,14 +528,18 @@ class ToolBoxInstaller:
         # Show instructions
         self.show_all_instructions()
 
-        print_colored("\n" + "=" * 60, Colors.GREEN)
-        print_success("Installation package is ready!")
-        print_info(f"Build location: {self.build_dir}")
-        print_info("Follow the instructions above to load the extension in your browser")
-        print_colored("=" * 60 + "\n", Colors.GREEN)
+        print()
+        print(Style.GREEN('═' * 70))
+        print_status('success', "Installation package is ready!")
+        print_status('info', f"Build location: {self.build_dir}")
+        print_status('info', "Follow the instructions above to load the extension in your browser")
+        print(Style.GREEN('═' * 70))
+        print()
 
         return True
 
+
+# =================== Main Entry Point ===================
 
 def main():
     """Main entry point"""
@@ -427,11 +550,13 @@ def main():
         command = sys.argv[1].lower()
 
         if command in ['--help', '-h', 'help']:
-            print_colored("""
-ToolBox Pro Extension Installer
+            print(Style.CYAN("""
+╔══════════════════════════════════════════════════════════════════════╗
+║          ToolBox Pro Extension Installer - Help                      ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 Usage:
-  python install.py [command]
+  tb browser [command]
 
 Commands:
   (none)    - Interactive menu mode
@@ -442,10 +567,10 @@ Commands:
   help      - Show this help message
 
 Examples:
-  python install.py           # Interactive mode
-  python install.py quick     # Quick install
-  python install.py build     # Production build
-            """, Colors.CYAN)
+  tb browser           # Interactive mode
+  tb browser quick     # Quick install
+  tb browser build     # Production build
+            """))
             return
 
         elif command == 'quick':
@@ -457,7 +582,7 @@ Examples:
             installer.check_requirements()
             installer.detect_platform()
             if installer.run_build('build'):
-                print_success("Build completed!")
+                print_status('success', "Build completed!")
             else:
                 sys.exit(1)
             return
@@ -466,7 +591,7 @@ Examples:
             installer.check_requirements()
             installer.detect_platform()
             if installer.run_build('dev'):
-                print_success("Development build completed!")
+                print_status('success', "Development build completed!")
             else:
                 sys.exit(1)
             return
@@ -490,8 +615,11 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print_colored("\n\n👋 Installation cancelled by user", Colors.WARNING)
+        print(f"\n\n{Style.YELLOW('👋 Installation cancelled by user')}")
         sys.exit(0)
     except Exception as e:
-        print_error(f"An error occurred: {e}")
+        print_status('error', f"An error occurred: {e}")
+        import traceback
+
+        traceback.print_exc()
         sys.exit(1)

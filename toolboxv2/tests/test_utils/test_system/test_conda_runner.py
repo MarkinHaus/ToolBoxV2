@@ -9,7 +9,7 @@ import unittest
 from toolboxv2 import get_app
 
 # Import the functions to be tested
-from toolboxv2.utils.system.conda_runner import (
+from toolboxv2.utils.clis.venv_runner import (
     add_dependency,
     create_conda_env,
     create_env_registry,

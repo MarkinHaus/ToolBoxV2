@@ -62,8 +62,8 @@ class Session(metaclass=Singleton):
             except ClientError as e:
                 print(f"Allgemeiner Client-Fehler: {e}")
                 return False
-            except Exception:
-                print("No session to close for", self.username)
+            except Exception as e:
+                pass
 
         atexit.register(async_test(helper))
 
@@ -100,6 +100,8 @@ class Session(metaclass=Singleton):
 
     async def auth_with_prv_key(self):
         prv_key = self.get_prv_key()
+        if not prv_key:
+            return False
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
         challenge = Result.result_from_dict(**await challenge)
@@ -144,7 +146,6 @@ class Session(metaclass=Singleton):
                 claim = b''
         if not claim:
             res = await self.auth_with_prv_key()
-            print(str(res))
             return res is True
         try:
             async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),

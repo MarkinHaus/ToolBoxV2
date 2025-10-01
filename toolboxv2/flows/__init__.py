@@ -24,6 +24,8 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
         files = os.listdir(dir_path)
         l_files = len(files)
         for i, file_name in enumerate(files):
+            if not file_name:
+                continue
             with Spinner(f"{file_name} {i}/{l_files}"):
                 if file_name == "__init__.py":
                     pass

@@ -62,7 +62,7 @@ class ToolBoxPopup {
         this.checkConnection();
         this.loadCurrentPageInfo();
         this.loadPageContext();
-
+        this.setupNavigationListener();
         // Initialize panels
         this.initializeISAAPanel();
         this.initializeSearchPanel();
@@ -85,6 +85,83 @@ class ToolBoxPopup {
             this.showErrorFallback(e.error?.message || 'Unknown error');
         });
     }
+
+    setupNavigationListener() {
+    // Listen for tab updates (navigation)
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        // Only process when the page has finished loading
+        if (changeInfo.status === 'complete') {
+            // Check if it's the active tab
+            chrome.tabs.query({ active: true, currentWindow: true }, async ([activeTab]) => {
+                if (activeTab && activeTab.id === tabId) {
+                    console.log('📍 Navigation detected, updating page info...');
+
+                    // Update page title
+                    await this.loadCurrentPageInfo();
+
+                    // Reload page context
+                    await this.loadPageContext();
+
+                    // Auto-index the new page
+                    await this.autoIndexNewPage(tabId);
+                }
+            });
+        }
+    });
+
+    // Also listen for tab activation (switching tabs)
+    chrome.tabs.onActivated.addListener(async (activeInfo) => {
+        console.log('🔄 Tab switched, updating page info...');
+        await this.loadCurrentPageInfo();
+        await this.loadPageContext();
+    });
+}
+
+async autoIndexNewPage(tabId) {
+    try {
+        console.log('🔍 Auto-indexing new page...');
+        this.showPageStatus('🔍 Indexing page...', 1000);
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        const response = await chrome.tabs.sendMessage(tabId, {
+            type: 'INDEX_PAGE'
+        });
+
+        if (response && response.success) {
+            console.log('✅ Page auto-indexed successfully');
+            this.showPageStatus('✅ Page indexed!', 2000);
+
+            if (this.currentTab === 'search') {
+                const searchResults = document.getElementById('searchResults');
+                if (searchResults && searchResults.innerHTML.includes('No results found')) {
+                    searchResults.innerHTML = `
+                        <div class="no-results">
+                            <p>✅ Page indexed! Start typing to search...</p>
+                        </div>
+                    `;
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('Auto-index failed (page may not support it):', error.message);
+    }
+}
+
+// Add this helper method to show temporary status messages
+showPageStatus(message, duration = 2000) {
+    const pageTitle = document.getElementById('pageTitle');
+    if (pageTitle) {
+        const originalText = pageTitle.textContent;
+        pageTitle.textContent = message;
+        pageTitle.style.color = '#00d4ff';
+
+        setTimeout(() => {
+            pageTitle.textContent = originalText;
+            pageTitle.style.color = '';
+        }, duration);
+    }
+}
 
     showErrorFallback(errorMessage) {
         const app = document.getElementById('app');

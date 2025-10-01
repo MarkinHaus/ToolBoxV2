@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import cProfile
-import inspect
 import io
 import json
 import logging
@@ -10,19 +9,21 @@ import os
 import pstats
 import time
 import traceback
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import AsyncGenerator, Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import field
+from datetime import timedelta, datetime
 from inspect import signature
 from types import ModuleType
-from typing import Any, TypeVar, Awaitable
+from typing import Any, TypeVar, Dict
 
+import psutil
 from pydantic import BaseModel
 
 from ..extras import generate_test_cases
 from ..extras.blobs import BlobStorage
 from ..extras.Style import Spinner
-from ..system.db_cli_manager import ClusterManager
+from toolboxv2.utils.clis.db_cli_manager import ClusterManager
 from .all_functions_enums import *
 from .file_handler import FileHandler
 
@@ -1324,6 +1325,96 @@ class MainToolType:
         return self.app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
 
+@dataclass
+class FootprintMetrics:
+    """Dataclass für Footprint-Metriken"""
+    # Uptime
+    start_time: float
+    uptime_seconds: float
+    uptime_formatted: str
+
+    # Memory (in MB)
+    memory_current: float
+    memory_max: float
+    memory_min: float
+    memory_percent: float
+
+    # CPU
+    cpu_percent_current: float
+    cpu_percent_max: float
+    cpu_percent_min: float
+    cpu_percent_avg: float
+    cpu_time_seconds: float
+
+    # Disk I/O (in MB)
+    disk_read_mb: float
+    disk_write_mb: float
+    disk_read_max: float
+    disk_read_min: float
+    disk_write_max: float
+    disk_write_min: float
+
+    # Network I/O (in MB)
+    network_sent_mb: float
+    network_recv_mb: float
+    network_sent_max: float
+    network_sent_min: float
+    network_recv_max: float
+    network_recv_min: float
+
+    # Additional Info
+    process_id: int
+    threads: int
+    open_files: int
+    connections: int
+
+    open_files_path: list[str]
+    connections_uri: list[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konvertiert Metriken in Dictionary"""
+        return {
+            'uptime': {
+                'seconds': self.uptime_seconds,
+                'formatted': self.uptime_formatted,
+            },
+            'memory': {
+                'current_mb': self.memory_current,
+                'max_mb': self.memory_max,
+                'min_mb': self.memory_min,
+                'percent': self.memory_percent,
+            },
+            'cpu': {
+                'current_percent': self.cpu_percent_current,
+                'max_percent': self.cpu_percent_max,
+                'min_percent': self.cpu_percent_min,
+                'avg_percent': self.cpu_percent_avg,
+                'time_seconds': self.cpu_time_seconds,
+            },
+            'disk': {
+                'read_mb': self.disk_read_mb,
+                'write_mb': self.disk_write_mb,
+                'read_max_mb': self.disk_read_max,
+                'read_min_mb': self.disk_read_min,
+                'write_max_mb': self.disk_write_max,
+                'write_min_mb': self.disk_write_min,
+            },
+            'network': {
+                'sent_mb': self.network_sent_mb,
+                'recv_mb': self.network_recv_mb,
+                'sent_max_mb': self.network_sent_max,
+                'sent_min_mb': self.network_sent_min,
+                'recv_max_mb': self.network_recv_max,
+                'recv_min_mb': self.network_recv_min,
+            },
+            'process': {
+                'pid': self.process_id,
+                'threads': self.threads,
+                'open_files': self.open_files,
+                'connections': self.connections,
+            }
+        }
+
 class AppType:
     prefix: str
     id: str
@@ -1402,13 +1493,266 @@ class AppType:
 
     initial_docs_parse: Callable | None = None
 
-    def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
+    def __init__(self, prefix=None, args=None):
         self.args_sto = args
         self.prefix = prefix
-        """proxi attr"""
+        self._footprint_start_time = time.time()
+        self._process = psutil.Process(os.getpid())
+
+        # Tracking-Daten für Min/Max/Avg
+        self._footprint_metrics = {
+            'memory': {'max': 0, 'min': float('inf'), 'samples': []},
+            'cpu': {'max': 0, 'min': float('inf'), 'samples': []},
+            'disk_read': {'max': 0, 'min': float('inf'), 'samples': []},
+            'disk_write': {'max': 0, 'min': float('inf'), 'samples': []},
+            'network_sent': {'max': 0, 'min': float('inf'), 'samples': []},
+            'network_recv': {'max': 0, 'min': float('inf'), 'samples': []},
+        }
+
+        # Initial Disk/Network Counters
+        try:
+            io_counters = self._process.io_counters()
+            self._initial_disk_read = io_counters.read_bytes
+            self._initial_disk_write = io_counters.write_bytes
+        except (AttributeError, OSError):
+            self._initial_disk_read = 0
+            self._initial_disk_write = 0
+
+        try:
+            net_io = psutil.net_io_counters()
+            self._initial_network_sent = net_io.bytes_sent
+            self._initial_network_recv = net_io.bytes_recv
+        except (AttributeError, OSError):
+            self._initial_network_sent = 0
+            self._initial_network_recv = 0
+
+    def _update_metric_tracking(self, metric_name: str, value: float):
+        """Aktualisiert Min/Max/Avg für eine Metrik"""
+        metrics = self._footprint_metrics[metric_name]
+        metrics['max'] = max(metrics['max'], value)
+        metrics['min'] = min(metrics['min'], value)
+        metrics['samples'].append(value)
+
+        # Begrenze die Anzahl der Samples (letzte 1000)
+        if len(metrics['samples']) > 1000:
+            metrics['samples'] = metrics['samples'][-1000:]
+
+    def _get_metric_avg(self, metric_name: str) -> float:
+        """Berechnet Durchschnitt einer Metrik"""
+        samples = self._footprint_metrics[metric_name]['samples']
+        return sum(samples) / len(samples) if samples else 0
+
+    def footprint(self, update_tracking: bool = True) -> FootprintMetrics:
+        """
+        Erfasst den aktuellen Ressourcen-Footprint der Toolbox-Instanz.
+
+        Args:
+            update_tracking: Wenn True, aktualisiert Min/Max/Avg-Tracking
+
+        Returns:
+            FootprintMetrics mit allen erfassten Metriken
+        """
+        current_time = time.time()
+        uptime_seconds = current_time - self._footprint_start_time
+
+        # Formatierte Uptime
+        uptime_delta = timedelta(seconds=int(uptime_seconds))
+        uptime_formatted = str(uptime_delta)
+
+        # Memory Metrics (in MB)
+        try:
+            mem_info = self._process.memory_info()
+            memory_current = mem_info.rss / (1024 * 1024)  # Bytes zu MB
+            memory_percent = self._process.memory_percent()
+
+            if update_tracking:
+                self._update_metric_tracking('memory', memory_current)
+
+            memory_max = self._footprint_metrics['memory']['max']
+            memory_min = self._footprint_metrics['memory']['min']
+            if memory_min == float('inf'):
+                memory_min = memory_current
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            memory_current = memory_max = memory_min = memory_percent = 0
+
+        # CPU Metrics
+        try:
+            cpu_percent_current = self._process.cpu_percent(interval=0.1)
+            cpu_times = self._process.cpu_times()
+            cpu_time_seconds = cpu_times.user + cpu_times.system
+
+            if update_tracking:
+                self._update_metric_tracking('cpu', cpu_percent_current)
+
+            cpu_percent_max = self._footprint_metrics['cpu']['max']
+            cpu_percent_min = self._footprint_metrics['cpu']['min']
+            cpu_percent_avg = self._get_metric_avg('cpu')
+
+            if cpu_percent_min == float('inf'):
+                cpu_percent_min = cpu_percent_current
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cpu_percent_current = cpu_percent_max = 0
+            cpu_percent_min = cpu_percent_avg = cpu_time_seconds = 0
+
+        # Disk I/O Metrics (in MB)
+        try:
+            io_counters = self._process.io_counters()
+            disk_read_bytes = io_counters.read_bytes - self._initial_disk_read
+            disk_write_bytes = io_counters.write_bytes - self._initial_disk_write
+
+            disk_read_mb = disk_read_bytes / (1024 * 1024)
+            disk_write_mb = disk_write_bytes / (1024 * 1024)
+
+            if update_tracking:
+                self._update_metric_tracking('disk_read', disk_read_mb)
+                self._update_metric_tracking('disk_write', disk_write_mb)
+
+            disk_read_max = self._footprint_metrics['disk_read']['max']
+            disk_read_min = self._footprint_metrics['disk_read']['min']
+            disk_write_max = self._footprint_metrics['disk_write']['max']
+            disk_write_min = self._footprint_metrics['disk_write']['min']
+
+            if disk_read_min == float('inf'):
+                disk_read_min = disk_read_mb
+            if disk_write_min == float('inf'):
+                disk_write_min = disk_write_mb
+        except (AttributeError, OSError, psutil.NoSuchProcess, psutil.AccessDenied):
+            disk_read_mb = disk_write_mb = 0
+            disk_read_max = disk_read_min = disk_write_max = disk_write_min = 0
+
+        # Network I/O Metrics (in MB)
+        try:
+            net_io = psutil.net_io_counters()
+            network_sent_bytes = net_io.bytes_sent - self._initial_network_sent
+            network_recv_bytes = net_io.bytes_recv - self._initial_network_recv
+
+            network_sent_mb = network_sent_bytes / (1024 * 1024)
+            network_recv_mb = network_recv_bytes / (1024 * 1024)
+
+            if update_tracking:
+                self._update_metric_tracking('network_sent', network_sent_mb)
+                self._update_metric_tracking('network_recv', network_recv_mb)
+
+            network_sent_max = self._footprint_metrics['network_sent']['max']
+            network_sent_min = self._footprint_metrics['network_sent']['min']
+            network_recv_max = self._footprint_metrics['network_recv']['max']
+            network_recv_min = self._footprint_metrics['network_recv']['min']
+
+            if network_sent_min == float('inf'):
+                network_sent_min = network_sent_mb
+            if network_recv_min == float('inf'):
+                network_recv_min = network_recv_mb
+        except (AttributeError, OSError):
+            network_sent_mb = network_recv_mb = 0
+            network_sent_max = network_sent_min = 0
+            network_recv_max = network_recv_min = 0
+
+        # Process Info
+        try:
+            process_id = self._process.pid
+            threads = self._process.num_threads()
+            open_files_path = [str(x.path).replace("\\", "/") for x in self._process.open_files()]
+            connections_uri = [f"{x.laddr}:{x.raddr} {str(x.status)}" for x in self._process.connections()]
+
+            open_files = len(open_files_path)
+            connections = len(connections_uri)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            process_id = os.getpid()
+            threads = open_files = connections = 0
+            open_files_path = []
+            connections_uri = []
+
+        return FootprintMetrics(
+            start_time=self._footprint_start_time,
+            uptime_seconds=uptime_seconds,
+            uptime_formatted=uptime_formatted,
+            memory_current=memory_current,
+            memory_max=memory_max,
+            memory_min=memory_min,
+            memory_percent=memory_percent,
+            cpu_percent_current=cpu_percent_current,
+            cpu_percent_max=cpu_percent_max,
+            cpu_percent_min=cpu_percent_min,
+            cpu_percent_avg=cpu_percent_avg,
+            cpu_time_seconds=cpu_time_seconds,
+            disk_read_mb=disk_read_mb,
+            disk_write_mb=disk_write_mb,
+            disk_read_max=disk_read_max,
+            disk_read_min=disk_read_min,
+            disk_write_max=disk_write_max,
+            disk_write_min=disk_write_min,
+            network_sent_mb=network_sent_mb,
+            network_recv_mb=network_recv_mb,
+            network_sent_max=network_sent_max,
+            network_sent_min=network_sent_min,
+            network_recv_max=network_recv_max,
+            network_recv_min=network_recv_min,
+            process_id=process_id,
+            threads=threads,
+            open_files=open_files,
+            connections=connections,
+            open_files_path=open_files_path,
+            connections_uri=connections_uri,
+        )
+
+    def print_footprint(self, detailed: bool = True) -> str:
+        """
+        Gibt den Footprint formatiert aus.
+
+        Args:
+            detailed: Wenn True, zeigt alle Details, sonst nur Zusammenfassung
+
+        Returns:
+            Formatierter Footprint-String
+        """
+        metrics = self.footprint()
+
+        output = [
+            "=" * 70,
+            f"TOOLBOX FOOTPRINT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 70,
+            f"\n📊 UPTIME",
+            f"  Runtime: {metrics.uptime_formatted}",
+            f"  Seconds: {metrics.uptime_seconds:.2f}s",
+            f"\n💾 MEMORY USAGE",
+            f"  Current:  {metrics.memory_current:.2f} MB ({metrics.memory_percent:.2f}%)",
+            f"  Maximum:  {metrics.memory_max:.2f} MB",
+            f"  Minimum:  {metrics.memory_min:.2f} MB",
+        ]
+
+        if detailed:
+            output.extend([
+                f"\n⚙️  CPU USAGE",
+                f"  Current:  {metrics.cpu_percent_current:.2f}%",
+                f"  Maximum:  {metrics.cpu_percent_max:.2f}%",
+                f"  Minimum:  {metrics.cpu_percent_min:.2f}%",
+                f"  Average:  {metrics.cpu_percent_avg:.2f}%",
+                f"  CPU Time: {metrics.cpu_time_seconds:.2f}s",
+                f"\n💿 DISK I/O",
+                f"  Read:     {metrics.disk_read_mb:.2f} MB (Max: {metrics.disk_read_max:.2f}, Min: {metrics.disk_read_min:.2f})",
+                f"  Write:    {metrics.disk_write_mb:.2f} MB (Max: {metrics.disk_write_max:.2f}, Min: {metrics.disk_write_min:.2f})",
+                f"\n🌐 NETWORK I/O",
+                f"  Sent:     {metrics.network_sent_mb:.2f} MB (Max: {metrics.network_sent_max:.2f}, Min: {metrics.network_sent_min:.2f})",
+                f"  Received: {metrics.network_recv_mb:.2f} MB (Max: {metrics.network_recv_max:.2f}, Min: {metrics.network_recv_min:.2f})",
+                f"\n🔧 PROCESS INFO",
+                f"  PID:         {metrics.process_id}",
+                f"  Threads:     {metrics.threads}",
+                f"\n📂 OPEN FILES",
+                f"  Open Files:  {metrics.open_files}",
+                f"  Open Files Path: \n\t- {'\n\t- '.join(metrics.open_files_path)}",
+                f"\n🔗 NETWORK CONNECTIONS",
+                f"  Connections: {metrics.connections}",
+                f"  Connections URI: \n\t- {'\n\t- '.join(metrics.connections_uri)}",
+            ])
+
+        output.append("=" * 70)
+
+        return "\n".join(output)
+
+
 
     def start_server(self):
-        from toolboxv2.utils.system.api import manage_server
+        from toolboxv2.utils.clis.api import manage_server
         if self.is_server:
             return
         manage_server("start")
@@ -1444,7 +1788,7 @@ class AppType:
     def set_flows(self, r):
         """proxi attr"""
 
-    def run_flows(self, name, **kwargs):
+    async def run_flows(self, name, **kwargs):
         """proxi attr"""
 
     def rrun_flows(self, name, **kwargs):
@@ -1461,13 +1805,11 @@ class AppType:
         self.print("idle done")
 
     async def a_idle(self):
-        self.print("a idle")
+        self.print("a idle (running :"+("online)" if hasattr(self, 'daemon_app') else "offline)"))
         try:
             if hasattr(self, 'daemon_app'):
-                self.print("serving daemon")
                 await self.daemon_app.connect(self)
             else:
-                self.print("serving default")
                 while self.alive:
                     await asyncio.sleep(1)
         except KeyboardInterrupt:
@@ -1800,7 +2142,6 @@ class AppType:
 
 
         if not self.functions:
-            print("Nothing to see")
             return
 
         def helper(_functions):
