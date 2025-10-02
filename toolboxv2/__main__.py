@@ -305,7 +305,7 @@ def setup_service_linux():
 RUNNER_KEYS = [
     "venv", "api", "ipy", "db", "gui", "p2p",
     "status", "browser", "mcp", "login", "logout",
-    "run", "mods", "x"
+    "run", "mods", "flow"
 ]
 
 DEFAULT_MODI = "cli"
@@ -407,8 +407,8 @@ def show_interactive_guide():
     │    $ tb venv [command]           # Run venv commands                       │
     │                                                                            │
     │  ▶️  Flow Execution:                                                       │
-    │    $ tb run          # Execute registers all flows/mods from directory     │
-    │    $ tb run --flow [file] # Execute flows from file or --remote + .gist    │
+    │    $ tb run          # ToolBox TBX Lang                                    │
+    │    $ tb flow --flow [file] # Execute flows from file or --remote + .gist   │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -684,8 +684,15 @@ def parse_args():
                             const=True,
                             default=False)
 
-    extensions.add_argument("run",
+    extensions.add_argument("flow",
                             help="Execute flows/mod from file or directory",
+                            nargs='?',
+                            const=True,
+                            default=False)
+
+
+    extensions.add_argument("run",
+                            help="Execute .tbx file and setup",
                             nargs='?',
                             const=True,
                             default=False)
@@ -1912,7 +1919,7 @@ def runner_setup():
     async def run_flow_from_file_or_load_all_flows_and_mods_from_dir(app):
         from toolboxv2 import init_cwd
         parser = argparse.ArgumentParser(
-            prog='tb run',
+            prog='tb flow',
             description='Run flow from file or load all flows and mods from dir',
         )
         parser.add_argument("--flow", help="Run flow from file", default=None)
@@ -1944,9 +1951,9 @@ def runner_setup():
         "mcp": lambda: __import__('toolboxv2.mcp_server', fromlist=['main']).main(),
         "login": cli_web_login,
         "logout": logout,
-        "run": run_c,
+        "flow": run_c,
         "mods": mods_manager,
-        "x": cli_tbx_main,
+        "run": cli_tbx_main,
         "default": interactive_user_dashboard
     }
     return runner
@@ -1972,9 +1979,9 @@ def main_runner():
         main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
         try:
             loop = asyncio.new_event_loop()
-            if runner_name == "run":
-                _hook[0] = runner['run']
-                runner['run'] = lambda : None
+            if runner_name == "flows":
+                _hook[0] = runner['flows']
+                runner['flows'] = lambda : None
             if runner_name == "mcp":
                 TbApp.print = lambda *a, **k: None
             loop.run_until_complete(main(TbApp))

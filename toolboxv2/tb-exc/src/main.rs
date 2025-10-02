@@ -83,13 +83,13 @@ fn handle_run(args: &[String]) -> Result<(), ()> {
         }
     }
 
-    println!("╔════════════════════════════════════════════════════════════════╗");
-    println!("║                    TB Language Execution                       ║");
-    println!("╚════════════════════════════════════════════════════════════════╝");
-    println!();
-    println!("📄 File: {}", file_path.display());
-    println!("⚙️  Mode: {}", mode_to_string(&mode));
-    println!();
+    // println!("╔════════════════════════════════════════════════════════════════╗");
+    // println!("║                    TB Language Execution                       ║");
+    // println!("╚════════════════════════════════════════════════════════════════╝");
+    // println!();
+    // println!("📄 File: {}", file_path.display());
+    // println!("⚙️  Mode: {}", mode_to_string(&mode));
+    // println!();
 
     let mut config = Config::default();
     config.mode = mode;
@@ -98,8 +98,7 @@ fn handle_run(args: &[String]) -> Result<(), ()> {
 
     match tb.execute_file(file_path) {
         Ok(value) => {
-            println!("\n✓ Execution completed successfully");
-            println!("Result: {}", value);
+            print!("{}", value);
             Ok(())
         }
         Err(e) => {
@@ -488,8 +487,6 @@ fn handle_repl(_args: &[String]) -> Result<(), ()> {
 
         let input = input.trim();
 
-        eprintln!("[DEBUG] REPL input: '{}'", input); // ADD THIS
-
         if input.is_empty() {
             continue;
         }
@@ -510,18 +507,14 @@ fn handle_repl(_args: &[String]) -> Result<(), ()> {
             _ => {}
         }
 
-        eprintln!("[DEBUG] About to execute...");
         match tb.execute(input) {
             Ok(value) => {
-                eprintln!("[DEBUG] Execution succeeded");
                 println!("✓ {}", value);
             }
             Err(e) => {
-                eprintln!("[DEBUG] Execution failed: {}", e);
                 eprintln!("✗ Error: {}", e);
             }
         }
-        eprintln!("[DEBUG] REPL iteration complete");
 
         line_number += 1;
     }
@@ -692,17 +685,3 @@ TB Syntax:
 "#);
 }
 
-fn mode_to_string(mode: &ExecutionMode) -> String {
-    match mode {
-        ExecutionMode::Compiled { optimize } => {
-            format!("Compiled (optimize: {})", optimize)
-        }
-        ExecutionMode::Jit { cache_enabled } => {
-            format!("JIT (cache: {})", cache_enabled)
-        }
-        ExecutionMode::Streaming { auto_complete, suggestions } => {
-            format!("Streaming (autocomplete: {}, suggestions: {})",
-                    auto_complete, suggestions)
-        }
-    }
-}

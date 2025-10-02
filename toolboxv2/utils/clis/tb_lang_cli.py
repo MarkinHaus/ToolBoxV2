@@ -390,7 +390,13 @@ def handle_init(project_name: str):
     print_box_header(f"Creating TB Project: {project_name}", "📦")
     print_box_footer()
 
-    project_path = Path.cwd() / project_name
+    from toolboxv2 import tb_root_dir, init_cwd
+
+    if init_cwd == tb_root_dir:
+        print_status("Cannot create project in TB root directory", "error")
+        return False
+
+    project_path = init_cwd / project_name
 
     if project_path.exists():
         print_status(f"Directory already exists: {project_path}", "error")
@@ -549,39 +555,39 @@ def cli_tbx_main():
     Copyparser = argparse.ArgumentParser(
         description="🚀 TB Language - Unified Multi-Language Programming Environment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        prog='tb x',
+        prog='tb run',
         epilog="""
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                           Command Examples                                 ║
 ╠════════════════════════════════════════════════════════════════════════════╣
 ║                                                                            ║
 ║  Setup & Build:                                                            ║
-║    $ tb x build                    # Build TB Language (release)           ║
-║    $ tb x build --debug            # Build in debug mode                   ║
-║    $ tb x clean                    # Clean build artifacts                 ║
+║    $ tb run build                    # Build TB Language (release)         ║
+║    $ tb run build --debug            # Build in debug mode                 ║
+║    $ tb run clean                    # Clean build artifacts               ║
 ║                                                                            ║
 ║  Running Programs:                                                         ║
-║    $ tb x run program.tb           # Run in JIT mode (default)             ║
-║    $ tb x run program.tb --mode compiled                                   ║
-║    $ tb x run program.tb --mode streaming                                  ║
+║    $ tb run x program.tb           # Run in JIT mode (default)             ║
+║    $ tb run x program.tb --mode compiled                                   ║
+║    $ tb run x program.tb --mode streaming                                  ║
 ║                                                                            ║
 ║  Compilation:                                                              ║
-║    $ tb x compile input.tb output  # Compile to native                     ║
-║    $ tb x compile app.tb app.wasm --target wasm                            ║
+║    $ tb run compile input.tb output  # Compile to native                   ║
+║    $ tb run compile app.tb app.wasm --target wasm                          ║
 ║                                                                            ║
 ║  Development:                                                              ║
-║    $ tb x repl                     # Start interactive REPL                ║
-║    $ tb x check program.tb         # Check syntax & types                  ║
-║    $ tb x examples                 # Browse and run examples               ║
+║    $ tb run repl                     # Start interactive REPL              ║
+║    $ tb run check program.tb         # Check syntax & types                ║
+║    $ tb run examples                 # Browse and run examples             ║
 ║                                                                            ║
 ║  Project Management:                                                       ║
-║    $ tb x init myproject           # Create new TB project                 ║
-║    $ tb x info                     # Show system information               ║
+║    $ tb run init myproject           # Create new TB project               ║
+║    $ tb run info                     # Show system information             ║
 ║                                                                            ║
 ║  Nested Tools:                                                             ║
-║    $ tb x support [args]           # System support operations             ║
-║    $ tb x ide [args]               # Language IDE extension tools          ║
-║    $ tb x test [args]              # TB language testing and examples      ║
+║    $ tb run support [args]           # System support operations           ║
+║    $ tb run ide [args]               # Language IDE extension tools        ║
+║    $ tb run test [args]              # TB language testing and examples    ║
 ║                                                                            ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 """
@@ -596,7 +602,7 @@ def cli_tbx_main():
     Copysubparsers.add_parser('clean', help='Clean build artifacts')
 
     # Run command
-    p_run = Copysubparsers.add_parser('run', help='Run a TB program')
+    p_run = Copysubparsers.add_parser('x', help='Run a TB program')
     p_run.add_argument('file', help='TB program file to run')
     p_run.add_argument('--mode', choices=['compiled', 'jit', 'streaming'],
                        default='jit', help='Execution mode')
@@ -645,7 +651,7 @@ def cli_tbx_main():
         success = handle_build(release=not args.debug)
     elif args.command == 'clean':
         success = handle_clean()
-    elif args.command == 'run':
+    elif args.command == 'x':
         success = handle_run(args.file, mode=args.mode, watch=args.watch)
     elif args.command == 'compile':
         success = handle_compile(args.input, args.output, target=args.target)

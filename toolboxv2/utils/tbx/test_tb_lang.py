@@ -23,16 +23,6 @@ from dataclasses import dataclass
 # ═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION - Adjust these paths
 # ═══════════════════════════════════════════════════════════════════════════
-from toolboxv2 import tb_root_dir
-# Path to TB binary (relative or absolute)
-TB_BINARY_PATH = str(tb_root_dir / "bin" / "tbx")
-
-# Alternative paths to try if main path doesn't exist
-ALTERNATIVE_PATHS = [
-    str(tb_root_dir / "tb-exc" / "target"/"debug"/"tbx"),
-    str(tb_root_dir / "tb-exc" / "target"/"release"/"tbx"),
-    "tbx",  # System PATH
-]
 
 # Test configuration
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
@@ -119,6 +109,16 @@ suite = TestSuite()
 
 def find_tb_binary() -> str:
     """Find TB binary, trying multiple paths with system-specific extensions."""
+    from toolboxv2 import tb_root_dir
+    # Path to TB binary (relative or absolute)
+    TB_BINARY_PATH = str(tb_root_dir / "bin" / "tbx")
+
+    # Alternative paths to try if main path doesn't exist
+    ALTERNATIVE_PATHS = [
+        str(tb_root_dir / "tb-exc" / "target" / "debug" / "tbx"),
+        str(tb_root_dir / "tb-exc" / "target" / "release" / "tbx"),
+        #"tbx",  # System PATH
+    ]
 
     # Add system-specific extension
     def add_extension(path: str) -> str:
@@ -160,7 +160,42 @@ def run_tb(code: str, mode: str = "jit", timeout: int = 10) -> Tuple[bool, str, 
     Returns:
         (success, stdout, stderr)
     """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False) as f:
+    if mode == "compiled":
+        with tempfile.NamedTemporaryFile(suffix='', delete=False) as f:
+            output_path = f.name
+
+        try:
+            start = time.perf_counter()
+            success, stderr = run_tb_compile(code, output_path)
+            duration = time.perf_counter() - start
+            print(f" -- Compile time ({duration:.3f}s)")
+            if not success:
+                raise AssertionError(f"Compilation failed:\n{stderr}")
+
+            # Check binary exists
+            if not os.path.exists(output_path):
+                raise AssertionError("Compiled binary not found")
+
+            # Check binary is executable
+            if not os.access(output_path, os.X_OK):
+                os.chmod(output_path, 0o755)
+
+            start = time.perf_counter()
+            # Run compiled binary
+            result = subprocess.run([output_path], capture_output=True, text=True, timeout=timeout//2,
+                                    encoding=sys.stdout.encoding or 'utf-8')
+            duration = time.perf_counter() - start
+            print(f" -- Exec time ({duration:.3f}s)")
+
+            if result.returncode != 0:
+                raise AssertionError(f"Compiled binary failed: {result.stderr}")
+
+            return success, result.stdout, result.stderr
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, encoding=sys.stdout.encoding or 'utf-8') as f:
         f.write(code)
         temp_file = f.name
 
@@ -169,7 +204,9 @@ def run_tb(code: str, mode: str = "jit", timeout: int = 10) -> Tuple[bool, str, 
             [TB_BINARY, "run", temp_file, "--mode", mode],
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            encoding=sys.stdout.encoding or 'utf-8',
+            errors='replace'
         )
 
         success = result.returncode == 0
@@ -187,7 +224,7 @@ def run_tb(code: str, mode: str = "jit", timeout: int = 10) -> Tuple[bool, str, 
 
 def run_tb_compile(code: str, output_path: str, target: str = None) -> Tuple[bool, str]:
     """Compile TB code to binary."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, encoding=sys.stdout.encoding or 'utf-8') as f:
         f.write(code)
         temp_file = f.name
 
@@ -196,7 +233,7 @@ def run_tb_compile(code: str, output_path: str, target: str = None) -> Tuple[boo
         if target:
             cmd.extend(["--target", target])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=not VERBOSE, text=True, timeout=60, encoding=sys.stdout.encoding or 'utf-8')
 
         success = result.returncode == 0
         return success, result.stderr
@@ -226,14 +263,14 @@ def test(name: str, category: str = "General"):
                 print(f"\n{Colors.BOLD}{Colors.CYAN}[{category}]{Colors.RESET}")
                 suite.current_category = category
 
-            print(f"  {Colors.GRAY}Testing:{Colors.RESET} {name}...", end=" ", flush=True)
+            print(f"  {Colors.GRAY}Testing:{Colors.RESET} {name}", end=" ", flush=True)
 
-            start = time.time()
+            start = time.perf_counter()
             try:
                 func()
-                duration = (time.time() - start) * 1000
+                duration = time.perf_counter() - start
 
-                print(f"{Colors.GREEN}✓{Colors.RESET} ({duration:.0f}ms)")
+                print(f" -- {Colors.GREEN}✓{Colors.RESET} ({duration:.3f}s)")
 
                 suite.add_result(TestResult(
                     name=name,
@@ -242,9 +279,9 @@ def test(name: str, category: str = "General"):
                 ))
 
             except AssertionError as e:
-                duration = (time.time() - start) * 1000
+                duration = time.perf_counter() - start
 
-                print(f"{Colors.RED}✗{Colors.RESET} ({duration:.0f}ms)")
+                print(f"{Colors.RED}✗{Colors.RESET} ({duration:.0f}s)")
                 if VERBOSE:
                     print(f"    {Colors.RED}Error: {str(e)}{Colors.RESET}")
 
@@ -256,7 +293,9 @@ def test(name: str, category: str = "General"):
                 ))
 
             except Exception as e:
-                duration = (time.time() - start) * 1000
+                import traceback
+                print(traceback.format_exc())
+                duration = (time.perf_counter() - start) * 1000
 
                 print(f"{Colors.RED}✗ (Exception){Colors.RESET}")
                 if VERBOSE:
@@ -276,8 +315,12 @@ def test(name: str, category: str = "General"):
 
 def assert_output(code: str, expected: str, mode: str = "jit"):
     """Assert that TB code produces expected output."""
-    success, stdout, stderr = run_tb(code, mode)
 
+    success, stdout, stderr = run_tb(code, mode)
+    if VERBOSE and not success:
+        print(f"code: {code}")
+        print()
+        print(f"stdout: {stdout}")
     if not success:
         raise AssertionError(f"Execution failed:\n{stderr}")
 
@@ -295,6 +338,10 @@ def assert_output(code: str, expected: str, mode: str = "jit"):
 def assert_success(code: str, mode: str = "jit"):
     """Assert that TB code runs without error."""
     success, stdout, stderr = run_tb(code, mode)
+    if VERBOSE and not success:
+        print(f"code: {code}")
+        print()
+        print(f"stdout: {stdout}")
 
     if not success:
         raise AssertionError(f"Execution failed:\n{stderr}")
@@ -329,7 +376,7 @@ echo "Hello, World!"
 def test_variables():
     code = '''
 let x = 42
-echo $x
+echo x
 '''
     assert_output(code, "42")
 
@@ -357,6 +404,7 @@ echo $name
 def test_comments():
     code = '''
 # This is a comment
+// me 2
 echo "test"  # inline comment
 '''
     assert_output(code, "test")
@@ -828,8 +876,10 @@ echo "Hello from compiled binary!"
         output_path = f.name
 
     try:
+        start = time.perf_counter()
         success, stderr = run_tb_compile(code, output_path)
-
+        duration = time.perf_counter() - start
+        print(f" -- Compile time ({duration:.3f}s)")
         if not success:
             raise AssertionError(f"Compilation failed:\n{stderr}")
 
@@ -841,8 +891,11 @@ echo "Hello from compiled binary!"
         if not os.access(output_path, os.X_OK):
             os.chmod(output_path, 0o755)
 
+        start = time.perf_counter()
         # Run compiled binary
-        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5, encoding=sys.stdout.encoding or 'utf-8')
+        duration = time.perf_counter() - start
+        print(f" -- Exec time ({duration:.3f}s)")
 
         if result.returncode != 0:
             raise AssertionError(f"Compiled binary failed: {result.stderr}")
@@ -872,13 +925,18 @@ echo $result
         output_path = f.name
 
     try:
+        start = time.perf_counter()
         success, stderr = run_tb_compile(code, output_path)
-
+        duration = time.perf_counter() - start
+        print(f" -- Compile time ({duration:.3f}s)")
         if not success:
             raise AssertionError(f"Compilation failed:\n{stderr}")
 
+        start = time.perf_counter()
         # Run and verify output
-        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5, encoding=sys.stdout.encoding or 'utf-8')
+        duration = time.perf_counter() - start
+        print(f" -- Exec time ({duration:.3f}s)")
 
         if "3628800" not in result.stdout:
             raise AssertionError(f"Incorrect factorial result: {result.stdout}")
@@ -1006,6 +1064,7 @@ def test_python_inline_simple():
 let result = python("""
 import math
 print(math.sqrt(16))
+
 """)
 '''
     # Just verify it executes without error
@@ -1760,6 +1819,1490 @@ print(text.count('\\n'))
 """)
 '''
     assert_success(code)
+
+
+@test("Cross-Language Variables", "Dependencies - Cross-Language Variables")
+def test_cross_variables():
+    code = '''
+@config {
+    mode: "jit"
+}
+
+# TB Variables
+let name = "Alice"
+let age = 30
+let scores = [85, 92, 78, 95]
+let is_active = true
+
+echo "=== Original TB Variables ==="
+echo "Name: $name"
+echo "Age: $age"
+echo "Scores: $scores"
+
+# Python kann TB-Variablen direkt nutzen
+echo "\n=== Python with TB Variables ==="
+let py_result = python("""
+# TB variables sind automatisch verfügbar!
+print(f"Hello {name}, you are {age} years old")
+print(f"Your scores: {scores}")
+print(f"Average: {sum(scores) / len(scores)}")
+print(f"Active status: {is_active}")
+
+# Berechnung mit TB-Variable
+result = age * 2
+print(f"Age doubled: {result}")
+""")
+
+# JavaScript kann TB-Variablen nutzen
+echo "\n=== JavaScript with TB Variables ==="
+let js_result = javascript("""
+// TB variables automatically available
+console.log(`Hello ${name}, you are ${age} years old`);
+console.log(`Scores: ${scores}`);
+console.log(`Max score: ${Math.max(...scores)}`);
+console.log(`Active: ${is_active}`);
+""")
+
+# Go kann TB-Variablen nutzen
+echo "\n=== Go with TB Variables ==="
+let go_result = go("""
+// TB variables automatically available
+fmt.Printf("Hello %s, you are %d years old\n", name, age)
+fmt.Printf("Number of scores: %d\n", len(scores))
+if is_active {
+    fmt.Println("Status: Active")
+}
+""")
+
+# Bash kann TB-Variablen nutzen
+echo "\n=== Bash with TB Variables ==="
+bash("""
+# TB variables automatically available
+echo "Name from Bash: $name"
+echo "Age from Bash: $age"
+echo "Active: $is_active"
+""")
+
+# Komplexeres Beispiel: Daten zwischen Sprachen teilen
+echo "\n=== Complex Data Flow ==="
+
+let data = [1, 2, 3, 4, 5]
+
+# Python verarbeitet
+let processed = python("""
+# data ist verfügbar
+result = [x * x for x in data]
+print(result)
+""")
+
+# JavaScript nutzt processed (wenn wir Return-Wert-Capture implementieren)
+javascript("""
+// Direkt mit TB-Variablen arbeiten
+console.log("Data length:", data.length);
+console.log("Sum:", data.reduce((a, b) => a + b, 0));
+""")'''
+    assert_success(code)
+
+@test("Cross-Language Variables - Compiled", "Dependencies - Cross-Language Variables - Compiled")
+def test_cross_variables_compiled():
+    code = '''
+@config {
+    mode: "jit"
+}
+
+# TB Variables
+let name = "Alice"
+let age = 30
+let scores = [85, 92, 78, 95]
+let is_active = true
+
+echo "=== Original TB Variables ==="
+echo "Name: $name"
+echo "Age: $age"
+echo "Scores: $scores"
+
+# Python kann TB-Variablen direkt nutzen
+echo "\n=== Python with TB Variables ==="
+let py_result = python("""
+# TB variables sind automatisch verfügbar!
+print(f"Hello {name}, you are {age} years old")
+print(f"Your scores: {scores}")
+print(f"Average: {sum(scores) / len(scores)}")
+print(f"Active status: {is_active}")
+
+# Berechnung mit TB-Variable
+result = age * 2
+print(f"Age doubled: {result}")
+""")
+
+# JavaScript kann TB-Variablen nutzen
+echo "\n=== JavaScript with TB Variables ==="
+let js_result = javascript("""
+// TB variables automatically available
+console.log(`Hello ${name}, you are ${age} years old`);
+console.log(`Scores: ${scores}`);
+console.log(`Max score: ${Math.max(...scores)}`);
+console.log(`Active: ${is_active}`);
+""")
+
+# Go kann TB-Variablen nutzen
+echo "\n=== Go with TB Variables ==="
+let go_result = go("""
+// TB variables automatically available
+fmt.Printf("Hello %s, you are %d years old\n", name, age)
+fmt.Printf("Number of scores: %d\n", len(scores))
+if is_active {
+    fmt.Println("Status: Active")
+}
+""")
+
+# Bash kann TB-Variablen nutzen
+echo "\n=== Bash with TB Variables ==="
+bash("""
+# TB variables automatically available
+echo "Name from Bash: $name"
+echo "Age from Bash: $age"
+echo "Active: $is_active"
+""")
+
+# Komplexeres Beispiel: Daten zwischen Sprachen teilen
+echo "\n=== Complex Data Flow ==="
+
+let data = [1, 2, 3, 4, 5]
+
+# Python verarbeitet
+let processed = python("""
+# data ist verfügbar
+result = [x * x for x in data]
+print(result)
+""")
+
+# JavaScript nutzt processed (wenn wir Return-Wert-Capture implementieren)
+javascript("""
+// Direkt mit TB-Variablen arbeiten
+console.log("Data length:", data.length);
+console.log("Sum:", data.reduce((a, b) => a + b, 0));
+""")'''
+    with tempfile.NamedTemporaryFile(suffix='', delete=False) as f:
+        output_path = f.name
+
+    try:
+        start = time.perf_counter()
+        success, stderr = run_tb_compile(code, output_path)
+        duration = time.perf_counter() - start
+        print(f" -- Compile time ({duration:.3f}s)")
+        if not success:
+            raise AssertionError(f"Compilation failed:\n{stderr}")
+
+        # Check binary exists
+        if not os.path.exists(output_path):
+            raise AssertionError("Compiled binary not found")
+
+        # Check binary is executable
+        if not os.access(output_path, os.X_OK):
+            os.chmod(output_path, 0o755)
+
+        start = time.perf_counter()
+        # Run compiled binary
+        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5,
+                                encoding=sys.stdout.encoding or 'utf-8')
+        duration = time.perf_counter() - start
+        print(f" -- Exec time ({duration:.3f}s)")
+
+        if result.returncode != 0:
+            raise AssertionError(f"Compiled binary failed: {result.stderr}")
+
+        if "Sum: 15" not in result.stdout:
+            raise AssertionError(f"Unexpected output: {result.stdout}")
+    finally:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+@test("Return Values from Dependencies", "Dependencies - Return Values")
+def testexample_return_values():
+    code = '''// example_return_values.tb
+
+@config {
+    mode: "jit"
+}
+
+# Python berechnet und returned
+let result = python("""
+import math
+result = math.sqrt(16) * 2
+print(result)
+""")
+
+echo "Python returned: $result"
+
+# JavaScript berechnet
+let js_value = javascript("""
+const value = 42 * 2;
+console.log(value);
+""")
+
+echo "JavaScript returned: $js_value"
+
+# Go berechnet
+let go_value = go("""
+result := 100 + 50
+fmt.Println(result)
+""")
+
+echo "Go returned: $go_value"
+
+# Werte weiterverarbeiten in TB
+let total = result + js_value + go_value
+echo "Total sum: $total"'''
+    assert_success(code)
+
+@test("Return Values from Dependencies - Compiled", "Dependencies - Return Values - Compiled")
+def testexample_return_values_compiled():
+    code = '''// example_return_values.tb
+
+@config {
+    mode: "jit"
+}
+
+# Python berechnet und returned
+let result = python("""
+import math
+result = math.sqrt(16) * 2
+print(result)
+""")
+
+echo "Python returned: $result"
+
+# JavaScript berechnet
+let js_value = javascript("""
+const value = 42 * 2;
+console.log(value);
+""")
+
+echo "JavaScript returned: $js_value"
+
+# Go berechnet
+let go_value = go("""
+result := 100 + 50
+fmt.Println(result)
+""")
+
+echo "Go returned: $go_value"
+
+# Werte weiterverarbeiten in TB
+let total = result + js_value + go_value
+echo "Total sum: $total"'''
+
+    with tempfile.NamedTemporaryFile(suffix='', delete=False) as f:
+        output_path = f.name
+
+    try:
+        start = time.perf_counter()
+        success, stderr = run_tb_compile(code, output_path)
+        duration = time.perf_counter() - start
+        print(f" -- Compile time ({duration:.3f}s)")
+        if not success:
+            raise AssertionError(f"Compilation failed:\n{stderr}")
+
+        # Check binary exists
+        if not os.path.exists(output_path):
+            raise AssertionError("Compiled binary not found")
+
+        # Check binary is executable
+        if not os.access(output_path, os.X_OK):
+            os.chmod(output_path, 0o755)
+
+        start = time.perf_counter()
+        # Run compiled binary
+        result = subprocess.run([output_path], capture_output=True, text=True, timeout=5, encoding='utf-8')
+        duration = time.perf_counter() - start
+        print(f" -- Exec time ({duration:.3f}s)")
+
+        if result.returncode != 0:
+            raise AssertionError(f"Compiled binary failed: {result.stderr}")
+
+        if "Total sum: 242" not in result.stdout:
+            raise AssertionError(f"Unexpected output: {result.stdout}")
+
+    finally:
+        try:
+            os.unlink(output_path)
+        except:
+            pass
+
+@test("Async Execution", "Dependencies - Async ")
+def test_example_async():
+    code = '''// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLE: example_async_parallel.tb
+// ═══════════════════════════════════════════════════════════════════════════
+
+@config {
+    mode: "jit"
+    runtime_mode: "async"  # or "parallel"
+}
+
+# Shared variable (thread-safe)
+let @shared counter = 0
+let @shared results = []
+
+# Async execution
+let task1 = async {
+    python("""
+import time
+time.sleep(1)
+print("Task 1 complete")
+    """)
+}
+
+let task2 = async {
+    javascript("""
+setTimeout(() => console.log('Task 2 complete'), 1000);
+    """)
+}
+
+# Wait for both
+await task1
+await task2
+
+# Parallel execution
+parallel {
+    {
+        counter = counter + 1
+        echo "Thread 1: $counter"
+    }
+    {
+        counter = counter + 1
+        echo "Thread 2: $counter"
+    }
+    {
+        counter = counter + 1
+        echo "Thread 3: $counter"
+    }
+}
+
+echo "Final counter: $counter"
+
+# Parallel for loop
+for item in [1, 2, 3, 4, 5] {
+    parallel {
+        let squared = item * item
+        results.push(squared)
+    }
+}
+
+echo "Results: $results"
+    '''
+    assert_success(code)
+@test("Parallel Execution", "Dependencies - Parallel")
+def test_example_parallel():
+    code = '''// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLE: example_async_parallel.tb
+// ═══════════════════════════════════════════════════════════════════════════
+
+@config {
+    mode: "jit"
+    runtime_mode:  "parallel"
+}
+
+# Shared variable (thread-safe)
+let @shared counter = 0
+let @shared results = []
+
+# Async execution
+let task1 = async {
+    python("""
+import time
+time.sleep(1)
+print("Task 1 complete")
+    """)
+}
+
+let task2 = async {
+    javascript("""
+setTimeout(() => console.log('Task 2 complete'), 1000);
+    """)
+}
+
+# Wait for both
+await task1
+await task2
+
+# Parallel execution
+parallel {
+    {
+        counter = counter + 1
+        echo "Thread 1: $counter"
+    }
+    {
+        counter = counter + 1
+        echo "Thread 2: $counter"
+    }
+    {
+        counter = counter + 1
+        echo "Thread 3: $counter"
+    }
+}
+
+echo "Final counter: $counter"
+
+# Parallel for loop
+for item in [1, 2, 3, 4, 5] {
+    parallel {
+        let squared = item * item
+        results.push(squared)
+    }
+}
+
+echo "Results: $results"
+    '''
+    assert_success(code)
+
+def test_types():
+    code = '''@config { mode: "jit" }
+
+# String Interpolation
+let name = "World"
+let count = 42
+echo "Hello, $name! Count: $count"
+
+# Type Conversions
+let x = int("123")
+echo "Parsed int: $x"
+
+let y = float("3.14")
+echo "English float: $y"
+
+let z = float("3,14")
+echo "German float: $z"
+
+let big = float("1.234,56")
+echo "German thousand: $big"
+
+# Convert everything to string
+let nums = [1, 2, 3]
+let tuple = (10, 20)
+echo "List as string: " str($nums)
+echo "Tuple as string: " str($tuple)
+
+# Type inspection
+echo "Type of x: " type_of($x)
+echo "Type of nums: " type_of($nums)'''
+    assert_output(code, '''Hello, World! Count: 42
+Parsed int: 123
+English float: 3.14
+German float: 3.14
+German thousand: 1234.56
+List as string: [1, 2, 3]
+Tuple as string: (10, 20)
+Type of x: int
+Type of nums: list''')
+# ═══════════════════════════════════════════════════════════════════════════
+# TESTS - IMPORT SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@test("Import - Single File", "Import System")
+def test_import_single_file():
+    """Test importing a single .tbx file"""
+    # Create library file
+    lib_code = '''
+fn double(x: int) {
+    x * 2
+}
+
+fn triple(x: int) {
+    x * 3
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        # Create main file that imports library
+        main_code = f'''
+@imports {{
+    "{lib_path}"
+}}
+
+let result = double(5)
+echo result
+'''
+        assert_output(main_code, "10")
+    finally:
+        os.unlink(lib_path)
+
+
+@test("Import - Multiple Files", "Import System")
+def test_import_multiple_files():
+    """Test importing multiple .tbx files"""
+    # Create math library
+    math_lib = '''
+fn add(x, y) {
+    x + y
+}
+'''
+
+    # Create string library
+    string_lib = '''
+fn greet(name: string) {
+    echo "Hello,"name "!"
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as math_file, \
+        tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as string_file:
+
+        math_file.write(math_lib)
+        string_file.write(string_lib)
+        math_path = os.path.basename(math_file.name)
+        string_path = os.path.basename(string_file.name)
+
+    try:
+        main_code = f'''
+@imports {{
+    "{math_path}"
+    "{string_path}"
+}}
+
+let sum = add(3, 7)
+echo sum
+greet("World")
+'''
+        success, stdout, stderr = run_tb(main_code)
+        assert success, f"Execution failed: {stderr}"
+        assert "10" in stdout, f"Expected '10' in output, got: {stdout}"
+        assert "Hello, World !" in stdout, f"Expected Hello, World! in output, got: {stdout}"
+    finally:
+        os.unlink(math_path)
+        os.unlink(string_path)
+
+
+@test("Import - With Variables", "Import System")
+def test_import_with_variables():
+    """Test importing file with global variables"""
+    lib_code = '''
+let PI = 3.14159
+let E = 2.71828
+
+fn circle_area(radius: float) {
+    PI * radius * radius
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@imports {{
+    "{lib_path}"
+}}
+
+echo PI
+let area = circle_area(2.0)
+echo area
+'''
+        success, stdout, stderr = run_tb(main_code)
+        assert success, f"Execution failed: {stderr}"
+        assert "3.14159" in stdout or "3.14" in stdout
+    finally:
+        os.unlink(lib_path)
+
+
+@test("Import - Relative Paths", "Import System")
+def test_import_relative_paths():
+    """Test importing with relative directory paths"""
+    # Create subdirectory
+    lib_dir = tempfile.mkdtemp(dir='.')
+    lib_dir_name = os.path.basename(lib_dir)
+
+    try:
+        # Create library in subdirectory
+        lib_code = '''
+fn multiply(x: int, y: int) {
+    x * y
+}
+'''
+        lib_path = os.path.join(lib_dir, 'math.tbx')
+        with open(lib_path, 'w') as f:
+            f.write(lib_code)
+
+        main_code = f'''
+@imports {{
+    "{lib_dir_name}/math.tbx"
+}}
+
+let result = multiply(6, 7)
+echo result
+'''
+        assert_output(main_code, "42")
+    finally:
+        shutil.rmtree(lib_dir, ignore_errors=True)
+
+
+@test("Import - Compiled Mode", "Import System")
+def test_import_compiled_mode():
+    """Test that imports work in compiled mode"""
+    lib_code = '''
+fn double(x: int) {
+    x * 2
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@config {{
+    mode: "compiled"
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+let result = double(21)
+echo result
+'''
+        assert_output(main_code, "42", mode="compiled")
+    finally:
+        os.unlink(lib_path)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TESTS - COMPILED MODES (JIT vs COMPILED)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("Compiled - Basic Arithmetic", "Compiled Modes")
+def test_compiled_arithmetic():
+    """Test basic arithmetic in compiled mode"""
+    code = '''
+let x = 10
+let y = 20
+let sum = x + y
+let product = x * y
+echo sum
+echo product
+'''
+    success, stdout, stderr = run_tb(code, mode="compiled")
+    assert success, f"Compilation failed: {stderr}"
+    assert "30" in stdout
+    assert "200" in stdout
+
+
+@test("Compiled - Functions", "Compiled Modes")
+def test_compiled_functions():
+    """Test function definitions in compiled mode"""
+    code = '''
+fn fibonacci(n: int) -> int {
+    if n <= 1 {
+        n
+    } else {
+        fibonacci(n - 1) + fibonacci(n - 2)
+    }
+}
+
+let result = fibonacci(10)
+echo result
+'''
+    assert_output(code, "55", mode="compiled")
+
+@test("Compiled - Functions", "Compiled Modes NO Compiled")
+def test_compiled_functions_no_compiled_():
+    """Test function definitions in compiled mode"""
+    code = '''
+fn fibonacci(n: int) -> int {
+    if n <= 1 {
+        n
+    } else {
+        fibonacci(n - 1) + fibonacci(n - 2)
+    }
+}
+
+let result = fibonacci(10)
+echo result
+'''
+    assert_output(code, "55", mode="jit")
+
+
+@test("Compiled - Loops", "Compiled Modes")
+def test_compiled_loops():
+    """Test loops in compiled mode"""
+    code = '''
+let sum = 0
+for i in [1, 2, 3, 4, 5] {
+    sum = sum + i
+}
+echo sum
+'''
+    assert_output(code, "15", mode="compiled")
+
+
+@test("Compiled - Async Support", "Compiled Modes")
+def test_compiled_async():
+    """Test async/await in compiled mode"""
+    code = '''
+@config {
+    runtime_mode: "async"
+}
+
+fn async_task() {
+    async {
+        let result = 42
+        result
+    }
+}
+
+let value = await async_task()
+echo value
+'''
+    assert_output(code, "42", mode="compiled")
+
+
+@test("Compiled - Parallel Execution", "Compiled Modes")
+def test_compiled_parallel():
+    """Test parallel execution in compiled mode"""
+    code = '''
+@config {
+    runtime_mode: "parallel"
+}
+
+let results = parallel {
+    10 + 5,
+    20 * 2,
+    30 - 10
+}
+
+for result in results {
+    echo result
+}
+'''
+    success, stdout, stderr = run_tb(code, mode="compiled")
+    assert success, f"Compilation failed: {stderr}"
+    # Results may be in any order due to parallelism
+    assert "15" in stdout
+    assert "40" in stdout
+    assert "20" in stdout
+
+
+@test("Compiled - Parallel with Imports", "Compiled Modes")
+def test_compiled_parallel_with_imports():
+    """Test parallel execution with imported functions"""
+    lib_code = '''
+fn compute_square(x: int) {
+    x * x
+}
+
+fn compute_cube(x: int) {
+    x * x * x
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@config {{
+    runtime_mode: "parallel"
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+let results = parallel {{
+    compute_square(5),
+    compute_cube(3),
+    compute_square(10)
+}}
+
+for result in results {{
+    echo result
+}}
+'''
+        success, stdout, stderr = run_tb(main_code, mode="compiled")
+        assert success, f"Compilation failed: {stderr}"
+        assert "25" in stdout
+        assert "27" in stdout
+        assert "100" in stdout
+    finally:
+        os.unlink(lib_path)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TESTS - MIXED FEATURES
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("Mixed - Import + Async + Language Bridge", "Mixed Features")
+def test_mixed_import_async_language():
+    """Test imports with async and language bridges"""
+    lib_code = '''
+fn get_data() {
+    async {
+        python("import sys; print(sys.version.split()[0])")
+    }
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@config {{
+    runtime_mode: "async"
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+let version = await get_data()
+echo "Python version detected"
+'''
+        assert_contains(main_code, "Python version detected", mode="jit")
+    finally:
+        os.unlink(lib_path)
+
+
+@test("Mixed - Multiple Imports + Parallel", "Mixed Features")
+def test_mixed_multiple_imports_parallel():
+    """Test multiple imports with parallel execution"""
+    math_lib = '''
+fn factorial(n: int) -> int {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+'''
+
+    utils_lib = '''
+fn power(base: int, exp: int) -> int {
+    if exp == 0 {
+        1
+    } else {
+        base * power(base, exp - 1)
+    }
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as math_file, \
+        tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as utils_file:
+
+        math_file.write(math_lib)
+        utils_file.write(utils_lib)
+        math_path = os.path.basename(math_file.name)
+        utils_path = os.path.basename(utils_file.name)
+
+    try:
+        main_code = f'''
+@config {{
+    runtime_mode: "parallel"
+}}
+
+@imports {{
+    "{math_path}"
+    "{utils_path}"
+}}
+
+let results = parallel {{
+    factorial(5),
+    power(2, 10),
+    factorial(6)
+}}
+
+for result in results {{
+    echo result
+}}
+'''
+        success, stdout, stderr = run_tb(main_code, mode="compiled")
+        assert success, f"Compilation failed: {stderr}"
+        assert "120" in stdout  # 5!
+        assert "1024" in stdout  # 2^10
+        assert "720" in stdout  # 6!
+    finally:
+        os.unlink(math_path)
+        os.unlink(utils_path)
+
+
+@test("Mixed - Shared Variables + Imports", "Mixed Features")
+def test_mixed_shared_imports():
+    """Test shared variables with imports"""
+    lib_code = '''
+fn increment_counter() {
+    counter + 1
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@shared {{
+    counter: 0
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+counter = increment_counter()
+counter = increment_counter()
+echo counter
+'''
+        assert_output(main_code, "2")
+    finally:
+        os.unlink(lib_path)
+
+@test("Mixed - Shared Variables + Imports + Python Bridge", "Mixed Features")
+def test_mixed_shared_imports_mixed_lang():
+    """Test shared variables with imports"""
+    lib_code = '''
+fn increment_counter() {python("print(counter + 1, end='')")}
+
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@shared {{
+    counter: 0
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+counter = increment_counter()
+counter = increment_counter()
+echo counter
+'''
+        assert_output(main_code, "2")
+    finally:
+        os.unlink(lib_path)
+
+
+@test("Mixed - Full Stack Test", "Mixed Features")
+def test_mixed_full_stack():
+    """Comprehensive test with all features combined"""
+    helpers_lib = '''
+fn async_compute(x: int) {
+    async {
+        x * 2
+    }
+}
+
+fn parallel_sum(numbers: list) {
+    let sum = 0
+    for n in numbers {
+        sum = sum + n
+    }
+    sum
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(helpers_lib)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@config {{
+    mode: "jit"
+    runtime_mode: "async"
+}}
+
+@shared {{
+    total: 0
+}}
+
+@imports {{
+    "{lib_path}"
+}}
+
+let value = await async_compute(21)
+total = parallel_sum([1, 2, 3, 4, 5])
+echo value
+echo total
+'''
+        success, stdout, stderr = run_tb(main_code, mode="jit")
+        assert success, f"Execution failed: {stderr}"
+        assert "42" in stdout
+        assert "15" in stdout
+    finally:
+        os.unlink(lib_path)
+
+
+
+@test("Compiled - Import Caching", "Import Compiled Modes")
+def test_import_compiled_caching():
+    """Test that compiled imports are cached"""
+    print("→ Test: Compiled Import Caching")
+
+    # Create library with compiled mode
+    lib_code = '''
+@config {
+    mode: "compiled"
+}
+
+fn factorial(n: int) {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        main_code = f'''
+@imports {{
+    "{lib_path}"
+}}
+
+let result = factorial(5)
+echo $result
+'''
+
+        # First run - should compile
+        start_time = time.time()
+        success1, stdout1, stderr1 = run_tb(main_code)
+        first_run_time = time.time() - start_time
+
+        assert success1, f"First execution failed: {stderr1}"
+        assert "120" in stdout1, f"Expected 120, got: {stdout1}"
+
+        # Second run - should use cache
+        start_time = time.time()
+        success2, stdout2, stderr2 = run_tb(main_code)
+        second_run_time = time.time() - start_time
+
+        assert success2, f"Second execution failed: {stderr2}"
+        assert "120" in stdout2, f"Expected 120, got: {stdout2}"
+
+        # Second run should be significantly faster (using cache)
+        assert second_run_time < first_run_time * 0.7, \
+            f"Cache not used? First: {first_run_time:.2f}s, Second: {second_run_time:.2f}s"
+
+        print(f"  ✓ Caching works (first: {first_run_time:.2f}s, second: {second_run_time:.2f}s)")
+
+    finally:
+        os.unlink(lib_path)
+
+@test("Compiled - JIT vs Compiled Imports", "Import Compiled Modes")
+def test_import_jit_vs_compiled():
+    """Test that JIT imports don't get compiled"""
+    print("→ Test: JIT vs Compiled Imports")
+
+    # JIT library
+    jit_lib = '''
+@config {
+    mode: "jit"
+}
+
+fn square(x: int) {
+    x * x
+}
+'''
+
+    # Compiled library
+    compiled_lib = '''
+@config {
+    mode: "compiled"
+}
+
+fn cube(x: int) {
+    x * x * x
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as jit_file, \
+         tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as compiled_file:
+
+        jit_file.write(jit_lib)
+        compiled_file.write(compiled_lib)
+        jit_path = os.path.basename(jit_file.name)
+        compiled_path = os.path.basename(compiled_file.name)
+
+    try:
+        main_code = f'''
+@imports {{
+    "{jit_path}"
+    "{compiled_path}"
+}}
+
+echo square(4)
+echo cube(3)
+'''
+
+        success, stdout, stderr = run_tb(main_code)
+
+        assert success, f"Execution failed: {stderr}"
+        assert "16" in stdout, f"Expected 16 from square(4), got: {stdout}"
+        assert "27" in stdout, f"Expected 27 from cube(3), got: {stdout}"
+
+        print("  ✓ Mixed JIT/Compiled imports work")
+
+    finally:
+        os.unlink(jit_path)
+        os.unlink(compiled_path)
+
+@test("Compiled - Import Dependency Chain", "Import Compiled Modes")
+def test_import_dependency_chain():
+    """Test imports that depend on other imports"""
+    print("→ Test: Import Dependency Chain")
+
+    # Base library
+    base_lib = '''
+fn double(x: int) {
+    x * 2
+}
+'''
+
+    # Mid library (uses base)
+    mid_lib = '''
+@imports {
+    "base.tbx"
+}
+
+fn quadruple(x: int) {
+    double(double(x))
+}
+'''
+
+    # Create base.tbx
+    with open('base.tbx', 'w') as f:
+        f.write(base_lib)
+
+    # Create mid.tbx
+    with open('mid.tbx', 'w') as f:
+        f.write(mid_lib)
+
+    try:
+        main_code = '''
+@imports {
+    "mid.tbx"
+}
+
+echo quadruple(5)
+'''
+
+        success, stdout, stderr = run_tb(main_code)
+
+        assert success, f"Execution failed: {stderr}"
+        assert "20" in stdout, f"Expected 20, got: {stdout}"
+
+        print("  ✓ Transitive imports work")
+
+    finally:
+        os.unlink('base.tbx')
+        os.unlink('mid.tbx')
+
+@test("Compiled - Cache Invalidation", "Import Compiled Modes")
+def test_import_cache_invalidation():
+    """Test that cache is invalidated when source changes"""
+    print("→ Test: Cache Invalidation")
+
+    lib_path = 'test_cache_lib.tbx'
+
+    # Write initial version
+    with open(lib_path, 'w') as f:
+        f.write('''
+@config {
+    mode: "compiled"
+}
+
+fn get_value() {
+    42
+}
+''')
+
+    try:
+        main_code = f'''
+@imports {{
+    "{lib_path}"
+}}
+
+echo get_value()
+'''
+
+        # First run
+        success1, stdout1, _ = run_tb(main_code)
+        assert success1
+        assert "42" in stdout1
+
+        # Modify library
+        time.sleep(0.1)  # Ensure timestamp difference
+        with open(lib_path, 'w') as f:
+            f.write('''
+@config {
+    mode: "compiled"
+}
+
+fn get_value() {
+    100
+}
+''')
+
+        # Second run should use updated version
+        success2, stdout2, _ = run_tb(main_code)
+        assert success2
+        assert "100" in stdout2, f"Cache not invalidated! Got: {stdout2}"
+
+        print("  ✓ Cache invalidation works")
+
+    finally:
+        os.unlink(lib_path)
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TESTS - ERROR HANDLING
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("Import - Missing File Error", "Import Errors")
+def test_import_missing_file():
+    """Test error handling for missing import files"""
+    code = '''
+@imports {
+    "nonexistent_file.tbx"
+}
+
+echo "This should not run"
+'''
+    success, stdout, stderr = run_tb(code)
+    assert not success, "Should fail for missing import file"
+    assert "not found" in stderr.lower() or "import" in stderr.lower()
+
+
+@test("Import - Circular Import Protection", "Import Errors")
+def test_import_no_circular():
+    """Test that circular imports are handled (imports are not recursive)"""
+    # Create file that tries to import itself
+    lib_code = '''
+fn test_func() {
+    echo "Hello"
+}
+'''
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, dir='.') as lib_file:
+        lib_file.write(lib_code)
+        lib_path = os.path.basename(lib_file.name)
+
+    try:
+        # This should work because imports are not recursive
+        main_code = f'''
+@imports {{
+    "{lib_path}"
+}}
+
+test_func()
+'''
+        assert_success(main_code)
+    finally:
+        os.unlink(lib_path)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TESTS - DEPENDENCIES: GO LANGUAGE BRIDGE & IMPORTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("Go Language Bridge - Basic Execution", "Dependencies - Go Bridge")
+def test_go_basic_execution():
+    """Test that Go code can be executed."""
+    code = '''
+let result = go("""
+import "fmt"
+fmt.Println("Hello from Go!")
+""")
+'''
+    assert_success(code)
+
+
+@test("Go Import - Math", "Dependencies - Go Bridge")
+def test_go_import_math():
+    """Test using the Go 'math' standard library package."""
+    code = '''
+let result = go("""
+import (
+    "fmt"
+    "math"
+)
+// Sqrt returns the square root of 64
+fmt.Println(math.Sqrt(64))
+""")
+'''
+    assert_success(code)
+
+
+@test("Go Import - Strings", "Dependencies - Go Bridge")
+def test_go_import_strings():
+    """Test using the Go 'strings' package with a TB variable."""
+    code = '''
+let my_string = "Hello, Go!"
+let result = go("""
+import (
+    "fmt"
+    "strings"
+)
+// my_string is available from TB context
+// ToUpper returns a copy of the string with all letters mapped to their upper case.
+fmt.Println(strings.ToUpper(my_string))
+""")
+'''
+    assert_success(code)
+
+
+@test("Go Import - JSON Marshalling", "Dependencies - Go Bridge")
+def test_go_import_json():
+    """Test marshalling data to JSON using Go's 'encoding/json' package."""
+    code = '''
+# This test assumes TB lists/dicts are converted to Go slices/maps
+let user_data = [
+    { "name": "Alice", "age": 30 },
+    { "name": "Bob", "age": 25 }
+]
+let result = go("""
+import (
+    "fmt"
+    "encoding/json"
+)
+// user_data is available from TB, assume it's a []map[string]interface{}
+// Marshal returns the JSON encoding of user_data.
+jsonData, err := json.Marshal(user_data)
+if err != nil {
+    fmt.Println("Error:", err)
+} else {
+    fmt.Println(string(jsonData))
+}
+""")
+'''
+    assert_success(code)
+
+
+@test("Go Multi-Language - Python to Go", "Dependencies - Go Bridge")
+def test_go_multilang_python_to_go():
+    """Test data flow from a Python block to a Go block."""
+    code = '''
+# Python creates a string
+let data_from_py = python("""
+print("Data generated by Python")
+""")
+
+# Go processes the string from the TB variable
+let go_result = go("""
+import "fmt"
+// data_from_py is available from TB context
+// Printf formats according to a format specifier and writes to standard output.
+fmt.Printf("Go received: '%s'\\n", data_from_py)
+""")
+'''
+    assert_success(code)
+
+
+@test("Go Bridge - Compiled Mode", "Dependencies - Go Bridge")
+def test_go_bridge_compiled_mode():
+    """Test that the Go language bridge works in compiled mode."""
+    code = '''
+@config {
+    mode: "compiled"
+}
+
+let result = go("""
+import "fmt"
+fmt.Println("Hello from Go in compiled mode!")
+""")
+
+echo "Go execution finished."
+'''
+    assert_contains(code, "Go execution finished.", mode="compiled")
+
+@test("Type Annotations - Basic Types", "Type Annotations")
+def test_type_annotations():
+    """Test that type annotations are correctly handled."""
+    code = '''@config { mode: "compiled" }
+
+let age: int = python("print(42)")
+let price: float = python("print(19.99)")
+let name: string = python("print('Alice')")
+let active: bool = python("print(True)")
+let scores: list<int> = python("print([85, 92, 78])")
+
+echo "Age: $age"           // Age: 42
+echo "Price: $price"       // Price: 19.99
+echo "Name: $name"         // Name: Alice
+echo "Active: $active"     // Active: true'''
+    assert_output(code, "Age: 42\nPrice: 19.99\nName: Alice\nActive: true")
+
+@test("Type Annotations - Auto Type Inference", "Type Annotations")
+def test_type_annotations_auto():
+    """Test that type annotations are correctly handled."""
+    code = '''@config { mode: "compiled" }
+
+let age: int = python("print(42)")
+let price: float = python("print(19.99)")
+let name: string = python("print('Alice')")
+let active: bool = python("print(True)")
+let scores: list<int> = python("print([85, 92, 78])")
+
+echo type_of($age)           // Age: 42
+echo type_of($price)       // Price: 19.99
+echo type_of($name)         // Name: Alice
+echo type_of($active)     // Active: true'''
+    assert_output(code, "int\nfloat\nstring\nbool\nlist<int>")
+
+@test("Type Annotations - Basic Type - Compiled", "Type Annotations - Compiled")
+def test_type_annotations_compiled():
+    """Test that type annotations are correctly handled."""
+    code = '''@config { mode: "compiled" }
+
+let age: int = python("print(42)")
+let price: float = python("print(19.99)")
+let name: string = python("print('Alice')")
+let active: bool = python("print(True)")
+let scores: list<int> = python("print([85, 92, 78])")
+
+echo "Age: $age"           // Age: 42
+echo "Price: $price"       // Price: 19.99
+echo "Name: $name"         // Name: Alice
+echo "Active: $active"     // Active: true'''
+    assert_output(code, "Age: 42\nPrice: 19.99\nName: Alice\nActive: true", mode="compiled")
+
+@test("Type Annotations - Auto Type Inference  - Compiled", "Type Annotations - Compiled")
+def test_type_annotations_auto_compiled():
+    """Test that type annotations are correctly handled."""
+    code = '''@config { mode: "compiled" }
+
+let age: int = python("print(42)")
+let price: float = python("print(19.99)")
+let name: string = python("print('Alice')")
+let active: bool = python("print(True)")
+let scores: list<int> = python("print([85, 92, 78])")
+
+echo type_of($age)           // Age: 42
+echo type_of($price)       // Price: 19.99
+echo type_of($name)         // Name: Alice
+echo type_of($active)     // Active: true'''
+    assert_output(code, "int\nfloat\nstring\nbool\nlist<int>", mode="compiled")
+
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN TEST RUNNER
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1773,7 +3316,7 @@ def main():
 
     # Verify binary works
     try:
-        result = subprocess.run([TB_BINARY, "--version"], capture_output=True, timeout=5)
+        result = subprocess.run([TB_BINARY, "--version"], capture_output=not VERBOSE, timeout=5)
         if result.returncode != 0:
             print(f"{Colors.YELLOW}Warning: TB binary may not be working correctly{Colors.RESET}")
     except:
@@ -1926,6 +3469,60 @@ def main():
         test_dep_edge_long_output,
         test_dep_edge_unicode,
         test_dep_edge_multiline,
+
+        test_cross_variables_compiled,
+        test_cross_variables,
+        testexample_return_values,
+        testexample_return_values_compiled,
+        test_example_async,
+        test_example_parallel,
+
+        # Import System
+        test_import_single_file,
+        test_import_multiple_files,
+        test_import_with_variables,
+        test_import_relative_paths,
+        test_import_compiled_mode,
+
+        # Compiled Modes
+        test_compiled_arithmetic,
+        test_compiled_functions,
+        test_compiled_functions_no_compiled_,
+        test_compiled_loops,
+        test_compiled_async,
+        test_compiled_parallel,
+        test_compiled_parallel_with_imports,
+
+        # Mixed Features
+        # test_mixed_import_async_language,
+        # test_mixed_multiple_imports_parallel,
+        test_mixed_shared_imports,
+        test_mixed_shared_imports_mixed_lang,
+        test_mixed_full_stack,
+
+        test_import_multiple_files,
+        test_import_compiled_caching,
+        test_import_jit_vs_compiled,
+        test_import_dependency_chain,
+        test_import_cache_invalidation,
+
+        # Error Handling
+        test_import_missing_file,
+        test_import_no_circular,
+
+        # Go
+        test_go_basic_execution,
+        test_go_import_math,
+        test_go_import_strings,
+        test_go_import_json,
+        test_go_multilang_python_to_go,
+        test_go_bridge_compiled_mode,
+
+        # Type Annotations
+        test_type_annotations,
+        test_type_annotations_auto,
+        test_type_annotations_compiled,
+        test_type_annotations_auto_compiled,
     ]
 
     for test_func in test_functions:
@@ -1941,10 +3538,11 @@ def function_runner(args):
     global VERBOSE, FILTER, TB_BINARY
 
     TB_BINARY = find_tb_binary()
-    VERBOSE = "--verbose" in args or "-v" in args
+    VERBOSE = "verbose" in args or "-v" in args
+    print(f"{VERBOSE=}")
     FILTER = None
     for i, arg in enumerate(args):
-        if arg == "--filter" and i + 1 < len(args):
+        if arg == "filter" and i + 1 < len(args):
             FILTER = args[i + 1]
     main()
 

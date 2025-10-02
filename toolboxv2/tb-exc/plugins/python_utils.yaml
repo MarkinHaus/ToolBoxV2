@@ -6,3 +6,6 @@ functions:
 
   - name: "reverse_string"
     code: "print(args[0][::-1])"
+
+  - name: "python"
+    code: "uv python -m {args[0]}"

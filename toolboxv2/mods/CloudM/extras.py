@@ -324,11 +324,11 @@ def show_version(self):
 
 
 @export(mod_name=Name, version=version, state=False, request_as_kwarg=True)
-async def get_eco(app: App | None = None,request=None):
+async def get_eco(app = None,request=None):
     return str(request)
 
 @export(mod_name=Name, version=version, state=False)
-async def login(m_link: str, app: App | None = None):
+async def login(m_link: str, app = None):
     if app is None:
         app = get_app("CloudM.login")
     if app.session.username is None or len(app.session.username) == 0:

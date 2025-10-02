@@ -75,7 +75,7 @@ print(calculate(16))
 
 echo "Python result: $py_result"
 
-# JavaScript dependency  
+# JavaScript dependency
 let js_result = javascript("""
 const lodash = require('lodash');
 const nums = [1, 2, 3, 4, 5];
@@ -121,3 +121,47 @@ CLI Commands: tb deps compile/list/clean
 Performance-Erwartungen:
 ToolSpeed vs NativeUse CaseNuitka95-100%Hot loops, CPU-intensiveCython80-95%Python extensionsesbuild~100%JS bundlingGo plugin100%Native Go code
 Das System ist jetzt production-ready! 🎉
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOCATION: In LanguageExecutionContext Documentation
+// ═══════════════════════════════════════════════════════════════════════════
+
+/*
+TYPE MAPPING TABLE
+==================
+
+TB Type       → Python      → JavaScript   → Go            → Bash
+---------------------------------------------------------------------------
+Unit          → None        → null         → nil           → ""
+Bool(true)    → True        → true         → true          → "true"
+Bool(false)   → False       → false        → false         → "false"
+Int(42)       → 42          → 42           → int64(42)     → "42"
+Float(3.14)   → 3.14        → 3.14         → float64(3.14) → "3.14"
+String("hi")  → "hi"        → "hi"         → "hi"          → "hi"
+List([1,2])   → [1, 2]      → [1, 2]       → []int64{1,2}  → (1 2)
+Dict({a:1})   → {"a": 1}    → {a: 1}       → map[...]      → (unsupported)
+Tuple((1,2))  → (1, 2)      → [1, 2]       → []int64{1,2}  → (1 2)
+
+RETURN VALUE PARSING
+====================
+
+From Python:  stdout → Type inference → TB Value
+From JS:      stdout → Type inference → TB Value
+From Go:      stdout → Type inference → TB Value
+From Bash:    stdout → String or Int/Float if parseable
+*/
+
+
+**Type Promotion Rules (wie in Python/JavaScript):**
+
+| Operation | Types | Result | Example |
+|-----------|-------|--------|---------|
+| `Int + Int` | `(i64, i64)` | `Int` | `5 + 3 = 8` |
+| `Float + Float` | `(f64, f64)` | `Float` | `5.0 + 3.0 = 8.0` |
+| **`Float + Int`** | `(f64, i64)` | **`Float`** | `8.0 + 84 = 92.0` ✅ |
+| **`Int + Float`** | `(i64, f64)` | **`Float`** | `84 + 8.0 = 92.0` ✅ |
+
+```
+Fehlermeldung: "Cannot perform Add on Float and String"
+```
