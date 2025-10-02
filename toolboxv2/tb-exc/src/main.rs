@@ -1,11 +1,27 @@
-// file: tb_lang/src/main.rs
+// file: tb-exc/src/main.rs
 
 use std::path::{Path, PathBuf};
 use std::{fs, process};
 use std::str::FromStr;
 use tb_lang::{TB, Config, ExecutionMode, CompilationTarget, Compiler, TargetPlatform, Parser, Lexer, TBCore, DependencyCompiler};
-
+use std::env;
 fn main() {
+    let default_stack = 3 * 1024 * 1024; // Fallback: 3 MB
+    let stack_size = env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|val| val.parse::<usize>().ok())
+        .unwrap_or(default_stack);
+
+    std::thread::Builder::new()
+        .stack_size(stack_size)
+        .spawn(|| {
+            actual_main();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+fn actual_main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -261,34 +277,28 @@ fn handle_compile(args: &[String]) -> Result<(), ()> {
     println!();
     println!("⚙️  Compiling...");
 
+    // Read source
     let source = fs::read_to_string(input_path).map_err(|e| {
         eprintln!("Failed to read file: {}", e);
     })?;
 
-    let mut config = Config::default();
+    // ✅ FIX: Use TBCore to handle imports properly
+    let mut config = Config::parse(&source).map_err(|e| {
+        eprintln!("Config parse failed: {}", e);
+    })?;
+
+    // Override with CLI options
     config.mode = ExecutionMode::Compiled { optimize };
     config.target = match target {
         TargetPlatform::Wasm => CompilationTarget::Wasm,
         _ => CompilationTarget::Native,
     };
 
-    // Parse and compile
-    let clean_source = TBCore::strip_directives(&source);
-    let mut lexer = Lexer::new(&clean_source);
-    let tokens = lexer.tokenize().map_err(|e| {
-        eprintln!("Tokenization failed: {}", e);
-    })?;
+    // Create TBCore with config
+    let mut tb_core = TBCore::new(config.clone());
 
-    let mut parser = Parser::new(tokens);
-    let statements = parser.parse().map_err(|e| {
-        eprintln!("Parse failed: {}", e);
-    })?;
-
-    let compiler = Compiler::new(config)
-        .with_target(target)
-        .with_optimization(if optimize { 3 } else { 0 });
-
-    compiler.compile_to_file(&statements, output_path).map_err(|e| {
+    // Use compile_to_file which will load imports
+    tb_core.compile_to_file(&source, output_path).map_err(|e| {
         eprintln!("Compilation failed: {}", e);
     })?;
 

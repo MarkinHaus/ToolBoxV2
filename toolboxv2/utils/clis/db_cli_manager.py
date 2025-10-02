@@ -203,7 +203,7 @@ class DBInstanceManager:
 
         print_box_header(f"Starting Instance: {self.id}", "🚀")
         print_box_content(f"Port: {self.port}", "info")
-        print_box_content(f"Data Directory: {self.data_dir[:40]}", "info")
+        print_box_content(f"Data Directory: {str(self.data_dir)[:15]}...{str(self.data_dir)[-15:]}", "info")
         print_box_footer()
 
         self.data_dir.mkdir(parents=True, exist_ok=True)

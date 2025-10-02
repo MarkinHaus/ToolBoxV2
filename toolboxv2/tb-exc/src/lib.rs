@@ -20,6 +20,8 @@
 //!
 //! Version: 1.0.0
 //! License: MIT
+//!
+//! tb-exc/src/lib.rs
 
 #![allow(dead_code, unused_variables, unused_imports)]
 
@@ -38,7 +40,7 @@ use std::{
     any::Any,
     marker::PhantomData,
 };
-
+use std::cmp::PartialEq;
 use std::collections::hash_map::DefaultHasher;
 // Async runtime
 use std::future::Future;
@@ -61,10 +63,6 @@ use std::time::{Duration, Instant};
 pub mod dependency_compiler;
 pub use dependency_compiler::{DependencyCompiler, Dependency, CompilationStrategy};
 
-// Async runtime (Tokio)
-use tokio::runtime::Runtime;
-use tokio::task::JoinHandle;
-use futures::future::join_all;
 
 // Multi-threading (Rayon)
 use rayon::prelude::*;
@@ -636,7 +634,7 @@ pub enum Expr {
 
     /// Block expression
     Block {
-        statements: Vec<Statement>,
+        statements: Box<Vec<Statement>>,
         result: Option<Box<Expr>>,
     },
 
@@ -650,7 +648,7 @@ pub enum Expr {
     /// Match expression
     Match {
         scrutinee: Box<Expr>,
-        arms: Vec<MatchArm>,
+        arms: Box<Vec<MatchArm>>,
     },
 
     /// Loop expression
@@ -682,7 +680,7 @@ pub enum Expr {
 
     /// Lambda function
     Lambda {
-        params: Vec<Parameter>,
+        params: Box<Vec<Parameter>>,
         body: Box<Expr>,
     },
 
@@ -698,17 +696,11 @@ pub enum Expr {
     /// Pipeline operation
     Pipeline {
         value: Box<Expr>,
-        operations: Vec<Expr>,
+        operations: Box<Vec<Expr>>,
     },
 
-    /// Async expression
-    Async(Box<Expr>),
-
-    /// Await expression
-    Await(Box<Expr>),
-
-    /// Parallel execution
-    Parallel(Vec<Expr>),
+    /// Parallel execution -
+    Parallel(Box<Vec<Expr>>),
 
     /// Native code block
     Native {
@@ -744,7 +736,7 @@ pub enum Statement {
     /// Function definition
     Function {
         name: String,
-        params: Vec<Parameter>,
+        params: Box<Vec<Parameter>>,
         return_type: Option<Type>,
         body: Expr,
     },
@@ -951,7 +943,6 @@ impl Config {
                                 "runtime_mode" => {
                                     config.runtime_mode = match value.trim_matches('"') {
                                         "sequential" => RuntimeMode::Sequential,
-                                        "async" => RuntimeMode::Async { runtime_threads: 4 },
                                         "parallel" => RuntimeMode::Parallel { worker_threads: num_cpus::get() },
                                         _ => config.runtime_mode,
                                     };
@@ -1175,11 +1166,6 @@ pub enum RuntimeMode {
     /// Sequential execution (default)
     Sequential,
 
-    /// Async execution with Tokio
-    Async {
-        runtime_threads: usize,
-    },
-
     /// Parallel execution with Rayon
     Parallel {
         worker_threads: usize,
@@ -1359,7 +1345,7 @@ pub enum Token {
 
     // Keywords
     Let, Mut, Fn, If, Else, Match, Loop, While, For, In,
-    Return, Break, Continue, Async, Await, Parallel,
+    Return, Break, Continue, Parallel,
 
     // Operators
     Dollar,
@@ -1486,7 +1472,7 @@ impl Lexer {
                 continue;
             }
 
-            debug_log!("Tokenizing at position {}, char: '{}'", self.position, self.current());
+            //debug_log!("Tokenizing at position {}, char: '{}'", self.position, self.current());
             let token = self.next_token()?;
 
             // Update depth tracking
@@ -1500,8 +1486,8 @@ impl Lexer {
                 _ => {}
             }
 
-            debug_log!("Token created: {:?} (depth: p={}, b={}, br={})",
-                   token, self.paren_depth, self.brace_depth, self.bracket_depth);
+            // debug_log!("Token created: {:?} (depth: p={}, b={}, br={})",
+            //        token, self.paren_depth, self.brace_depth, self.bracket_depth);
             tokens.push(token);
         }
 
@@ -1696,8 +1682,6 @@ impl Lexer {
             "return" => Token::Return,
             "break" => Token::Break,
             "continue" => Token::Continue,
-            "async" => Token::Async,
-            "await" => Token::Await,
             "parallel" => Token::Parallel,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
@@ -2138,7 +2122,7 @@ impl Parser {
 
         Ok(Statement::Function {
             name,
-            params,
+            params: Box::new(params),
             return_type,
             body,
         })
@@ -2146,12 +2130,9 @@ impl Parser {
 
     fn parse_expression(&mut self) -> TBResult<Expr> {
         self.enter_recursion()?;
-        debug_log!("parse_expression() at position {}, token: {:?}", self.position, self.current());
-
         let result = self.parse_pipeline();
 
         self.exit_recursion();
-        debug_log!("parse_expression() completed");
         result
     }
 
@@ -2166,7 +2147,7 @@ impl Parser {
             }
             expr = Expr::Pipeline {
                 value: Box::new(expr),
-                operations,
+                operations: Box::new(operations),
             };
         }
 
@@ -2489,11 +2470,12 @@ impl Parser {
         self.current(),
         Token::Let | Token::Fn | Token::If | Token::Else | Token::Match |
         Token::Loop | Token::While | Token::For | Token::Return |
-        Token::Break | Token::Continue | Token::Async | Token::Await
+        Token::Break | Token::Continue
     )
     }
 
     /// Parse a single argument in implicit call
+    /// Parse a single argument in implicit call (NOW SUPPORTS NESTED CALLS)
     fn parse_argument(&mut self) -> TBResult<Expr> {
         match self.current().clone() {
             Token::String(s) => {
@@ -2513,8 +2495,37 @@ impl Parser {
                 Ok(Expr::Literal(Literal::Bool(b)))
             }
             Token::Identifier(name) => {
+                let name = name.clone();
                 self.advance();
-                Ok(Expr::Variable(name))
+
+                // Check for function call after identifier
+                if self.match_token(&Token::LParen) {
+                    self.advance(); // consume '('
+
+                    let mut args = Vec::new();
+                    while !self.match_token(&Token::RParen) {
+                        args.push(self.parse_expression()?);
+                        if !self.match_token(&Token::RParen) {
+                            if !self.match_token(&Token::Comma) {
+                                return Err(TBError::ParseError {
+                                    message: "Expected ',' or ')' in argument list".to_string(),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance();
+                        }
+                    }
+                    self.advance(); // consume ')'
+
+                    Ok(Expr::Call {
+                        function: Box::new(Expr::Variable(name)),
+                        args,
+                    })
+                } else {
+                    // Just a variable reference
+                    Ok(Expr::Variable(name))
+                }
             }
             Token::LBracket => {
                 // Parse list literal as argument
@@ -2745,14 +2756,6 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Continue)
             }
-            Token::Async => {
-                self.advance();
-                Ok(Expr::Async(Box::new(self.parse_expression()?)))
-            }
-            Token::Await => {
-                self.advance();
-                Ok(Expr::Await(Box::new(self.parse_expression()?)))
-            }
             Token::Parallel => self.parse_parallel(),
             _ => Err(TBError::ParseError {
                 message: format!("Unexpected token: {:?}", self.current()),
@@ -2926,7 +2929,7 @@ impl Parser {
         self.advance(); // consume '}'
         debug_log!("parse_block() completed with {} statements", statements.len());
 
-        Ok(Expr::Block { statements, result })
+        Ok(Expr::Block {  statements: Box::new(statements) , result })
     }
 
     fn parse_if(&mut self) -> TBResult<Expr> {
@@ -2997,7 +3000,7 @@ impl Parser {
         }
         self.advance(); // consume '}'
 
-        Ok(Expr::Match { scrutinee, arms })
+        Ok(Expr::Match { scrutinee, arms: Box::new(arms) })
     }
 
     fn parse_pattern(&mut self) -> TBResult<Pattern> {
@@ -3089,17 +3092,32 @@ impl Parser {
         self.advance();
 
         let mut tasks = Vec::new();
+
+        // Support both comma and newline as separators
         while !self.match_token(&Token::RBrace) {
+            if self.is_eof() {
+                return Err(TBError::ParseError {
+                    message: "Unexpected EOF in parallel block".to_string(),
+                    line: 0,
+                    column: 0,
+                });
+            }
+
             tasks.push(self.parse_expression()?);
+
+            // Skip separators (comma, semicolon, or newline)
             if !self.match_token(&Token::RBrace) {
-                if self.match_token(&Token::Comma) || self.match_token(&Token::Semicolon) {
+                if self.match_token(&Token::Comma)
+                    || self.match_token(&Token::Semicolon)
+                    || self.match_token(&Token::Newline) {
                     self.advance();
                 }
             }
         }
+
         self.advance(); // consume '}'
 
-        Ok(Expr::Parallel(tasks))
+        Ok(Expr::Parallel(Box::new(tasks)))
     }
 
     fn parse_type(&mut self) -> TBResult<Type> {
@@ -3175,8 +3193,8 @@ impl Parser {
 
         // Check if current token is EOF (without calling self.current() to avoid recursion)
         let is_eof_token = matches!(self.tokens[self.position], Token::Eof);
-        debug_log!("Parser::is_eof() = {}, position = {}, tokens.len = {}, token = {:?}",
-               is_eof_token, self.position, self.tokens.len(), self.tokens[self.position]);
+        // debug_log!("Parser::is_eof() = {}, position = {}, tokens.len = {}, token = {:?}",
+        //       is_eof_token, self.position, self.tokens.len(), self.tokens[self.position]);
 
         is_eof_token
     }
@@ -3511,6 +3529,8 @@ pub struct CodeGenerator {
     buffer: String,
     indent: usize,
     variables_in_scope: Vec<(String, Type)>,
+    compiled_deps: HashMap<String, PathBuf>,
+    mutable_vars: std::collections::HashSet<String>,
 }
 
 impl CodeGenerator {
@@ -3520,9 +3540,23 @@ impl CodeGenerator {
             buffer: String::new(),
             indent: 0,
             variables_in_scope: Vec::new(),
+            compiled_deps: HashMap::new(),
+            mutable_vars: std::collections::HashSet::new(),
         }
     }
 
+    /// Set compiled dependencies (called by Compiler)
+    pub fn set_compiled_dependencies(&mut self, deps: &[CompiledDependency]) {
+        for dep in deps {
+            self.compiled_deps.insert(dep.id.clone(), dep.output_path.clone());
+        }
+    }
+
+    /// ✅ NEW: Set mutable variables info
+    pub fn set_mutable_vars(&mut self, vars: &std::collections::HashSet<String>) {
+        self.mutable_vars = vars.clone();
+        debug_log!("CodeGenerator: mutable_vars = {:?}", self.mutable_vars);
+    }
     pub fn generate(&mut self, statements: &[Statement]) -> TBResult<String> {
         match self.target_language {
             Language::Rust => self.generate_rust(statements),
@@ -3545,6 +3579,21 @@ impl CodeGenerator {
         self.emit_line("use std::io::Write;");
         self.emit_line("");
 
+        // ✅ NEW: Pre-analyze variable mutability
+        let mut mutable_vars = std::collections::HashSet::new();
+        for stmt in statements {
+            if let Statement::Let { name, .. } = stmt {
+                // Check if this variable is assigned later
+                if self.is_variable_assigned(name, statements) {
+                    mutable_vars.insert(name.clone());
+                    debug_log!("Variable '{}' detected as mutable", name);
+                }
+            }
+        }
+
+        // Store for use in generate_rust_statement
+        self.mutable_vars = mutable_vars;
+
         // Check if we need language bridges
         let needs_bridges = self.statements_use_language_bridges(statements);
 
@@ -3556,6 +3605,7 @@ impl CodeGenerator {
             self.generate_language_bridge_helpers();
             self.emit_line("");
         }
+
         // Add fmt_display
         self.emit_line("");
         self.emit_line("/// Format any value for display in println!");
@@ -3567,6 +3617,7 @@ impl CodeGenerator {
         self.emit_line("}");
         self.emit_line("");
 
+        // Generate functions
         for stmt in statements {
             if let Statement::Function { .. } = stmt {
                 self.generate_rust_statement(stmt)?;
@@ -3669,53 +3720,37 @@ impl CodeGenerator {
     /// Generate language bridge helper functions with JSON support
     /// Generate language bridge helper functions with JSON support
     fn generate_language_bridge_helpers(&mut self) {
-        // Add serde_json dependency comment
         self.emit_line("// Note: For complex types, ensure serde_json is available");
         self.emit_line("// or results will be returned as strings");
         self.emit_line("");
 
         // ═══════════════════════════════════════════════════════════════
-        // Python executor with auto-return
+        // Python executor
         // ═══════════════════════════════════════════════════════════════
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn python(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("// Auto-wrap last expression");
         self.emit_line("let wrapped = wrap_python_auto_return(code);");
-        self.emit_line("");
         self.emit_line("let output = Command::new(\"python\")");
         self.indent += 1;
-        self.emit_line(".arg(\"-c\")");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute Python\");");
+        self.emit_line(".arg(\"-c\").arg(&wrapped).output().expect(\"Failed to execute Python\");");
         self.indent -= 1;
-        self.emit_line("");
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
         self.emit_line("eprintln!(\"Python error: {}\", stderr);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("if !stderr.is_empty() {");
-        self.indent += 1;
-        self.emit_line("eprint!(\"{}\", stderr);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("print!(\"{}\", stdout);");  // ✅ ADD: Print output to console
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("print!(\"{}\", stdout);");
         self.emit_line("stdout.trim().to_string()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // ═══════════════════════════════════════════════════════════════
-        // wrap_python_auto_return helper
-        // ═══════════════════════════════════════════════════════════════
+        // --- Python auto-return helper ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn wrap_python_auto_return(code: &str) -> String {");
         self.indent += 1;
@@ -3723,35 +3758,10 @@ impl CodeGenerator {
         self.emit_line("let lines: Vec<&str> = trimmed.lines().collect();");
         self.emit_line("if lines.is_empty() { return code.to_string(); }");
         self.emit_line("let last_line = lines.last().unwrap().trim();");
-        self.emit_line("");
-        self.emit_line("// Skip wrapping for statements");
-        self.emit_line("if last_line.is_empty()");
-        self.indent += 1;
-        self.emit_line("|| last_line.starts_with('#')");
-        self.emit_line("|| last_line.starts_with(\"print(\")");
-        self.emit_line("|| (last_line.contains(\" = \") && !last_line.contains(\"==\"))");
-        self.emit_line("|| last_line.ends_with(':')");
-        self.indent -= 1;
-        self.emit_line("{");
-        self.indent += 1;
-        self.emit_line("return code.to_string();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("let mut wrapped = String::new();");
-        self.emit_line("for (i, line) in lines.iter().enumerate() {");
-        self.indent += 1;
-        self.emit_line("if i < lines.len() - 1 {");
-        self.indent += 1;
-        self.emit_line("wrapped.push_str(line);");
-        self.emit_line("wrapped.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("wrapped.push_str(\"__tb_result = (\");");
-        self.emit_line("wrapped.push_str(last_line);");
-        self.emit_line("wrapped.push_str(\")\\nprint(__tb_result, end='')\");");
+        self.emit_line("if last_line.is_empty() || last_line.starts_with('#') || last_line.starts_with(\"print(\") || (last_line.contains(\" = \") && !last_line.contains(\"==\")) || last_line.ends_with(':') { return code.to_string(); }");
+        self.emit_line("let mut wrapped = lines.iter().take(lines.len() - 1).map(|&s| s).collect::<Vec<&str>>().join(\"\\n\");");
+        self.emit_line("if !wrapped.is_empty() { wrapped.push('\\n'); }");
+        self.emit_line("wrapped.push_str(&format!(\"__tb_result = ({})\\nprint(__tb_result, end='')\", last_line));");
         self.emit_line("wrapped");
         self.indent -= 1;
         self.emit_line("}");
@@ -3763,134 +3773,16 @@ impl CodeGenerator {
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn javascript(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("let output = Command::new(\"node\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"-e\")");
-        self.emit_line(".arg(code)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute JavaScript\");");
-        self.indent -= 1;
-        self.emit_line("");
+        self.emit_line("let output = Command::new(\"node\").arg(\"-e\").arg(code).output().expect(\"Failed to execute JavaScript\");");
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
         self.emit_line("eprintln!(\"JavaScript error: {}\", stderr);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("if !stderr.is_empty() {");
-        self.indent += 1;
-        self.emit_line("eprint!(\"{}\", stderr);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("print!(\"{}\", stdout);");  // ✅ ADD: Print output to console
-        self.emit_line("stdout.trim().to_string()");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // Go executor
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn go(code: &str) -> String {");
-        self.indent += 1;
-        self.emit_line("use std::fs;");
-        self.emit_line("use std::env;");
-        self.emit_line("");
-        self.emit_line("let temp_dir = env::temp_dir().join(format!(\"tb_go_{}\", std::process::id()));");
-        self.emit_line("fs::create_dir_all(&temp_dir).ok();");
-        self.emit_line("");
-        self.emit_line("// Split injection from user code");
-        self.emit_line("let (injection, user_code) = split_go_injection(code);");
-        self.emit_line("");
-        self.emit_line("// Extract variable names from injection");
-        self.emit_line("let var_names = extract_go_var_names(&injection);");
-        self.emit_line("");
-        self.emit_line("// Fix := in user code for existing variables");
-        self.emit_line("let fixed_user = fix_go_variable_declarations(&user_code, &var_names);");
-        self.emit_line("");
-        self.emit_line("// Add suppressions for unused variables");
-        self.emit_line("let mut suppression = String::new();");
-        self.emit_line("if !var_names.is_empty() {");
-        self.indent += 1;
-        self.emit_line("suppression.push_str(\"\\n// Suppress unused variable warnings\\n\");");
-        self.emit_line("for var_name in &var_names {");
-        self.indent += 1;
-        self.emit_line("suppression.push_str(&format!(\"_ = {}\\n\", var_name));");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("// Combine injection + fixed user code + suppression");
-        self.emit_line("let preprocessed = format!(\"{}\\n{}{}\", injection, fixed_user, suppression);");self.emit_line("");
-        self.emit_line("// Indent code properly");
-        self.emit_line("let indented_code = preprocessed.lines()");
-        self.indent += 1;
-        self.emit_line(".map(|line| format!(\"    {}\", line))");
-        self.emit_line(".collect::<Vec<_>>()");
-        self.emit_line(".join(\"\\n\");");
-        self.indent -= 1;
-        self.emit_line("");
-        self.emit_line("// Build Go code with only needed imports");
-        self.emit_line("let needs_os = preprocessed.contains(\"os.\") || preprocessed.contains(\"Args\");");
-        self.emit_line("let imports = if needs_os {");
-        self.indent += 1;
-        self.emit_line("\"import (\\n    \\\"fmt\\\"\\n    \\\"os\\\"\\n)\"");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("\"import \\\"fmt\\\"\"");
-        self.indent -= 1;
-        self.emit_line("};");
-        self.emit_line("");
-        self.emit_line("let full_code = format!(");
-        self.indent += 1;
-        self.emit_line("\"package main\\n\\n{}\\n\\nfunc main() {{\\n{}\\n}}\",");
-        self.emit_line("imports,");
-        self.emit_line("indented_code");
-        self.indent -= 1;
-        self.emit_line(");");
-        self.emit_line("");
-        self.emit_line("let go_file = temp_dir.join(\"main.go\");");
-        self.emit_line("fs::write(&go_file, &full_code).expect(\"Failed to write Go file\");");
-        self.emit_line("");
-        self.emit_line("let output = Command::new(\"go\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"run\")");
-        self.emit_line(".arg(&go_file)");
-        self.emit_line(".current_dir(&temp_dir)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute Go\");");
-        self.indent -= 1;
-        self.emit_line("");
-        self.emit_line("fs::remove_dir_all(&temp_dir).ok();");
-        self.emit_line("");
-        self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
-        self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
-        self.emit_line("if !output.status.success() {");
-        self.indent += 1;
-        self.emit_line("// Print to stdout so test can see it");
-        self.emit_line("println!(\"[Go Compilation Error]\");");
-        self.emit_line("println!(\"{}\", stderr);");
-        self.emit_line("println!(\"[Generated Code]\");");
-        self.emit_line("println!(\"{}\", full_code);");
-        self.emit_line("return String::new();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("if !stderr.is_empty() {");
-        self.indent += 1;
-        self.emit_line("eprint!(\"{}\", stderr);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
         self.emit_line("print!(\"{}\", stdout);");
         self.emit_line("stdout.trim().to_string()");
         self.indent -= 1;
@@ -3898,145 +3790,96 @@ impl CodeGenerator {
         self.emit_line("");
 
         // ═══════════════════════════════════════════════════════════════
-        // Helper: Split injection from user code
+        // Go executor (Full, correct implementation with output printing)
         // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn go(code: &str) -> String {");
+        self.indent += 1;
+        self.emit_line("use std::env;");
+        self.emit_line("use std::fs;");
+        self.emit_line("let temp_dir = env::temp_dir().join(format!(\"tb_go_{}\", std::process::id()));");
+        self.emit_line("fs::create_dir_all(&temp_dir).ok();");
+        self.emit_line("let (injection, user_code) = split_go_injection(code);");
+        self.emit_line("let var_names = extract_go_var_names(&injection);");
+        self.emit_line("let fixed_user = fix_go_redeclarations(&user_code, &var_names);");
+        self.emit_line("let wrapped = wrap_go_auto_return(&fixed_user);");
+        self.emit_line("let combined = if injection.is_empty() { wrapped } else { format!(\"{}\\n{}\", injection, wrapped) };");
+        self.emit_line("let indented_code = combined.lines().map(|l| format!(\"    {}\", l)).collect::<Vec<_>>().join(\"\\n\");");
+        self.emit_line("let full_code = format!(\"package main\\nimport \\\"fmt\\\"\\nfunc main() {{\\n{}\\n}}\", indented_code);");
+        self.emit_line("let go_file = temp_dir.join(\"main.go\");");
+        self.emit_line("fs::write(&go_file, &full_code).ok();");
+        self.emit_line("let output = Command::new(\"go\").arg(\"run\").arg(&go_file).current_dir(&temp_dir).output().expect(\"Failed to execute Go\");");
+        self.emit_line("fs::remove_dir_all(&temp_dir).ok();");
+        self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
+        self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
+        self.emit_line("if !output.status.success() {");
+        self.indent += 1;
+        self.emit_line("eprintln!(\"[Go Error] {}\\n[Generated Code]\\n{}\", stderr, full_code);");
+        self.emit_line("return String::new();");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("print!(\"{}\", stdout); // ✅ KORREKTUR: Gibt die Go-Ausgabe an die Konsole weiter.");
+        self.emit_line("stdout.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or(\"\").trim().to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // --- Go helper: Split injection ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn split_go_injection(code: &str) -> (String, String) {");
         self.indent += 1;
         self.emit_line("let mut injection = String::new();");
         self.emit_line("let mut user_code = String::new();");
         self.emit_line("let mut in_injection = false;");
-        self.emit_line("let mut after_injection = false;");
-        self.emit_line("");
         self.emit_line("for line in code.lines() {");
         self.indent += 1;
-        self.emit_line("let trimmed = line.trim();");
-        self.emit_line("");
-        self.emit_line("if trimmed.contains(\"TB Variables (auto-injected)\") {");
-        self.indent += 1;
-        self.emit_line("in_injection = true;");
-        self.emit_line("injection.push_str(line);");
-        self.emit_line("injection.push('\\n');");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
+        self.emit_line("if line.contains(\"TB Variables (auto-injected)\") { in_injection = true; continue; }");
         self.emit_line("if in_injection {");
         self.indent += 1;
-        self.emit_line("if trimmed.is_empty() && !injection.is_empty() {");
-        self.indent += 1;
-        self.emit_line("// Empty line after injection = end of injection");
-        self.emit_line("after_injection = true;");
-        self.emit_line("continue;");
+        self.emit_line("if line.trim().is_empty() { continue; }");
+        self.emit_line("if line.trim().starts_with(\"var \") || line.trim().starts_with(\"_\") || line.trim().contains(\" := \") { injection.push_str(line); injection.push('\\n'); } else { in_injection = false; user_code.push_str(line); user_code.push('\\n'); }");
+        self.indent -= 1;
+        self.emit_line("} else { user_code.push_str(line); user_code.push('\\n'); }");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("if trimmed.starts_with(\"var \") {");
-        self.indent += 1;
-        self.emit_line("injection.push_str(line);");
-        self.emit_line("injection.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("// Non-var line = end of injection");
-        self.emit_line("after_injection = true;");
-        self.emit_line("user_code.push_str(line);");
-        self.emit_line("user_code.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("} else if after_injection {");
-        self.indent += 1;
-        self.emit_line("user_code.push_str(line);");
-        self.emit_line("user_code.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("// Before injection = user code");
-        self.emit_line("user_code.push_str(line);");
-        self.emit_line("user_code.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
         self.emit_line("(injection, user_code)");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // ═══════════════════════════════════════════════════════════════
-        // Helper: Extract variable names from injection
-        // ═══════════════════════════════════════════════════════════════
+        // --- Go helper: Extract var names ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn extract_go_var_names(injection: &str) -> Vec<String> {");
         self.indent += 1;
-        self.emit_line("let mut vars = Vec::new();");
-        self.emit_line("for line in injection.lines() {");
-        self.indent += 1;
-        self.emit_line("let trimmed = line.trim();");
-        self.emit_line("if trimmed.starts_with(\"var \") {");
-        self.indent += 1;
-        self.emit_line("// Parse: var name type = value");
-        self.emit_line("if let Some(rest) = trimmed.strip_prefix(\"var \") {");
-        self.indent += 1;
-        self.emit_line("if let Some(name) = rest.split_whitespace().next() {");
-        self.indent += 1;
-        self.emit_line("vars.push(name.to_string());");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("vars");
+        self.emit_line("injection.lines().filter_map(|line| { if line.trim().starts_with(\"var \") { line.trim().strip_prefix(\"var \").and_then(|r| r.split_whitespace().next().map(String::from)) } else if line.contains(\" := \") { line.split(\" := \").next().map(|s| s.trim().to_string()) } else { None } }).collect()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // ═══════════════════════════════════════════════════════════════
-        // Helper: Fix := declarations in user code
-        // ═══════════════════════════════════════════════════════════════
+        // --- Go helper: Fix redeclarations ---
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn fix_go_variable_declarations(user_code: &str, existing_vars: &[String]) -> String {");
+        self.emit_line("fn fix_go_redeclarations(code: &str, existing_vars: &[String]) -> String {");
         self.indent += 1;
-        self.emit_line("let mut result = String::new();");
-        self.emit_line("for line in user_code.lines() {");
-        self.indent += 1;
-        self.emit_line("let mut modified = line.to_string();");
-        self.emit_line("");
-        self.emit_line("// Check each existing variable");
-        self.emit_line("for var_name in existing_vars {");
-        self.indent += 1;
-        self.emit_line("// Pattern: \"varname :=\" (with space)");
-        self.emit_line("let pattern = format!(\"{} :=\", var_name);");
-        self.emit_line("let replacement = format!(\"{} =\", var_name);");
-        self.emit_line("");
-        self.emit_line("if modified.contains(&pattern) {");
-        self.indent += 1;
-        self.emit_line("modified = modified.replace(&pattern, &replacement);");
+        self.emit_line("code.lines().map(|line| { let mut fixed = line.to_string(); for var in existing_vars { let pattern = format!(\"{} :=\", var); if fixed.contains(&pattern) { fixed = fixed.replace(&pattern, &format!(\"{} =\", var)); } } fixed }).collect::<Vec<_>>().join(\"\\n\")");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
-        self.emit_line("// Also check without space: \"varname:=\"");
-        self.emit_line("let pattern_no_space = format!(\"{}:=\", var_name);");
-        self.emit_line("let replacement_no_space = format!(\"{}=\", var_name);");
-        self.emit_line("");
-        self.emit_line("if modified.contains(&pattern_no_space) {");
+
+        // --- Go helper: Wrap auto-return ---
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn wrap_go_auto_return(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("modified = modified.replace(&pattern_no_space, &replacement_no_space);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("result.push_str(&modified);");
-        self.emit_line("result.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("result");
+        self.emit_line("let trimmed = code.trim();");
+        self.emit_line("let lines: Vec<&str> = trimmed.lines().collect();");
+        self.emit_line("if lines.is_empty() { return code.to_string(); }");
+        self.emit_line("let last_line = lines.last().unwrap().trim();");
+        self.emit_line("let skip_wrap = last_line.is_empty() || last_line.starts_with(\"//\") || last_line.starts_with(\"if \") || last_line.starts_with(\"for \") || last_line.starts_with(\"var \") || last_line.contains(\" := \") || (last_line.contains(\" = \") && !last_line.contains(\"==\")) || last_line.starts_with(\"fmt.Print\") || last_line == \"}\" || last_line.ends_with('{');");
+        self.emit_line("if skip_wrap { return code.to_string(); }");
+        self.emit_line("let mut wrapped = lines.iter().take(lines.len() - 1).map(|&s| s).collect::<Vec<&str>>().join(\"\\n\");");
+        self.emit_line("if !wrapped.is_empty() { wrapped.push('\\n'); }");
+        self.emit_line("wrapped.push_str(&format!(\"__tb_result := ({})\\nfmt.Print(__tb_result)\", last_line));");
+        self.emit_line("wrapped");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -4049,38 +3892,22 @@ impl CodeGenerator {
         self.indent += 1;
         self.emit_line("let shell = if cfg!(windows) { \"cmd\" } else { \"bash\" };");
         self.emit_line("let flag = if cfg!(windows) { \"/C\" } else { \"-c\" };");
-        self.emit_line("");
-        self.emit_line("let output = Command::new(shell)");
-        self.indent += 1;
-        self.emit_line(".arg(flag)");
-        self.emit_line(".arg(code)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute Bash\");");
-        self.indent -= 1;
-        self.emit_line("");
+        self.emit_line("let output = Command::new(shell).arg(flag).arg(code).output().expect(\"Failed to execute Bash\");");
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
         self.emit_line("eprintln!(\"Bash error: {}\", stderr);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("if !stderr.is_empty() {");
-        self.indent += 1;
-        self.emit_line("eprint!(\"{}\", stderr);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("print!(\"{}\", stdout);");  // ✅ ADD: Print output to console
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("print!(\"{}\", stdout);");
         self.emit_line("stdout.trim().to_string()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // Type parsing helpers
         self.generate_type_parser_helpers();
     }
 
@@ -4093,34 +3920,17 @@ impl CodeGenerator {
 
         // Parse to i64
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_i64(s: &str) -> i64 {");
-        self.indent += 1;
-        self.emit_line("s.trim().parse::<i64>()");
-        self.indent += 1;
-        self.emit_line(".or_else(|_| s.trim().parse::<f64>().map(|f| f as i64))");
-        self.emit_line(".unwrap_or(0)");
-        self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("fn parse_i64(s: &str) -> i64 { s.trim().parse::<i64>().or_else(|_| s.trim().parse::<f64>().map(|f| f as i64)).unwrap_or(0) }");
         self.emit_line("");
 
         // Parse to f64
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_f64(s: &str) -> f64 {");
-        self.indent += 1;
-        self.emit_line("s.trim().parse::<f64>().unwrap_or(0.0)");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("fn parse_f64(s: &str) -> f64 { s.trim().parse::<f64>().unwrap_or(0.0) }");
         self.emit_line("");
 
         // Parse to bool
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_bool(s: &str) -> bool {");
-        self.indent += 1;
-        self.emit_line("let trimmed = s.trim().to_lowercase();");
-        self.emit_line("matches!(trimmed.as_str(), \"true\" | \"1\" | \"yes\" | \"on\")");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("fn parse_bool(s: &str) -> bool { matches!(s.trim().to_lowercase().as_str(), \"true\" | \"1\" | \"yes\" | \"on\") }");
         self.emit_line("");
 
         // Parse to Vec<i64>
@@ -4131,17 +3941,9 @@ impl CodeGenerator {
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| parse_i64(item.trim()))");
-        self.emit_line(".collect()");
+        self.emit_line("inner.split(',').map(|item| parse_i64(item.trim())).collect()");
         self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("Vec::new()");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("} else { Vec::new() }");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -4154,17 +3956,9 @@ impl CodeGenerator {
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| parse_f64(item.trim()))");
-        self.emit_line(".collect()");
+        self.emit_line("inner.split(',').map(|item| parse_f64(item.trim())).collect()");
         self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("Vec::new()");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("} else { Vec::new() }");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
@@ -4177,63 +3971,185 @@ impl CodeGenerator {
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| item.trim().trim_matches('\"').trim_matches('\\'').to_string())");
-        self.emit_line(".collect()");
+        self.emit_line("inner.split(',').map(|item| item.trim().trim_matches('\"').trim_matches('\\'').to_string()).collect()");
         self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("Vec::new()");
+        self.emit_line("} else { Vec::new() }");
         self.indent -= 1;
         self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
+    }
+
+    /// Check if variable is assigned in any statement
+    fn is_variable_assigned(&self, var_name: &str, statements: &[Statement]) -> bool {
+        for stmt in statements {
+            if self.statement_assigns_variable(stmt, var_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if statement contains assignment to variable
+    fn statement_assigns_variable(&self, stmt: &Statement, var_name: &str) -> bool {
+        match stmt {
+            Statement::Assign { target, .. } => {
+                matches!(target, Expr::Variable(name) if name == var_name)
+            }
+            Statement::Expr(expr) => self.expr_assigns_variable(expr, var_name),
+            Statement::Function { body, .. } => self.expr_assigns_variable(body, var_name),
+            _ => false,
+        }
+    }
+
+    /// Check if expression contains assignment to variable
+    fn expr_assigns_variable(&self, expr: &Expr, var_name: &str) -> bool {
+        match expr {
+            Expr::Block { statements, result } => {
+                statements.iter().any(|s| self.statement_assigns_variable(s, var_name))
+                    || result.as_ref().map_or(false, |e| self.expr_assigns_variable(e, var_name))
+            }
+            Expr::If { condition, then_branch, else_branch } => {
+                self.expr_assigns_variable(condition, var_name)
+                    || self.expr_assigns_variable(then_branch, var_name)
+                    || else_branch.as_ref().map_or(false, |e| self.expr_assigns_variable(e, var_name))
+            }
+            Expr::Loop { body } => self.expr_assigns_variable(body, var_name),
+            Expr::While { condition, body } => {
+                self.expr_assigns_variable(condition, var_name)
+                    || self.expr_assigns_variable(body, var_name)
+            }
+            Expr::For { iterable, body, .. } => {
+                self.expr_assigns_variable(iterable, var_name)
+                    || self.expr_assigns_variable(body, var_name)
+            }
+            _ => false,
+        }
     }
 
     fn generate_rust_statement(&mut self, stmt: &Statement) -> TBResult<()> {
         match stmt {
             Statement::Let { name, mutable, type_annotation, value, .. } => {
-                let keyword = if *mutable { "let mut" } else { "let" };
+                let is_mutable = *mutable || self.mutable_vars.contains(name);
+                let keyword = if is_mutable { "let mut" } else { "let" };
+
+                debug_log!("Generating let for '{}': mutable={} (explicit={}, detected={})",
+                        name, is_mutable, *mutable, self.mutable_vars.contains(name));
 
                 // Check if value is a language bridge call
                 let is_bridge = self.is_language_bridge_call(value);
+                let is_parallel = matches!(value, Expr::Parallel(_));
 
+                // Infer type FIRST, before generating code
+                let actual_type = if let Some(ann) = type_annotation.as_ref() {
+                    ann.clone()
+                } else {
+                    let inferred = self.infer_type_from_expr(value);
+                    debug_log!("  Inferred type for '{}': {:?}", name, inferred);
+
+                    // Override String to Int for numeric bridge code
+                    if is_bridge && inferred == Type::String {
+                        if let Expr::Call { args, .. } = value {
+                            if let Some(Expr::Literal(Literal::String(code))) = args.first() {
+                                let code_lower = code.to_lowercase();
+
+                                // Detect arithmetic operations
+                                let has_arithmetic = code_lower.contains(" + ")
+                                    || code_lower.contains(" - ")
+                                    || code_lower.contains(" * ")
+                                    || code_lower.contains(" / ")
+                                    || code_lower.contains(":= ")
+                                    || code_lower.contains("+=")
+                                    || code_lower.contains("-=");
+
+                                let has_numbers = code.chars().any(|c| c.is_ascii_digit());
+
+                                if has_arithmetic && has_numbers {
+                                    debug_log!("  ✅ Override: String -> Int (detected arithmetic in bridge)");
+                                    Type::Int
+                                } else {
+                                    inferred
+                                }
+                            } else {
+                                inferred
+                            }
+                        } else {
+                            inferred
+                        }
+                    } else {
+                        inferred
+                    }
+                };
+
+                // Generate code based on type
                 if is_bridge {
                     // Step 1: Get string result
                     self.emit(&format!("let {}_str = ", name));
                     self.generate_rust_expr(value)?;
                     self.emit_line(";");
 
-                    // Step 2: Parse based on type annotation or infer
-                    let target_type = type_annotation.as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| self.infer_type_from_expr(value));
-
-                    self.generate_typed_parser(name, &target_type);
+                    // Step 2: Parse to actual_type
+                    if actual_type == Type::String {
+                        self.emit(&format!("let {} = {}_str;", name, name));
+                        self.emit_line("");
+                    } else {
+                        self.generate_typed_parser(name, &actual_type);
+                    }
+                } else if is_parallel {
+                    self.emit(&format!("let {} = ", name));
+                    self.generate_rust_expr(value)?;
+                    self.emit_line(";");
                 } else {
                     self.emit(&format!("{} {} = ", keyword, name));
                     self.generate_rust_expr(value)?;
                     self.emit_line(";");
                 }
 
-                let var_type = type_annotation.clone()
-                    .unwrap_or_else(|| self.infer_type_from_expr(value));
-                self.variables_in_scope.push((name.clone(), var_type));
+                self.variables_in_scope.push((name.clone(), actual_type));
 
                 Ok(())
             }
+
+            Statement::Assign { target, value } => {
+                match target {
+                    Expr::Variable(name) => {
+                        debug_log!("Generating assignment: {} = ...", name);
+                        self.emit(&format!("{} = ", name));
+                        self.generate_rust_expr(value)?;
+                        self.emit_line(";");
+                        Ok(())
+                    }
+                    Expr::Index { object, index } => {
+                        self.generate_rust_expr(object)?;
+                        self.emit("[");
+                        self.generate_rust_expr(index)?;
+                        self.emit("] = ");
+                        self.generate_rust_expr(value)?;
+                        self.emit_line(";");
+                        Ok(())
+                    }
+                    Expr::Field { object, field } => {
+                        self.generate_rust_expr(object)?;
+                        self.emit(&format!(".{} = ", field));
+                        self.generate_rust_expr(value)?;
+                        self.emit_line(";");
+                        Ok(())
+                    }
+                    _ => {
+                        Err(TBError::InvalidOperation(
+                            format!("Invalid assignment target: {:?}", target)
+                        ))
+                    }
+                }
+            }
+
             Statement::Function { name, params, body, return_type, .. } => {
                 // Determine return type
                 let ret_type = if let Some(ref rt) = return_type {
                     self.type_to_rust_string(rt)
                 } else {
-                    // Infer from body - if it's just calls/blocks, assume ()
                     if self.expr_returns_unit(body) {
                         "()".to_string()
                     } else {
-                        "i64".to_string() // Default for expressions
+                        "i64".to_string()
                     }
                 };
 
@@ -4241,7 +4157,6 @@ impl CodeGenerator {
                 self.emit(&format!("fn {}(", name));
                 for (i, param) in params.iter().enumerate() {
                     if i > 0 { self.emit(", "); }
-                    // Use type annotation if available
                     let param_type = param.type_annotation.as_ref()
                         .map(|t| self.type_to_rust_string(t))
                         .unwrap_or_else(|| "i64".to_string());
@@ -4265,13 +4180,53 @@ impl CodeGenerator {
                 Ok(())
             }
 
-            _ => Ok(()),
+            Statement::Import { .. } => {
+                // Imports are handled elsewhere
+                Ok(())
+            }
         }
+    }
+
+    fn bridge_code_looks_numeric(&self, expr: &Expr) -> bool {
+        if let Expr::Call { function, args } = expr {
+            if let Expr::Variable(name) = function.as_ref() {
+                if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
+                    if let Some(Expr::Literal(Literal::String(code))) = args.first() {
+                        let code_lower = code.to_lowercase();
+
+                        // Check for arithmetic operators
+                        let has_arithmetic = code_lower.contains(" + ")
+                            || code_lower.contains(" - ")
+                            || code_lower.contains(" * ")
+                            || code_lower.contains(" / ")
+                            || code_lower.contains("+=")
+                            || code_lower.contains("-=")
+                            || code_lower.contains("*=")
+                            || code_lower.contains("/=");
+
+                        // Check for numeric literals
+                        let has_numbers = code.chars().any(|c| c.is_ascii_digit());
+
+                        // Check for numeric function calls
+                        let has_numeric_funcs = code_lower.contains("math.")
+                            || code_lower.contains("len(")
+                            || code_lower.contains("count")
+                            || code_lower.contains("parseint")
+                            || code_lower.contains("parsefloat")
+                            || code_lower.contains("number(");
+
+                        return (has_arithmetic && has_numbers) || has_numeric_funcs;
+                    }
+                }
+            }
+        }
+        false
     }
 
 
     /// Generate type-specific parser
     fn generate_typed_parser(&mut self, name: &str, target_type: &Type) {
+        debug_log!("  Generating parser for '{}' -> {:?}", name, target_type);
         match target_type {
             Type::Int => {
                 self.emit(&format!("let {} = parse_i64(&{}_str);", name, name));
@@ -4371,12 +4326,15 @@ impl CodeGenerator {
                     _ => Type::Dynamic,
                 }
             }
-            Expr::Call { function, .. } => {
-                // Language bridges default to Int (most common return)
-                // unless we can infer better from the code
+            Expr::Call { function, args } => {
+                // ✅ IMPROVED: Infer type from language bridge code
                 if let Expr::Variable(name) = function.as_ref() {
                     if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
-                        return Type::Int; // Default for numeric results
+                        // Try to infer type from code content
+                        if let Some(Expr::Literal(Literal::String(code))) = args.first() {
+                            return self.infer_type_from_bridge_code(name, code);
+                        }
+                        return Type::String; // ✅ Changed: Default to String (safer)
                     }
                 }
                 Type::Dynamic
@@ -4384,6 +4342,107 @@ impl CodeGenerator {
             Expr::List(_) => Type::List(Box::new(Type::Dynamic)),
             _ => Type::Dynamic,
         }
+    }
+
+    /// Infer return type from language bridge code
+    /// Infer return type from language bridge code
+    fn infer_type_from_bridge_code(&self, language: &str, code: &str) -> Type {
+        let code_lower = code.to_lowercase();
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PRIORITY 1: Detect explicit type conversions
+        // ═══════════════════════════════════════════════════════════════════
+        if code_lower.contains("int(")
+            || code_lower.contains("len(")
+            || code_lower.contains("count(")
+            || code_lower.contains("sum(")
+            || code_lower.contains("range(") {
+            return Type::Int;
+        }
+
+        if code_lower.contains("float(")
+            || code_lower.contains("math.sqrt")
+            || code_lower.contains("math.pow")
+            || code_lower.contains("math.") {
+            // ✅ Special case: math.sqrt returns float, but often used in int context
+            // Check if result is multiplied/divided (suggests numeric)
+            if code_lower.contains("* ") || code_lower.contains("/ ") {
+                return Type::Int;  // Default to Int for arithmetic
+            }
+            return Type::Float;
+        }
+
+        if code_lower.contains("bool(")
+            || code_lower.contains("true")
+            || code_lower.contains("false")
+            || code_lower.contains(" and ")
+            || code_lower.contains(" or ") {
+            return Type::Bool;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PRIORITY 2: Detect arithmetic operations (✅ NEW)
+        // ═══════════════════════════════════════════════════════════════════
+        let has_arithmetic = code_lower.contains(" + ")
+            || code_lower.contains(" - ")
+            || code_lower.contains(" * ")
+            || code_lower.contains(" / ")
+            || code_lower.contains(" % ")
+            || code_lower.contains("+=")
+            || code_lower.contains("-=")
+            || code_lower.contains("*=")
+            || code_lower.contains("/=");
+
+        let has_numeric_literal = code.chars().any(|c| c.is_numeric());
+
+        if has_arithmetic && has_numeric_literal {
+            debug_log!("  Detected arithmetic: {} -> Type::Int", &code[..code.len().min(50)]);
+            return Type::Int;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PRIORITY 3: Language-specific patterns
+        // ═══════════════════════════════════════════════════════════════════
+        match language {
+            "python" => {
+                // Check for numeric variables being printed
+                if code_lower.contains("print(") && has_numeric_literal {
+                    return Type::Int;
+                }
+            }
+
+            "javascript" => {
+                // const/let with numeric operations
+                if (code_lower.contains("const ") || code_lower.contains("let "))
+                    && has_arithmetic {
+                    return Type::Int;
+                }
+
+                if code_lower.contains("console.log") && has_numeric_literal {
+                    return Type::Int;
+                }
+            }
+
+            "go" => {
+                // Go variable declarations with numeric types
+                if code_lower.contains(":=") && has_arithmetic {
+                    return Type::Int;
+                }
+
+                if code_lower.contains("fmt.println") && has_numeric_literal {
+                    return Type::Int;
+                }
+            }
+
+            _ => {}
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // DEFAULT: String (safest fallback - can always be parsed later)
+        // ═══════════════════════════════════════════════════════════════════
+        debug_log!("  No type detected, defaulting to String for: {}",
+               &code[..code.len().min(50)]);
+        Type::String
     }
 
     /// Check if expression is a language bridge call
@@ -4449,6 +4508,7 @@ impl CodeGenerator {
 
     /// Generate language bridge call with automatic variable injection
     /// Generate language bridge call with automatic variable injection
+    /// Generate language bridge call with automatic variable injection
     fn generate_language_bridge_call_with_context(
         &mut self,
         language: &str,
@@ -4481,6 +4541,7 @@ impl CodeGenerator {
                 .collect();
 
             let is_javascript = language == "javascript";
+            let is_go = language == "go";
 
             // Generate format! call with variable injection
             self.emit(&format!("{}(&format!(r#\"", language));
@@ -4489,7 +4550,7 @@ impl CodeGenerator {
             self.emit("\"#");
 
             // Format arguments - emit variable values with correct formatting
-            for (name, _ty, is_list) in &var_data {
+            for (name, ty, is_list) in &var_data {
                 self.emit(", ");
 
                 if *is_list {
@@ -4498,8 +4559,25 @@ impl CodeGenerator {
                         self.emit("&format!(\"[{}]\", ");
                         self.emit(name);
                         self.emit(".iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"))");
+                    } else if is_go {
+                        // ÄNDERUNG HIER: Generiert nur das Go-Slice-Literal, z.B. "[]interface{}{85,92,78}"
+                        let inner_type = if let Type::List(inner) = ty {
+                            match inner.as_ref() {
+                                Type::Int => "int64",
+                                Type::Float => "float64",
+                                Type::String => "string",
+                                _ => "interface{{}}",
+                            }
+                        } else {
+                            "interface{{}}"
+                        };
+                        self.emit(&format!(
+                            // Erzeugt: "[]type{val1,val2,val3}"
+                            "&format!(\"[]{}{{}}{{}}{{}}\", \"{{\", {}.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"), \"}}\")",
+                            inner_type, name
+                        ));
                     } else {
-                        // Python/Go/Bash: pass Vec directly (will use {:?} from template)
+                        // Python/Bash: pass Vec directly (will use {:?} from template)
                         self.emit(name);
                     }
                 } else {
@@ -4515,9 +4593,6 @@ impl CodeGenerator {
 
         Ok(())
     }
-
-    /// Generate variable injection code for specific language
-    /// Generate variable injection code for specific language
 
     /// Generate variable injection code for specific language
     fn generate_var_injection_for_language(&self, language: &str) -> String {
@@ -4547,11 +4622,15 @@ impl CodeGenerator {
             "go" => {
                 injection.push_str("// TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    let go_type = Self::go_type_for(ty);
+                    // let go_type = Self::go_type_for(ty);
                     // ✅ Use {:?} for List types (Vec doesn't implement Display)
                     let value_placeholder = Self::format_spec_for_type(ty, "go");
-                    injection.push_str(&format!("var {} {} = {}\n",
-                                                name, go_type, value_placeholder));
+
+                    // Wir verwenden den `:=` Operator für eine saubere Deklaration und Initialisierung.
+                    // Der Go-Compiler leitet den Typ automatisch vom Wert auf der rechten Seite ab.
+                    injection.push_str(&format!("{} := {}\n", name, value_placeholder));
+                    injection.push_str(&format!("_ = {}\n", name));
+
                 }
             }
 
@@ -4589,7 +4668,7 @@ impl CodeGenerator {
             "go" => match ty {
                 Type::String => "\"{}\"",
                 Type::Bool | Type::Int | Type::Float => "{}",
-                Type::List(_) => "{:?}",  // ✅ Debug format for Go slices
+                Type::List(_) => "{}",  // ✅ Debug format for Go slices
                 _ => "{}",
             },
 
@@ -4621,7 +4700,6 @@ impl CodeGenerator {
                     "[]interface{{}}".to_string()
                 }
             }
-            // ✅ FIXED: Escape braces for format! macro
             _ => "interface{{}}".to_string(),
         }
     }
@@ -4661,7 +4739,60 @@ impl CodeGenerator {
                 self.emit(")");
                 Ok(())
             }
+            Expr::Parallel(tasks) => {
+                self.emit_line("// Parallel execution");
+                self.emit("{");
+                self.indent += 1;
 
+                // Generate parallel execution using rayon
+                self.emit_line("use rayon::prelude::*;");
+                self.emit_line("let __tasks: Vec<Box<dyn Fn() -> i64 + Send + Sync>> = vec![");
+                self.indent += 1;
+
+                for (i, task) in tasks.iter().enumerate() {
+                    self.emit("Box::new(|| ");
+
+                    // Generate task body
+                    match task {
+                        Expr::Call { function, args } => {
+                            self.generate_rust_expr(function)?;
+                            self.emit("(");
+                            for (j, arg) in args.iter().enumerate() {
+                                if j > 0 { self.emit(", "); }
+                                self.generate_rust_expr(arg)?;
+                            }
+                            self.emit(")");
+                        }
+                        _ => {
+                            self.generate_rust_expr(task)?;
+                        }
+                    }
+
+                    self.emit(")");
+                    if i < tasks.len() - 1 {
+                        self.emit(",");
+                    }
+                    self.emit_line("");
+                }
+
+                self.indent -= 1;
+                self.emit_line("];");
+                self.emit_line("");
+
+                // Execute in parallel and collect results
+                self.emit_line("let __results: Vec<i64> = (0..__tasks.len())");
+                self.indent += 1;
+                self.emit_line(".into_par_iter()");
+                self.emit_line(".map(|i| __tasks[i]())");
+                self.emit_line(".collect();");
+                self.indent -= 1;
+                self.emit_line("");
+                self.emit_line("__results");
+
+                self.indent -= 1;
+                self.emit("}");
+                Ok(())
+            }
             Expr::Call { function, args } => {
                 // Special handling for builtin functions
                 if let Expr::Variable(func_name) = function.as_ref() {
@@ -4735,7 +4866,7 @@ impl CodeGenerator {
                 self.emit_line("{");
                 self.indent += 1;
 
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.generate_rust_statement(stmt)?;
                 }
 
@@ -4772,12 +4903,48 @@ impl CodeGenerator {
                 Ok(())
             }
 
+            Expr::Loop { body } => {
+                // Loops müssen einen Wert zurückgeben können
+                self.emit("loop ");
+                self.generate_rust_expr(body)?;
+                Ok(())
+            }
+
+            Expr::While { condition, body } => {
+                self.emit("while ");
+                self.generate_rust_expr(condition)?;
+                self.emit(" ");
+                self.generate_rust_expr(body)?;
+                Ok(())
+            }
+
+            Expr::For { variable, iterable, body } => {
+                self.emit("for ");
+                self.emit(variable);
+                self.emit(" in ");
+                self.generate_rust_expr(iterable)?;
+                self.emit(" ");
+                self.generate_rust_expr(body)?;
+                Ok(())
+            }
+
+            Expr::Break(value) => {
+                if let Some(val) = value {
+                    self.emit("break ");
+                    self.generate_rust_expr(val)?;
+                } else {
+                    self.emit("break");
+                }
+                Ok(())
+            }
+
             _ => {
                 self.emit("()");
                 Ok(())
             }
         }
     }
+
 
     /// Parse string with $variable interpolation
     /// Returns (format_string, variables)
@@ -5015,10 +5182,37 @@ impl CodeGenerator {
 
 pub type Environment = Arc<RwLock<HashMap<String, Value>>>;
 
+
+/// Fast single-threaded environment (10x faster than Arc<RwLock>)
+pub type FastEnvironment = Rc<RefCell<HashMap<String, Value>>>;
+
+/// Function registry for zero-copy function calls
+pub struct FunctionRegistry {
+    functions: HashMap<String, (Vec<String>, Rc<Expr>)>, // name → (params, body)
+}
+
+impl FunctionRegistry {
+    fn new() -> Self {
+        Self {
+            functions: HashMap::new(),
+        }
+    }
+
+    fn register(&mut self, name: String, params: Vec<String>, body: Expr) {
+        self.functions.insert(name, (params, Rc::new(body)));
+    }
+
+    fn get(&self, name: &str) -> Option<&(Vec<String>, Rc<Expr>)> {
+        self.functions.get(name)
+    }
+}
 pub struct JitExecutor {
-    env: Environment,
+    env: FastEnvironment,
     config: Config,
     builtins: BuiltinRegistry,
+    functions: FunctionRegistry,
+    recursion_depth: usize,
+    max_recursion_depth: usize,
 }
 
 impl JitExecutor {
@@ -5033,7 +5227,6 @@ impl JitExecutor {
         // Create builtin registry
         let mut builtins = BuiltinRegistry::new();
 
-        // Load plugins from config
         if !config.plugins.is_empty() {
             debug_log!("Loading {} plugins", config.plugins.len());
             if let Err(e) = builtins.load_plugins(&config.plugins) {
@@ -5042,16 +5235,52 @@ impl JitExecutor {
         }
 
         Self {
-            env: Arc::new(RwLock::new(env_map)),
+            env: Rc::new(RefCell::new(env_map)),
             config,
             builtins,
+            functions: FunctionRegistry::new(),
+            recursion_depth: 0,
+            max_recursion_depth: 10000,
         }
     }
 
     pub fn execute(&mut self, statements: &[Statement]) -> TBResult<Value> {
         debug_log!("JitExecutor::execute() started with {} statements", statements.len());
+        // ✅ TEMPORARY: Check if we have enough stack space
+        #[cfg(debug_assertions)]
+        {
+            // Try to allocate a large-ish array on stack to test available space
+            fn check_stack_space() -> bool {
+                let _test: [u8; 100_000] = [0; 100_000]; // 100KB test
+                true
+            }
+
+            if !std::panic::catch_unwind(|| check_stack_space()).is_ok() {
+                eprintln!("⚠️  WARNING: Limited stack space detected!");
+                eprintln!("   Consider running with: RUST_MIN_STACK=8388608 cargo run");
+            }
+        }
         let mut last_value = Value::Unit;
 
+        // ✅ PHASE 1: Register all functions FIRST (no cloning!)
+        for stmt in statements {
+            if let Statement::Function { name, params, body, .. } = stmt {
+                let param_names: Vec<String> = params.iter()
+                    .map(|p| p.name.clone())
+                    .collect();
+
+                // ✅ body is cloned once here, then shared via Rc
+                self.functions.register(
+                    name.clone(),
+                    param_names,
+                    body.clone()  // ✅ Clone once, then Rc::new() in register()
+                );
+
+                debug_log!("Registered function: {}", name);
+            }
+        }
+
+        // ✅ PHASE 2: Execute non-function statements
         for (i, stmt) in statements.iter().enumerate() {
             debug_log!("Executing statement {}/{}", i + 1, statements.len());
             last_value = self.execute_statement(stmt)?;
@@ -5062,20 +5291,19 @@ impl JitExecutor {
         Ok(last_value)
     }
 
-    fn execute_statement(&mut self, stmt: &Statement) -> TBResult<Value> {
+    pub fn execute_statement(&mut self, stmt: &Statement) -> TBResult<Value> {
         match stmt {
             Statement::Let { name, value, .. } => {
                 let val = self.eval_expr(value)?;
-                self.env.write().unwrap().insert(name.clone(), val.clone());
+                self.env.borrow_mut().insert(name.clone(), val);
                 Ok(Value::Unit)
             }
 
             Statement::Assign { target, value } => {
                 let new_value = self.eval_expr(value)?;
 
-                // Extract variable name from target
                 if let Expr::Variable(name) = target {
-                    self.env.write().unwrap().insert(name.clone(), new_value);
+                    self.env.borrow_mut().insert(name.clone(), new_value);
                     Ok(Value::Unit)
                 } else {
                     Err(TBError::InvalidOperation(
@@ -5084,17 +5312,8 @@ impl JitExecutor {
                 }
             }
 
-            Statement::Function { name, params, body, .. } => {
-                // Capture CURRENT environment for closure
-                let closure_env = self.env.clone();
-
-                let func = Value::Function {
-                    params: params.iter().map(|p| p.name.clone()).collect(),
-                    body: Box::new(body.clone()),
-                    env: closure_env,  // ← Capture environment
-                };
-
-                self.env.write().unwrap().insert(name.clone(), func);
+            Statement::Function { .. } => {
+                // Already registered in execute()
                 Ok(Value::Unit)
             }
 
@@ -5104,11 +5323,10 @@ impl JitExecutor {
         }
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> TBResult<Value> {
+    pub fn eval_expr(&mut self, expr: &Expr) -> TBResult<Value> {
         match expr {
             Expr::Literal(lit) => {
                 match lit {
-                    // FIXED: String interpolation - replace $variable with actual value
                     Literal::String(s) if s.contains('$') => {
                         Ok(Value::String(self.interpolate_string(s)?))
                     }
@@ -5117,14 +5335,13 @@ impl JitExecutor {
             }
 
             Expr::Variable(name) => {
-                // First check environment variables
-                if let Some(value) = self.env.read().unwrap().get(name) {
-                    return Ok(value.clone());
+                // ✅ Fast lookup with Rc<RefCell>
+                if let Some(value) = self.env.borrow().get(name).cloned() {
+                    return Ok(value);
                 }
 
-                // Then check builtin functions
-                if let Some(builtin) = self.builtins.get(name) {
-                    // Wrap builtin as a callable value
+                // Check builtin functions
+                if let Some(_) = self.builtins.get(name) {
                     return Ok(Value::Native {
                         language: Language::Rust,
                         type_name: format!("builtin:{}", name),
@@ -5149,56 +5366,51 @@ impl JitExecutor {
                 self.eval_unaryop(*op, val)
             }
 
-            Expr::Native { language, code } => {
-                // Create execution context with current variables
-                let variables = self.env.read().unwrap().clone();
-                let context = LanguageExecutionContext::with_variables(variables);
-
-                match language {
-                    Language::Python => execute_python_code_with_context(code, &[], Some(&context)),
-                    Language::JavaScript => execute_js_code_with_context(code, &[], Some(&context)),
-                    Language::Go => execute_go_code_with_context(code, &[], Some(&context)),
-                    Language::Bash => execute_bash_command_with_context(code, &[], Some(&context)),
-                    _ => Err(TBError::UnsupportedLanguage(format!("{:?}", language))),
-                }
-            }
-
             Expr::Call { function, args } => {
-                // Check if it's a language bridge function
+                // ✅ OPTIMIZED: Check if it's a registered function FIRST
                 if let Expr::Variable(func_name) = function.as_ref() {
+                    // Check language bridges first
                     if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
-                        // Evaluate arguments
                         let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
                         let arg_vals = arg_vals?;
 
-                        // Get code from first argument
                         if let Some(Value::String(code)) = arg_vals.first() {
-                            // Create context with current variables
-                            let variables = self.env.read().unwrap().clone();
+                            let variables = self.env.borrow().clone();
                             let context = LanguageExecutionContext::with_variables(variables);
 
-                            let result = match func_name.as_str() {
+                            return match func_name.as_str() {
                                 "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context)),
                                 "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context)),
                                 "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context)),
                                 "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context)),
                                 _ => unreachable!(),
-                            }?;
-
-                            return Ok(result);
+                            };
                         }
+                    }
+
+                    // ✅ ZERO-COPY function call from registry (NO CLONING!)
+                    if let Some((params, body_rc)) = self.functions.get(func_name) {
+                        // ✅ Clone only the Vec<String>, not the Expr!
+                        let params = params.clone();
+                        let body_rc = body_rc.clone(); // ✅ Rc::clone is cheap (just increments ref count)
+
+                        // Evaluate arguments
+                        let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                        let arg_vals = arg_vals?;
+
+                        return self.call_function_fast(func_name, &params, &body_rc, arg_vals);
                     }
                 }
 
-                // Regular function call
-                let func = self.eval_expr(function)?;
+                // Fallback: regular function call
+                let func = self.eval_expr(function.as_ref())?;
                 let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
                 let arg_vals = arg_vals?;
-                self.call_function(func, arg_vals)
+                self.call_function_legacy(func, arg_vals)
             }
 
             Expr::Block { statements, result } => {
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.execute_statement(stmt)?;
                 }
 
@@ -5221,9 +5433,35 @@ impl JitExecutor {
                 }
             }
 
+            Expr::Loop { body } => {
+                let mut iterations = 0;
+                let max_iterations = 100000;
+
+                loop {
+                    iterations += 1;
+
+                    if iterations > max_iterations {
+                        return Err(TBError::RuntimeError {
+                            message: format!("Loop exceeded maximum iterations ({})", max_iterations),
+                            trace: vec!["loop execution".to_string()],
+                        });
+                    }
+
+                    match self.eval_expr(body) {
+                        Ok(Value::Unit) => continue,
+                        Ok(val) => return Ok(val),
+                        Err(TBError::RuntimeError { message, .. }) if message.contains("break") => {
+                            return Ok(Value::Unit);
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+
             Expr::While { condition, body } => {
                 let mut iterations = 0;
-                let max_iterations = 10000; // Safety limit to prevent infinite loops
+                let max_iterations = 10000;
+                let mut last_value = Value::Unit;
 
                 while self.eval_expr(condition)?.is_truthy() {
                     iterations += 1;
@@ -5235,10 +5473,10 @@ impl JitExecutor {
                         });
                     }
 
-                    self.eval_expr(body)?;
+                    last_value = self.eval_expr(body)?;
                 }
 
-                Ok(Value::Unit)
+                Ok(last_value)
             }
 
             Expr::For { variable, iterable, body } => {
@@ -5248,10 +5486,7 @@ impl JitExecutor {
                     let mut last_value = Value::Unit;
 
                     for item in items {
-                        // Set loop variable in environment
-                        self.env.write().unwrap().insert(variable.clone(), item);
-
-                        // Execute body
+                        self.env.borrow_mut().insert(variable.clone(), item);
                         last_value = self.eval_expr(body)?;
                     }
 
@@ -5260,6 +5495,15 @@ impl JitExecutor {
                     Err(TBError::InvalidOperation(
                         "For loop requires an iterable (list)".to_string()
                     ))
+                }
+            }
+
+            Expr::Break(value) => {
+                if let Some(val_expr) = value {
+                    let val = self.eval_expr(val_expr)?;
+                    Ok(val)
+                } else {
+                    Ok(Value::Unit)
                 }
             }
 
@@ -5294,52 +5538,52 @@ impl JitExecutor {
             Expr::Pipeline { value, operations } => {
                 let mut result = self.eval_expr(value)?;
 
-                for op in operations {
-                    // Treat operation as function call with result as argument
+                for op in operations.as_ref() {
                     result = match op {
                         Expr::Call { function, args } => {
-                            // Check if it's a language bridge function
                             if let Expr::Variable(func_name) = function.as_ref() {
                                 if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
-                                    // Evaluate arguments
                                     let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
                                     let arg_vals = arg_vals?;
 
-                                    // Get code from first argument
                                     if let Some(Value::String(code)) = arg_vals.first() {
-                                        // Create context with current variables
-                                        let variables = self.env.read().unwrap().clone();
+                                        let variables = self.env.borrow().clone();
                                         let context = LanguageExecutionContext::with_variables(variables);
 
-                                        let result = match func_name.as_str() {
-                                            "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context)),
-                                            "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context)),
-                                            "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context)),
-                                            "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context)),
+                                        match func_name.as_str() {
+                                            "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context))?,
                                             _ => unreachable!(),
-                                        }?;
-
-                                        return Ok(result);
+                                        }
+                                    } else {
+                                        result
                                     }
+                                } else {
+                                    let func = self.eval_expr(function.as_ref())?;
+                                    let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                                    let arg_vals = arg_vals?;
+                                    self.call_function_legacy(func, arg_vals)?
                                 }
+                            } else {
+                                let func = self.eval_expr(function.as_ref())?;
+                                let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                                let arg_vals = arg_vals?;
+                                self.call_function_legacy(func, arg_vals)?
                             }
-
-                            // Evaluate function expression
-                            let func = self.eval_expr(function)?;
-
-                            // Evaluate arguments
-                            let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
-                            let arg_vals = arg_vals?;
-
-                            // Call the function
-                            self.call_function(func, arg_vals)?
                         }
                         Expr::Variable(name) => {
-                            let func = self.env.read().unwrap()
-                                .get(name)
-                                .cloned()
-                                .ok_or_else(|| TBError::UndefinedFunction(name.clone()))?;
-                            self.call_function(func, vec![result])?
+                            if let Some((params, body_rc)) = self.functions.get(name) {
+                                let params = params.clone();
+                                let body_rc = body_rc.clone(); // ✅ Rc::clone is cheap
+                                self.call_function_fast(name, &params, &body_rc, vec![result])?
+                            } else {
+                                let func = self.env.borrow().get(name)
+                                    .cloned()
+                                    .ok_or_else(|| TBError::UndefinedFunction(name.clone()))?;
+                                self.call_function_legacy(func, vec![result])?
+                            }
                         }
                         _ => return Err(TBError::InvalidOperation("Pipeline".to_string())),
                     };
@@ -5360,7 +5604,127 @@ impl JitExecutor {
                 }
             }
 
+            Expr::Parallel(tasks) => {
+                // ✅ Ensure this returns Value::List
+                let results: TBResult<Vec<_>> = tasks
+                    .iter()
+                    .map(|task| self.eval_expr(task))
+                    .collect();
+
+                Ok(Value::List(results?))
+            }
+
             _ => Ok(Value::Unit),
+        }
+    }
+
+    /// ✅ ULTRA-FAST function call (zero environment cloning!)
+    fn call_function_fast(
+        &mut self,
+        func_name: &str,  // ✅ Changed from _func_name to use it
+        params: &[String],
+        body: &Rc<Expr>,
+        args: Vec<Value>,
+    ) -> TBResult<Value> {
+        // Check recursion depth
+        self.recursion_depth += 1;
+
+        // ✅ DEBUG: Print current recursion depth and estimated stack usage
+        #[cfg(debug_assertions)]
+        {
+            let estimated_stack_kb = self.recursion_depth * 4; // Rough estimate: ~4KB per call
+            let env_size = self.env.borrow().len();
+            debug_log!(
+            "📞 CALL depth={}/{} func='{}' params={} env_vars={} ~{}KB stack",
+            self.recursion_depth,
+            self.max_recursion_depth,
+            if func_name.is_empty() { "closure" } else { func_name },
+            params.len(),
+            env_size,
+            estimated_stack_kb
+        );
+        }
+
+        if self.recursion_depth > self.max_recursion_depth {
+            self.recursion_depth = 0;
+            return Err(TBError::RuntimeError {
+                message: format!(
+                    "Maximum recursion depth exceeded ({})",
+                    self.max_recursion_depth
+                ),
+                trace: vec!["function call".to_string()],
+            });
+        }
+
+        if params.len() != args.len() {
+            self.recursion_depth -= 1;
+            return Err(TBError::InvalidOperation(
+                format!("Expected {} arguments, got {}", params.len(), args.len())
+            ));
+        }
+
+        // ✅ CRITICAL OPTIMIZATION: Temporarily push parameters into environment
+        let mut saved_params = Vec::new();
+        for (param, arg) in params.iter().zip(args.iter()) {
+            let old_value = self.env.borrow_mut().insert(param.clone(), arg.clone());
+            saved_params.push((param.clone(), old_value));
+        }
+
+        // ✅ Execute body (dereference Rc to get &Expr)
+        let result = self.eval_expr(body);  // body: &Rc<Expr> derefs to &Expr automatically
+
+        // Restore old parameter values
+        for (param, old_value) in saved_params {
+            if let Some(old) = old_value {
+                self.env.borrow_mut().insert(param, old);
+            } else {
+                self.env.borrow_mut().remove(&param);
+            }
+        }
+
+        self.recursion_depth -= 1;
+
+        result
+    }
+
+    /// Legacy function call (for closures)
+    fn call_function_legacy(&mut self, func: Value, args: Vec<Value>) -> TBResult<Value> {
+        match func {
+            Value::Function { params, body, env: _ } => {
+                // ✅ Wrap body in Rc for consistency
+                let body_rc = Rc::new(*body);
+                self.call_function_fast("", &params, &body_rc, args)
+            }
+
+            Value::Native { type_name, .. } if type_name.starts_with("builtin:") => {
+                let func_name = type_name.strip_prefix("builtin:").unwrap();
+
+                if let Some(builtin) = self.builtins.get(func_name) {
+                    if args.len() < builtin.min_args {
+                        return Err(TBError::InvalidOperation(
+                            format!("{} requires at least {} arguments, got {}",
+                                    func_name, builtin.min_args, args.len())
+                        ));
+                    }
+
+                    if let Some(max) = builtin.max_args {
+                        if args.len() > max {
+                            return Err(TBError::InvalidOperation(
+                                format!("{} accepts at most {} arguments, got {}",
+                                        func_name, max, args.len())
+                            ));
+                        }
+                    }
+
+                    (builtin.function)(&args)
+                } else {
+                    Err(TBError::UndefinedFunction(func_name.to_string()))
+                }
+            }
+
+            _ => Err(TBError::InvalidOperation(format!(
+                "Not a function: {:?}", func.get_type()
+            ))),
         }
     }
 
@@ -5388,8 +5752,8 @@ impl JitExecutor {
                     result.push('$');
                 } else {
                     // Look up variable and format it
-                    if let Some(value) = self.env.read().unwrap().get(&var_name) {
-                        result.push_str(&format_value_for_output(value));
+                    if let Some(value) = self.env.borrow().get(&var_name).cloned() {
+                        result.push_str(&format_value_for_output(&value));
                     } else {
                         // Variable not found, keep original
                         result.push('$');
@@ -5531,73 +5895,6 @@ impl JitExecutor {
         }
     }
 
-    fn call_function(&mut self, func: Value, args: Vec<Value>) -> TBResult<Value> {
-        match func {
-            Value::Function { params, body, env } => {
-                if params.len() != args.len() {
-                    return Err(TBError::InvalidOperation(
-                        format!("Expected {} arguments, got {}", params.len(), args.len())
-                    ));
-                }
-
-                // Save current environment
-                let old_env = self.env.clone();
-
-                // Create new environment starting from function's closure env
-                let mut new_env = env.read().unwrap().clone();
-
-                // Add parameters
-                for (param, arg) in params.iter().zip(args.iter()) {
-                    new_env.insert(param.clone(), arg.clone());
-                }
-
-                // Switch to new environment
-                self.env = Arc::new(RwLock::new(new_env));
-
-                // Execute body
-                let result = self.eval_expr(&body)?;
-
-                // Restore environment
-                self.env = old_env;
-
-                Ok(result)
-            }
-
-            // Handle builtin functions
-            Value::Native { type_name, .. } if type_name.starts_with("builtin:") => {
-                let func_name = type_name.strip_prefix("builtin:").unwrap();
-
-                if let Some(builtin) = self.builtins.get(func_name) {
-                    // Check argument count
-                    if args.len() < builtin.min_args {
-                        return Err(TBError::InvalidOperation(
-                            format!("{} requires at least {} arguments, got {}",
-                                    func_name, builtin.min_args, args.len())
-                        ));
-                    }
-
-                    if let Some(max) = builtin.max_args {
-                        if args.len() > max {
-                            return Err(TBError::InvalidOperation(
-                                format!("{} accepts at most {} arguments, got {}",
-                                        func_name, max, args.len())
-                            ));
-                        }
-                    }
-
-                    // Call the builtin function
-                    (builtin.function)(&args)
-                } else {
-                    Err(TBError::UndefinedFunction(func_name.to_string()))
-                }
-            }
-
-            _ => Err(TBError::InvalidOperation(format!(
-                "Not a function: {:?}", func.get_type()
-            ))),
-        }
-    }
-
     fn literal_to_value(&self, lit: &Literal) -> Value {
         match lit {
             Literal::Unit => Value::Unit,
@@ -5621,478 +5918,219 @@ impl JitExecutor {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// AsyncJitExecutor
+// ParallelExecutor
 // ═══════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LOCATION: Zeile 3373-4150 (KOMPLETTE AsyncJitExecutor struct)
-// ACTION: KOMPLETTE ERSETZUNG
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Async-capable executor using Tokio
-pub struct AsyncJitExecutor {
-    env: Arc<RwLock<HashMap<String, ScopedValue>>>,
-    config: Config,
-    builtins: BuiltinRegistry,
-}
-
-impl AsyncJitExecutor {
-    pub fn new(config: Config) -> Self {
-        let mut env_map = HashMap::new();
-
-        // Initialize with shared variables (as ScopedValue)
-        for (key, value) in &config.shared {
-            env_map.insert(
-                key.clone(),
-                ScopedValue::new(value.clone(), VarScope::Local)
-            );
-        }
-
-        let mut builtins = BuiltinRegistry::new();
-
-        if !config.plugins.is_empty() {
-            debug_log!("Loading {} plugins", config.plugins.len());
-            if let Err(e) = builtins.load_plugins(&config.plugins) {
-                eprintln!("Warning: Failed to load plugins: {}", e);
-            }
-        }
-
-        Self {
-            env: Arc::new(RwLock::new(env_map)),
-            config,
-            builtins,
-        }
-    }
-
-    /// Execute statements with async support
-    pub fn execute(&mut self, statements: &[Statement]) -> TBResult<Value> {
-        // Create Tokio runtime on-demand
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(match self.config.runtime_mode {
-                RuntimeMode::Async { runtime_threads } => runtime_threads,
-                _ => 4,
-            })
-            .enable_all()
-            .build()
-            .map_err(|e| TBError::RuntimeError {
-                message: format!("Failed to create async runtime: {}", e),
-                trace: vec![],
-            })?;
-
-        // Clone what we need for the async block
-        let env = self.env.clone();
-        let builtins = self.builtins.clone();
-        let statements = statements.to_vec();
-
-        // Execute in runtime
-        runtime.block_on(async move {
-            let mut last_value = Value::Unit;
-
-            for stmt in statements.iter() {
-                last_value = Self::execute_statement_async(
-                    stmt,
-                    env.clone(),
-                    builtins.clone()
-                ).await?;
-            }
-
-            Ok(last_value)
-        })
-    }
-
-    /// Execute single statement asynchronously (static method)
-    async fn execute_statement_async(
-        stmt: &Statement,
-        env: Arc<RwLock<HashMap<String, ScopedValue>>>,
-        builtins: BuiltinRegistry,
-    ) -> TBResult<Value> {
-        match stmt {
-            Statement::Let { name, value, scope, .. } => {
-                let val = Self::eval_expr_async(value, env.clone(), builtins).await?;
-                let scoped_val = ScopedValue::new(val, *scope);
-                env.write().unwrap().insert(name.clone(), scoped_val);
-                Ok(Value::Unit)
-            }
-
-            Statement::Function { name, params, body, .. } => {
-                let func = Value::Function {
-                    params: params.iter().map(|p| p.name.clone()).collect(),
-                    body: Box::new(body.clone()),
-                    env: Arc::new(RwLock::new(HashMap::new())),
-                };
-                env.write().unwrap().insert(
-                    name.clone(),
-                    ScopedValue::Local(func)
-                );
-                Ok(Value::Unit)
-            }
-
-            Statement::Expr(expr) => {
-                Self::eval_expr_async(expr, env, builtins).await
-            }
-
-            _ => Ok(Value::Unit),
-        }
-    }
-
-    /// Evaluate expression asynchronously (static method with Box<Pin> for recursion)
-    fn eval_expr_async(
-        expr: &Expr,
-        env: Arc<RwLock<HashMap<String, ScopedValue>>>,
-        builtins: BuiltinRegistry,
-    ) -> Pin<Box<dyn Future<Output = TBResult<Value>> + Send + '_>> {
-        Box::pin(async move {
-            match expr {
-                Expr::Literal(lit) => Ok(Self::literal_to_value(lit)),
-
-                Expr::Variable(name) => {
-                    if let Some(scoped_val) = env.read().unwrap().get(name) {
-                        return scoped_val.get();
-                    }
-
-                    if let Some(_builtin) = builtins.get(name) {
-                        return Ok(Value::Native {
-                            language: Language::Rust,
-                            type_name: format!("builtin:{}", name),
-                            handle: NativeHandle {
-                                id: name.as_ptr() as u64,
-                                data: Arc::new(name.clone()),
-                            },
-                        });
-                    }
-
-                    Err(TBError::UndefinedVariable(name.clone()))
-                }
-
-                Expr::BinOp { op, left, right } => {
-                    let left_val = Self::eval_expr_async(left, env.clone(), builtins.clone()).await?;
-                    let right_val = Self::eval_expr_async(right, env, builtins).await?;
-                    Self::eval_binop(*op, left_val, right_val)
-                }
-
-                // Async expression - just evaluate inner
-                Expr::Async(inner) => {
-                    Self::eval_expr_async(inner, env, builtins).await
-                }
-
-                // Await expression
-                Expr::Await(inner) => {
-                    Self::eval_expr_async(inner, env, builtins).await
-                }
-
-                // Parallel execution with Tokio
-                Expr::Parallel(tasks) => {
-                    let mut handles = Vec::new();
-
-                    for task_expr in tasks {
-                        let expr_clone = task_expr.clone();
-                        let env_clone = env.clone();
-                        let builtins_clone = builtins.clone();
-
-                        let handle = tokio::spawn(async move {
-                            Self::eval_expr_async(&expr_clone, env_clone, builtins_clone).await
-                        });
-
-                        handles.push(handle);
-                    }
-
-                    // Wait for all tasks
-                    let results = futures::future::join_all(handles).await;
-
-                    let values: TBResult<Vec<Value>> = results.into_iter()
-                        .map(|r| r.unwrap_or_else(|e| Err(TBError::RuntimeError {
-                            message: format!("Task panicked: {}", e),
-                            trace: vec![],
-                        })))
-                        .collect();
-
-                    Ok(Value::List(values?))
-                }
-
-                // Call language bridges asynchronously
-                Expr::Native { language, code } => {
-                    let variables = Self::get_all_values(&env);
-                    let context = LanguageExecutionContext::with_variables(variables);
-
-                    let lang = *language;
-                    let code_clone = code.clone();
-
-                    tokio::task::spawn_blocking(move || {
-                        match lang {
-                            Language::Python => execute_python_code_with_context(&code_clone, &[], Some(&context)),
-                            Language::JavaScript => execute_js_code_with_context(&code_clone, &[], Some(&context)),
-                            Language::Go => execute_go_code_with_context(&code_clone, &[], Some(&context)),
-                            Language::Bash => execute_bash_command_with_context(&code_clone, &[], Some(&context)),
-                            _ => Err(TBError::UnsupportedLanguage(format!("{:?}", lang))),
-                        }
-                    }).await.unwrap_or_else(|e| Err(TBError::RuntimeError {
-                        message: format!("Task error: {}", e),
-                        trace: vec![],
-                    }))
-                }
-
-                Expr::Call { function, args } => {
-                    // Check if it's a language bridge function
-                    if let Expr::Variable(func_name) = function.as_ref() {
-                        if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(Self::eval_expr_async(arg, env.clone(), builtins.clone()).await?);
-                            }
-
-                            if let Some(Value::String(code)) = arg_vals.first() {
-                                let variables = Self::get_all_values(&env);
-                                let context = LanguageExecutionContext::with_variables(variables);
-                                let code_clone = code.clone();
-                                let func_name_clone = func_name.clone();
-                                let remaining_args = arg_vals[1..].to_vec();
-
-                                return tokio::task::spawn_blocking(move || {
-                                    match func_name_clone.as_str() {
-                                        "python" => execute_python_code_with_context(&code_clone, &remaining_args, Some(&context)),
-                                        "javascript" => execute_js_code_with_context(&code_clone, &remaining_args, Some(&context)),
-                                        "go" => execute_go_code_with_context(&code_clone, &remaining_args, Some(&context)),
-                                        "bash" => execute_bash_command_with_context(&code_clone, &remaining_args, Some(&context)),
-                                        _ => unreachable!(),
-                                    }
-                                }).await.unwrap_or_else(|e| Err(TBError::RuntimeError {
-                                    message: format!("Task error: {}", e),
-                                    trace: vec![],
-                                }));
-                            }
-                        }
-                    }
-
-                    // Regular function call - simplified
-                    Ok(Value::Unit)
-                }
-
-                Expr::Block { statements, result } => {
-                    for stmt in statements {
-                        Self::execute_statement_async(stmt, env.clone(), builtins.clone()).await?;
-                    }
-
-                    if let Some(result) = result {
-                        Self::eval_expr_async(result, env, builtins).await
-                    } else {
-                        Ok(Value::Unit)
-                    }
-                }
-
-                Expr::If { condition, then_branch, else_branch } => {
-                    let cond = Self::eval_expr_async(condition, env.clone(), builtins.clone()).await?;
-
-                    if Self::is_truthy(&cond) {
-                        Self::eval_expr_async(then_branch, env, builtins).await
-                    } else if let Some(else_branch) = else_branch {
-                        Self::eval_expr_async(else_branch, env, builtins).await
-                    } else {
-                        Ok(Value::Unit)
-                    }
-                }
-
-                Expr::List(items) => {
-                    let mut values = Vec::new();
-                    for item in items {
-                        values.push(Self::eval_expr_async(item, env.clone(), builtins.clone()).await?);
-                    }
-                    Ok(Value::List(values))
-                }
-
-                // Regular synchronous expressions
-                _ => Ok(Value::Unit),
-            }
-        })
-    }
-
-    /// Helper: Get all variable values
-    fn get_all_values(env: &Arc<RwLock<HashMap<String, ScopedValue>>>) -> HashMap<String, Value> {
-        env.read().unwrap()
-            .iter()
-            .filter_map(|(k, sv)| sv.get().ok().map(|v| (k.clone(), v)))
-            .collect()
-    }
-
-    /// Helper: Literal to value
-    fn literal_to_value(lit: &Literal) -> Value {
-        match lit {
-            Literal::Unit => Value::Unit,
-            Literal::Bool(b) => Value::Bool(*b),
-            Literal::Int(n) => Value::Int(*n),
-            Literal::Float(f) => Value::Float(*f),
-            Literal::String(s) => Value::String(s.clone()),
-        }
-    }
-
-    /// Helper: Check truthiness
-    fn is_truthy(value: &Value) -> bool {
-        match value {
-            Value::Unit => false,
-            Value::Bool(b) => *b,
-            Value::Int(n) => *n != 0,
-            Value::Float(f) => *f != 0.0 && !f.is_nan(),
-            Value::String(s) => !s.is_empty(),
-            Value::List(l) => !l.is_empty(),
-            _ => true,
-        }
-    }
-
-    /// Helper: Binary operation
-    fn eval_binop(op: BinOp, left: Value, right: Value) -> TBResult<Value> {
-        match (op, left, right) {
-            (BinOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-            (BinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-            (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-            (BinOp::Div, Value::Int(a), Value::Int(b)) => {
-                if b == 0 {
-                    Err(TBError::DivisionByZero)
-                } else {
-                    Ok(Value::Int(a / b))
-                }
-            }
-            (BinOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-            (BinOp::Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-            (BinOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-            (BinOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-            (BinOp::Eq, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a == b)),
-            (BinOp::Ne, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a != b)),
-            (BinOp::Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-            (BinOp::Le, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-            (BinOp::Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-            (BinOp::Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
-            _ => Err(TBError::InvalidOperation(format!("Binary operation {:?}", op))),
-        }
-    }
-}
-
 
 /// Parallel executor using Rayon for CPU-bound work
+// ═══════════════════════════════════════════════════════════════════════════
+// PARALLEL EXECUTOR - Multi-JIT Design
+// ═══════════════════════════════════════════════════════════════════════════
+
+use rayon::prelude::*;
+
+/// Parallel executor using multiple JitExecutor instances
 pub struct ParallelExecutor {
-    env: Arc<RwLock<HashMap<String, ScopedValue>>>,
     config: Config,
-    builtins: BuiltinRegistry,
+    shared_state: Arc<Mutex<HashMap<String, Value>>>,
+    worker_threads: usize,
 }
 
 impl ParallelExecutor {
     pub fn new(config: Config) -> Self {
-        let mut env_map = HashMap::new();
+        let worker_threads = match config.runtime_mode {
+            RuntimeMode::Parallel { worker_threads } => worker_threads,
+            _ => num_cpus::get(),
+        };
 
+        // Initialize shared state from config
+        let mut shared_map = HashMap::new();
         for (key, value) in &config.shared {
-            env_map.insert(
-                key.clone(),
-                ScopedValue::new(value.clone(), VarScope::Local)
-            );
-        }
-
-        let mut builtins = BuiltinRegistry::new();
-
-        if !config.plugins.is_empty() {
-            if let Err(e) = builtins.load_plugins(&config.plugins) {
-                eprintln!("Warning: Failed to load plugins: {}", e);
-            }
+            shared_map.insert(key.clone(), value.clone());
         }
 
         // Configure Rayon thread pool
-        if let RuntimeMode::Parallel { worker_threads } = config.runtime_mode {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(worker_threads)
-                .build_global()
-                .ok();
-        }
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_threads)
+            .build_global()
+            .ok();
 
         Self {
-            env: Arc::new(RwLock::new(env_map)),
             config,
-            builtins,
+            shared_state: Arc::new(Mutex::new(shared_map)),
+            worker_threads,
         }
     }
 
     /// Execute statements with parallel support
     pub fn execute(&mut self, statements: &[Statement]) -> TBResult<Value> {
-        let mut last_value = Value::Unit;
+        debug_log!("ParallelExecutor: {} workers, {} statements",
+            self.worker_threads, statements.len());
+
+        // Separate parallel blocks from sequential statements
+        let mut sequential_stmts = Vec::new();
+        let mut parallel_blocks = Vec::new();
 
         for stmt in statements {
-            last_value = self.execute_statement(stmt)?;
+            if self.contains_parallel_expr(stmt) {
+                parallel_blocks.push(stmt.clone());
+            } else {
+                sequential_stmts.push(stmt.clone());
+            }
+        }
+
+        // Execute sequential statements first
+        let mut result = Value::Unit;
+        if !sequential_stmts.is_empty() {
+            result = self.execute_sequential(&sequential_stmts)?;
+        }
+
+        // Execute parallel blocks
+        for block_stmt in parallel_blocks {
+            result = self.execute_statement_parallel(&block_stmt)?;
+        }
+
+        Ok(result)
+    }
+
+    /// Execute sequential statements using single JitExecutor
+    fn execute_sequential(&self, statements: &[Statement]) -> TBResult<Value> {
+        let mut executor = self.create_executor();
+        executor.execute(statements)
+    }
+
+    /// Execute statement that contains parallel operations
+    fn execute_statement_parallel(&self, stmt: &Statement) -> TBResult<Value> {
+        match stmt {
+            Statement::Expr(Expr::Parallel(tasks)) => {
+                self.execute_parallel_tasks(tasks)
+            }
+
+            Statement::Expr(Expr::For { variable, iterable, body }) => {
+                // Evaluate iterable first
+                let mut executor = self.create_executor();
+                let iter_val = executor.eval_expr(iterable)?;
+
+                if let Value::List(items) = iter_val {
+                    self.execute_parallel_for(variable, &items, body)
+                } else {
+                    Err(TBError::InvalidOperation(
+                        "Parallel for requires list".to_string()
+                    ))
+                }
+            }
+
+            _ => {
+                // Fallback to sequential
+                let mut executor = self.create_executor();
+                executor.execute_statement(stmt)
+            }
+        }
+    }
+
+    /// Execute parallel tasks using Rayon
+    fn execute_parallel_tasks(&self, tasks: &[Expr]) -> TBResult<Value> {
+        debug_log!("Executing {} tasks in parallel", tasks.len());
+
+        // Execute each task in parallel with its own JitExecutor
+        let results: Vec<TBResult<Value>> = tasks
+            .par_iter()
+            .map(|task| {
+                let mut executor = self.create_executor();
+                executor.eval_expr(task)
+            })
+            .collect();
+
+        // Collect ALL results, not just last
+        let mut values = Vec::new();
+        for result in results {
+            values.push(result?);
+        }
+
+        // ✅ CRITICAL: Return as List, not Unit
+        Ok(Value::List(values))
+    }
+
+    /// Execute parallel for loop
+    fn execute_parallel_for(
+        &self,
+        variable: &str,
+        items: &[Value],
+        body: &Expr,
+    ) -> TBResult<Value> {
+        debug_log!("Parallel for: {} iterations", items.len());
+
+        // Process items in parallel
+        let results: Vec<TBResult<Value>> = items
+            .par_iter()
+            .map(|item| {
+                let mut executor = self.create_executor();
+
+                // Set loop variable
+                executor.env.borrow_mut().insert(variable.to_string(), item.clone());
+
+                // Execute body
+                executor.eval_expr(body)
+            })
+            .collect();
+
+        // Return last result or first error
+        let mut last_value = Value::Unit;
+        for result in results {
+            last_value = result?;
         }
 
         Ok(last_value)
     }
 
-    fn execute_statement(&mut self, stmt: &Statement) -> TBResult<Value> {
+    /// Create new JitExecutor with shared config and state
+    fn create_executor(&self) -> JitExecutor {
+        let mut config = self.config.clone();
+
+        // Inject current shared state
+        let shared_state = self.shared_state.lock().unwrap();
+        config.shared = shared_state.clone();
+
+        JitExecutor::new(config)
+    }
+
+    /// Check if statement contains parallel expressions
+    fn contains_parallel_expr(&self, stmt: &Statement) -> bool {
         match stmt {
-            Statement::Let { name, value, scope, .. } => {
-                let val = self.eval_expr(value)?;
-                let scoped_val = ScopedValue::new(val, *scope);
-                self.env.write().unwrap().insert(name.clone(), scoped_val);
-                Ok(Value::Unit)
-            }
-
-
-            Statement::Expr(expr) => self.eval_expr(expr),
-
-            _ => Ok(Value::Unit),
+            Statement::Expr(expr) => self.is_parallel_expr(expr),
+            Statement::Let { value, .. } => self.is_parallel_expr(value),
+            Statement::Function { body, .. } => self.is_parallel_expr(body),
+            _ => false,
         }
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> TBResult<Value> {
+    fn is_parallel_expr(&self, expr: &Expr) -> bool {
         match expr {
-            Expr::Literal(lit) => Ok(self.literal_to_value(lit)),
-
-            Expr::Variable(name) => {
-                if let Some(scoped_val) = self.env.read().unwrap().get(name) {
-                    return scoped_val.get();
-                }
-                Err(TBError::UndefinedVariable(name.clone()))
+            Expr::Parallel(_) => true,
+            Expr::For { .. } if matches!(self.config.runtime_mode, RuntimeMode::Parallel { .. }) => true,
+            Expr::Block { statements, result } => {
+                statements.iter().any(|s| self.contains_parallel_expr(s))
+                    || result.as_ref().map_or(false, |e| self.is_parallel_expr(e))
             }
-
-            // Parallel execution with Rayon
-            Expr::Parallel(tasks) => {
-                let env = self.env.clone();
-
-                // Execute tasks in parallel using Rayon
-                let results: Vec<TBResult<Value>> = tasks.par_iter()
-                    .map(|task_expr| {
-                        // Each thread needs access to environment
-                        // Simplified: just return unit
-                        Ok(Value::Unit)
-                    })
-                    .collect();
-
-                // Collect successful results
-                let values: TBResult<Vec<Value>> = results.into_iter().collect();
-                Ok(Value::List(values?))
-            }
-
-            // Parallel for loop
-            Expr::For { variable, iterable, body } => {
-                let iter_val = self.eval_expr(iterable)?;
-
-                if let Value::List(items) = iter_val {
-                    // Parallel iteration with Rayon
-                    items.par_iter().for_each(|item| {
-                        // Set variable and execute body
-                        // Note: This is simplified
-                        let _ = item;
-                    });
-                }
-
-                Ok(Value::Unit)
-            }
-
-            _ => Ok(Value::Unit),
+            _ => false,
         }
     }
 
-    fn literal_to_value(&self, lit: &Literal) -> Value {
-        match lit {
-            Literal::Unit => Value::Unit,
-            Literal::Bool(b) => Value::Bool(*b),
-            Literal::Int(n) => Value::Int(*n),
-            Literal::Float(f) => Value::Float(*f),
-            Literal::String(s) => Value::String(s.clone()),
-        }
+    /// Get value from shared state
+    pub fn get_shared(&self, key: &str) -> Option<Value> {
+        self.shared_state.lock().unwrap().get(key).cloned()
+    }
+
+    /// Set value in shared state
+    pub fn set_shared(&self, key: String, value: Value) {
+        self.shared_state.lock().unwrap().insert(key, value);
+    }
+
+    /// Get all shared state
+    pub fn get_all_shared(&self) -> HashMap<String, Value> {
+        self.shared_state.lock().unwrap().clone()
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §11.5 BUILTIN FUNCTIONS & NATIVE BRIDGES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8403,11 +8441,13 @@ fn preprocess_go_code_for_existing_vars(code: &str, existing_vars: &[String]) ->
 
 pub mod target;
 pub use target::{TargetPlatform, CompilationConfig};
+use crate::dependency_compiler::CompiledDependency;
 
 pub struct Compiler {
     config: Config,
     target: TargetPlatform,
     optimization_level: u8,
+    compiled_deps: Vec<CompiledDependency>,
 }
 
 impl Compiler {
@@ -8416,6 +8456,7 @@ impl Compiler {
             config,
             target: TargetPlatform::current(),
             optimization_level: 3,
+            compiled_deps: Vec::new(),
         }
     }
 
@@ -8429,21 +8470,25 @@ impl Compiler {
         self
     }
 
-    /// Compile statements to native binary
+    pub fn set_compiled_dependencies(&mut self, deps: Vec<CompiledDependency>) {
+        self.compiled_deps = deps;
+    }
+
     /// Compile statements to native binary with full import support
     pub fn compile(&self, statements: &[Statement]) -> TBResult<Vec<u8>> {
         debug_log!("Compiler::compile() for target {}", self.target);
 
-        // 1. Recursively load ALL imports (including transitive dependencies)
+        // Statements already include imports (loaded by TBCore)
         let function_count = statements.iter()
             .filter(|s| matches!(s, Statement::Function{..}))
             .count();
         debug_log!("✓ Total functions for compilation: {}", function_count);
 
-        let all_statements = statements.to_vec();
         // 2. Generate Rust code with runtime support
-        let rust_code = self.generate_rust_code_with_runtime(&all_statements)?;
+        let rust_code = self.generate_rust_code_with_runtime(&statements)?;
         debug_log!("Generated Rust code: {} bytes", rust_code.len());
+
+        debug_log!("full code {}", rust_code);
 
         // 3. Write to temporary directory
         let temp_dir = self.create_temp_project()?;
@@ -8610,143 +8655,140 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_rust_code_with_runtime(&self, statements: &[Statement]) -> TBResult<String> {
-        // Separate functions from other statements
-        let mut functions = Vec::new();
-        let mut main_statements = Vec::new();
+    /// Analyze which variables need to be mutable
+    fn analyze_mutability(&self, statements: &[Statement]) -> std::collections::HashSet<String> {
+        let mut mutable_vars = std::collections::HashSet::new();
 
+        // Find all variable assignments
         for stmt in statements {
-            match stmt {
-                Statement::Function { .. } => functions.push(stmt.clone()),
-                _ => main_statements.push(stmt.clone()),
+            self.collect_assigned_variables(stmt, &mut mutable_vars);
+        }
+
+        debug_log!("Mutable variables detected: {:?}", mutable_vars);
+        mutable_vars
+    }
+
+    /// Recursively collect variables that are assigned to
+    fn collect_assigned_variables(&self, stmt: &Statement, mutable_vars: &mut std::collections::HashSet<String>) {
+        match stmt {
+            Statement::Assign { target, value } => {
+                // Mark target variable as mutable
+                if let Expr::Variable(name) = target {
+                    mutable_vars.insert(name.clone());
+                }
+
+                // Check value expression for assignments
+                self.collect_assigned_in_expr(value, mutable_vars);
             }
+
+            Statement::Let { value, .. } => {
+                self.collect_assigned_in_expr(value, mutable_vars);
+            }
+
+            Statement::Expr(expr) => {
+                self.collect_assigned_in_expr(expr, mutable_vars);
+            }
+
+            Statement::Function { body, .. } => {
+                self.collect_assigned_in_expr(body, mutable_vars);
+            }
+
+            _ => {}
         }
+    }
 
-        debug_log!("Code generation: {} functions, {} main statements",
-        functions.len(), main_statements.len());
-
-        // Build final code
-        let mut final_code = String::from("// Auto-generated by TB Compiler\n");
-        final_code.push_str("// Optimized for native execution\n\n");
-        final_code.push_str("#![allow(unused)]\n\n");
-        final_code.push_str("use std::process::Command;\n");
-        final_code.push_str("use std::io::Write;\n\n");
-
-        // Check if we need language bridges
-        let needs_bridges = self.statements_use_language_bridges(statements);
-        if needs_bridges {
-            final_code.push_str("// ═══════════════════════════════════════════════════\n");
-            final_code.push_str("// Language Bridge Helper Functions\n");
-            final_code.push_str("// ═══════════════════════════════════════════════════\n\n");
-
-            // Generate bridge helpers inline
-            self.append_bridge_helpers(&mut final_code);
-        }
-
-        // Add fmt_display helper
-        final_code.push_str("\n/// Format any value for display in println!\n");
-        final_code.push_str("#[allow(dead_code)]\n");
-        final_code.push_str("fn fmt_display<T: std::fmt::Debug>(val: &T) -> String {\n");
-        final_code.push_str("    format!(\"{:?}\", val)\n");
-        final_code.push_str("}\n\n");
-
-        // Generate all function definitions
-        for func in &functions {
-            let mut codegen = CodeGenerator::new(Language::Rust);
-            codegen.variables_in_scope = Vec::new(); // Reset
-            let func_code = codegen.generate(&[func.clone()])?;
-
-            // Extract just the function (skip imports and main)
-            if let Some(fn_start) = func_code.find("#[inline(always)]") {
-                let func_part = &func_code[fn_start..];
-                if let Some(fn_end) = func_part.find("\nfn main()") {
-                    final_code.push_str(&func_part[..fn_end]);
-                    final_code.push_str("\n\n");
-                } else {
-                    // No main found, take everything after inline
-                    final_code.push_str(func_part);
-                    final_code.push_str("\n\n");
+    /// Recursively find assignments in expressions
+    fn collect_assigned_in_expr(&self, expr: &Expr, mutable_vars: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Block { statements, result } => {
+                for stmt in statements.as_ref() {
+                    self.collect_assigned_variables(stmt, mutable_vars);
+                }
+                if let Some(res) = result {
+                    self.collect_assigned_in_expr(res, mutable_vars);
                 }
             }
-        }
 
-        // Generate main function
-        final_code.push_str("fn main() {\n");
-
-        if !main_statements.is_empty() {
-            let mut codegen = CodeGenerator::new(Language::Rust);
-            codegen.variables_in_scope = Vec::new();
-            codegen.indent = 1;
-
-            for stmt in &main_statements {
-                codegen.generate_rust_statement(stmt)?;
+            Expr::If { condition, then_branch, else_branch } => {
+                self.collect_assigned_in_expr(condition, mutable_vars);
+                self.collect_assigned_in_expr(then_branch, mutable_vars);
+                if let Some(else_b) = else_branch {
+                    self.collect_assigned_in_expr(else_b, mutable_vars);
+                }
             }
 
-            final_code.push_str(&codegen.buffer);
+            Expr::Loop { body } => {
+                self.collect_assigned_in_expr(body, mutable_vars);
+            }
+
+            Expr::While { condition, body } => {
+                self.collect_assigned_in_expr(condition, mutable_vars);
+                self.collect_assigned_in_expr(body, mutable_vars);
+            }
+
+            Expr::For { iterable, body, .. } => {
+                self.collect_assigned_in_expr(iterable, mutable_vars);
+                self.collect_assigned_in_expr(body, mutable_vars);
+            }
+
+            Expr::BinOp { left, right, .. } => {
+                self.collect_assigned_in_expr(left, mutable_vars);
+                self.collect_assigned_in_expr(right, mutable_vars);
+            }
+
+            Expr::UnaryOp { expr, .. } => {
+                self.collect_assigned_in_expr(expr, mutable_vars);
+            }
+
+            Expr::Call { function, args } => {
+                self.collect_assigned_in_expr(function, mutable_vars);
+                for arg in args {
+                    self.collect_assigned_in_expr(arg, mutable_vars);
+                }
+            }
+
+            _ => {}
         }
-
-        final_code.push_str("}\n");
-
-        Ok(final_code)
     }
 
-    fn append_bridge_helpers(&self, code: &mut String) {
-        code.push_str(r#"
-#[allow(dead_code)]
-fn python(code: &str) -> String {
-    let output = Command::new("python")
-        .arg("-c")
-        .arg(code)
-        .output()
-        .expect("Failed to execute Python");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
+    // ✅ NEUE, VEREINFACHTE VERSION (PLUG-AND-PLAY) ✅
+    fn generate_rust_code_with_runtime(&self, statements: &[Statement]) -> TBResult<String> {
+        // Schritt 1: Analysiere, welche Variablen tatsächlich veränderbar sein müssen.
+        // Diese Logik bleibt erhalten, da sie korrekt und nützlich ist.
+        let mutable_vars = self.analyze_mutability(statements);
+        debug_log!("Variables requiring mut: {:?}", mutable_vars);
 
-#[allow(dead_code)]
-fn javascript(code: &str) -> String {
-    let output = Command::new("node")
-        .arg("-e")
-        .arg(code)
-        .output()
-        .expect("Failed to execute JavaScript");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
+        // Schritt 2: Erstelle eine einzige CodeGenerator-Instanz.
+        let mut codegen = CodeGenerator::new(Language::Rust);
 
-#[allow(dead_code)]
-fn bash(code: &str) -> String {
-    let shell = if cfg!(windows) { "cmd" } else { "bash" };
-    let flag = if cfg!(windows) { "/C" } else { "-c" };
-    let output = Command::new(shell)
-        .arg(flag)
-        .arg(code)
-        .output()
-        .expect("Failed to execute Bash");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
+        // Schritt 3: Konfiguriere den Generator mit allen notwendigen Kontext-Informationen.
+        codegen.set_compiled_dependencies(&self.compiled_deps);
+        codegen.set_mutable_vars(&mutable_vars);
 
-#[allow(dead_code)]
-fn go(code: &str) -> String {
-    use std::env;
-    use std::fs;
-
-    let temp_dir = env::temp_dir().join("tb_go_temp");
-    fs::create_dir_all(&temp_dir).ok();
-
-    let full_code = format!("package main\nimport \"fmt\"\nfunc main() {{\n{}\n}}", code);
-    let go_file = temp_dir.join("main.go");
-    fs::write(&go_file, full_code).ok();
-
-    let output = Command::new("go")
-        .arg("run")
-        .arg(&go_file)
-        .output()
-        .expect("Failed to execute Go");
-
-    fs::remove_dir_all(&temp_dir).ok();
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-"#);
+        // Schritt 4: Generiere den gesamten Code in einem einzigen, sauberen Aufruf.
+        // Die `generate`-Methode kümmert sich um alles:
+        // - Korrekte Helferfunktionen für ALLE Sprachen
+        // - Typ-Parser-Helfer
+        // - Alle Funktionsdefinitionen
+        // - Die `main`-Funktion mit dem restlichen Code
+        // Dies stellt sicher, dass JIT- und Compile-Modus exakt denselben Code-Generator verwenden.
+        codegen.generate(statements)
     }
+
+    fn expr_needs_vec_return(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Parallel(_) => true,
+            Expr::Block { result, .. } => {
+                result.as_ref().map_or(false, |e| self.expr_needs_vec_return(e))
+            }
+            Expr::If { then_branch, else_branch, .. } => {
+                self.expr_needs_vec_return(then_branch)
+                    || else_branch.as_ref().map_or(false, |e| self.expr_needs_vec_return(e))
+            }
+            _ => false,
+        }
+    }
+
     /// Check if statements use language bridges (python, javascript, go, bash)
     fn statements_use_language_bridges(&self, statements: &[Statement]) -> bool {
         for stmt in statements {
@@ -8794,39 +8836,6 @@ fn go(code: &str) -> String {
     }
 
 
-    /// Check if statements contain async expressions
-    fn has_async_expressions(&self, statements: &[Statement]) -> bool {
-        for stmt in statements {
-            if self.statement_has_async(stmt) {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn statement_has_async(&self, stmt: &Statement) -> bool {
-        match stmt {
-            Statement::Expr(expr) => self.expr_has_async(expr),
-            Statement::Let { value, .. } => self.expr_has_async(value),
-            Statement::Function { body, .. } => self.expr_has_async(body),
-            _ => false,
-        }
-    }
-
-    fn expr_has_async(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Async(_) | Expr::Await(_) => true,
-            Expr::Block { statements, result } => {
-                statements.iter().any(|s| self.statement_has_async(s))
-                    || result.as_ref().map_or(false, |e| self.expr_has_async(e))
-            }
-            Expr::Call { function, args } => {
-                self.expr_has_async(function) || args.iter().any(|a| self.expr_has_async(a))
-            }
-            _ => false,
-        }
-    }
-
     /// Check if statements contain parallel expressions
     fn has_parallel_expressions(&self, statements: &[Statement]) -> bool {
         for stmt in statements {
@@ -8845,9 +8854,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = {{ version = "1", features = ["full"] }}
-rayon = "1"
-futures = "0.3"
+rayon = "1.11.0"
 
 [profile.release]
 opt-level = {}
@@ -8943,6 +8950,8 @@ strip = true
 
         Ok(binary_path)
     }
+
+
 
     /// Compile to file with proper naming
     pub fn compile_to_file(&self, statements: &[Statement], output: &Path) -> TBResult<()> {
@@ -9065,11 +9074,11 @@ impl Compiler {
                 let mut code = String::from("{\n");
 
                 // Generate statements
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     match stmt {
                         Statement::Expr(e) => {
                             code.push_str("        ");
-                            code.push_str(&self.generate_expr_code(e)?);
+                            code.push_str(&self.generate_expr_code(&e)?);
                             code.push_str(";\n");
                         }
                         _ => {}
@@ -9266,7 +9275,7 @@ impl TBCore {
 
     /// Execute TB source code
     pub fn execute(&mut self, source: &str) -> TBResult<Value> {
-        debug_log!("TBCore::execute() started");
+        debug_log!("TBCore::execute() started!!");
         debug_log!("Source length: {} bytes", source.len());
 
         // Parse configuration
@@ -9284,17 +9293,16 @@ impl TBCore {
         let mut statements = parser.parse()?;
         debug_log!("Parsing complete: {} statements", statements.len());
 
-        // Load and prepend imports WITH COMPILATION CACHING
-        // FIX: Clone imports before borrowing self mutably
+        // ✅ CRITICAL FIX: Load imports BEFORE executing (for ALL modes)
         let imports = self.config.imports.clone();
         if !imports.is_empty() {
-            debug_log!("Loading {} imports", imports.len());
+            debug_log!("📦 Loading {} imports", imports.len());
             let imported_statements = self.load_imports(&imports)?;
-            debug_log!("Loaded {} statements from imports", imported_statements.len());
+            debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
 
             // Deduplicate function definitions
             statements = Self::merge_statements_deduplicated(imported_statements, statements)?;
-            debug_log!("Total statements after deduplication: {}", statements.len());
+            debug_log!("✓ Total statements after deduplication: {}", statements.len());
         }
 
         // Analyze dependencies
@@ -9302,7 +9310,7 @@ impl TBCore {
 
         // Compile dependencies if any
         if !dependencies.is_empty() {
-            debug_log!("\n╔════════════════════════════════════════════════════════════════╗");
+            debug_log!("╔════════════════════════════════════════════════════════════════╗");
             debug_log!("║              Compiling Dependencies                            ║");
             debug_log!("╚════════════════════════════════════════════════════════════════╝\n");
 
@@ -9312,9 +9320,9 @@ impl TBCore {
                 match compiler.compile(dep) {
                     Ok(compiled) => {
                         debug_log!("✓ {} ({} bytes, {}ms)",
-                                 compiled.id,
-                                 compiled.size_bytes,
-                                 compiled.compile_time_ms);
+                             compiled.id,
+                             compiled.size_bytes,
+                             compiled.compile_time_ms);
                     }
                     Err(e) => {
                         eprintln!("✗ Failed to compile {}: {}", dep.id, e);
@@ -9331,7 +9339,7 @@ impl TBCore {
             debug_log!("Type checking complete");
         }
 
-        // Execute based on mode (clone config to avoid borrow issues)
+        // Execute based on mode
         let mode = self.config.mode.clone();
         let runtime_mode = self.config.runtime_mode;
 
@@ -9340,20 +9348,67 @@ impl TBCore {
             ExecutionMode::Compiled { optimize } => {
                 debug_log!("Compiled mode execution");
 
-                // ✅ FIX: Load imports BEFORE compilation (same as JIT mode)
+                // ✅ Load imports BEFORE compilation
                 let imports = self.config.imports.clone();
                 let all_statements = if !imports.is_empty() {
-                    debug_log!("Loading {} imports for compilation", imports.len());
+                    debug_log!("📦 Loading {} imports for compilation", imports.len());
                     let imported_statements = self.load_imports(&imports)?;
-                    Self::merge_statements_deduplicated(imported_statements, statements)?
+                    debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
+
+                    let merged = Self::merge_statements_deduplicated(imported_statements, statements)?;
+                    debug_log!("✓ Total statements after merge: {}", merged.len());
+                    merged
                 } else {
+                    debug_log!("No imports to load");
                     statements
                 };
 
-                debug_log!("Total statements for compilation: {}", all_statements.len());
+                let func_count = all_statements.iter()
+                    .filter(|s| matches!(s, Statement::Function { .. }))
+                    .count();
+                debug_log!("✓ Functions available for compilation: {}", func_count);
 
-                let compiler = Compiler::new(self.config.clone())
+                // ✅ NEW: Analyze and compile dependencies (Python/JS/Go/Bash blocks)
+                let dependencies = self.analyze_dependencies(&all_statements)?;
+
+                let compiled_deps = if !dependencies.is_empty() {
+                    println!("\n╔════════════════════════════════════════════════════════════════╗");
+                    println!("║              Compiling Language Dependencies                   ║");
+                    println!("╚════════════════════════════════════════════════════════════════╝\n");
+
+                    let dep_compiler = DependencyCompiler::new(Path::new("."));
+                    let mut compiled = Vec::new();
+
+                    for dep in &dependencies {
+                        match dep_compiler.compile(dep) {
+                            Ok(compiled_dep) => {
+                                println!("✓ {} → {} ({:.2} KB, {}ms)",
+                                         dep.id,
+                                         compiled_dep.output_path.display(),
+                                         compiled_dep.size_bytes as f64 / 1024.0,
+                                         compiled_dep.compile_time_ms
+                                );
+                                compiled.push(compiled_dep);
+                            }
+                            Err(e) => {
+                                eprintln!("✗ Failed to compile {}: {}", dep.id, e);
+                                // Continue with other deps
+                            }
+                        }
+                    }
+
+                    println!("\n✓ Compiled {} dependencies\n", compiled.len());
+                    compiled
+                } else {
+                    Vec::new()
+                };
+
+                // Create compiler with dependency info
+                let mut compiler = Compiler::new(self.config.clone())
                     .with_optimization(if *optimize { 3 } else { 0 });
+
+                // ✅ NEW: Pass compiled dependencies to compiler
+                compiler.set_compiled_dependencies(compiled_deps);
 
                 // Compile to temporary file
                 let temp_exe = std::env::temp_dir().join(format!(
@@ -9361,9 +9416,11 @@ impl TBCore {
                     TargetPlatform::current().exe_extension()
                 ));
 
+                debug_log!("Compiling to: {}", temp_exe.display());
+
                 compiler.compile_to_file(&all_statements, &temp_exe)?;
 
-                debug_log!("Compiled binary: {}", temp_exe.display());
+                debug_log!("✓ Compiled binary: {}", temp_exe.display());
 
                 // Execute compiled binary
                 let output = Command::new(&temp_exe).output()?;
@@ -9372,10 +9429,9 @@ impl TBCore {
                 fs::remove_file(&temp_exe).ok();
 
                 if output.status.success() {
-                    // Parse output if any
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     if !stdout.is_empty() {
-                        println!("{}", stdout);
+                        print!("{}", stdout);
                     }
                     Ok(Value::Unit)
                 } else {
@@ -9392,11 +9448,6 @@ impl TBCore {
 
                 // Choose executor based on runtime mode
                 match runtime_mode {
-                    RuntimeMode::Async { .. } => {
-                        debug_log!("Using AsyncJitExecutor");
-                        let mut executor = AsyncJitExecutor::new(self.config.clone());
-                        executor.execute(&statements)
-                    }
 
                     RuntimeMode::Parallel { .. } => {
                         debug_log!("Using ParallelExecutor");
@@ -9423,8 +9474,11 @@ impl TBCore {
         result
     }
 
+
+
+
     /// Merge imported and main statements, removing duplicate function definitions
-    fn merge_statements_deduplicated(
+    pub fn merge_statements_deduplicated(
         imported: Vec<Statement>,
         main: Vec<Statement>,
     ) -> TBResult<Vec<Statement>> {
@@ -9464,11 +9518,11 @@ impl TBCore {
     /// Load imports with compilation caching
     /// Takes owned Vec to avoid borrowing issues
     /// Load imports with compilation caching
-    fn load_imports(&mut self, imports: &[PathBuf]) -> TBResult<Vec<Statement>> {
+    pub fn load_imports(&mut self, imports: &[PathBuf]) -> TBResult<Vec<Statement>> {
         let mut all_statements = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
-        debug_log!("\n╔════════════════════════════════════════════════════════════════╗");
+        debug_log!("╔════════════════════════════════════════════════════════════════╗");
         debug_log!("║                    Loading Imports (JIT)                       ║");
         debug_log!("╚════════════════════════════════════════════════════════════════╝\n");
 
@@ -9604,19 +9658,96 @@ impl TBCore {
     }
 
     /// Compile source to binary
+    /// Compile source to file with import support
+    /// Compile source to file with import support
     pub fn compile_to_file(&mut self, source: &str, output_path: &Path) -> TBResult<()> {
+        debug_log!("TBCore::compile_to_file() started");
+
+        // Parse configuration
         self.config = Config::parse(source)?;
+        debug_log!("Configuration parsed: mode={:?}", self.config.mode);
 
-        let mut lexer = Lexer::new(source);
+        // Strip directives
+        let clean_source = Self::strip_directives(source);
+        debug_log!("Clean source length: {} bytes", clean_source.len());
+
+        // Tokenize and parse main source
+        let mut lexer = Lexer::new(&clean_source);
         let tokens = lexer.tokenize()?;
-
         let mut parser = Parser::new(tokens);
-        let statements = parser.parse()?;
+        let mut statements = parser.parse()?;
+        debug_log!("Parsing complete: {} statements", statements.len());
 
-        let compiler = Compiler::new(self.config.clone());
+        // ✅ Load imports before compilation
+        let imports = self.config.imports.clone();
+        if !imports.is_empty() {
+            debug_log!("📦 Loading {} imports for compilation", imports.len());
+            let imported_statements = self.load_imports(&imports)?;
+            debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
+
+            statements = Self::merge_statements_deduplicated(imported_statements, statements)?;
+            debug_log!("✓ Total statements after merge: {}", statements.len());
+        }
+
+        let func_count = statements.iter()
+            .filter(|s| matches!(s, Statement::Function { .. }))
+            .count();
+        debug_log!("✓ Functions available for compilation: {}", func_count);
+
+        // ✅ NEW: Analyze and compile dependencies
+        let dependencies = self.analyze_dependencies(&statements)?;
+
+        let compiled_deps = if !dependencies.is_empty() {
+            println!("\n╔════════════════════════════════════════════════════════════════╗");
+            println!("║              Compiling Language Dependencies                   ║");
+            println!("╚════════════════════════════════════════════════════════════════╝\n");
+
+            let dep_compiler = DependencyCompiler::new(Path::new("."));
+            let mut compiled = Vec::new();
+
+            for dep in &dependencies {
+                match dep_compiler.compile(dep) {
+                    Ok(compiled_dep) => {
+                        println!("✓ {} → {} ({:.2} KB, {}ms)",
+                                 dep.id,
+                                 compiled_dep.output_path.display(),
+                                 compiled_dep.size_bytes as f64 / 1024.0,
+                                 compiled_dep.compile_time_ms
+                        );
+                        compiled.push(compiled_dep);
+                    }
+                    Err(e) => {
+                        eprintln!("✗ Failed to compile {}: {}", dep.id, e);
+                    }
+                }
+            }
+
+            println!("\n✓ Compiled {} dependencies\n", compiled.len());
+            compiled
+        } else {
+            Vec::new()
+        };
+
+        // Create compiler with dependencies
+        let mut compiler = Compiler::new(self.config.clone());
+        compiler.set_compiled_dependencies(compiled_deps);
+
+        // Compile
         let binary = compiler.compile(&statements)?;
 
+        // Write to file
         fs::write(output_path, binary)?;
+
+        // Make executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(output_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(output_path, perms)?;
+        }
+
+        debug_log!("✓ Compilation complete: {}", output_path.display());
 
         Ok(())
     }
@@ -9627,8 +9758,10 @@ impl TBCore {
         let mut dep_id = 0;
 
         for stmt in statements {
-            self.collect_dependencies_from_statement(stmt, &mut dependencies, &mut dep_id)?;
+            self.collect_dependencies_from_statement(stmt, &mut dependencies, &mut dep_id, 0)?;
         }
+
+        debug_log!("Found {} language dependencies", dependencies.len());
 
         Ok(dependencies)
     }
@@ -9638,16 +9771,17 @@ impl TBCore {
         stmt: &Statement,
         dependencies: &mut Vec<Dependency>,
         dep_id: &mut usize,
+        loop_depth: usize,
     ) -> TBResult<()> {
         match stmt {
             Statement::Expr(expr) => {
-                self.collect_dependencies_from_expr(expr, dependencies, dep_id)?;
+                self.collect_dependencies_from_expr(expr, dependencies, dep_id, loop_depth)?;
             }
             Statement::Function { body, .. } => {
-                self.collect_dependencies_from_expr(body, dependencies, dep_id)?;
+                self.collect_dependencies_from_expr(body, dependencies, dep_id, loop_depth)?;
             }
             Statement::Let { value, .. } => {
-                self.collect_dependencies_from_expr(value, dependencies, dep_id)?;
+                self.collect_dependencies_from_expr(value, dependencies, dep_id, loop_depth)?;
             }
             _ => {}
         }
@@ -9659,10 +9793,11 @@ impl TBCore {
         expr: &Expr,
         dependencies: &mut Vec<Dependency>,
         dep_id: &mut usize,
+        loop_depth: usize,
     ) -> TBResult<()> {
         match expr {
+            // ✅ Native blocks: python { ... }, javascript { ... }, etc.
             Expr::Native { language, code } => {
-                // Extract imports
                 let imports = self.extract_imports(*language, code);
 
                 dependencies.push(Dependency {
@@ -9670,34 +9805,99 @@ impl TBCore {
                     language: *language,
                     code: code.clone(),
                     imports,
-                    is_in_loop: false, // TODO: Track loop context
-                    estimated_calls: 1,
+                    is_in_loop: loop_depth > 0,
+                    estimated_calls: if loop_depth > 0 { 1000 } else { 1 },
                 });
 
                 *dep_id += 1;
             }
 
+            // ✅ Function calls: python("code"), javascript("code"), etc.
+            Expr::Call { function, args } => {
+                if let Expr::Variable(func_name) = function.as_ref() {
+                    if let Some(language) = self.language_from_builtin_name(func_name) {
+                        // Extract code from first argument
+                        if let Some(Expr::Literal(Literal::String(code))) = args.first() {
+                            let imports = self.extract_imports(language, code);
+
+                            dependencies.push(Dependency {
+                                id: format!("dep_{}", dep_id),
+                                language,
+                                code: code.clone(),
+                                imports,
+                                is_in_loop: loop_depth > 0,
+                                estimated_calls: if loop_depth > 0 { 1000 } else { 1 },
+                            });
+
+                            *dep_id += 1;
+                        }
+                    }
+                }
+
+                // Recurse into function and args
+                self.collect_dependencies_from_expr(function, dependencies, dep_id, loop_depth)?;
+                for arg in args {
+                    self.collect_dependencies_from_expr(arg, dependencies, dep_id, loop_depth)?;
+                }
+            }
+
             Expr::Block { statements, result } => {
-                for stmt in statements {
-                    self.collect_dependencies_from_statement(stmt, dependencies, dep_id)?;
+                for stmt in statements.as_ref() {
+                    self.collect_dependencies_from_statement(stmt, dependencies, dep_id, loop_depth)?;
                 }
                 if let Some(res) = result {
-                    self.collect_dependencies_from_expr(res, dependencies, dep_id)?;
+                    self.collect_dependencies_from_expr(res, dependencies, dep_id, loop_depth)?;
                 }
             }
 
-            Expr::Call { function, args } => {
-                self.collect_dependencies_from_expr(function, dependencies, dep_id)?;
-                for arg in args {
-                    self.collect_dependencies_from_expr(arg, dependencies, dep_id)?;
+            Expr::Loop { body } => {
+                self.collect_dependencies_from_expr(body, dependencies, dep_id, loop_depth + 1)?;
+            }
+
+            Expr::While { condition, body } => {
+                self.collect_dependencies_from_expr(condition, dependencies, dep_id, loop_depth)?;
+                self.collect_dependencies_from_expr(body, dependencies, dep_id, loop_depth + 1)?;
+            }
+
+            Expr::For { iterable, body, .. } => {
+                self.collect_dependencies_from_expr(iterable, dependencies, dep_id, loop_depth)?;
+                self.collect_dependencies_from_expr(body, dependencies, dep_id, loop_depth + 1)?;
+            }
+
+            Expr::If { condition, then_branch, else_branch } => {
+                self.collect_dependencies_from_expr(condition, dependencies, dep_id, loop_depth)?;
+                self.collect_dependencies_from_expr(then_branch, dependencies, dep_id, loop_depth)?;
+                if let Some(else_b) = else_branch {
+                    self.collect_dependencies_from_expr(else_b, dependencies, dep_id, loop_depth)?;
                 }
             }
 
-            // ... handle other expressions ...
+            Expr::BinOp { left, right, .. } => {
+                self.collect_dependencies_from_expr(left, dependencies, dep_id, loop_depth)?;
+                self.collect_dependencies_from_expr(right, dependencies, dep_id, loop_depth)?;
+            }
+
+            Expr::UnaryOp { expr, .. } => {
+                self.collect_dependencies_from_expr(expr, dependencies, dep_id, loop_depth)?;
+            }
+
             _ => {}
         }
 
         Ok(())
+    }
+
+
+    /// Map builtin function name to Language
+    fn language_from_builtin_name(&self, name: &str) -> Option<Language> {
+        match name {
+            "python" => Some(Language::Python),
+            "javascript" => Some(Language::JavaScript),
+            "typescript" => Some(Language::TypeScript),
+            "go" => Some(Language::Go),
+            "bash" => Some(Language::Bash),
+            _ => None,
+        }
     }
 
     fn extract_imports(&self, language: Language, code: &str) -> Vec<String> {
@@ -9726,11 +9926,33 @@ impl TBCore {
                 for line in code.lines() {
                     let line = line.trim();
                     if line.starts_with("import ") || line.contains("require(") {
-                        // Simple extraction - could be improved
                         if let Some(start) = line.find(|c| c == '\'' || c == '"') {
                             if let Some(end) = line[start + 1..].find(|c| c == '\'' || c == '"') {
                                 let module = &line[start + 1..start + 1 + end];
                                 imports.push(module.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            Language::Go => {
+                let mut in_import_block = false;
+                for line in code.lines() {
+                    let line = line.trim();
+
+                    if line.starts_with("import (") {
+                        in_import_block = true;
+                    } else if in_import_block && line.starts_with(")") {
+                        in_import_block = false;
+                    } else if in_import_block {
+                        let import_path = line.trim_matches('"');
+                        imports.push(import_path.to_string());
+                    } else if line.starts_with("import \"") {
+                        if let Some(start) = line.find('"') {
+                            if let Some(end) = line[start + 1..].find('"') {
+                                let import_path = &line[start + 1..start + 1 + end];
+                                imports.push(import_path.to_string());
                             }
                         }
                     }
@@ -9842,6 +10064,17 @@ mod tests {
     }
 }
 
+#[cfg(debug_assertions)]
+fn print_type_sizes() {
+    use std::mem::size_of;
+    eprintln!("Type sizes:");
+    eprintln!("  Expr: {} bytes", size_of::<Expr>());
+    eprintln!("  Statement: {} bytes", size_of::<Statement>());
+    eprintln!("  Value: {} bytes", size_of::<Value>());
+    eprintln!("  Vec<Expr>: {} bytes", size_of::<Vec<Expr>>());
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §16 CLI ENTRY POINT (Example)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -9866,6 +10099,9 @@ fn main() {
     match tb.execute(source) {
         Ok(result) => println!("{}", result),
         Err(e) => {
+            // Call in main() or execute()
+            #[cfg(debug_assertions)]
+            print_type_sizes();
             eprintln!("✗ Execution failed:\n{}", e.detailed_message());
             std::process::exit(1);
         }
