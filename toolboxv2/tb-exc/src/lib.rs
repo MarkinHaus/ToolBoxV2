@@ -31,6 +31,7 @@
 
 use std::{
     collections::HashMap,
+    collections::VecDeque,
     fmt::{self, Debug, Display, Formatter},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -48,6 +49,8 @@ use std::pin::Pin;
 
 // Serialization
 use std::str::FromStr;
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // File I/O
 use std::fs;
@@ -81,6 +84,8 @@ macro_rules! debug_log {
 macro_rules! debug_log {
     ($($arg:tt)*) => {};
 }
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §2 CORE TYPE SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════
@@ -129,7 +134,7 @@ pub enum Type {
 
     /// Generic type parameter
     Generic {
-        name: String,
+        name: Arc<String>,
         constraints: Vec<TypeConstraint>,
     },
 
@@ -142,7 +147,7 @@ pub enum Type {
     /// Native language type (opaque)
     Native {
         language: Language,
-        type_name: String,
+        type_name: Arc<String>,
     },
 
     /// Type variable (for inference)
@@ -153,10 +158,17 @@ pub enum Type {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TypeConstraint {
     /// Must implement trait
-    Trait(String),
+    Trait(Arc<String>),
 
     /// Must be specific type
     Exact(Type),
+}
+
+impl TypeConstraint {
+    /// Create Trait constraint with interned name
+    pub fn trait_constraint(name: &str) -> Self {
+        TypeConstraint::Trait(STRING_INTERNER.intern(name))
+    }
 }
 
 impl Type {
@@ -177,13 +189,543 @@ impl Type {
             Type::Bool => Value::Bool(false),
             Type::Int => Value::Int(0),
             Type::Float => Value::Float(0.0),
-            Type::String => Value::String(String::new()),
+            Type::String => Value::String(Arc::new(String::new())),
             Type::List(_) => Value::List(Vec::new()),
             Type::Dict { .. } => Value::Dict(HashMap::new()),
             Type::Option(_) => Value::Option(None),
             _ => Value::Unit,
         }
     }
+
+    /// Create Generic type with interned name
+    pub fn generic(name: &str, constraints: Vec<TypeConstraint>) -> Self {
+        Type::Generic {
+            name: STRING_INTERNER.intern(name),
+            constraints,
+        }
+    }
+
+    /// Create Native type with interned name
+    pub fn native(language: Language, type_name: &str) -> Self {
+        Type::Native {
+            language,
+            type_name: STRING_INTERNER.intern(type_name),
+        }
+    }
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// §2.4 STRING INTERNER - With Auto-Cleanup & Sliding Window
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+/// Interned string entry with access tracking
+#[derive(Clone)]
+struct InternedEntry {
+    string: Arc<String>,
+    access_count: usize,
+    last_access: u64,  // Unix timestamp in milliseconds
+    size_bytes: usize,
+}
+
+impl InternedEntry {
+    fn new(s: String) -> Self {
+        let size_bytes = s.len();
+        Self {
+            string: Arc::new(s),
+            access_count: 1,
+            last_access: current_timestamp_ms(),
+            size_bytes,
+        }
+    }
+
+    fn touch(&mut self) {
+        self.access_count += 1;
+        self.last_access = current_timestamp_ms();
+    }
+}
+
+/// Configuration for StringInterner behavior
+#[derive(Debug, Clone)]
+pub struct InternerConfig {
+    /// Maximum number of unique strings (0 = unlimited)
+    pub max_entries: usize,
+
+    /// Maximum memory usage in bytes (0 = unlimited)
+    pub max_memory_bytes: usize,
+
+    /// Eviction threshold (0.0-1.0): trigger cleanup when this full
+    pub eviction_threshold: f64,
+
+    /// How many entries to remove per eviction (as fraction: 0.0-1.0)
+    pub eviction_ratio: f64,
+
+    /// Enable automatic cleanup
+    pub auto_cleanup: bool,
+
+    /// Keep strings accessed within this many milliseconds
+    pub hot_string_window_ms: u64,
+}
+
+impl Default for InternerConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: 10_000,           // Max 10k unique strings
+            max_memory_bytes: 10 * 1024 * 1024,  // 10 MB
+            eviction_threshold: 0.80,      // Cleanup at 80% full
+            eviction_ratio: 0.25,          // Remove 25% of entries
+            auto_cleanup: true,
+            hot_string_window_ms: 60_000,  // Keep strings from last 60s
+        }
+    }
+}
+
+impl InternerConfig {
+    /// Conservative config for long-running services
+    pub fn conservative() -> Self {
+        Self {
+            max_entries: 5_000,
+            max_memory_bytes: 5 * 1024 * 1024,
+            eviction_threshold: 0.70,
+            eviction_ratio: 0.30,
+            auto_cleanup: true,
+            hot_string_window_ms: 30_000,
+        }
+    }
+
+    /// Aggressive config for high-throughput, short-lived processes
+    pub fn aggressive() -> Self {
+        Self {
+            max_entries: 50_000,
+            max_memory_bytes: 50 * 1024 * 1024,
+            eviction_threshold: 0.90,
+            eviction_ratio: 0.20,
+            auto_cleanup: true,
+            hot_string_window_ms: 120_000,
+        }
+    }
+
+    /// No limits (original behavior, use with caution!)
+    pub fn unlimited() -> Self {
+        Self {
+            max_entries: 0,
+            max_memory_bytes: 0,
+            eviction_threshold: 1.0,
+            eviction_ratio: 0.0,
+            auto_cleanup: false,
+            hot_string_window_ms: 0,
+        }
+    }
+}
+
+/// Enhanced string interner with automatic cleanup
+pub struct StringInterner {
+    cache: RwLock<HashMap<String, InternedEntry>>,
+    stats: RwLock<InternerStats>,
+    config: InternerConfig,
+    eviction_log: RwLock<VecDeque<EvictionEvent>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct InternerStats {
+    pub total_requests: usize,
+    pub cache_hits: usize,
+    pub unique_strings: usize,
+    pub memory_used_bytes: usize,
+    pub memory_saved_bytes: usize,
+    pub evictions_triggered: usize,
+    pub strings_evicted: usize,
+}
+
+#[derive(Debug, Clone)]
+struct EvictionEvent {
+    timestamp: u64,
+    entries_removed: usize,
+    memory_freed: usize,
+}
+
+impl StringInterner {
+    pub fn new() -> Self {
+        Self::with_config(InternerConfig::default())
+    }
+
+    pub fn with_config(config: InternerConfig) -> Self {
+        Self {
+            cache: RwLock::new(HashMap::with_capacity(
+                if config.max_entries > 0 { config.max_entries } else { 1024 }
+            )),
+            stats: RwLock::new(InternerStats::default()),
+            config,
+            eviction_log: RwLock::new(VecDeque::with_capacity(100)),
+        }
+    }
+
+    /// Get or create Arc<String> (deduplicated)
+    pub fn intern(&self, s: &str) -> Arc<String> {
+        // Fast path: read-only check
+        {
+            let mut cache = self.cache.write().unwrap();
+
+            if let Some(entry) = cache.get_mut(s) {
+                entry.touch();
+
+                let mut stats = self.stats.write().unwrap();
+                stats.total_requests += 1;
+                stats.cache_hits += 1;
+                stats.memory_saved_bytes += s.len();
+
+                return Arc::clone(&entry.string);
+            }
+        }
+
+        // Slow path: insert new string
+        self.intern_new(s.to_string())
+    }
+
+    /// Intern from owned String (consumes String if not cached)
+    pub fn intern_owned(&self, s: String) -> Arc<String> {
+        // Check if already cached
+        {
+            let mut cache = self.cache.write().unwrap();
+
+            if let Some(entry) = cache.get_mut(&s) {
+                entry.touch();
+
+                let mut stats = self.stats.write().unwrap();
+                stats.total_requests += 1;
+                stats.cache_hits += 1;
+                stats.memory_saved_bytes += s.len();
+
+                return Arc::clone(&entry.string);
+            }
+        }
+
+        // Insert new
+        self.intern_new(s)
+    }
+
+    /// Insert new string (with auto-cleanup check)
+    fn intern_new(&self, s: String) -> Arc<String> {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+
+        stats.total_requests += 1;
+
+        // Check if cleanup needed BEFORE insertion
+        if self.config.auto_cleanup && self.should_evict(&stats) {
+            drop(stats); // Release stats lock
+            drop(cache); // Release cache lock
+
+            self.evict_cold_strings();
+
+            // Re-acquire locks
+            cache = self.cache.write().unwrap();
+            stats = self.stats.write().unwrap();
+        }
+
+        let entry = InternedEntry::new(s.clone());
+        let arc = Arc::clone(&entry.string);
+
+        stats.unique_strings += 1;
+        stats.memory_used_bytes += entry.size_bytes;
+
+        cache.insert(s, entry);
+
+        arc
+    }
+
+    /// Check if eviction should be triggered
+    fn should_evict(&self, stats: &InternerStats) -> bool {
+        if self.config.max_entries > 0 {
+            let usage = stats.unique_strings as f64 / self.config.max_entries as f64;
+            if usage >= self.config.eviction_threshold {
+                return true;
+            }
+        }
+
+        if self.config.max_memory_bytes > 0 {
+            let usage = stats.memory_used_bytes as f64 / self.config.max_memory_bytes as f64;
+            if usage >= self.config.eviction_threshold {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Evict cold (rarely used) strings using LRU strategy
+    fn evict_cold_strings(&self) {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+
+        let current_time = current_timestamp_ms();
+        let hot_window = self.config.hot_string_window_ms;
+
+        // Calculate how many to remove
+        let target_remove = (cache.len() as f64 * self.config.eviction_ratio).ceil() as usize;
+
+        if target_remove == 0 {
+            return;
+        }
+
+        debug_log!("╔════════════════════════════════════════════════════════════════╗");
+        debug_log!("║           STRING_INTERNER Auto-Cleanup Triggered               ║");
+        debug_log!("╠════════════════════════════════════════════════════════════════╣");
+        debug_log!("║ Current Entries: {:>43} ║", cache.len());
+        debug_log!("║ Memory Used:     {:>39} KB ║", stats.memory_used_bytes / 1024);
+        debug_log!("║ Target Remove:   {:>43} ║", target_remove);
+        debug_log!("╚════════════════════════════════════════════════════════════════╝");
+
+        // Collect candidates for eviction
+        let mut candidates: Vec<(String, u64, usize)> = cache
+            .iter()
+            .filter_map(|(key, entry)| {
+                let age_ms = current_time.saturating_sub(entry.last_access);
+
+                // Keep hot strings (recently accessed)
+                if hot_window > 0 && age_ms < hot_window {
+                    return None;
+                }
+
+                // Keep strings with high access count (adjust threshold as needed)
+                if entry.access_count > 10 {
+                    return None;
+                }
+
+                // Score = older + less accessed = higher priority for removal
+                let score = age_ms + (1000 / (entry.access_count + 1) as u64);
+                Some((key.clone(), score, entry.size_bytes))
+            })
+            .collect();
+
+        // Sort by score (highest = coldest)
+        candidates.sort_by_key(|(_, score, _)| std::cmp::Reverse(*score));
+
+        // Remove coldest entries
+        let mut removed_count = 0;
+        let mut memory_freed = 0;
+
+        for (key, _, size) in candidates.iter().take(target_remove) {
+            if cache.remove(key).is_some() {
+                removed_count += 1;
+                memory_freed += size;
+            }
+        }
+
+        // Update stats
+        stats.unique_strings = cache.len();
+        stats.memory_used_bytes = stats.memory_used_bytes.saturating_sub(memory_freed);
+        stats.evictions_triggered += 1;
+        stats.strings_evicted += removed_count;
+
+        // Log eviction event
+        let mut log = self.eviction_log.write().unwrap();
+        log.push_back(EvictionEvent {
+            timestamp: current_time,
+            entries_removed: removed_count,
+            memory_freed,
+        });
+
+        // Keep only last 100 events
+        while log.len() > 100 {
+            log.pop_front();
+        }
+
+        debug_log!("✓ Evicted {} entries, freed {} KB", removed_count, memory_freed / 1024);
+    }
+
+    /// Get statistics
+    pub fn stats(&self) -> InternerStats {
+        self.stats.read().unwrap().clone()
+    }
+
+    /// Get cache hit rate (0.0 - 1.0)
+    pub fn hit_rate(&self) -> f64 {
+        let stats = self.stats.read().unwrap();
+        if stats.total_requests == 0 {
+            0.0
+        } else {
+            stats.cache_hits as f64 / stats.total_requests as f64
+        }
+    }
+
+    /// Get current memory usage as percentage (0.0 - 1.0)
+    pub fn memory_usage(&self) -> f64 {
+        if self.config.max_memory_bytes == 0 {
+            return 0.0;
+        }
+        let stats = self.stats.read().unwrap();
+        stats.memory_used_bytes as f64 / self.config.max_memory_bytes as f64
+    }
+
+    /// Get current entry count as percentage (0.0 - 1.0)
+    pub fn capacity_usage(&self) -> f64 {
+        if self.config.max_entries == 0 {
+            return 0.0;
+        }
+        let stats = self.stats.read().unwrap();
+        stats.unique_strings as f64 / self.config.max_entries as f64
+    }
+
+    /// Manual cleanup trigger
+    pub fn cleanup_now(&self) {
+        if !self.config.auto_cleanup {
+            debug_log!("Warning: Auto-cleanup disabled, manual cleanup may not follow eviction strategy");
+        }
+        self.evict_cold_strings();
+    }
+
+    /// Clear entire cache (use with caution!)
+    pub fn clear(&self) {
+        let mut cache = self.cache.write().unwrap();
+        let mut stats = self.stats.write().unwrap();
+
+        let freed_memory = stats.memory_used_bytes;
+
+        cache.clear();
+        *stats = InternerStats::default();
+
+        debug_log!("STRING_INTERNER cleared: freed {} KB", freed_memory / 1024);
+    }
+
+    /// Get eviction history (last 100 events)
+    pub fn eviction_history(&self) -> Vec<EvictionEvent> {
+        self.eviction_log.read().unwrap().iter().cloned().collect()
+    }
+
+    /// Get detailed health report
+    pub fn health_report(&self) -> String {
+        let stats = self.stats();
+        let capacity = self.capacity_usage();
+        let memory = self.memory_usage();
+
+        format!(
+            "STRING_INTERNER Health Report\n\
+             ═══════════════════════════════════════════\n\
+             Entries:       {}/{} ({:.1}% full)\n\
+             Memory:        {} KB / {} KB ({:.1}% full)\n\
+             Hit Rate:      {:.1}%\n\
+             Memory Saved:  {} KB\n\
+             Evictions:     {} (removed {} strings)\n\
+             Status:        {}",
+            stats.unique_strings,
+            if self.config.max_entries > 0 { self.config.max_entries } else { 0 },
+            capacity * 100.0,
+            stats.memory_used_bytes / 1024,
+            self.config.max_memory_bytes / 1024,
+            memory * 100.0,
+            self.hit_rate() * 100.0,
+            stats.memory_saved_bytes / 1024,
+            stats.evictions_triggered,
+            stats.strings_evicted,
+            if capacity > 0.9 || memory > 0.9 { "⚠️  CRITICAL" }
+            else if capacity > 0.7 || memory > 0.7 { "⚠️  WARNING" }
+            else { "✓ OK" }
+        )
+    }
+}
+
+impl Default for StringInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Get current timestamp in milliseconds
+fn current_timestamp_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+// Globaler String-Interner mit Default-Config
+lazy_static::lazy_static! {
+    /// Global string interner with auto-cleanup
+    ///
+    /// Default limits:
+    /// - Max 10,000 entries
+    /// - Max 10 MB memory
+    /// - Auto-cleanup at 80% capacity
+    ///
+    /// Usage:
+    /// ```
+    /// use crate::STRING_INTERNER;
+    /// let name = STRING_INTERNER.intern("my_var");
+    /// ```
+    pub static ref STRING_INTERNER: StringInterner = StringInterner::new();
+
+    /// Alternative: Conservative interner for long-running services
+    ///
+    /// Limits:
+    /// - Max 5,000 entries
+    /// - Max 5 MB memory
+    /// - Aggressive cleanup at 70% capacity
+    #[allow(dead_code)]
+    pub static ref STRING_INTERNER_CONSERVATIVE: StringInterner =
+        StringInterner::with_config(InternerConfig::conservative());
+}
+
+/// Convenience macro for interning strings
+#[macro_export]
+macro_rules! intern {
+    ($s:expr) => {
+        $crate::STRING_INTERNER.intern($s)
+    };
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// Environment-based Interner Configuration
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Initialize interner from environment variables
+///
+/// Supported env vars:
+/// - TB_INTERNER_MAX_ENTRIES (default: 10000)
+/// - TB_INTERNER_MAX_MEMORY_MB (default: 10)
+/// - TB_INTERNER_EVICTION_THRESHOLD (default: 0.80)
+/// - TB_INTERNER_EVICTION_RATIO (default: 0.25)
+/// - TB_INTERNER_AUTO_CLEANUP (default: true)
+pub fn interner_config_from_env() -> InternerConfig {
+    let max_entries = std::env::var("TB_INTERNER_MAX_ENTRIES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+
+    let max_memory_mb = std::env::var("TB_INTERNER_MAX_MEMORY_MB")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
+
+    let eviction_threshold = std::env::var("TB_INTERNER_EVICTION_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.80);
+
+    let eviction_ratio = std::env::var("TB_INTERNER_EVICTION_RATIO")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.25);
+
+    let auto_cleanup = std::env::var("TB_INTERNER_AUTO_CLEANUP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(true);
+
+    InternerConfig {
+        max_entries,
+        max_memory_bytes: max_memory_mb * 1024 * 1024,
+        eviction_threshold,
+        eviction_ratio,
+        auto_cleanup,
+        hot_string_window_ms: 60_000,
+    }
+}
+
+// Alternative: Create custom global interner
+lazy_static::lazy_static! {
+    /// Interner configured from environment variables
+    #[allow(dead_code)]
+    pub static ref STRING_INTERNER_ENV: StringInterner =
+        StringInterner::with_config(interner_config_from_env());
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // §2.5 IMPORT CACHE & COMPILATION MANAGEMENT
@@ -210,7 +752,7 @@ impl ImportCache {
     pub fn new() -> TBResult<Self> {
         let cache_dir = std::env::temp_dir().join("tb_import_cache");
         fs::create_dir_all(&cache_dir)
-            .map_err(|e| TBError::IoError(format!("Failed to create cache dir: {}", e)))?;
+            .map_err(|e| TBError::IoError(Arc::new(format!("Failed to create cache dir: {}", e))))?;
 
         Ok(Self {
             cache_dir,
@@ -225,7 +767,7 @@ impl ImportCache {
         parent_config: &Config,
     ) -> TBResult<Vec<Statement>> {
         let canonical_path = import_path.canonicalize()
-            .map_err(|e| TBError::IoError(format!("Import not found: {}", import_path.display())))?;
+            .map_err(|e| TBError::IoError(Arc::new(format!("Import not found: {}", import_path.display()))))?;
 
         // Read source and compute hash
         let source = fs::read_to_string(&canonical_path)?;
@@ -353,13 +895,13 @@ pub enum Value {
     Float(f64),
 
     /// String value
-    String(String),
+    String(Arc<String>),
 
     /// List of values
     List(Vec<Value>),
 
     /// Dictionary
-    Dict(HashMap<String, Value>),
+    Dict(HashMap<Arc<String>, Value>),
 
     /// Optional value
     Option(Option<Box<Value>>),
@@ -369,7 +911,7 @@ pub enum Value {
 
     /// Function closure
     Function {
-        params: Vec<String>,
+        params: Vec<Arc<String>>,
         body: Box<Expr>,
         env: Environment,
     },
@@ -380,7 +922,7 @@ pub enum Value {
     /// Native handle (for language interop)
     Native {
         language: Language,
-        type_name: String,
+        type_name: Arc<String>,
         handle: NativeHandle,
     },
 }
@@ -429,7 +971,7 @@ impl Value {
             Value::Tuple(items) => Type::Tuple(items.iter().map(|v| v.get_type()).collect()),
             Value::Native { language, type_name, .. } => Type::Native {
                 language: *language,
-                type_name: type_name.clone(),
+                type_name: Arc::clone(type_name),
             },
         }
     }
@@ -465,7 +1007,7 @@ impl Display for Value {
                     write!(f, "{}", fl)
                 }
             },
-            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::String(s) => write!(f, "\"{}\"", s.as_str()),
             Value::List(items) => {
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
@@ -478,7 +1020,7 @@ impl Display for Value {
                 write!(f, "{{")?;
                 for (i, (k, v)) in map.iter().enumerate() {
                     if i > 0 { write!(f, ", ")?; }
-                    write!(f, "{}: {}", k, v)?;
+                    write!(f, "{}: {}", k.as_str(), v)?;
                 }
                 write!(f, "}}")
             }
@@ -491,7 +1033,7 @@ impl Display for Value {
                 Err(e) => write!(f, "Err({})", e),
             },
             Value::Function { params, .. } => {
-                write!(f, "fn({})", params.join(", "))
+                write!(f, "fn({})", params.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))
             }
             Value::Tuple(items) => {
                 write!(f, "(")?;
@@ -565,7 +1107,7 @@ impl ScopedValue {
             }
             ScopedValue::Immutable(_) => {
                 Err(TBError::InvalidOperation(
-                    "Cannot modify immutable shared variable".to_string()
+                    Arc::new("Cannot modify immutable shared variable".to_string())
                 ))
             }
         }
@@ -592,7 +1134,7 @@ pub enum Expr {
     Literal(Literal),
 
     /// Variable reference
-    Variable(String),
+    Variable(Arc<String>),
 
     /// Binary operation
     BinOp {
@@ -616,7 +1158,7 @@ pub enum Expr {
     /// Method call
     Method {
         object: Box<Expr>,
-        method: String,
+        method: Arc<String>,
         args: Vec<Expr>,
     },
 
@@ -629,7 +1171,7 @@ pub enum Expr {
     /// Field access
     Field {
         object: Box<Expr>,
-        field: String,
+        field: Arc<String>,
     },
 
     /// Block expression
@@ -664,7 +1206,7 @@ pub enum Expr {
 
     /// For loop
     For {
-        variable: String,
+        variable: Arc<String>,
         iterable: Box<Expr>,
         body: Box<Expr>,
     },
@@ -705,7 +1247,7 @@ pub enum Expr {
     /// Native code block
     Native {
         language: Language,
-        code: String,
+        code: Arc<String>,
     },
 
     /// Try expression (? operator)
@@ -717,7 +1259,7 @@ pub enum Expr {
 pub enum Statement {
     /// Let binding
     Let {
-        name: String,
+        name: Arc<String>,
         mutable: bool,
         type_annotation: Option<Type>,
         value: Expr,
@@ -735,7 +1277,7 @@ pub enum Statement {
 
     /// Function definition
     Function {
-        name: String,
+        name: Arc<String>,
         params: Box<Vec<Parameter>>,
         return_type: Option<Type>,
         body: Expr,
@@ -743,15 +1285,15 @@ pub enum Statement {
 
     /// Import statement
     Import {
-        module: String,
-        items: Vec<String>,
+        module: Arc<String>,
+        items: Vec<Arc<String>>,
     },
 }
 
 /// Function parameter
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    pub name: String,
+    pub name: Arc<String>,
     pub type_annotation: Option<Type>,
     pub default: Option<Expr>,
 }
@@ -774,7 +1316,7 @@ pub enum Pattern {
     Literal(Literal),
 
     /// Variable binding
-    Variable(String),
+    Variable(Arc<String>),
 
     /// Tuple pattern
     Tuple(Vec<Pattern>),
@@ -793,7 +1335,7 @@ pub enum Literal {
     Bool(bool),
     Int(i64),
     Float(f64),
-    String(String),
+    String(Arc<String>),
 }
 
 /// Binary operators
@@ -838,7 +1380,7 @@ pub struct Config {
     pub languages: Vec<Language>,
 
     /// Loaded macros
-    pub macros: Vec<String>,
+    pub macros: Vec<Arc<String>>,
 
     /// Optimization level
     pub optimize: bool,
@@ -850,10 +1392,10 @@ pub struct Config {
     pub type_mode: TypeMode,
 
     /// Environment variables
-    pub env: HashMap<String, String>,
+    pub env: HashMap<String, Arc<String>>,
 
     /// Shared variables
-    pub shared: HashMap<String, Value>,
+    pub shared: HashMap<Arc<String>, Value>,
 
     pub runtime_mode: RuntimeMode,
     /// Loaded plugins
@@ -871,7 +1413,7 @@ impl Default for Config {
             optimize: true,
             hot_reload: false,
             type_mode: TypeMode::Static,
-            env: env::vars().collect(),
+            env: env::vars().map(|(k, v)| (k, Arc::new(v))).collect(),
             shared: HashMap::new(),
             runtime_mode: RuntimeMode::default(),
             plugins: Vec::new(),
@@ -898,57 +1440,26 @@ impl Config {
                         }
 
                         if let Some((key, value)) = line.split_once(':') {
-                            let key = key.trim();
+                            // Intern config keys
+                            let key = STRING_INTERNER.intern(key.trim());
                             let value = value.trim().trim_end_matches(',');
 
-                            match key {
-                                "mode" => {
-                                    config.mode = match value.trim_matches('"') {
-                                        "compiled" => ExecutionMode::Compiled {
-                                            optimize: config.optimize
-                                        },
-                                        "jit" => ExecutionMode::Jit { cache_enabled: true },
-                                        "streaming" => ExecutionMode::Streaming {
-                                            auto_complete: true,
-                                            suggestions: true
-                                        },
-                                        _ => config.mode,
-                                    };
-                                }
-                                "target" => {
-                                    config.target = match value.trim_matches('"') {
-                                        "native" => CompilationTarget::Native,
-                                        "wasm" => CompilationTarget::Wasm,
-                                        "library" => CompilationTarget::Library,
-                                        _ => config.target,
-                                    };
-                                }
-                                "optimize" => {
-                                    config.optimize = value == "true";
-                                }
-                                "type_mode" => {
-                                    config.type_mode = match value.trim_matches('"') {
-                                        "static" => TypeMode::Static,
-                                        "dynamic" => TypeMode::Dynamic,
-                                        _ => config.type_mode,
-                                    };
-                                }
-                                "languages" => {
-                                    // Parse array: [python, typescript, go]
-                                    let langs = value.trim_matches(|c| c == '[' || c == ']');
-                                    config.languages = langs.split(',')
-                                        .filter_map(|s| Language::from_str(s.trim()).ok())
-                                        .collect();
-                                }
-                                "runtime_mode" => {
-                                    config.runtime_mode = match value.trim_matches('"') {
-                                        "sequential" => RuntimeMode::Sequential,
-                                        "parallel" => RuntimeMode::Parallel { worker_threads: num_cpus::get() },
-                                        _ => config.runtime_mode,
-                                    };
-                                }
-                                _ => {}
-                            }
+                            let val = if value.starts_with('"') {
+                                //  Intern string values
+                                Value::String(STRING_INTERNER.intern(value.trim_matches('"')))
+                            } else if value == "true" {
+                                Value::Bool(true)
+                            } else if value == "false" {
+                                Value::Bool(false)
+                            } else if let Ok(n) = value.parse::<i64>() {
+                                Value::Int(n)
+                            } else if let Ok(f) = value.parse::<f64>() {
+                                Value::Float(f)
+                            } else {
+                                Value::String(STRING_INTERNER.intern(value))
+                            };
+
+                            config.shared.insert(key, val);
                         }
                     }
                 }
@@ -968,12 +1479,11 @@ impl Config {
                         }
 
                         if let Some((key, value)) = line.split_once(':') {
-                            let key = key.trim().to_string();
+                            let key = STRING_INTERNER.intern(key.trim());
                             let value = value.trim().trim_end_matches(',');
 
-                            // Simple value parsing
                             let val = if value.starts_with('"') {
-                                Value::String(value.trim_matches('"').to_string())
+                                Value::String(STRING_INTERNER.intern(value.trim_matches('"')))
                             } else if value == "true" {
                                 Value::Bool(true)
                             } else if value == "false" {
@@ -983,7 +1493,7 @@ impl Config {
                             } else if let Ok(f) = value.parse::<f64>() {
                                 Value::Float(f)
                             } else {
-                                Value::String(value.to_string())
+                                Value::String(STRING_INTERNER.intern(value))
                             };
 
                             config.shared.insert(key, val);
@@ -1124,7 +1634,7 @@ impl Config {
                 if s.starts_with('$') {
                     let env_var = &s[1..];
                     if let Some(env_value) = self.env.get(env_var) {
-                        *s = env_value.clone();
+                        *value = Value::String(env_value.clone());
                     }
                 }
             }
@@ -1200,7 +1710,7 @@ impl FromStr for Language {
             "typescript" | "ts" => Ok(Language::TypeScript),
             "go" => Ok(Language::Go),
             "bash" | "sh" => Ok(Language::Bash),
-            _ => Err(TBError::UnsupportedLanguage(s.to_string())),
+            _ => Err(TBError::UnsupportedLanguage(Arc::new(s.to_string()))),
         }
     }
 }
@@ -1213,28 +1723,28 @@ impl FromStr for Language {
 #[derive(Debug, Clone)]
 pub enum TBError {
     /// Parse error
-    ParseError { message: String, line: usize, column: usize },
+    ParseError { message: Arc<String>, line: usize, column: usize },
 
     /// Type error
-    TypeError { expected: Type, found: Type, context: String },
+    TypeError { expected: Type, found: Type, context: Arc<String> },
 
     /// Runtime error
-    RuntimeError { message: String, trace: Vec<String> },
+    RuntimeError { message: Arc<String>, trace: Vec<Arc<String>> },
 
     /// Compilation error
-    CompilationError { message: String, source: String },
+    CompilationError { message: Arc<String>, source: Arc<String> },
 
     /// IO error
-    IoError(String),
+    IoError(Arc<String>),
 
     /// Unsupported language
-    UnsupportedLanguage(String),
+    UnsupportedLanguage(Arc<String>),
 
     /// Undefined variable
-    UndefinedVariable(String),
+    UndefinedVariable(Arc<String>),
 
     /// Undefined function
-    UndefinedFunction(String),
+    UndefinedFunction(Arc<String>),
 
     /// Division by zero
     DivisionByZero,
@@ -1243,7 +1753,7 @@ pub enum TBError {
     IndexOutOfBounds { index: i64, length: usize },
 
     /// Invalid operation
-    InvalidOperation(String),
+    InvalidOperation(Arc<String>),
 }
 
 impl Display for TBError {
@@ -1282,7 +1792,7 @@ impl std::error::Error for TBError {}
 
 impl From<io::Error> for TBError {
     fn from(e: io::Error) -> Self {
-        TBError::IoError(e.to_string())
+        TBError::IoError(Arc::new(e.to_string()))
     }
 }
 
@@ -1324,7 +1834,7 @@ impl TBError {
 }
 
 /// Result type alias
-pub type TBResult<T> = std::result::Result<T, TBError>;
+pub type TBResult<T> = Result<T, TBError>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // §7 PARSER
@@ -1337,11 +1847,11 @@ pub enum Token {
     // Literals
     Int(i64),
     Float(f64),
-    String(String),
+    String(Arc<String>),
     Bool(bool),
 
     // Identifiers and keywords
-    Identifier(String),
+    Identifier(Arc<String>),
 
     // Keywords
     Let, Mut, Fn, If, Else, Match, Loop, While, For, In,
@@ -1426,7 +1936,7 @@ impl Lexer {
             if iterations > max_iterations {
                 debug_log!("ERROR: Lexer infinite loop detected at position {}", self.position);
                 return Err(TBError::ParseError {
-                    message: format!("Lexer infinite loop at position {}", self.position),
+                    message: Arc::new(format!("Lexer infinite loop at position {}", self.position)),
                     line: self.line,
                     column: self.column,
                 });
@@ -1688,7 +2198,7 @@ impl Lexer {
             "and" => Token::And,
             "or" => Token::Or,
             "not" => Token::Not,
-            _ => Token::Identifier(ident),
+            _ => Token::Identifier(STRING_INTERNER.intern(&ident)),
         };
 
         Ok(token)
@@ -1732,7 +2242,7 @@ impl Lexer {
         }
 
         self.advance(); // Skip closing "
-        Ok(Token::String(string))
+        Ok(Token::String(STRING_INTERNER.intern_owned(string)))
     }
 
     fn read_triple_quoted_string(&mut self) -> TBResult<Token> {
@@ -1746,7 +2256,7 @@ impl Lexer {
         for i in 0..3 {
             if self.current() != '"' {
                 return Err(TBError::ParseError {
-                    message: format!("Expected '\"' (quote {}/3 of opening triple-quote)", i + 1),
+                    message:Arc::new( format!("Expected '\"' (quote {}/3 of opening triple-quote)", i + 1)),
                     line: self.line,
                     column: self.column,
                 });
@@ -1764,10 +2274,10 @@ impl Lexer {
         loop {
             if self.is_eof() {
                 return Err(TBError::ParseError {
-                    message: format!(
+                    message: Arc::new(format!(
                         "Unterminated triple-quoted string (started at line {}, position {})",
                         start_line, start_position
-                    ),
+                    )),
                     line: self.line,
                     column: self.column,
                 });
@@ -1792,7 +2302,7 @@ impl Lexer {
                            if self.is_eof() { "EOF".to_string() } else { self.current().to_string() });
                 debug_log!("Triple-quoted string complete: {} bytes", string.len());
 
-                return Ok(Token::String(string));
+                return Ok(Token::String(STRING_INTERNER.intern_owned(string)));
             }
 
             // Not a closing """, add character to string
@@ -1842,7 +2352,7 @@ impl Lexer {
 
     fn error(&self, message: &str) -> TBError {
         TBError::ParseError {
-            message: message.to_string(),
+            message: Arc::new(message.to_string()),
             line: self.line,
             column: self.column,
         }
@@ -1877,10 +2387,10 @@ impl Parser {
             iterations += 1;
             if iterations > max_iterations {
                 return Err(TBError::ParseError {
-                    message: format!(
+                    message: Arc::new(format!(
                         "Parser exceeded {} iterations. Infinite loop at position {}",
                         max_iterations, self.position
-                    ),
+                    )),
                     line: 0,
                     column: 0,
                 });
@@ -1896,10 +2406,10 @@ impl Parser {
             // CRITICAL: Ensure we made progress!
             if self.position == position_before && !self.is_eof() {
                 return Err(TBError::ParseError {
-                    message: format!(
+                    message: Arc::new(format!(
                         "Parser stuck at position {} with token {:?}. Statement parsing made no progress.",
                         self.position, self.current()
-                    ),
+                    )),
                     line: 0,
                     column: 0,
                 });
@@ -1922,7 +2432,7 @@ impl Parser {
             self.advance();
             if self.is_eof() {
                 return Err(TBError::ParseError {
-                    message: "Unexpected end of input".to_string(),
+                    message: Arc::from("Unexpected end of input".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -1940,7 +2450,7 @@ impl Parser {
             }
             Token::Eof => {
                 return Err(TBError::ParseError {
-                    message: "Unexpected EOF".to_string(),
+                    message: Arc::from("Unexpected EOF".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -1950,7 +2460,7 @@ impl Parser {
 
                 // Try to parse assignment: identifier = expr
                 if let Token::Identifier(name) = self.current() {
-                    let name = name.clone();
+                    let name = Arc::clone(name);
                     let pos_before = self.position;
                     self.advance();
 
@@ -1994,7 +2504,7 @@ impl Parser {
 
         // FIXED: Check for '@shared' or '@' prefix for scope
         let scope = if let Token::Identifier(s) = self.current() {
-            if s == "shared" || s.starts_with('@') {
+            if s.as_str() == "shared" || s.starts_with('@') {
                 self.advance(); // consume 'shared' or '@shared'
                 VarScope::Shared
             } else {
@@ -2005,12 +2515,12 @@ impl Parser {
         };
 
         let name = if let Token::Identifier(n) = self.current() {
-            let name = n.clone();
+            let name = Arc::clone(n);  // Cheap pointer clone
             self.advance();
             name
         } else {
             return Err(TBError::ParseError {
-                message: "Expected identifier after 'let'".to_string(),
+                message: Arc::from("Expected identifier after 'let'".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2025,7 +2535,7 @@ impl Parser {
 
         if !self.match_token(&Token::Assign) {
             return Err(TBError::ParseError {
-                message: "Expected '=' after variable name".to_string(),
+                message: Arc::from("Expected '=' after variable name".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2039,7 +2549,7 @@ impl Parser {
         }
 
         Ok(Statement::Let {
-            name,
+            name,  // Already interned Arc<String>
             mutable,
             type_annotation,
             value,
@@ -2049,14 +2559,13 @@ impl Parser {
 
     fn parse_function(&mut self) -> TBResult<Statement> {
         self.advance(); // consume 'fn'
-
         let name = if let Token::Identifier(n) = self.current() {
-            let name = n.clone();
+            let name = Arc::clone(n);
             self.advance();
             name
         } else {
             return Err(TBError::ParseError {
-                message: "Expected function name".to_string(),
+                message: Arc::from("Expected function name".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2064,7 +2573,7 @@ impl Parser {
 
         if !self.match_token(&Token::LParen) {
             return Err(TBError::ParseError {
-                message: "Expected '(' after function name".to_string(),
+                message: Arc::from("Expected '(' after function name".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2074,12 +2583,12 @@ impl Parser {
         let mut params = Vec::new();
         while !self.match_token(&Token::RParen) {
             let param_name = if let Token::Identifier(n) = self.current() {
-                let name = n.clone();
+                let name = Arc::clone(n);
                 self.advance();
                 name
             } else {
                 return Err(TBError::ParseError {
-                    message: "Expected parameter name".to_string(),
+                    message: Arc::from("Expected parameter name".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -2101,7 +2610,7 @@ impl Parser {
             if !self.match_token(&Token::RParen) {
                 if !self.match_token(&Token::Comma) {
                     return Err(TBError::ParseError {
-                        message: "Expected ',' or ')' in parameter list".to_string(),
+                        message: Arc::from("Expected ',' or ')' in parameter list".to_string()),
                         line: 0,
                         column: 0,
                     });
@@ -2314,7 +2823,7 @@ impl Parser {
                         if !self.match_token(&Token::RParen) {
                             if !self.match_token(&Token::Comma) {
                                 return Err(TBError::ParseError {
-                                    message: "Expected ',' or ')' in argument list".to_string(),
+                                    message: Arc::from("Expected ',' or ')' in argument list".to_string()),
                                     line: 0,
                                     column: 0,
                                 });
@@ -2343,7 +2852,7 @@ impl Parser {
                                 if !self.match_token(&Token::RParen) {
                                     if !self.match_token(&Token::Comma) {
                                         return Err(TBError::ParseError {
-                                            message: "Expected ',' or ')' in argument list".to_string(),
+                                            message: Arc::from("Expected ',' or ')' in argument list".to_string()),
                                             line: 0,
                                             column: 0,
                                         });
@@ -2365,7 +2874,7 @@ impl Parser {
                         }
                     } else {
                         return Err(TBError::ParseError {
-                            message: "Expected field name after '.'".to_string(),
+                            message: Arc::from("Expected field name after '.'".to_string()),
                             line: 0,
                             column: 0,
                         });
@@ -2377,7 +2886,7 @@ impl Parser {
                     let index = self.parse_expression()?;
                     if !self.match_token(&Token::RBracket) {
                         return Err(TBError::ParseError {
-                            message: "Expected ']' after index".to_string(),
+                            message: Arc::from("Expected ']' after index".to_string()),
                             line: 0,
                             column: 0,
                         });
@@ -2391,7 +2900,7 @@ impl Parser {
 
                 // Implicit function call for builtin commands
                 Token::String(_) | Token::Dollar | Token::Identifier(_)
-                if matches!(expr, Expr::Variable(ref name) if self.is_builtin_command(name)) =>
+                if matches!(expr, Expr::Variable(ref name) if self.is_builtin_command(name.as_str())) =>
                     {
                         debug_log!("Detected implicit builtin call for: {}",
                         if let Expr::Variable(ref n) = expr { n } else { "unknown" });
@@ -2403,12 +2912,12 @@ impl Parser {
                             let arg = if self.match_token(&Token::Dollar) {
                                 self.advance();
                                 if let Token::Identifier(name) = self.current() {
-                                    let name = name.clone();
+                                    let name = Arc::clone(name);
                                     self.advance();
                                     Expr::Variable(name)
                                 } else {
                                     return Err(TBError::ParseError {
-                                        message: "Expected identifier after '$'".to_string(),
+                                        message: Arc::from("Expected identifier after '$'".to_string()),
                                         line: 0,
                                         column: 0,
                                     });
@@ -2495,7 +3004,7 @@ impl Parser {
                 Ok(Expr::Literal(Literal::Bool(b)))
             }
             Token::Identifier(name) => {
-                let name = name.clone();
+                let name = Arc::clone(&name);
                 self.advance();
 
                 // Check for function call after identifier
@@ -2508,7 +3017,7 @@ impl Parser {
                         if !self.match_token(&Token::RParen) {
                             if !self.match_token(&Token::Comma) {
                                 return Err(TBError::ParseError {
-                                    message: "Expected ',' or ')' in argument list".to_string(),
+                                    message: Arc::from("Expected ',' or ')' in argument list".to_string()),
                                     line: 0,
                                     column: 0,
                                 });
@@ -2536,7 +3045,7 @@ impl Parser {
                     if !self.match_token(&Token::RBracket) {
                         if !self.match_token(&Token::Comma) {
                             return Err(TBError::ParseError {
-                                message: "Expected ',' or ']' in list".to_string(),
+                                message: Arc::from("Expected ',' or ']' in list".to_string()),
                                 line: 0,
                                 column: 0,
                             });
@@ -2548,7 +3057,7 @@ impl Parser {
                 Ok(Expr::List(items))
             }
             _ => Err(TBError::ParseError {
-                message: format!("Unexpected token in argument: {:?}", self.current()),
+                message: format!("Unexpected token in argument: {:?}", self.current()).into(),
                 line: 0,
                 column: 0,
             }),
@@ -2568,7 +3077,7 @@ impl Parser {
                         if !self.match_token(&Token::RParen) {
                             if !self.match_token(&Token::Comma) {
                                 return Err(TBError::ParseError {
-                                    message: "Expected ',' or ')' in argument list".to_string(),
+                                    message: Arc::from("Expected ',' or ')' in argument list".to_string()),
                                     line: 0,
                                     column: 0,
                                 });
@@ -2597,7 +3106,7 @@ impl Parser {
                                 if !self.match_token(&Token::RParen) {
                                     if !self.match_token(&Token::Comma) {
                                         return Err(TBError::ParseError {
-                                            message: "Expected ',' or ')' in argument list".to_string(),
+                                            message: Arc::from("Expected ',' or ')' in argument list".to_string()),
                                             line: 0,
                                             column: 0,
                                         });
@@ -2619,7 +3128,7 @@ impl Parser {
                         }
                     } else {
                         return Err(TBError::ParseError {
-                            message: "Expected field name after '.'".to_string(),
+                            message: Arc::from("Expected field name after '.'".to_string()),
                             line: 0,
                             column: 0,
                         });
@@ -2630,7 +3139,7 @@ impl Parser {
                     let index = self.parse_expression()?;
                     if !self.match_token(&Token::RBracket) {
                         return Err(TBError::ParseError {
-                            message: "Expected ']' after index".to_string(),
+                            message: Arc::from("Expected ']' after index".to_string()),
                             line: 0,
                             column: 0,
                         });
@@ -2666,17 +3175,17 @@ impl Parser {
                 debug_log!("Parsing string literal: {}", s);
                 self.advance();
                 // For now, return as variable to avoid crash
-                Ok(Expr::Literal(Literal::String(s)))
+                Ok(Expr::Literal(Literal::String(Arc::clone(&s))))
             }
             Token::Dollar => {
                 self.advance(); // consume $
                 if let Token::Identifier(name) = self.current() {
-                    let name = name.clone();
+                    let name = Arc::clone(name);
                     self.advance();
                     Ok(Expr::Variable(name))
                 } else {
                     Err(TBError::ParseError {
-                        message: "Expected identifier after '$'".to_string(),
+                        message: Arc::from("Expected identifier after '$'".to_string()),
                         line: 0,
                         column: 0,
                     })
@@ -2688,14 +3197,14 @@ impl Parser {
             }
             Token::Identifier(name) => {
                 self.advance();
-                Ok(Expr::Variable(name))
+                Ok(Expr::Variable(Arc::clone(&name)))
             }
             Token::LParen => {
                 self.advance();
                 let expr = self.parse_expression()?;
                 if !self.match_token(&Token::RParen) {
                     return Err(TBError::ParseError {
-                        message: "Expected ')' after expression".to_string(),
+                        message: Arc::from("Expected ')' after expression".to_string()),
                         line: 0,
                         column: 0,
                     });
@@ -2711,7 +3220,7 @@ impl Parser {
                     if !self.match_token(&Token::RBracket) {
                         if !self.match_token(&Token::Comma) {
                             return Err(TBError::ParseError {
-                                message: "Expected ',' or ']' in list".to_string(),
+                                message: Arc::from("Expected ',' or ']' in list".to_string()),
                                 line: 0,
                                 column: 0,
                             });
@@ -2758,7 +3267,7 @@ impl Parser {
             }
             Token::Parallel => self.parse_parallel(),
             _ => Err(TBError::ParseError {
-                message: format!("Unexpected token: {:?}", self.current()),
+                message: format!("Unexpected token: {:?}", self.current()).into(),
                 line: 0,
                 column: 0,
             }),
@@ -2824,7 +3333,7 @@ impl Parser {
                 }
                 _ => {
                     return Err(TBError::ParseError {
-                        message: format!("Expected string or identifier as dict key, found {:?}", self.current()),
+                        message: format!("Expected string or identifier as dict key, found {:?}", self.current()).into(),
                         line: 0,
                         column: 0,
                     });
@@ -2834,7 +3343,7 @@ impl Parser {
             // Expect colon
             if !self.match_token(&Token::Colon) {
                 return Err(TBError::ParseError {
-                    message: "Expected ':' after dict key".to_string(),
+                    message: Arc::from("Expected ':' after dict key".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -2850,7 +3359,7 @@ impl Parser {
             if !self.match_token(&Token::RBrace) {
                 if !self.match_token(&Token::Comma) {
                     return Err(TBError::ParseError {
-                        message: "Expected ',' or '}' in dict literal".to_string(),
+                        message: Arc::from("Expected ',' or '}' in dict literal".to_string()),
                         line: 0,
                         column: 0,
                     });
@@ -2883,7 +3392,7 @@ impl Parser {
                     message: format!(
                         "Block parsing exceeded {} iterations. Infinite loop at position {}?",
                         max_iterations, self.position
-                    ),
+                    ).into(),
                     line: 0,
                     column: 0,
                 });
@@ -2891,7 +3400,7 @@ impl Parser {
 
             if self.is_eof() {
                 return Err(TBError::ParseError {
-                    message: "Unexpected EOF in block".to_string(),
+                    message: Arc::from("Unexpected EOF in block".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -2908,7 +3417,7 @@ impl Parser {
                     message: format!(
                         "Parser stuck at position {} with token {:?}. No progress made.",
                         self.position, self.current()
-                    ),
+                    ).into(),
                     line: 0,
                     column: 0,
                 });
@@ -2959,7 +3468,7 @@ impl Parser {
 
         if !self.match_token(&Token::LBrace) {
             return Err(TBError::ParseError {
-                message: "Expected '{' after match scrutinee".to_string(),
+                message: Arc::from("Expected '{' after match scrutinee".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2972,7 +3481,7 @@ impl Parser {
 
             if !self.match_token(&Token::FatArrow) {
                 return Err(TBError::ParseError {
-                    message: "Expected '=>' after pattern".to_string(),
+                    message: Arc::from("Expected '=>' after pattern".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -2990,7 +3499,7 @@ impl Parser {
             if !self.match_token(&Token::RBrace) {
                 if !self.match_token(&Token::Comma) {
                     return Err(TBError::ParseError {
-                        message: "Expected ',' or '}' after match arm".to_string(),
+                        message: Arc::from("Expected ',' or '}' after match arm".to_string()),
                         line: 0,
                         column: 0,
                     });
@@ -3005,12 +3514,12 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> TBResult<Pattern> {
         match self.current() {
-            Token::Identifier(name) if name == "_" => {
+            Token::Identifier(name) if name.as_str() == "_" => {
                 self.advance();
                 Ok(Pattern::Wildcard)
             }
             Token::Identifier(name) => {
-                let name = name.clone();
+                let name = Arc::clone(name);
                 self.advance();
                 Ok(Pattern::Variable(name))
             }
@@ -3025,7 +3534,7 @@ impl Parser {
                 Ok(Pattern::Literal(Literal::Bool(b)))
             }
             _ => Err(TBError::ParseError {
-                message: "Invalid pattern".to_string(),
+                message: Arc::from("Invalid pattern".to_string()),
                 line: 0,
                 column: 0,
             }),
@@ -3049,12 +3558,12 @@ impl Parser {
         self.advance(); // consume 'for'
 
         let variable = if let Token::Identifier(name) = self.current() {
-            let name = name.clone();
+            let name = Arc::clone(name);
             self.advance();
             name
         } else {
             return Err(TBError::ParseError {
-                message: "Expected variable name after 'for'".to_string(),
+                message: Arc::from("Expected variable name after 'for'".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -3062,7 +3571,7 @@ impl Parser {
 
         if !self.match_token(&Token::In) {
             return Err(TBError::ParseError {
-                message: "Expected 'in' after loop variable".to_string(),
+                message: Arc::from("Expected 'in' after loop variable".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -3084,7 +3593,7 @@ impl Parser {
 
         if !self.match_token(&Token::LBrace) {
             return Err(TBError::ParseError {
-                message: "Expected '{' after 'parallel'".to_string(),
+                message: Arc::from("Expected '{' after 'parallel'".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -3097,7 +3606,7 @@ impl Parser {
         while !self.match_token(&Token::RBrace) {
             if self.is_eof() {
                 return Err(TBError::ParseError {
-                    message: "Unexpected EOF in parallel block".to_string(),
+                    message: Arc::from("Unexpected EOF in parallel block".to_string()),
                     line: 0,
                     column: 0,
                 });
@@ -3123,7 +3632,7 @@ impl Parser {
     fn parse_type(&mut self) -> TBResult<Type> {
         match self.current() {
             Token::Identifier(name) => {
-                let name = name.clone();
+                let name = Arc::clone(name);
                 self.advance();
                 match name.as_str() {
                     "int" => Ok(Type::Int),
@@ -3169,7 +3678,7 @@ impl Parser {
                     "Maximum recursion depth {} exceeded at position {}. Possible infinite loop.",
                     self.max_recursion_depth,
                     self.position
-                ),
+                ).into(),
                 line: 0,
                 column: 0,
             });
@@ -3211,8 +3720,8 @@ pub struct TypeChecker {
 
 #[derive(Debug, Clone)]
 struct TypeEnvironment {
-    variables: HashMap<String, Type>,
-    functions: HashMap<String, (Vec<Type>, Type)>,
+    variables: HashMap<Arc<String>, Type>,
+    functions: HashMap<Arc<String>, (Vec<Type>, Type)>,
 }
 
 impl TypeChecker {
@@ -3248,7 +3757,7 @@ impl TypeChecker {
                         return Err(TBError::TypeError {
                             expected: expected.clone(),
                             found: value_type,
-                            context: format!("let binding '{}'", name),
+                            context: format!("let binding '{}'", name).into(),
                         });
                     }
                 }
@@ -3325,7 +3834,7 @@ impl TypeChecker {
                             Err(TBError::TypeError {
                                 expected: Type::Int,
                                 found: left_type,
-                                context: "binary operation".to_string(),
+                                context: Arc::from("binary operation".to_string()),
                             })
                         }
                     }
@@ -3528,9 +4037,9 @@ pub struct CodeGenerator {
     target_language: Language,
     buffer: String,
     indent: usize,
-    variables_in_scope: Vec<(String, Type)>,
-    compiled_deps: HashMap<String, PathBuf>,
-    mutable_vars: std::collections::HashSet<String>,
+    variables_in_scope: Vec<(Arc<String>, Type)>,
+    compiled_deps: HashMap<Arc<String>, PathBuf>,
+    mutable_vars: std::collections::HashSet<Arc<String>>,
 }
 
 impl CodeGenerator {
@@ -3553,7 +4062,7 @@ impl CodeGenerator {
     }
 
     /// ✅ NEW: Set mutable variables info
-    pub fn set_mutable_vars(&mut self, vars: &std::collections::HashSet<String>) {
+    pub fn set_mutable_vars(&mut self, vars: &std::collections::HashSet<Arc<String>>) {
         self.mutable_vars = vars.clone();
         debug_log!("CodeGenerator: mutable_vars = {:?}", self.mutable_vars);
     }
@@ -3562,7 +4071,7 @@ impl CodeGenerator {
             Language::Rust => self.generate_rust(statements),
             Language::Python => self.generate_python(statements),
             Language::JavaScript => self.generate_javascript(statements),
-            _ => Err(TBError::UnsupportedLanguage(format!("{:?}", self.target_language))),
+            _ => Err(TBError::UnsupportedLanguage(format!("{:?}", self.target_language).into())),
         }
     }
 
@@ -3637,7 +4146,7 @@ impl CodeGenerator {
         self.indent -= 1;
         self.emit_line("}");
 
-        Ok(std::mem::take(&mut self.buffer))
+        Ok(std::mem::take(&mut self.buffer.to_string()))
     }
 
     pub fn extract_function_code(&self, full_code: &str) -> String {
@@ -3992,7 +4501,7 @@ impl CodeGenerator {
     fn statement_assigns_variable(&self, stmt: &Statement, var_name: &str) -> bool {
         match stmt {
             Statement::Assign { target, .. } => {
-                matches!(target, Expr::Variable(name) if name == var_name)
+                matches!(target, Expr::Variable(name) if name.to_string() == var_name.to_string())
             }
             Statement::Expr(expr) => self.expr_assigns_variable(expr, var_name),
             Statement::Function { body, .. } => self.expr_assigns_variable(body, var_name),
@@ -4135,7 +4644,7 @@ impl CodeGenerator {
                     }
                     _ => {
                         Err(TBError::InvalidOperation(
-                            format!("Invalid assignment target: {:?}", target)
+                            format!("Invalid assignment target: {:?}", target).into()
                         ))
                     }
                 }
@@ -4516,7 +5025,7 @@ impl CodeGenerator {
     ) -> TBResult<()> {
         if args.is_empty() {
             return Err(TBError::InvalidOperation(
-                format!("{} requires code argument", language)
+                format!("{} requires code argument", language).into()
             ));
         }
 
@@ -4533,10 +5042,10 @@ impl CodeGenerator {
             self.emit(")");
         } else {
             // Collect ALL variable data BEFORE any emit() calls
-            let var_data: Vec<(String, Type, bool)> = self.variables_in_scope.iter()
+            let var_data: Vec<(Arc<String>, Type, bool)> = self.variables_in_scope.iter()
                 .map(|(name, ty)| {
                     let is_list = matches!(ty, Type::List(_));
-                    (name.clone(), ty.clone(), is_list)
+                    (Arc::clone(name), ty.clone(), is_list)
                 })
                 .collect();
 
@@ -4557,7 +5066,7 @@ impl CodeGenerator {
                     if is_javascript {
                         // JavaScript: format Vec as JSON array [1,2,3] (no spaces)
                         self.emit("&format!(\"[{}]\", ");
-                        self.emit(name);
+                        self.emit(name.as_str());
                         self.emit(".iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"))");
                     } else if is_go {
                         // ÄNDERUNG HIER: Generiert nur das Go-Slice-Literal, z.B. "[]interface{}{85,92,78}"
@@ -4574,14 +5083,14 @@ impl CodeGenerator {
                         self.emit(&format!(
                             // Erzeugt: "[]type{val1,val2,val3}"
                             "&format!(\"[]{}{{}}{{}}{{}}\", \"{{\", {}.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"), \"}}\")",
-                            inner_type, name
+                            inner_type, name.as_str()
                         ));
                     } else {
                         // Python/Bash: pass Vec directly (will use {:?} from template)
-                        self.emit(name);
+                        self.emit(name.as_str());
                     }
                 } else {
-                    self.emit(name);
+                    self.emit(name.as_str());
                 }
             }
 
@@ -4606,7 +5115,7 @@ impl CodeGenerator {
             "python" => {
                 injection.push_str("# TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("{} = {}\n", name,
+                    injection.push_str(&format!("{} = {}\n", name.as_str(),
                                                 Self::format_spec_for_type(ty, "python")));
                 }
             }
@@ -4614,7 +5123,7 @@ impl CodeGenerator {
             "javascript" => {
                 injection.push_str("// TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("const {} = {};\n", name,
+                    injection.push_str(&format!("const {} = {};\n", name.as_str(),
                                                 Self::format_spec_for_type(ty, "javascript")));
                 }
             }
@@ -4628,8 +5137,8 @@ impl CodeGenerator {
 
                     // Wir verwenden den `:=` Operator für eine saubere Deklaration und Initialisierung.
                     // Der Go-Compiler leitet den Typ automatisch vom Wert auf der rechten Seite ab.
-                    injection.push_str(&format!("{} := {}\n", name, value_placeholder));
-                    injection.push_str(&format!("_ = {}\n", name));
+                    injection.push_str(&format!("{} := {}\n", name.as_str(), value_placeholder));
+                    injection.push_str(&format!("_ = {}\n", name.as_str()));
 
                 }
             }
@@ -4637,7 +5146,7 @@ impl CodeGenerator {
             "bash" => {
                 injection.push_str("# TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("{}={}\n", name,
+                    injection.push_str(&format!("{}={}\n", name.as_str(),
                                                 Self::format_spec_for_type(ty, "bash")));
                 }
             }
@@ -4976,7 +5485,7 @@ impl CodeGenerator {
 
                         // Add placeholder and variable
                         result.push_str("{}");
-                        variables.push(Expr::Variable(var_name));
+                        variables.push(Expr::Variable(Arc::new(var_name)));
                         continue;
                     }
                 }
@@ -5180,15 +5689,15 @@ impl CodeGenerator {
 // §11 JIT EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub type Environment = Arc<RwLock<HashMap<String, Value>>>;
+pub type Environment = Arc<RwLock<HashMap<Arc<String>, Value>>>;
 
 
 /// Fast single-threaded environment (10x faster than Arc<RwLock>)
-pub type FastEnvironment = Rc<RefCell<HashMap<String, Value>>>;
+pub type FastEnvironment = Rc<RefCell<HashMap<Arc<String>, Value>>>;
 
 /// Function registry for zero-copy function calls
 pub struct FunctionRegistry {
-    functions: HashMap<String, (Vec<String>, Rc<Expr>)>, // name → (params, body)
+    functions: HashMap<String, (Vec<Arc<String>>, Rc<Expr>)>, // name → (params, body)
 }
 
 impl FunctionRegistry {
@@ -5198,11 +5707,11 @@ impl FunctionRegistry {
         }
     }
 
-    fn register(&mut self, name: String, params: Vec<String>, body: Expr) {
-        self.functions.insert(name, (params, Rc::new(body)));
+    fn register(&mut self, name: Arc<String>, params: Vec<Arc<String>>, body: Expr) {
+        self.functions.insert(name.to_string(), (params, Rc::new(body)));  // ✅ Konvertiere einmal
     }
 
-    fn get(&self, name: &str) -> Option<&(Vec<String>, Rc<Expr>)> {
+    fn get(&self, name: &str) -> Option<&(Vec<Arc<String>>, Rc<Expr>)> {
         self.functions.get(name)
     }
 }
@@ -5221,7 +5730,7 @@ impl JitExecutor {
 
         // Initialize with shared variables
         for (key, value) in &config.shared {
-            env_map.insert(key.clone(), value.clone());
+            env_map.insert(Arc::clone(key), value.clone());
         }
 
         // Create builtin registry
@@ -5265,15 +5774,14 @@ impl JitExecutor {
         // ✅ PHASE 1: Register all functions FIRST (no cloning!)
         for stmt in statements {
             if let Statement::Function { name, params, body, .. } = stmt {
-                let param_names: Vec<String> = params.iter()
-                    .map(|p| p.name.clone())
+                let param_names: Vec<Arc<String>> = params.iter()
+                    .map(|p| Arc::clone(&p.name))
                     .collect();
 
-                // ✅ body is cloned once here, then shared via Rc
                 self.functions.register(
-                    name.clone(),
+                    Arc::clone(name),
                     param_names,
-                    body.clone()  // ✅ Clone once, then Rc::new() in register()
+                    body.clone()
                 );
 
                 debug_log!("Registered function: {}", name);
@@ -5295,19 +5803,18 @@ impl JitExecutor {
         match stmt {
             Statement::Let { name, value, .. } => {
                 let val = self.eval_expr(value)?;
-                self.env.borrow_mut().insert(name.clone(), val);
+                self.env.borrow_mut().insert(Arc::clone(name), val);
                 Ok(Value::Unit)
             }
 
             Statement::Assign { target, value } => {
                 let new_value = self.eval_expr(value)?;
-
                 if let Expr::Variable(name) = target {
-                    self.env.borrow_mut().insert(name.clone(), new_value);
+                    self.env.borrow_mut().insert(Arc::clone(name), new_value);
                     Ok(Value::Unit)
                 } else {
                     Err(TBError::InvalidOperation(
-                        "Assignment target must be a variable".to_string()
+                        Arc::from("Assignment target must be a variable".to_string())
                     ))
                 }
             }
@@ -5328,7 +5835,7 @@ impl JitExecutor {
             Expr::Literal(lit) => {
                 match lit {
                     Literal::String(s) if s.contains('$') => {
-                        Ok(Value::String(self.interpolate_string(s)?))
+                        Ok(Value::String(Arc::from(self.interpolate_string(s)?)))
                     }
                     _ => Ok(self.literal_to_value(lit)),
                 }
@@ -5341,10 +5848,10 @@ impl JitExecutor {
                 }
 
                 // Check builtin functions
-                if let Some(_) = self.builtins.get(name) {
+                if let Some(_) = self.builtins.get(name.as_str()) {
                     return Ok(Value::Native {
                         language: Language::Rust,
-                        type_name: format!("builtin:{}", name),
+                        type_name: format!("builtin:{}", name).into(),
                         handle: NativeHandle {
                             id: name.as_ptr() as u64,
                             data: Arc::new(name.clone()),
@@ -5352,7 +5859,7 @@ impl JitExecutor {
                     });
                 }
 
-                Err(TBError::UndefinedVariable(name.clone()))
+                Err(TBError::UndefinedVariable(Arc::clone(name)))
             }
 
             Expr::BinOp { op, left, right } => {
@@ -5389,7 +5896,7 @@ impl JitExecutor {
                     }
 
                     // ✅ ZERO-COPY function call from registry (NO CLONING!)
-                    if let Some((params, body_rc)) = self.functions.get(func_name) {
+                    if let Some((params, body_rc)) = self.functions.get(func_name.as_str()) {
                         // ✅ Clone only the Vec<String>, not the Expr!
                         let params = params.clone();
                         let body_rc = body_rc.clone(); // ✅ Rc::clone is cheap (just increments ref count)
@@ -5398,7 +5905,7 @@ impl JitExecutor {
                         let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
                         let arg_vals = arg_vals?;
 
-                        return self.call_function_fast(func_name, &params, &body_rc, arg_vals);
+                        return self.call_function_fast(func_name.as_str(), &params, &body_rc, arg_vals);
                     }
                 }
 
@@ -5442,8 +5949,8 @@ impl JitExecutor {
 
                     if iterations > max_iterations {
                         return Err(TBError::RuntimeError {
-                            message: format!("Loop exceeded maximum iterations ({})", max_iterations),
-                            trace: vec!["loop execution".to_string()],
+                            message: format!("Loop exceeded maximum iterations ({})", max_iterations).into(),
+                            trace: vec![Arc::from("loop execution".to_string())],
                         });
                     }
 
@@ -5468,8 +5975,8 @@ impl JitExecutor {
 
                     if iterations > max_iterations {
                         return Err(TBError::RuntimeError {
-                            message: format!("While loop exceeded maximum iterations ({})", max_iterations),
-                            trace: vec!["while loop execution".to_string()],
+                            message: format!("While loop exceeded maximum iterations ({})", max_iterations).into(),
+                            trace: vec![Arc::from("while loop execution".to_string())],
                         });
                     }
 
@@ -5486,14 +5993,14 @@ impl JitExecutor {
                     let mut last_value = Value::Unit;
 
                     for item in items {
-                        self.env.borrow_mut().insert(variable.clone(), item);
+                        self.env.borrow_mut().insert(Arc::clone(variable), item);
                         last_value = self.eval_expr(body)?;
                     }
 
                     Ok(last_value)
                 } else {
                     Err(TBError::InvalidOperation(
-                        "For loop requires an iterable (list)".to_string()
+                        Arc::from("For loop requires an iterable (list)".to_string())
                     ))
                 }
             }
@@ -5531,7 +6038,7 @@ impl JitExecutor {
                                 length: items.len(),
                             })
                     }
-                    _ => Err(TBError::InvalidOperation("Index operation".to_string())),
+                    _ => Err(TBError::InvalidOperation(Arc::from("Index operation".to_string()))),
                 }
             }
 
@@ -5585,7 +6092,7 @@ impl JitExecutor {
                                 self.call_function_legacy(func, vec![result])?
                             }
                         }
-                        _ => return Err(TBError::InvalidOperation("Pipeline".to_string())),
+                        _ => return Err(TBError::InvalidOperation(Arc::from("Pipeline".to_string()))),
                     };
                 }
 
@@ -5596,7 +6103,7 @@ impl JitExecutor {
                 match self.eval_expr(expr) {
                     Ok(Value::Result(Ok(val))) => Ok(*val),
                     Ok(Value::Result(Err(err))) => Err(TBError::RuntimeError {
-                        message: format!("Propagated error: {}", err),
+                        message: format!("Propagated error: {}", err).into(),
                         trace: vec![],
                     }),
                     Ok(val) => Ok(val),
@@ -5622,7 +6129,7 @@ impl JitExecutor {
     fn call_function_fast(
         &mut self,
         func_name: &str,  // ✅ Changed from _func_name to use it
-        params: &[String],
+        params: &[Arc<String>],
         body: &Rc<Expr>,
         args: Vec<Value>,
     ) -> TBResult<Value> {
@@ -5651,23 +6158,23 @@ impl JitExecutor {
                 message: format!(
                     "Maximum recursion depth exceeded ({})",
                     self.max_recursion_depth
-                ),
-                trace: vec!["function call".to_string()],
+                ).into(),
+                trace: vec![Arc::from("function call".to_string())],
             });
         }
 
         if params.len() != args.len() {
             self.recursion_depth -= 1;
             return Err(TBError::InvalidOperation(
-                format!("Expected {} arguments, got {}", params.len(), args.len())
+                format!("Expected {} arguments, got {}", params.len(), args.len()).into()
             ));
         }
 
         // ✅ CRITICAL OPTIMIZATION: Temporarily push parameters into environment
         let mut saved_params = Vec::new();
         for (param, arg) in params.iter().zip(args.iter()) {
-            let old_value = self.env.borrow_mut().insert(param.clone(), arg.clone());
-            saved_params.push((param.clone(), old_value));
+            let old_value = self.env.borrow_mut().insert(Arc::clone(param), arg.clone());
+            saved_params.push((Arc::clone(param), old_value));
         }
 
         // ✅ Execute body (dereference Rc to get &Expr)
@@ -5703,7 +6210,7 @@ impl JitExecutor {
                     if args.len() < builtin.min_args {
                         return Err(TBError::InvalidOperation(
                             format!("{} requires at least {} arguments, got {}",
-                                    func_name, builtin.min_args, args.len())
+                                    func_name, builtin.min_args, args.len()).into()
                         ));
                     }
 
@@ -5711,20 +6218,20 @@ impl JitExecutor {
                         if args.len() > max {
                             return Err(TBError::InvalidOperation(
                                 format!("{} accepts at most {} arguments, got {}",
-                                        func_name, max, args.len())
+                                        func_name, max, args.len()).into()
                             ));
                         }
                     }
 
                     (builtin.function)(&args)
                 } else {
-                    Err(TBError::UndefinedFunction(func_name.to_string()))
+                    Err(TBError::UndefinedFunction(Arc::from(func_name.to_string())))
                 }
             }
 
             _ => Err(TBError::InvalidOperation(format!(
                 "Not a function: {:?}", func.get_type()
-            ))),
+            ).into())),
         }
     }
 
@@ -5818,7 +6325,7 @@ impl JitExecutor {
             // STRING CONCATENATION
             // ═══════════════════════════════════════════════════════════
             (BinOp::Add, Value::String(a), Value::String(b)) => {
-                Ok(Value::String(format!("{}{}", a, b)))
+                Ok(Value::String(Arc::new(format!("{}{}", a, b))))
             }
 
             // ═══════════════════════════════════════════════════════════
@@ -5881,7 +6388,7 @@ impl JitExecutor {
                 format!("Cannot perform {:?} on {:?} and {:?}",
                         op,
                         left.get_type(),
-                        right.get_type())
+                        right.get_type()).into()
             )),
         }
     }
@@ -5891,7 +6398,7 @@ impl JitExecutor {
             (UnaryOp::Not, val) => Ok(Value::Bool(!val.is_truthy())),
             (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
             (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
-            _ => Err(TBError::InvalidOperation(format!("Unary operation {:?}", op))),
+            _ => Err(TBError::InvalidOperation(format!("Unary operation {:?}", op).into())),
         }
     }
 
@@ -5931,7 +6438,7 @@ use rayon::prelude::*;
 /// Parallel executor using multiple JitExecutor instances
 pub struct ParallelExecutor {
     config: Config,
-    shared_state: Arc<Mutex<HashMap<String, Value>>>,
+    shared_state: Arc<Mutex<HashMap<Arc<String>, Value>>>,
     worker_threads: usize,
 }
 
@@ -6014,7 +6521,7 @@ impl ParallelExecutor {
                     self.execute_parallel_for(variable, &items, body)
                 } else {
                     Err(TBError::InvalidOperation(
-                        "Parallel for requires list".to_string()
+                        Arc::from("Parallel for requires list".to_string())
                     ))
                 }
             }
@@ -6053,7 +6560,7 @@ impl ParallelExecutor {
     /// Execute parallel for loop
     fn execute_parallel_for(
         &self,
-        variable: &str,
+        variable: &Arc<String>,
         items: &[Value],
         body: &Expr,
     ) -> TBResult<Value> {
@@ -6066,7 +6573,7 @@ impl ParallelExecutor {
                 let mut executor = self.create_executor();
 
                 // Set loop variable
-                executor.env.borrow_mut().insert(variable.to_string(), item.clone());
+                executor.env.borrow_mut().insert(Arc::clone(variable), item.clone());
 
                 // Execute body
                 executor.eval_expr(body)
@@ -6117,16 +6624,19 @@ impl ParallelExecutor {
 
     /// Get value from shared state
     pub fn get_shared(&self, key: &str) -> Option<Value> {
-        self.shared_state.lock().unwrap().get(key).cloned()
+        let state = self.shared_state.lock().unwrap();
+        state.iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.clone())
     }
 
     /// Set value in shared state
-    pub fn set_shared(&self, key: String, value: Value) {
+    pub fn set_shared(&self, key: Arc<String>, value: Value) {
         self.shared_state.lock().unwrap().insert(key, value);
     }
 
     /// Get all shared state
-    pub fn get_all_shared(&self) -> HashMap<String, Value> {
+    pub fn get_all_shared(&self) -> HashMap<Arc<String>, Value> {
         self.shared_state.lock().unwrap().clone()
     }
 }
@@ -6140,11 +6650,11 @@ type NativeFunction = Arc<dyn Fn(&[Value]) -> TBResult<Value> + Send + Sync>;
 
 /// Native function with metadata
 pub struct BuiltinFunction {
-    pub name: String,
+    pub name: Arc<String>,
     pub function: Arc<dyn Fn(&[Value]) -> TBResult<Value> + Send + Sync>,
     pub min_args: usize,
     pub max_args: Option<usize>,
-    pub description: String,
+    pub description: Arc<String>,
 }
 
 impl Clone for BuiltinFunction {
@@ -6168,7 +6678,7 @@ pub struct BuiltinRegistry {
 impl BuiltinRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
-            functions: HashMap::new(),
+            functions: HashMap::with_capacity(64),
         };
 
         // Register standard library functions
@@ -6217,33 +6727,33 @@ impl BuiltinRegistry {
         max_args: Option<usize>,
         description: &str,
     ) {
+        let arc_name = STRING_INTERNER.intern(name);
         self.functions.insert(
-            name.to_string(),
+            name.to_string(),  //
             BuiltinFunction {
-                name: name.to_string(),
+                name: arc_name,
                 function,
                 min_args,
                 max_args,
-                description: description.to_string(),
+                description: STRING_INTERNER.intern(description),
             },
         );
     }
 
-    /// Get a builtin function
+    /// Get a builtin function (O(1) lookup with &str)
     pub fn get(&self, name: &str) -> Option<&BuiltinFunction> {
-        self.functions.get(name)
+        self.functions.get(name)  // ✅ Direkter O(1) lookup
     }
 
-    /// Check if function exists
+    /// Check if function exists (O(1))
     pub fn has(&self, name: &str) -> bool {
-        self.functions.contains_key(name)
+        self.functions.contains_key(name)  // ✅ Direkter O(1) lookup
     }
 
     /// List all functions
     pub fn list(&self) -> Vec<&str> {
         self.functions.keys().map(|s| s.as_str()).collect()
     }
-
     /// Load plugins from configuration
     pub fn load_plugins(&mut self, plugins: &[PluginConfig]) -> TBResult<()> {
         for plugin in plugins {
@@ -6262,7 +6772,7 @@ impl BuiltinRegistry {
                 Language::Bash => self.load_bash_plugin(plugin)?,
                 _ => {
                     return Err(TBError::UnsupportedLanguage(
-                        format!("{:?}", plugin.language)
+                        format!("{:?}", plugin.language).into()
                     ));
                 }
             }
@@ -6287,7 +6797,7 @@ impl BuiltinRegistry {
             } else {
                 code
             };
-
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
                 Arc::new(move |args: &[Value]| -> TBResult<Value> {
@@ -6295,7 +6805,7 @@ impl BuiltinRegistry {
                 }),
                 func.min_args,
                 func.max_args,
-                &format!("[Plugin:{}] {}", plugin.name, func.description),
+                &description,
             );
 
             debug_log!("  Registered function: {}", func_name);
@@ -6324,7 +6834,7 @@ impl BuiltinRegistry {
             } else {
                 code
             };
-
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
                 Arc::new(move |args: &[Value]| -> TBResult<Value> {
@@ -6332,7 +6842,7 @@ impl BuiltinRegistry {
                 }),
                 func.min_args,
                 func.max_args,
-                &format!("[Plugin:{}] {}", plugin.name, func.description),
+                &description,
             );
 
             debug_log!("  Registered function: {}", func_name);
@@ -6354,7 +6864,7 @@ impl BuiltinRegistry {
             let code = func.code.clone();
             let imports = plugin.imports.clone();
             let func_name = func.name.clone();
-
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
                 Arc::new(move |args: &[Value]| -> TBResult<Value> {
@@ -6372,7 +6882,7 @@ impl BuiltinRegistry {
                 }),
                 func.min_args,
                 func.max_args,
-                &format!("[Plugin:{}] {}", plugin.name, func.description),
+                &description,
             );
 
             debug_log!("  Registered function: {}", func_name);
@@ -6386,7 +6896,7 @@ impl BuiltinRegistry {
         for func in &plugin.functions {
             let code = func.code.clone();
             let func_name = func.name.clone();
-
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
                 Arc::new(move |args: &[Value]| -> TBResult<Value> {
@@ -6394,7 +6904,7 @@ impl BuiltinRegistry {
                 }),
                 func.min_args,
                 func.max_args,
-                &format!("[Plugin:{}] {}", plugin.name, func.description),
+                &description,
             );
 
             debug_log!("  Registered function: {}", func_name);
@@ -6444,8 +6954,8 @@ fn builtin_read_line(_args: &[Value]) -> TBResult<Value> {
     let stdin = std::io::stdin();
     let mut line = String::new();
     stdin.lock().read_line(&mut line)
-        .map_err(|e| TBError::IoError(e.to_string()))?;
-    Ok(Value::String(line.trim_end().to_string()))
+        .map_err(|e| TBError::IoError(Arc::from(e.to_string())))?;
+    Ok(Value::String(Arc::new(line.trim_end().to_string())))
 }
 
 /// str - Convert to string
@@ -6462,7 +6972,7 @@ fn builtin_str(args: &[Value]) -> TBResult<Value> {
                 format!("{}", f)
             }
         }
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_string(),
         Value::List(items) => {
             let elements: Vec<String> = items.iter()
                 .map(|v| format_value_for_output(v))
@@ -6490,14 +7000,17 @@ fn builtin_str(args: &[Value]) -> TBResult<Value> {
             Err(e) => format!("Err({})", format_value_for_output(e)),
         },
         Value::Function { params, .. } => {
-            format!("fn({})", params.join(", "))
+            let param_strs: Vec<&str> = params.iter()
+                .map(|s| s.as_str())
+                .collect();
+            format!("fn({})", param_strs.join(", "))
         }
         Value::Native { type_name, .. } => {
             format!("<native:{}>", type_name)
         }
     };
 
-    Ok(Value::String(formatted))
+    Ok(Value::String(Arc::from(formatted)))
 }
 
 /// int - Convert to integer with enhanced parsing
@@ -6526,12 +7039,12 @@ fn builtin_int(args: &[Value]) -> TBResult<Value> {
             }
 
             Err(TBError::InvalidOperation(
-                format!("Cannot convert '{}' to int", s)
+                format!("Cannot convert '{}' to int", s).into()
             ))
         }
         Value::Bool(b) => Ok(Value::Int(if *b { 1 } else { 0 })),
         _ => Err(TBError::InvalidOperation(
-            format!("Cannot convert {:?} to int", args[0].get_type())
+            format!("Cannot convert {:?} to int", args[0].get_type()).into()
         )),
     }
 }
@@ -6578,12 +7091,12 @@ fn builtin_float(args: &[Value]) -> TBResult<Value> {
             }
 
             Err(TBError::InvalidOperation(
-                format!("Cannot convert '{}' to float", s)
+                format!("Cannot convert '{}' to float", s).into()
             ))
         }
         Value::Bool(b) => Ok(Value::Float(if *b { 1.0 } else { 0.0 })),
         _ => Err(TBError::InvalidOperation(
-            format!("Cannot convert {:?} to float", args[0].get_type())
+            format!("Cannot convert {:?} to float", args[0].get_type()).into()
         )),
     }
 }
@@ -6641,7 +7154,7 @@ fn builtin_len(args: &[Value]) -> TBResult<Value> {
         Value::List(l) => Ok(Value::Int(l.len() as i64)),
         Value::Dict(d) => Ok(Value::Int(d.len() as i64)),
         Value::Tuple(t) => Ok(Value::Int(t.len() as i64)),
-        _ => Err(TBError::InvalidOperation("Value has no length".to_string())),
+        _ => Err(TBError::InvalidOperation(Arc::from("Value has no length".to_string()))),
     }
 }
 
@@ -6651,7 +7164,7 @@ fn builtin_push(args: &[Value]) -> TBResult<Value> {
         list.push(args[1].clone());
         Ok(Value::List(list))
     } else {
-        Err(TBError::InvalidOperation("First argument must be a list".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("First argument must be a list".to_string())))
     }
 }
 
@@ -6660,9 +7173,9 @@ fn builtin_pop(args: &[Value]) -> TBResult<Value> {
     if let Value::List(mut list) = args[0].clone() {
         list.pop()
             .map(|v| Value::Tuple(vec![Value::List(list), v]))
-            .ok_or_else(|| TBError::InvalidOperation("Cannot pop from empty list".to_string()))
+            .ok_or_else(|| TBError::InvalidOperation(Arc::from("Cannot pop from empty list".to_string())))
     } else {
-        Err(TBError::InvalidOperation("Argument must be a list".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("Argument must be a list".to_string())))
     }
 }
 
@@ -6690,7 +7203,7 @@ fn builtin_type_of(args: &[Value]) -> TBResult<Value> {
         Value::Function { .. } => "function",
         Value::Native { .. } => "native",
     };
-    Ok(Value::String(type_str.to_string()))
+    Ok(Value::String(Arc::new(type_str.to_string())))
 }
 /// python_info - Show information about the active Python environment
 fn builtin_python_info(_args: &[Value]) -> TBResult<Value> {
@@ -6755,7 +7268,7 @@ fn builtin_python(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
         execute_python_code(code, &args[1..])
     } else {
-        Err(TBError::InvalidOperation("python() requires string argument".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("python() requires string argument".to_string())))
     }
 }
 
@@ -6764,7 +7277,7 @@ fn builtin_javascript(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
         execute_js_code(code, &args[1..])
     } else {
-        Err(TBError::InvalidOperation("javascript() requires string argument".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("javascript() requires string argument".to_string())))
     }
 }
 
@@ -6773,7 +7286,7 @@ fn builtin_bash(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
         execute_bash_command(code, &args[1..])
     } else {
-        Err(TBError::InvalidOperation("bash() requires string argument".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("bash() requires string argument".to_string())))
     }
 }
 
@@ -6782,14 +7295,14 @@ fn builtin_go(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
         execute_go_code(code, &args[1..])
     } else {
-        Err(TBError::InvalidOperation("go() requires string argument".to_string()))
+        Err(TBError::InvalidOperation(Arc::from("go() requires string argument".to_string())))
     }
 }
 
 /// Helper to format value for output (without quotes for strings)
 fn format_value_for_output(value: &Value) -> String {
     match value {
-        Value::String(s) => s.clone(), // No quotes
+        Value::String(s) => s.to_string(), // No quotes
         Value::Unit => String::new(),
         Value::Float(f) => {
             // Smart formatting
@@ -6982,7 +7495,7 @@ pub mod builders {
 /// Context für Language-Execution mit Variablen-Zugriff
 #[derive(Debug, Clone)]
 pub struct LanguageExecutionContext {
-    pub variables: HashMap<String, Value>,
+    pub variables: HashMap<Arc<String>, Value>,
     pub return_type: Option<Type>,
 }
 
@@ -6994,7 +7507,8 @@ impl LanguageExecutionContext {
         }
     }
 
-    pub fn with_variables(variables: HashMap<String, Value>) -> Self {
+    pub fn with_variables(variables: HashMap<Arc<String>, Value>) -> Self {
+
         Self {
             variables,
             return_type: None,
@@ -7321,7 +7835,7 @@ impl ReturnValueParser {
         }
 
         // Default to string
-        Value::String(trimmed.to_string())
+        Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse JavaScript output as TB value
@@ -7351,7 +7865,7 @@ impl ReturnValueParser {
         }
 
         // Default to string
-        Value::String(trimmed.to_string())
+        Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse Go output as TB value
@@ -7376,7 +7890,7 @@ impl ReturnValueParser {
         }
 
         // Default to string
-        Value::String(trimmed.to_string())
+        Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse Bash output as TB value
@@ -7402,7 +7916,7 @@ impl ReturnValueParser {
         }
 
         // Default to string
-        Value::String(trimmed.to_string())
+        Value::String(Arc::from(trimmed.to_string()))
     }
 
     // Helper methods
@@ -7417,7 +7931,7 @@ impl ReturnValueParser {
                 } else if let Ok(f) = trimmed.parse::<f64>() {
                     Value::Float(f)
                 } else {
-                    Value::String(trimmed.trim_matches('"').to_string())
+                    Value::String(Arc::from(trimmed.trim_matches('"').to_string()))
                 }
             })
             .collect();
@@ -7507,11 +8021,11 @@ fn execute_bash_command_with_context(
                     Then ensure 'bash' is in your PATH.\n\n\
                     Code that failed:\n{}\n",
                     code
-                ),
+                ).into(),
                 trace: vec![
-                    "execute_bash_command_with_context()".to_string(),
+                    Arc::from("execute_bash_command_with_context()".to_string()),
                     format!("bash(\"{}\") at script line (unable to determine)",
-                            code.lines().next().unwrap_or(""))
+                            code.lines().next().unwrap_or("")).into()
                 ],
             });
         }
@@ -7531,10 +8045,10 @@ fn execute_bash_command_with_context(
                 Shell: {}\n\
                 Code:\n{}\n",
                 e, shell, code
-            ),
+            ).into(),
             trace: vec![
-                "execute_bash_command_with_context()".to_string(),
-                format!("bash(...) call"),
+                Arc::from("execute_bash_command_with_context()".to_string()),
+                format!("bash(...) call").into(),
             ],
         })?;
 
@@ -7564,11 +8078,11 @@ fn execute_bash_command_with_context(
                 stderr.trim(),
                 code_preview,
                 shell
-            ),
+            ).into(),
             trace: vec![
-                "execute_bash_command_with_context()".to_string(),
-                format!("bash() call"),
-                format!("Exit code: {}", exit_code),
+                Arc::from("execute_bash_command_with_context()".to_string()),
+                format!("bash() call").into(),
+                format!("Exit code: {}", exit_code).into(),
             ],
         });
     }
@@ -7799,7 +8313,7 @@ fn execute_python_code_with_context(
             message: format!(
                 "Failed to execute Python ({}): {}\nMake sure Python is installed.",
                 python_exe, e
-            ),
+            ).into(),
             trace: vec![],
         })?;
 
@@ -7812,7 +8326,7 @@ fn execute_python_code_with_context(
             message: format!(
                 "Python execution failed (exit code {}):\n{}\n\nScript:\n{}",
                 exit_code, stderr, script
-            ),
+            ).into(),
             trace: vec![],
         });
     }
@@ -7934,7 +8448,7 @@ fn execute_js_code_with_context(
             Ok(out) => out,
             Err(_) => {
                 return Err(TBError::RuntimeError {
-                    message: "Node.js/Deno not found. Please install Node.js or Deno.".to_string(),
+                    message: Arc::from("Node.js/Deno not found. Please install Node.js or Deno.".to_string()),
                     trace: vec![],
                 });
             }
@@ -7946,7 +8460,7 @@ fn execute_js_code_with_context(
 
     if !output.status.success() {
         return Err(TBError::RuntimeError {
-            message: format!("JavaScript execution failed:\n{}", stderr),
+            message: format!("JavaScript execution failed:\n{}", stderr).into(),
             trace: vec![],
         });
     }
@@ -8019,7 +8533,7 @@ fn execute_go_code_with_context(
     let go_version = Command::new("go").arg("version").output();
     if go_version.is_err() {
         return Err(TBError::RuntimeError {
-            message: "Go not found. Please install Go from https://go.dev/dl/".to_string(),
+            message: Arc::from("Go not found. Please install Go from https://go.dev/dl/".to_string()),
             trace: vec![],
         });
     }
@@ -8030,12 +8544,12 @@ fn execute_go_code_with_context(
 
     let temp_dir = env::temp_dir().join(format!("tb_go_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir)
-        .map_err(|e| TBError::IoError(format!("Failed to create temp dir: {}", e)))?;
+        .map_err(|e| TBError::IoError(format!("Failed to create temp dir: {}", e).into()))?;
 
     // ═══════════════════════════════════════════════════════════════════════
     // ✅ PREPROCESS USER CODE TO ESCAPE LITERAL NEWLINES IN STRINGS
     // ═══════════════════════════════════════════════════════════════════════
-    let existing_vars: Vec<String> = if let Some(ctx) = context {
+    let existing_vars: Vec<Arc<String>> = if let Some(ctx) = context {
         ctx.variables.keys().cloned().collect()
     } else {
         Vec::new()
@@ -8125,7 +8639,7 @@ fn execute_go_code_with_context(
     // Write Go file
     let go_file = temp_dir.join("main.go");
     fs::write(&go_file, &full_code)
-        .map_err(|e| TBError::IoError(format!("Failed to write Go file: {}", e)))?;
+        .map_err(|e| TBError::IoError(format!("Failed to write Go file: {}", e).into()))?;
 
     debug_log!("Executing Go code:\n{}", full_code);
 
@@ -8137,7 +8651,7 @@ fn execute_go_code_with_context(
         .current_dir(&temp_dir)
         .output()
         .map_err(|e| TBError::RuntimeError {
-            message: format!("Failed to execute Go code: {}", e),
+            message: format!("Failed to execute Go code: {}", e).into(),
             trace: vec![],
         })?;
 
@@ -8154,7 +8668,7 @@ fn execute_go_code_with_context(
     if !output.status.success() {
         let exit_code = output.status.code().unwrap_or(-1);
         return Err(TBError::RuntimeError {
-            message: format!("Go execution failed (exit code {}):\n{}", exit_code, stderr),
+            message: format!("Go execution failed (exit code {}):\n{}", exit_code, stderr).into(),
             trace: vec![],
         });
     }
@@ -8404,7 +8918,7 @@ fn preprocess_go_code(code: &str) -> String {
 }
 
 /// Preprocess Go code to replace := with = for existing variables
-fn preprocess_go_code_for_existing_vars(code: &str, existing_vars: &[String]) -> String {
+fn preprocess_go_code_for_existing_vars(code: &str, existing_vars: &Vec<Arc<String>>) -> String {
     // First escape literal newlines in strings (existing logic)
     let escaped = preprocess_go_code(code);
 
@@ -8539,8 +9053,8 @@ impl Compiler {
         for stmt in statements {
             match stmt {
                 Statement::Function { name, .. } => {
-                    if !function_names.contains(name) {
-                        function_names.insert(name.clone());
+                    if !function_names.contains(name.as_str()) {
+                        function_names.insert(name.to_string());
                         all_statements.push(stmt.clone());
                     } else {
                         debug_log!("  Skipping duplicate function in main: {}", name);
@@ -8584,7 +9098,7 @@ impl Compiler {
                         return Err(TBError::IoError(
                             format!("Import not found: {} (searched at: {})",
                                     import_path.display(),
-                                    resolved.display())
+                                    resolved.display()).into()
                         ));
                     }
                 }
@@ -8631,8 +9145,8 @@ impl Compiler {
             for stmt in statements {
                 match stmt.clone() {
                     Statement::Function { ref name, .. } => {
-                        if !function_names.contains(name) {
-                            function_names.insert(name.clone());
+                        if !function_names.contains(name.as_str()) {
+                            function_names.insert(name.to_string());
                             collected.push(stmt);
                             added_count += 1;
                             debug_log!("{}    + fn {}", indent, name);
@@ -8656,7 +9170,7 @@ impl Compiler {
     }
 
     /// Analyze which variables need to be mutable
-    fn analyze_mutability(&self, statements: &[Statement]) -> std::collections::HashSet<String> {
+    fn analyze_mutability(&self, statements: &[Statement]) -> std::collections::HashSet<Arc<String>> {
         let mut mutable_vars = std::collections::HashSet::new();
 
         // Find all variable assignments
@@ -8664,17 +9178,18 @@ impl Compiler {
             self.collect_assigned_variables(stmt, &mut mutable_vars);
         }
 
-        debug_log!("Mutable variables detected: {:?}", mutable_vars);
+        debug_log!("Mutable variables detected: {:?}",
+                   mutable_vars.iter().map(|s| s.as_str()).collect::<Vec<_>>());
         mutable_vars
     }
 
     /// Recursively collect variables that are assigned to
-    fn collect_assigned_variables(&self, stmt: &Statement, mutable_vars: &mut std::collections::HashSet<String>) {
+    fn collect_assigned_variables(&self, stmt: &Statement, mutable_vars: &mut std::collections::HashSet<Arc<String>>) {
         match stmt {
             Statement::Assign { target, value } => {
                 // Mark target variable as mutable
                 if let Expr::Variable(name) = target {
-                    mutable_vars.insert(name.clone());
+                    mutable_vars.insert(name.clone());  // Clone Arc (cheap)
                 }
 
                 // Check value expression for assignments
@@ -8698,7 +9213,7 @@ impl Compiler {
     }
 
     /// Recursively find assignments in expressions
-    fn collect_assigned_in_expr(&self, expr: &Expr, mutable_vars: &mut std::collections::HashSet<String>) {
+    fn collect_assigned_in_expr(&self, expr: &Expr, mutable_vars: &mut std::collections::HashSet<Arc<String>>) {
         match expr {
             Expr::Block { statements, result } => {
                 for stmt in statements.as_ref() {
@@ -8751,7 +9266,6 @@ impl Compiler {
         }
     }
 
-    // ✅ NEUE, VEREINFACHTE VERSION (PLUG-AND-PLAY) ✅
     fn generate_rust_code_with_runtime(&self, statements: &[Statement]) -> TBResult<String> {
         // Schritt 1: Analysiere, welche Variablen tatsächlich veränderbar sein müssen.
         // Diese Logik bleibt erhalten, da sie korrekt und nützlich ist.
@@ -8920,15 +9434,15 @@ strip = true
         // Execute compilation
         let output = cmd.output()
             .map_err(|e| TBError::CompilationError {
-                message: format!("Failed to run cargo: {}", e),
-                source: String::new(),
+                message: format!("Failed to run cargo: {}", e).into(),
+                source: Arc::new("".to_string()),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(TBError::CompilationError {
-                message: format!("Cargo build failed:\n{}", stderr),
-                source: String::new(),
+                message: format!("Cargo build failed:\n{}", stderr).into(),
+                source: Arc::new("".to_string()),
             });
         }
 
@@ -8943,8 +9457,8 @@ strip = true
 
         if !binary_path.exists() {
             return Err(TBError::CompilationError {
-                message: format!("Compiled binary not found at: {}", binary_path.display()),
-                source: String::new(),
+                message: format!("Compiled binary not found at: {}", binary_path.display()).into(),
+                source: Arc::new("".to_string()),
             });
         }
 
@@ -9129,7 +9643,7 @@ impl Compiler {
                 Ok(code)
             }
 
-            Expr::Variable(name) => Ok(name.clone()),
+            Expr::Variable(name) => Ok(name.to_string()),
 
             Expr::Literal(lit) => {
                 match lit {
@@ -9197,15 +9711,15 @@ strip = true
 
         let output = cmd.output()
             .map_err(|e| TBError::CompilationError {
-                message: format!("Failed to run cargo: {}", e),
-                source: String::new(),
+                message: format!("Failed to run cargo: {}", e).into(),
+                source: Arc::new("".to_string()),
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(TBError::CompilationError {
-                message: format!("Library compilation failed:\n{}", stderr),
-                source: String::new(),
+                message: format!("Library compilation failed:\n{}", stderr).into(),
+                source: Arc::new("".to_string()),
             });
         }
 
@@ -9222,8 +9736,8 @@ strip = true
 
         if !lib_path.exists() {
             return Err(TBError::CompilationError {
-                message: format!("Library not found at: {}", lib_path.display()),
-                source: String::new(),
+                message: format!("Library not found at: {}", lib_path.display()).into(),
+                source: Arc::new("".to_string()),
             });
         }
 
@@ -9293,7 +9807,7 @@ impl TBCore {
         let mut statements = parser.parse()?;
         debug_log!("Parsing complete: {} statements", statements.len());
 
-        // ✅ CRITICAL FIX: Load imports BEFORE executing (for ALL modes)
+        // Load imports BEFORE executing (for ALL modes)
         let imports = self.config.imports.clone();
         if !imports.is_empty() {
             debug_log!("📦 Loading {} imports", imports.len());
@@ -9348,7 +9862,7 @@ impl TBCore {
             ExecutionMode::Compiled { optimize } => {
                 debug_log!("Compiled mode execution");
 
-                // ✅ Load imports BEFORE compilation
+                // Load imports BEFORE compilation
                 let imports = self.config.imports.clone();
                 let all_statements = if !imports.is_empty() {
                     debug_log!("📦 Loading {} imports for compilation", imports.len());
@@ -9368,7 +9882,7 @@ impl TBCore {
                     .count();
                 debug_log!("✓ Functions available for compilation: {}", func_count);
 
-                // ✅ NEW: Analyze and compile dependencies (Python/JS/Go/Bash blocks)
+                //Analyze and compile dependencies (Python/JS/Go/Bash blocks)
                 let dependencies = self.analyze_dependencies(&all_statements)?;
 
                 let compiled_deps = if !dependencies.is_empty() {
@@ -9407,7 +9921,7 @@ impl TBCore {
                 let mut compiler = Compiler::new(self.config.clone())
                     .with_optimization(if *optimize { 3 } else { 0 });
 
-                // ✅ NEW: Pass compiled dependencies to compiler
+                // Pass compiled dependencies to compiler
                 compiler.set_compiled_dependencies(compiled_deps);
 
                 // Compile to temporary file
@@ -9437,7 +9951,7 @@ impl TBCore {
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     Err(TBError::RuntimeError {
-                        message: format!("Execution failed:\n{}", stderr),
+                        message: format!("Execution failed:\n{}", stderr).into(),
                         trace: vec![],
                     })
                 }
@@ -9469,6 +9983,29 @@ impl TBCore {
                 executor.execute(&statements)
             }
         };
+        #[cfg(debug_assertions)]
+        {
+            let stats = STRING_INTERNER.stats();
+            if stats.total_requests > 0 {
+                debug_log!("╔════════════════════════════════════════════════════════════════╗");
+                debug_log!("║              STRING_INTERNER Statistics                        ║");
+                debug_log!("╠════════════════════════════════════════════════════════════════╣");
+                debug_log!("║ Total Requests:  {:>42} ║", stats.total_requests);
+                debug_log!("║ Cache Hits:      {:>42} ║", stats.cache_hits);
+                debug_log!("║ Hit Rate:        {:>41.1}% ║", STRING_INTERNER.hit_rate() * 100.0);
+                debug_log!("║ Unique Strings:  {:>42} ║", stats.unique_strings);
+                debug_log!("║ Memory Used:     {:>38} KB ║", stats.memory_used_bytes / 1024);
+                debug_log!("║ Memory Saved:    {:>38} KB ║", stats.memory_saved_bytes / 1024);
+                debug_log!("║ Capacity:        {:>41.1}% ║", STRING_INTERNER.capacity_usage() * 100.0);
+                debug_log!("║ Evictions:       {:>42} ║", stats.evictions_triggered);
+                debug_log!("╚════════════════════════════════════════════════════════════════╝");
+
+                // Warning if approaching limits
+                if STRING_INTERNER.capacity_usage() > 0.7 || STRING_INTERNER.memory_usage() > 0.7 {
+                    debug_log!("⚠️  WARNING: STRING_INTERNER approaching capacity limits!");
+                }
+            }
+        }
 
         debug_log!("TBCore::execute() completed: {:?}", result);
         result
@@ -9549,13 +10086,13 @@ impl TBCore {
                 import_path.clone()
             } else {
                 std::env::current_dir()
-                    .map_err(|e| TBError::IoError(e.to_string()))?
+                    .map_err(|e| TBError::IoError(Arc::new(e.to_string())))?
                     .join(import_path)
             };
 
             let canonical = resolved_path.canonicalize()
                 .map_err(|_| TBError::IoError(
-                    format!("Import file not found: {}", resolved_path.display())
+                    format!("Import file not found: {}", resolved_path.display()).into()
                 ))?;
 
             // Check for cycles
@@ -9796,12 +10333,11 @@ impl TBCore {
         loop_depth: usize,
     ) -> TBResult<()> {
         match expr {
-            // ✅ Native blocks: python { ... }, javascript { ... }, etc.
             Expr::Native { language, code } => {
                 let imports = self.extract_imports(*language, code);
 
                 dependencies.push(Dependency {
-                    id: format!("dep_{}", dep_id),
+                    id: format!("dep_{}", dep_id).into(),
                     language: *language,
                     code: code.clone(),
                     imports,
@@ -9812,7 +10348,6 @@ impl TBCore {
                 *dep_id += 1;
             }
 
-            // ✅ Function calls: python("code"), javascript("code"), etc.
             Expr::Call { function, args } => {
                 if let Expr::Variable(func_name) = function.as_ref() {
                     if let Some(language) = self.language_from_builtin_name(func_name) {
@@ -9821,7 +10356,7 @@ impl TBCore {
                             let imports = self.extract_imports(language, code);
 
                             dependencies.push(Dependency {
-                                id: format!("dep_{}", dep_id),
+                                id: format!("dep_{}", dep_id).into(),
                                 language,
                                 code: code.clone(),
                                 imports,
@@ -9900,7 +10435,7 @@ impl TBCore {
         }
     }
 
-    fn extract_imports(&self, language: Language, code: &str) -> Vec<String> {
+    fn extract_imports(&self, language: Language, code: &str) -> Vec<Arc<String>> {  //  Return Arc<String>
         let mut imports = Vec::new();
 
         match language {
@@ -9910,12 +10445,12 @@ impl TBCore {
                     if line.starts_with("import ") {
                         if let Some(module) = line.strip_prefix("import ") {
                             let module = module.split_whitespace().next().unwrap_or("");
-                            imports.push(module.to_string());
+                            imports.push(Arc::new(module.to_string()));  //  Wrap in Arc
                         }
                     } else if line.starts_with("from ") {
                         if let Some(rest) = line.strip_prefix("from ") {
                             if let Some(module) = rest.split_whitespace().next() {
-                                imports.push(module.to_string());
+                                imports.push(Arc::new(module.to_string()));  //  Wrap in Arc
                             }
                         }
                     }
@@ -9929,7 +10464,7 @@ impl TBCore {
                         if let Some(start) = line.find(|c| c == '\'' || c == '"') {
                             if let Some(end) = line[start + 1..].find(|c| c == '\'' || c == '"') {
                                 let module = &line[start + 1..start + 1 + end];
-                                imports.push(module.to_string());
+                                imports.push(Arc::new(module.to_string()));  //  Wrap in Arc
                             }
                         }
                     }
@@ -9947,12 +10482,12 @@ impl TBCore {
                         in_import_block = false;
                     } else if in_import_block {
                         let import_path = line.trim_matches('"');
-                        imports.push(import_path.to_string());
+                        imports.push(Arc::new(import_path.to_string()));  // Wrap in Arc
                     } else if line.starts_with("import \"") {
                         if let Some(start) = line.find('"') {
                             if let Some(end) = line[start + 1..].find('"') {
                                 let import_path = &line[start + 1..start + 1 + end];
-                                imports.push(import_path.to_string());
+                                imports.push(Arc::new(import_path.to_string()));  //  Wrap in Arc
                             }
                         }
                     }
@@ -9962,9 +10497,31 @@ impl TBCore {
             _ => {}
         }
 
+        #[cfg(debug_assertions)]
+        {
+            let stats = STRING_INTERNER.stats();
+            if stats.total_requests > 0 {
+                debug_log!("╔════════════════════════════════════════════════════════════════╗");
+                debug_log!("║              STRING_INTERNER Statistics                        ║");
+                debug_log!("╠════════════════════════════════════════════════════════════════╣");
+                debug_log!("║ Total Requests:  {:>42} ║", stats.total_requests);
+                debug_log!("║ Cache Hits:      {:>42} ║", stats.cache_hits);
+                debug_log!("║ Hit Rate:        {:>41.1}% ║", STRING_INTERNER.hit_rate() * 100.0);
+                debug_log!("║ Unique Strings:  {:>42} ║", stats.unique_strings);
+                debug_log!("║ Memory Saved:    {:>38} KB ║", stats.memory_saved_bytes / 1024);
+                debug_log!("╚════════════════════════════════════════════════════════════════╝");
+            }
+        }
+
         imports
     }
 }
+
+// =================================================================================
+// §13.5 STREAMING EXECUTOR MODULE
+// =================================================================================
+
+pub mod streaming;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // §14 PUBLIC API
@@ -10004,6 +10561,20 @@ impl TB {
     /// Compile to executable
     pub fn compile(&mut self, source: &str, output: &Path) -> TBResult<()> {
         self.core.compile_to_file(source, output)
+    }
+
+    pub fn interner_health(&self) -> String {
+        STRING_INTERNER.health_report()
+    }
+
+    /// Manually trigger interner cleanup
+    pub fn cleanup_interner(&self) {
+        STRING_INTERNER.cleanup_now();
+    }
+
+    /// Clear entire interner (use between independent script runs)
+    pub fn reset_interner(&self) {
+        STRING_INTERNER.clear();
     }
 }
 

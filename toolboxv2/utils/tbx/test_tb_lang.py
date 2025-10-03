@@ -86,7 +86,7 @@ class TestSuite:
             print(f"{Colors.RED}✗ {failed} of {total} tests failed{Colors.RESET}")
             print(f"{Colors.GREEN}✓ {passed} passed{Colors.RESET}")
 
-        print(f"\n{Colors.CYAN}Total time: {total_time:.0f}ms{Colors.RESET}")
+        print(f"\n{Colors.CYAN}Total time: {total_time:.0f}s{Colors.RESET}")
 
         if failed > 0:
             print(f"\n{Colors.RED}Failed tests:{Colors.RESET}")

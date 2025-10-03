@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use crate::{TBResult, TBError, Language};
 
 
@@ -65,10 +66,10 @@ pub enum BundleFormat {
 /// Dependency to be compiled
 #[derive(Debug, Clone)]
 pub struct Dependency {
-    pub id: String,
+    pub id: Arc<String>,
     pub language: Language,
-    pub code: String,
-    pub imports: Vec<String>,
+    pub code: Arc<String>,
+    pub imports: Vec<Arc<String>>,
     pub is_in_loop: bool,
     pub estimated_calls: usize,
 }
@@ -76,7 +77,7 @@ pub struct Dependency {
 /// Compiled dependency output
 #[derive(Debug, Clone)]
 pub struct CompiledDependency {
-    pub id: String,
+    pub id: Arc<String>,
     pub strategy: CompilationStrategy,
     pub output_path: PathBuf,
     pub size_bytes: usize,
@@ -311,7 +312,7 @@ impl DependencyCompiler {
 
         // Write Python module
         let py_file = temp_dir.join("app.py");
-        fs::write(&py_file, &dep.code)?;
+        fs::write(&py_file, &*dep.code)?;
 
         // Create pyoxidizer.bzl config
         let config = format!(r#"
@@ -359,7 +360,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("PyOxidizer compilation failed:\n{}", stderr),
+                message: format!("PyOxidizer compilation failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -371,7 +372,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         let binary_name = if cfg!(target_os = "windows") {
             format!("{}.exe", dep.id)
         } else {
-            dep.id.clone()
+            dep.id.to_string()
         };
 
         let source_bin = temp_dir
@@ -398,7 +399,7 @@ register_target("install", make_install, depends=["exe"], default=True)
 
         // Write Python code
         let py_file = temp_dir.join("module.py");
-        fs::write(&py_file, &dep.code)?;
+        fs::write(&py_file, &*dep.code)?;
 
         // Install dependencies with UV (if needed)
         if !dep.imports.is_empty() {
@@ -449,7 +450,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("Nuitka compilation failed:\n{}", stderr),
+                message: format!("Nuitka compilation failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -472,7 +473,7 @@ register_target("install", make_install, depends=["exe"], default=True)
             _ => "js",
         };
         let entry_file = temp_dir.join(format!("index.{}", ext));
-        fs::write(&entry_file, &dep.code)?;
+        fs::write(&entry_file, &*dep.code)?;
 
         let output_dir = self.deps_dir.join("js");
         fs::create_dir_all(&output_dir)?;
@@ -480,7 +481,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         let binary_name = if cfg!(target_os = "windows") {
             format!("{}.exe", dep.id)
         } else {
-            dep.id.clone()
+            dep.id.to_string()
         };
 
         let output = output_dir.join(&binary_name);
@@ -499,7 +500,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("BUN compile failed:\n{}", stderr),
+                message: format!("BUN compile failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -522,7 +523,7 @@ register_target("install", make_install, depends=["exe"], default=True)
             _ => "js",
         };
         let entry_file = temp_dir.join(format!("index.{}", ext));
-        fs::write(&entry_file, &dep.code)?;
+        fs::write(&entry_file, &*dep.code)?;
 
         let output_dir = self.deps_dir.join("js");
         fs::create_dir_all(&output_dir)?;
@@ -544,7 +545,7 @@ register_target("install", make_install, depends=["exe"], default=True)
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("BUN build failed:\n{}", stderr),
+                message: format!("BUN build failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -569,7 +570,7 @@ impl DependencyCompiler {
             _ => Err(TBError::UnsupportedLanguage(format!(
                 "Native compilation not supported for {:?} with {:?}",
                 dep.language, tool
-            ))),
+            ).into())),
         }
     }
 
@@ -581,7 +582,7 @@ impl DependencyCompiler {
         fs::create_dir_all(&temp_dir)?;
 
         let py_file = temp_dir.join("module.py");
-        fs::write(&py_file, &dep.code)?;
+        fs::write(&py_file, &*dep.code)?;
 
         let output_dir = self.deps_dir.join("python");
         fs::create_dir_all(&output_dir)?;
@@ -600,7 +601,7 @@ impl DependencyCompiler {
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("Nuitka compilation failed:\n{}", stderr),
+                message: format!("Nuitka compilation failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -618,7 +619,7 @@ impl DependencyCompiler {
         fs::create_dir_all(&temp_dir)?;
 
         let pyx_file = temp_dir.join("module.pyx");
-        fs::write(&pyx_file, &dep.code)?;
+        fs::write(&pyx_file, &**dep.code)?;
 
         let setup_py = format!(r#"
 from setuptools import setup
@@ -637,7 +638,7 @@ setup(
 
         if !result.status.success() {
             return Err(TBError::CompilationError {
-                message: "Cython compilation failed".to_string(),
+                message: Arc::from("Cython compilation failed".to_string()),
                 source: dep.code.clone(),
             });
         }
@@ -662,7 +663,7 @@ setup(
         fs::create_dir_all(&temp_dir)?;
 
         let py_file = temp_dir.join("main.py");
-        fs::write(&py_file, &dep.code)?;
+        fs::write(&py_file, &*dep.code)?;
 
         let output_dir = self.deps_dir.join("python");
         fs::create_dir_all(&output_dir)?;
@@ -680,12 +681,12 @@ setup(
 
         if !result.status.success() {
             return Err(TBError::CompilationError {
-                message: "PyInstaller bundling failed".to_string(),
+                message: Arc::from("PyInstaller bundling failed".to_string()),
                 source: dep.code.clone(),
             });
         }
 
-        let output = output_dir.join(&dep.id);
+        let output = output_dir.join(dep.id.to_string());
         debug_log!("  ✓ Bundled Python application");
 
         Ok(output)
@@ -702,7 +703,7 @@ setup(
             _ => Err(TBError::UnsupportedLanguage(format!(
                 "Bundling not supported for {:?} with {:?}",
                 dep.language, format
-            ))),
+            ).into())),
         }
     }
 
@@ -714,7 +715,7 @@ setup(
         fs::create_dir_all(&temp_dir)?;
 
         let js_file = temp_dir.join("index.js");
-        fs::write(&js_file, &dep.code)?;
+        fs::write(&js_file, &*dep.code)?;
 
         let output_dir = self.deps_dir.join("js");
         fs::create_dir_all(&output_dir)?;
@@ -735,7 +736,7 @@ setup(
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Err(TBError::CompilationError {
-                message: format!("esbuild failed:\n{}", stderr),
+                message: format!("esbuild failed:\n{}", stderr).into(),
                 source: dep.code.clone(),
             });
         }
@@ -753,7 +754,7 @@ setup(
         fs::create_dir_all(&temp_dir)?;
 
         let js_file = temp_dir.join("index.js");
-        fs::write(&js_file, &dep.code)?;
+        fs::write(&js_file, dep.code.to_string())?;
 
         let package_json = r#"{
   "name": "tb-js-dep",
@@ -769,7 +770,7 @@ setup(
         let output_dir = self.deps_dir.join("js");
         fs::create_dir_all(&output_dir)?;
 
-        let output = output_dir.join(&dep.id);
+        let output = output_dir.join(dep.id.to_string());
 
         let result = Command::new("pkg")
             .args(&[
@@ -781,7 +782,7 @@ setup(
 
         if !result.status.success() {
             return Err(TBError::CompilationError {
-                message: "pkg compilation failed".to_string(),
+                message: Arc::from("pkg compilation failed".to_string()),
                 source: dep.code.clone(),
             });
         }
@@ -811,14 +812,14 @@ impl DependencyCompiler {
         if temp_dir.exists() {
             debug_log!("  Cleaning existing temp dir: {}", temp_dir.display());
             fs::remove_dir_all(&temp_dir)
-                .map_err(|e| TBError::IoError(format!("Failed to clean temp dir: {}", e)))?;
+                .map_err(|e| TBError::IoError(format!("Failed to clean temp dir: {}", e).into()))?;
         }
 
         fs::create_dir_all(&temp_dir)?;
 
         // Get absolute path (critical for Go)
         let temp_dir_abs = temp_dir.canonicalize()
-            .map_err(|e| TBError::IoError(format!("Failed to get absolute temp dir: {}", e)))?;
+            .map_err(|e| TBError::IoError(format!("Failed to get absolute temp dir: {}", e).into()))?;
 
         debug_log!("  Temp dir: {}", temp_dir_abs.display());
 
@@ -844,7 +845,7 @@ func main() {{}}
 "#, dep.code);
 
         fs::write(&go_file, plugin_code)
-            .map_err(|e| TBError::IoError(format!("Failed to write Go file: {}", e)))?;
+            .map_err(|e| TBError::IoError(format!("Failed to write Go file: {}", e).into()))?;
 
         debug_log!("  Go source: {}", go_file.display());
 
@@ -864,7 +865,7 @@ func main() {{}}
             if !mod_init.status.success() {
                 let stderr = String::from_utf8_lossy(&mod_init.stderr);
                 return Err(TBError::CompilationError {
-                    message: format!("Go mod init failed:\n{}", stderr),
+                    message: format!("Go mod init failed:\n{}", stderr).into(),
                     source: dep.code.clone(),
                 });
             }
@@ -917,7 +918,7 @@ func main() {{}}
                     dir_contents,
                     stderr,
                     stdout
-                ),
+                ).into(),
                 source: dep.code.clone(),
             });
         }
@@ -929,7 +930,7 @@ func main() {{}}
 
         if !compiled_file.exists() {
             return Err(TBError::CompilationError {
-                message: format!("Compiled file not found: {}", compiled_file.display()),
+                message: format!("Compiled file not found: {}", compiled_file.display()).into(),
                 source: dep.code.clone(),
             });
         }
@@ -961,7 +962,7 @@ func main() {{}}
             _ => Err(TBError::UnsupportedLanguage(format!(
                 "Plugin compilation not supported for {:?}",
                 dep.language
-            ))),
+            ).into())),
         }
     }
 }
@@ -986,7 +987,7 @@ impl DependencyCompiler {
         fs::create_dir_all(&output_dir)?;
 
         let output = output_dir.join(format!("{}.{}", dep.id, ext));
-        fs::write(&output, &dep.code)?;
+        fs::write(&output, dep.code.to_string())?;
 
         Ok(output)
     }
@@ -1040,7 +1041,7 @@ impl DependencyCompiler {
             return Err(TBError::InvalidOperation(format!(
                 "Missing Python package: {}",
                 package
-            )));
+            ).into()));
         }
 
         debug_log!("  ✓ Found Python package: {}", package);
@@ -1075,7 +1076,7 @@ impl DependencyCompiler {
             return Err(TBError::InvalidOperation(format!(
                 "Missing package: {}",
                 package
-            )));
+            ).into()));
         }
 
         debug_log!("  ✓ Found NPM package: {}", package);
@@ -1114,6 +1115,6 @@ impl DependencyCompiler {
             }
         }
 
-        Err(TBError::IoError(format!("No {} file found in {}", ext, dir.display())))
+        Err(TBError::IoError(format!("No {} file found in {}", ext, dir.display()).into()))
     }
 }

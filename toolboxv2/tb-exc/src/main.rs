@@ -1,10 +1,13 @@
 // file: tb-exc/src/main.rs
 
 use std::path::{Path, PathBuf};
-use std::{fs, process};
+use std::{fs, io, process};
 use std::str::FromStr;
-use tb_lang::{TB, Config, ExecutionMode, CompilationTarget, Compiler, TargetPlatform, Parser, Lexer, TBCore, DependencyCompiler};
+use tb_lang::{TB, Config, ExecutionMode, CompilationTarget, Compiler, TargetPlatform, Parser, Lexer, TBCore, DependencyCompiler, Value, streaming, STRING_INTERNER};
 use std::env;
+use std::io::Write;
+use tb_lang::streaming::StreamingExecutor;
+
 fn main() {
     let default_stack = 3 * 1024 * 1024; // Fallback: 3 MB
     let stack_size = env::var("RUST_MIN_STACK")
@@ -475,23 +478,31 @@ fn handle_build(args: &[String]) -> Result<(), ()> {
     Ok(())
 }
 
-fn handle_repl(_args: &[String]) -> Result<(), ()> {
+/// Enhanced REPL with full command support
+pub fn handle_repl(_args: &[String]) -> Result<(), ()> {
     println!("╔════════════════════════════════════════════════════════════════╗");
-    println!("║                  TB Interactive Shell v1.0                     ║");
-    println!("║  Type 'help' for commands, 'exit' to quit                      ║");
+    println!("║              TB Interactive Shell v2.0 - Enhanced              ║");
+    println!("║  Type ':help' for commands, 'exit' to quit                     ║");
     println!("╚════════════════════════════════════════════════════════════════╝");
     println!();
 
-    let mut tb = TB::new();
+    let mut executor = StreamingExecutor::new();
     let mut line_number = 1;
 
     loop {
-        print!("tb[{}]> ", line_number);
-        use std::io::Write;
-        std::io::stdout().flush().unwrap();
+        // Dynamic prompt showing mode
+        let mode_char = match executor.config.mode {
+            ExecutionMode::Jit { .. } => 'J',
+            ExecutionMode::Compiled { .. } => 'C',
+            ExecutionMode::Streaming { .. } => 'S',
+        };
+
+        print!("tb[{}:{}]> ", line_number, mode_char);
+        io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
+        if io::stdin().read_line(&mut input).is_err() {
+            eprintln!("Error reading input. Exiting.");
             break;
         }
 
@@ -501,35 +512,60 @@ fn handle_repl(_args: &[String]) -> Result<(), ()> {
             continue;
         }
 
-        match input {
-            "exit" | "quit" => {
-                println!("Goodbye!");
-                break;
-            }
-            "help" => {
-                print_repl_help();
-                continue;
-            }
-            "clear" => {
-                print!("\x1B[2J\x1B[1;1H");
-                continue;
-            }
-            _ => {}
+        // Handle exit
+        if matches!(input, "exit" | "quit" | ":quit" | ":exit") {
+            println!("Goodbye!");
+            break;
         }
 
-        match tb.execute(input) {
-            Ok(value) => {
-                println!("✓ {}", value);
+        // Handle clear screen
+        if input == "clear" || input == ":clear" {
+            print!("\x1B[2J\x1B[1;1H");
+            continue;
+        }
+
+        // Execute line
+        match executor.execute_line(input) {
+            Ok(response) => {
+                match response {
+                    streaming::ReplResponse::Value { value, execution_time } => {
+                        // Don't print Unit values
+                        if !matches!(value, Value::Unit) {
+                            println!("✓ {} ({}ms)", value, execution_time.as_millis());
+                        }
+                    }
+
+                    streaming::ReplResponse::Message(msg) => {
+                        println!("{}", msg);
+                    }
+
+                    streaming::ReplResponse::Incomplete => {
+                        // Multi-line input continues
+                        print!("  ... ");
+                        io::stdout().flush().unwrap();
+                        continue;
+                    }
+                }
             }
+
             Err(e) => {
-                eprintln!("✗ Error: {}", e);
+                eprintln!("✗ Error: {}", e.detailed_message());
             }
         }
 
         line_number += 1;
     }
 
+    // Print final stats before exit
+    println!("\n{}", executor.format_metrics());
+    println!("{}", STRING_INTERNER.health_report());
+
     Ok(())
+}
+
+/// Helper print functions
+fn print_repl_help() {
+    println!("{}", streaming::StreamingExecutor::help_text());
 }
 
 fn handle_check(args: &[String]) -> Result<(), ()> {
@@ -678,20 +714,4 @@ For more information, visit: https://github.com/yourusername/tb-lang
 "#);
 }
 
-fn print_repl_help() {
-    println!(r#"
-REPL Commands:
-    exit, quit    Exit the REPL
-    help          Show this help
-    clear         Clear screen
-
-TB Syntax:
-    let x = 10              Variable declaration
-    fn double(x) {{ x * 2 }}  Function definition
-    if x > 5 {{ ... }}        Conditional
-    x |> double |> inc      Pipeline operator
-    [1, 2, 3]               List literal
-    {{ "key": "value" }}      Dict literal
-"#);
-}
 
