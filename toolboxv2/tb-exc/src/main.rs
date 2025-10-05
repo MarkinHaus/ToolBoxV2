@@ -6,6 +6,7 @@ use std::str::FromStr;
 use tb_lang::{TB, Config, ExecutionMode, CompilationTarget, Compiler, TargetPlatform, Parser, Lexer, TBCore, DependencyCompiler, Value, streaming, STRING_INTERNER};
 use std::env;
 use std::io::Write;
+use bumpalo::Bump;
 use tb_lang::streaming::StreamingExecutor;
 
 fn main() {
@@ -159,7 +160,8 @@ fn handle_deps(args: &[String]) -> Result<(), ()> {
                 eprintln!("Tokenization failed: {}", e);
             })?;
 
-            let mut parser = Parser::new(tokens);
+            let arena = Bump::new();
+            let mut parser = Parser::new(tokens, &arena);
             let statements = parser.parse().map_err(|e| {
                 eprintln!("Parse failed: {}", e);
             })?;
@@ -412,7 +414,8 @@ fn handle_build(args: &[String]) -> Result<(), ()> {
         eprintln!("Tokenization failed: {}", e);
     })?;
 
-    let mut parser = Parser::new(tokens);
+    let arena = Bump::new();
+    let mut parser = Parser::new(tokens, &arena);
     let statements = parser.parse().map_err(|e| {
         eprintln!("Parse failed: {}", e);
     })?;
@@ -478,7 +481,7 @@ fn handle_build(args: &[String]) -> Result<(), ()> {
     Ok(())
 }
 
-/// Enhanced REPL with full command support
+/// REPL
 pub fn handle_repl(_args: &[String]) -> Result<(), ()> {
     println!("╔════════════════════════════════════════════════════════════════╗");
     println!("║              TB Interactive Shell v2.0 - Enhanced              ║");
@@ -486,7 +489,9 @@ pub fn handle_repl(_args: &[String]) -> Result<(), ()> {
     println!("╚════════════════════════════════════════════════════════════════╝");
     println!();
 
-    let mut executor = StreamingExecutor::new();
+    let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+
+    let mut executor = StreamingExecutor::new(arena);
     let mut line_number = 1;
 
     loop {
@@ -521,6 +526,11 @@ pub fn handle_repl(_args: &[String]) -> Result<(), ()> {
         // Handle clear screen
         if input == "clear" || input == ":clear" {
             print!("\x1B[2J\x1B[1;1H");
+            continue;
+        }
+
+        if input == "help" || input == ":help" || input == ":h" || input == "h" || input == ":?" || input == "?" {
+            print_repl_help();
             continue;
         }
 
@@ -602,7 +612,8 @@ fn handle_check(args: &[String]) -> Result<(), ()> {
 
     println!("✓ Tokenization successful ({} tokens)", tokens.len());
 
-    let mut parser = Parser::new(tokens);
+    let arena = Bump::new();
+    let mut parser = Parser::new(tokens, &arena);
     let statements = match parser.parse() {
         Ok(s) => s,
         Err(e) => {

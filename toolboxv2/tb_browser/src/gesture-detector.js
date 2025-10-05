@@ -133,9 +133,6 @@ class TBGestureDetector {
 
         }
 
-        // Wheel events for scroll gestures
-        document.addEventListener('wheel', (e) => this.handleWheel(e), { passive: false });
-
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
     }
@@ -206,27 +203,6 @@ class TBGestureDetector {
         this.lastClickTime = currentTime;
     }
 
-    handleWheel(e) {
-        if (!this.isEnabled) return;
-
-        const currentTime = Date.now();
-        const deltaY = e.deltaY;
-
-        // Accumulate scroll for dynamic scrolling
-        this.scrollAccumulator += Math.abs(deltaY);
-
-        // Dynamic scroll based on gesture length
-        if (currentTime - this.lastScrollTime > 100) {
-            const scrollMultiplier = Math.min(this.scrollAccumulator / 100, 5) * this.settings.scrollSensitivity;
-
-            if (Math.abs(deltaY) > 10) {
-                this.performDynamicScroll(deltaY > 0 ? 'down' : 'up', scrollMultiplier);
-            }
-
-            this.lastScrollTime = currentTime;
-            this.scrollAccumulator = 0;
-        }
-    }
 
     handleKeyboard(e) {
         // Alt + Arrow keys for navigation
@@ -243,6 +219,10 @@ class TBGestureDetector {
                 case 'ArrowUp':
                     e.preventDefault();
                     this.executeGesture('swipe-up');
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    this.executeGesture('swipe-down');
                     break;
             }
         }

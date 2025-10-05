@@ -149,6 +149,7 @@ def get_executable_path() -> Optional[Path]:
     search_paths = [
         tb_root / "bin" / name_with_ext,
         get_project_dir() / "target" / "release" / name_with_ext,
+        get_project_dir() / "target" / "debug" / name_with_ext,
     ]
 
     for path in search_paths:

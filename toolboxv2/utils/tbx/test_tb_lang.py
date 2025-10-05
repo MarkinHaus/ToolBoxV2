@@ -1743,6 +1743,9 @@ let result = bash("nonexistent_command_xyz_123")
 '''
     success, stdout, stderr = run_tb(code)
     # Should fail due to command not found
+    print(stdout)
+    print("stderr")
+    print(stderr)
     assert not success, "Non-existent bash command should cause failure"
 
 
@@ -3172,6 +3175,22 @@ echo "Price: $price"       // Price: 19.99
 echo "Name: $name"         // Name: Alice
 echo "Active: $active"     // Active: true'''
     assert_output(code, "Age: 42\nPrice: 19.99\nName: Alice\nActive: true")
+@test("Type Annotations - Basic Types", "Type Annotations")
+def test_type_annotations_():
+    """Test that type annotations are correctly handled."""
+    code = '''@config { mode: "compiled" }
+
+let age: int = python("print(42)")
+let price: float = python("19.99")
+let name: string = python("Alice")
+let active: bool = python("True")
+let scores: list<int> = python("[85, 92, 78]")
+
+echo "Age: $age"           // Age: 42
+echo "Price: $price"       // Price: 19.99
+echo "Name: $name"         // Name: Alice
+echo "Active: $active"     // Active: true'''
+    assert_output(code, "Age: 42\nPrice: 19.99\nName: Alice\nActive: true")
 
 @test("Type Annotations - Auto Type Inference", "Type Annotations")
 def test_type_annotations_auto():
@@ -3441,6 +3460,7 @@ def main():
 
         # Type Annotations
         test_type_annotations,
+        test_type_annotations_,
         test_type_annotations_auto,
         test_type_annotations_compiled,
         test_type_annotations_auto_compiled,
