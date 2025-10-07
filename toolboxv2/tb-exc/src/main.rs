@@ -6,7 +6,6 @@ use std::str::FromStr;
 use tb_lang::{TB, Config, ExecutionMode, CompilationTarget, Compiler, TargetPlatform, Parser, Lexer, TBCore, DependencyCompiler, Value, streaming, STRING_INTERNER};
 use std::env;
 use std::io::Write;
-use bumpalo::Bump;
 use tb_lang::streaming::StreamingExecutor;
 
 fn main() {
@@ -160,8 +159,7 @@ fn handle_deps(args: &[String]) -> Result<(), ()> {
                 eprintln!("Tokenization failed: {}", e);
             })?;
 
-            let arena = Bump::new();
-            let mut parser = Parser::new(tokens, &arena);
+            let mut parser = Parser::new(tokens);
             let statements = parser.parse().map_err(|e| {
                 eprintln!("Parse failed: {}", e);
             })?;
@@ -414,8 +412,7 @@ fn handle_build(args: &[String]) -> Result<(), ()> {
         eprintln!("Tokenization failed: {}", e);
     })?;
 
-    let arena = Bump::new();
-    let mut parser = Parser::new(tokens, &arena);
+    let mut parser = Parser::new(tokens);
     let statements = parser.parse().map_err(|e| {
         eprintln!("Parse failed: {}", e);
     })?;
@@ -489,9 +486,7 @@ pub fn handle_repl(_args: &[String]) -> Result<(), ()> {
     println!("╚════════════════════════════════════════════════════════════════╝");
     println!();
 
-    let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-
-    let mut executor = StreamingExecutor::new(arena);
+    let mut executor = StreamingExecutor::new();
     let mut line_number = 1;
 
     loop {
@@ -612,8 +607,7 @@ fn handle_check(args: &[String]) -> Result<(), ()> {
 
     println!("✓ Tokenization successful ({} tokens)", tokens.len());
 
-    let arena = Bump::new();
-    let mut parser = Parser::new(tokens, &arena);
+    let mut parser = Parser::new(tokens);
     let statements = match parser.parse() {
         Ok(s) => s,
         Err(e) => {

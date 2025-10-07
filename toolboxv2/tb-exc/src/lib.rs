@@ -13,10 +13,10 @@
 //! - Multi-language support (Rust, Python, JS, Go, Bash)
 //! - Cross-platform compilation
 //!
-//! ## Performance
-//! - Compiled mode: 0-5% overhead vs native Rust
-//! - JIT mode: ~20-30% overhead
-//! - Streaming mode: Interactive performance
+//! ## Supports
+//! - Compiled mode
+//! - JIT mode
+//! - Streaming mode
 //!
 //! Version: 1.0.0
 //! License: MIT
@@ -63,14 +63,10 @@ use std::process::{Command};
 use std::env;
 // Time
 use std::time::{Duration, Instant};
-use bumpalo::Bump;
-
 pub mod dependency_compiler;
 pub use dependency_compiler::{DependencyCompiler, Dependency, CompilationStrategy};
-use pyo3::types::PyModule;
 
-// Multi-threading (Rayon)
-use rayon::prelude::*;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DEBUG LOGGING MACRO
 // ═══════════════════════════════════════════════════════════════════════════
@@ -339,7 +335,7 @@ pub struct InternerStats {
 }
 
 #[derive(Debug, Clone)]
-pub struct EvictionEvent {
+struct EvictionEvent {
     timestamp: u64,
     entries_removed: usize,
     memory_freed: usize,
@@ -589,11 +585,6 @@ impl StringInterner {
         debug_log!("STRING_INTERNER cleared: freed {} KB", freed_memory / 1024);
     }
 
-    /// Get eviction history (last 100 events)
-    pub fn eviction_history(&self) -> Vec<EvictionEvent> {
-        self.eviction_log.read().unwrap().iter().cloned().collect()
-    }
-
     /// Get detailed health report
     pub fn health_report(&self) -> String {
         let stats = self.stats();
@@ -732,19 +723,19 @@ lazy_static::lazy_static! {
 // ═══════════════════════════════════════════════════════════════════════════
 // §2.5 IMPORT CACHE & COMPILATION MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
-/// Cached compilation artifact with static lifetime
+
+
+/// Cached compilation artifact
 #[derive(Debug, Clone)]
 pub struct CachedArtifact {
     pub source_path: PathBuf,
     pub source_hash: u64,
     pub binary_path: PathBuf,
-
-    // Statements als 'static (via Box::leak)
-    pub statements: Vec<Statement<'static>>,
-    pub compiled_at: SystemTime,
+    pub statements: Vec<Statement>,
+    pub compiled_at: std::time::SystemTime,
 }
 
-/// Import cache manager with full binary compilation
+/// Import cache manager
 pub struct ImportCache {
     cache_dir: PathBuf,
     artifacts: HashMap<PathBuf, CachedArtifact>,
@@ -762,17 +753,14 @@ impl ImportCache {
         })
     }
 
-    /// Get or compile an import (FULL COMPILATION)
-    pub fn get_or_compile<'arena>(
+    /// Get or compile an import
+    pub fn get_or_compile(
         &mut self,
         import_path: &Path,
         parent_config: &Config,
-        target_arena: &'arena Bump,
-    ) -> TBResult<Vec<Statement<'arena>>> {
+    ) -> TBResult<Vec<Statement>> {
         let canonical_path = import_path.canonicalize()
-            .map_err(|_| TBError::IoError(
-                Arc::new(format!("Import not found: {}", import_path.display()))
-            ))?;
+            .map_err(|e| TBError::IoError(Arc::new(format!("Import not found: {}", import_path.display()))))?;
 
         // Read source and compute hash
         let source = fs::read_to_string(&canonical_path)?;
@@ -782,9 +770,7 @@ impl ImportCache {
         if let Some(cached) = self.artifacts.get(&canonical_path) {
             if cached.source_hash == source_hash {
                 debug_log!("✓ Using cached artifact for {}", import_path.display());
-
-                // Clone cached 'static statements in neue Arena
-                return Ok(self.clone_statements_to_arena(&cached.statements, target_arena));
+                return Ok(cached.statements.clone());
             }
         }
 
@@ -793,369 +779,78 @@ impl ImportCache {
         // Parse import config
         let import_config = Config::parse(&source)?;
 
-        // COMPILE if in compiled mode
+        // Check if import requires compilation
         if matches!(import_config.mode, ExecutionMode::Compiled { .. }) {
             debug_log!("  → Import is in compiled mode, compiling...");
-            return self.compile_and_cache(
-                &canonical_path,
-                &source,
-                source_hash,
-                &import_config,
-                target_arena
-            );
+            return self.compile_and_cache(&canonical_path, &source, source_hash, &import_config);
         }
 
-        // JIT mode: parse and cache
+        // JIT mode: just parse and cache statements
         debug_log!("  → Import is in JIT mode, parsing...");
-        self.parse_and_cache_jit(&canonical_path, &source, source_hash, target_arena)
+        let statements = self.parse_import(&source)?;
+
+        self.artifacts.insert(canonical_path, CachedArtifact {
+            source_path: import_path.to_path_buf(),
+            source_hash,
+            binary_path: PathBuf::new(),
+            statements: statements.clone(),
+            compiled_at: std::time::SystemTime::now(),
+        });
+
+        Ok(statements)
     }
 
-    /// Compile import to native library (FULL IMPLEMENTATION)
-    fn compile_and_cache<'arena>(
+    /// Compile import to native library and cache
+    fn compile_and_cache(
         &mut self,
         path: &Path,
         source: &str,
         source_hash: u64,
         config: &Config,
-        target_arena: &'arena Bump,
-    ) -> TBResult<Vec<Statement<'arena>>> {
+    ) -> TBResult<Vec<Statement>> {
         let cache_key = format!("{:x}", source_hash);
         let binary_path = self.cache_dir.join(format!("lib_{}.so", cache_key));
 
-        // PHASE 1: Parse in temporärer Arena für Compilation
-        let parse_arena = Bump::new();
-        let statements_arena = self.parse_import(source, &parse_arena)?;
-
-        // PHASE 2: Compile Binary (falls nicht existiert)
-        if !binary_path.exists() {
+        // Check if binary exists
+        if binary_path.exists() {
+            debug_log!("  ✓ Using cached binary: {}", binary_path.display());
+        } else {
             debug_log!("  ⚙ Compiling to: {}", binary_path.display());
 
-            //  Erstelle 'static Versionen durch Box::leak
-            let statements_static: &'static [Statement<'static>] = {
-                let vec: Vec<Statement<'static>> = statements_arena.iter()
-                    .map(|stmt| self.clone_statement_static(stmt))
-                    .collect();
+            // Parse statements
+            let statements = self.parse_import(source)?;
 
-                // Leak zu 'static (wird nie freed, aber das ist OK für Compiler)
-                Box::leak(vec.into_boxed_slice())
-            };
-
+            // Compile to shared library
             let compiler = Compiler::new(config.clone())
                 .with_target(TargetPlatform::current())
                 .with_optimization(3);
 
-            compiler.compile_to_library(statements_static, &binary_path)?;
+            compiler.compile_to_library(&statements, &binary_path)?;
+
             debug_log!("  ✓ Compilation complete");
-        } else {
-            debug_log!("  ✓ Using cached binary: {}", binary_path.display());
         }
 
-        // PHASE 3: Parse erneut in target_arena
-        let final_statements = self.parse_import(source, target_arena)?;
-
-        // PHASE 4: Cache Metadata
-        let cached_static: Vec<Statement<'static>> = statements_arena.iter()
-            .map(|stmt| self.clone_statement_static(stmt))
-            .collect();
+        // Parse statements for metadata (functions, types)
+        let statements = self.parse_import(source)?;
 
         self.artifacts.insert(path.to_path_buf(), CachedArtifact {
             source_path: path.to_path_buf(),
             source_hash,
             binary_path: binary_path.clone(),
-            statements: cached_static,
-            compiled_at: SystemTime::now(),
+            statements: statements.clone(),
+            compiled_at: std::time::SystemTime::now(),
         });
 
-        Ok(final_statements)
-    }
-
-    /// Parse and cache for JIT mode
-    fn parse_and_cache_jit<'arena>(
-        &mut self,
-        path: &Path,
-        source: &str,
-        source_hash: u64,
-        target_arena: &'arena Bump,
-    ) -> TBResult<Vec<Statement<'arena>>> {
-        // Parse in eigener Arena
-        let parse_arena = Bump::new();
-        let statements_arena = self.parse_import(source, &parse_arena)?;
-
-        // Promote zu 'static
-        let statements_static = self.promote_to_static(&statements_arena);
-
-        // Cache ohne Binary
-        self.artifacts.insert(path.to_path_buf(), CachedArtifact {
-            source_path: path.to_path_buf(),
-            source_hash,
-            binary_path: PathBuf::new(),
-            statements: statements_static.clone(),
-            compiled_at: SystemTime::now(),
-        });
-
-        // Clone in Target-Arena
-        Ok(self.clone_statements_to_arena(&statements_static, target_arena))
+        Ok(statements)
     }
 
     /// Parse import source
-    fn parse_import<'a>(&self, source: &str, arena: &'a Bump) -> TBResult<Vec<Statement<'a>>> {
+    fn parse_import(&self, source: &str) -> TBResult<Vec<Statement>> {
         let clean_source = TBCore::strip_directives(source);
         let mut lexer = Lexer::new(&clean_source);
         let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(tokens, arena);
+        let mut parser = Parser::new(tokens);
         parser.parse()
-    }
-
-    /// Promote statements to 'static lifetime via Box::leak
-    fn promote_to_static<'a>(&self, statements: &[Statement<'a>]) -> Vec<Statement<'static>> {
-        statements.iter().map(|stmt| self.clone_statement_static(stmt)).collect()
-    }
-
-    /// Deep clone statement to 'static
-    fn clone_statement_static<'a>(&self, stmt: &Statement<'a>) -> Statement<'static> {
-        match stmt {
-            Statement::Function { name, params, return_type, body } => {
-                let params_static: Vec<Parameter<'static>> = params.iter()
-                    .map(|p| Parameter {
-                        name: Arc::clone(&p.name),
-                        type_annotation: p.type_annotation.clone(),
-                        default: p.default.as_ref().map(|e| self.clone_expr_static(e)),
-                    })
-                    .collect();
-
-                Statement::Function {
-                    name: Arc::clone(name),
-                    params: self.vec_to_arena_vec_static(params_static),
-                    return_type: return_type.clone(),
-                    body: self.clone_expr_static(body),
-                }
-            }
-
-            Statement::Let { name, mutable, type_annotation, value, scope } => {
-                Statement::Let {
-                    name: Arc::clone(name),
-                    mutable: *mutable,
-                    type_annotation: type_annotation.clone(),
-                    value: self.clone_expr_static(value),
-                    scope: *scope,
-                }
-            }
-
-            Statement::Assign { target, value } => {
-                Statement::Assign {
-                    target: self.clone_expr_static(target),
-                    value: self.clone_expr_static(value),
-                }
-            }
-
-            Statement::Expr(expr) => {
-                Statement::Expr(self.clone_expr_static(expr))
-            }
-
-            Statement::Import { module, items } => {
-                Statement::Import {
-                    module: Arc::clone(module),
-                    items: items.clone(),
-                }
-            }
-        }
-    }
-
-    /// Deep clone expression to 'static
-    fn clone_expr_static<'a>(&self, expr: &Expr<'a>) -> Expr<'static> {
-        match expr {
-            Expr::Literal(lit) => Expr::Literal(lit.clone()),
-            Expr::Variable(name) => Expr::Variable(Arc::clone(name)),
-
-            Expr::BinOp { op, left, right } => {
-                let left_static = Box::new(self.clone_expr_static(left));
-                let right_static = Box::new(self.clone_expr_static(right));
-
-                Expr::BinOp {
-                    op: *op,
-                    left: Box::leak(left_static),
-                    right: Box::leak(right_static),
-                }
-            }
-
-            Expr::Call { function, args } => {
-                let func_static = Box::new(self.clone_expr_static(function));
-                let args_static: Vec<Expr<'static>> = args.iter()
-                    .map(|a| self.clone_expr_static(a))
-                    .collect();
-
-                Expr::Call {
-                    function: Box::leak(func_static),
-                    args: self.vec_to_arena_vec_static(args_static),
-                }
-            }
-
-            Expr::Block { statements, result } => {
-                let stmts_static: Vec<Statement<'static>> = statements.iter()
-                    .map(|s| self.clone_statement_static(s))
-                    .collect();
-
-                Expr::Block {
-                    statements: self.vec_to_arena_vec_static(stmts_static),
-                    result: result.as_ref().map(|e| {
-                        let expr_static = Box::new(self.clone_expr_static(e));
-                        Box::leak(expr_static) as &'static _
-                    }),
-                }
-            }
-
-            Expr::If { condition, then_branch, else_branch } => {
-                let cond_static = Box::new(self.clone_expr_static(condition));
-                let then_static = Box::new(self.clone_expr_static(then_branch));
-                let else_static = else_branch.as_ref().map(|e| {
-                    let expr = Box::new(self.clone_expr_static(e));
-                    Box::leak(expr) as &'static _
-                });
-
-                Expr::If {
-                    condition: Box::leak(cond_static),
-                    then_branch: Box::leak(then_static),
-                    else_branch: else_static,
-                }
-            }
-
-            Expr::List(items) => {
-                let items_static: Vec<Expr<'static>> = items.iter()
-                    .map(|i| self.clone_expr_static(i))
-                    .collect();
-                Expr::List(self.vec_to_arena_vec_static(items_static))
-            }
-
-            // Analog für andere Expr-Typen
-            _ => Expr::Literal(Literal::Unit),
-        }
-    }
-
-    /// Convert Vec to ArenaVec in 'static lifetime
-    fn vec_to_arena_vec_static<T>(&self, vec: Vec<T>) -> bumpalo::collections::Vec<'static, T> {
-        // Erstelle neue lokale Arena und leak sie absichtlich
-        let leaked_arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-
-        let mut arena_vec = bumpalo::collections::Vec::new_in(leaked_arena);
-        arena_vec.extend(vec);
-        arena_vec
-    }
-
-    /// Clone cached statements into target arena
-    fn clone_statements_to_arena<'arena>(
-        &self,
-        statements: &[Statement<'static>],
-        arena: &'arena Bump,
-    ) -> Vec<Statement<'arena>> {
-        statements.iter().map(|stmt| self.clone_statement_to_arena(stmt, arena)).collect()
-    }
-
-    /// Clone single statement into arena
-    fn clone_statement_to_arena<'arena>(
-        &self,
-        stmt: &Statement<'static>,
-        arena: &'arena Bump,
-    ) -> Statement<'arena> {
-        match stmt {
-            Statement::Function { name, params, return_type, body } => {
-                let params_arena: Vec<Parameter<'arena>> = params.iter()
-                    .map(|p| Parameter {
-                        name: Arc::clone(&p.name),
-                        type_annotation: p.type_annotation.clone(),
-                        default: p.default.as_ref().map(|e| self.clone_expr_to_arena(e, arena)),
-                    })
-                    .collect();
-
-                Statement::Function {
-                    name: Arc::clone(name),
-                    params: ArenaVec::from_iter_in(params_arena, arena),
-                    return_type: return_type.clone(),
-                    body: self.clone_expr_to_arena(body, arena),
-                }
-            }
-
-            Statement::Let { name, mutable, type_annotation, value, scope } => {
-                Statement::Let {
-                    name: Arc::clone(name),
-                    mutable: *mutable,
-                    type_annotation: type_annotation.clone(),
-                    value: self.clone_expr_to_arena(value, arena),
-                    scope: *scope,
-                }
-            }
-
-            Statement::Assign { target, value } => {
-                Statement::Assign {
-                    target: self.clone_expr_to_arena(target, arena),
-                    value: self.clone_expr_to_arena(value, arena),
-                }
-            }
-
-            Statement::Expr(expr) => {
-                Statement::Expr(self.clone_expr_to_arena(expr, arena))
-            }
-
-            Statement::Import { module, items } => {
-                Statement::Import {
-                    module: Arc::clone(module),
-                    items: items.clone(),
-                }
-            }
-        }
-    }
-
-    /// Clone expression into arena
-    fn clone_expr_to_arena<'arena>(
-        &self,
-        expr: &Expr<'static>,
-        arena: &'arena Bump,
-    ) -> Expr<'arena> {
-        match expr {
-            Expr::Literal(lit) => Expr::Literal(lit.clone()),
-            Expr::Variable(name) => Expr::Variable(Arc::clone(name)),
-
-            Expr::BinOp { op, left, right } => {
-                Expr::BinOp {
-                    op: *op,
-                    left: arena.alloc(self.clone_expr_to_arena(left, arena)),
-                    right: arena.alloc(self.clone_expr_to_arena(right, arena)),
-                }
-            }
-
-            Expr::Call { function, args } => {
-                let args_arena: Vec<Expr<'arena>> = args.iter()
-                    .map(|a| self.clone_expr_to_arena(a, arena))
-                    .collect();
-
-                Expr::Call {
-                    function: arena.alloc(self.clone_expr_to_arena(function, arena)),
-                    args: ArenaVec::from_iter_in(args_arena, arena),
-                }
-            }
-
-            Expr::Block { statements, result } => {
-                let stmts_arena: Vec<Statement<'arena>> = statements.iter()
-                    .map(|s| self.clone_statement_to_arena(s, arena))
-                    .collect();
-
-                Expr::Block {
-                    statements: ArenaVec::from_iter_in(stmts_arena, arena),
-                    result: result.as_ref().map(|e|
-                        arena.alloc(self.clone_expr_to_arena(e, arena)) as &_
-                    ),
-                }
-            }
-
-            Expr::List(items) => {
-                let items_arena: Vec<Expr<'arena>> = items.iter()
-                    .map(|i| self.clone_expr_to_arena(i, arena))
-                    .collect();
-                Expr::List(ArenaVec::from_iter_in(items_arena, arena))
-            }
-
-            // Analog für andere Expr-Typen
-            _ => Expr::Literal(Literal::Unit),
-        }
     }
 
     /// Compute hash of source
@@ -1179,7 +874,7 @@ impl ImportCache {
 
 /// Runtime value - optimized for performance
 #[derive(Debug, Clone)]
-pub enum Value<'arena> {
+pub enum Value {
     /// Unit value
     Unit,
 
@@ -1196,26 +891,26 @@ pub enum Value<'arena> {
     String(Arc<String>),
 
     /// List of values
-    List(Vec<Value<'arena>>),
+    List(Vec<Value>),
 
     /// Dictionary
-    Dict(HashMap<Arc<String>, Value<'arena>>),
+    Dict(HashMap<Arc<String>, Value>),
 
     /// Optional value
-    Option(Option<Box<Value<'arena>>>),
+    Option(Option<Box<Value>>),
 
     /// Result value
-    Result(Result<Box<Value<'arena>>, Box<Value<'arena>>>),
+    Result(Result<Box<Value>, Box<Value>>),
 
     /// Function closure
     Function {
         params: Vec<Arc<String>>,
-        body: AstNode<'arena, Expr<'arena>>,
-        env: Environment<'arena>,
+        body: Box<Expr>,
+        env: Environment,
     },
 
     /// Tuple
-    Tuple(Vec<Value<'arena>>),
+    Tuple(Vec<Value>),
 
     /// Native handle (for language interop)
     Native {
@@ -1225,7 +920,7 @@ pub enum Value<'arena> {
     },
 }
 
-impl<'arena> Value<'arena> {
+impl Value {
     /// Get type of value
     pub fn get_type(&self) -> Type {
         match self {
@@ -1289,54 +984,9 @@ impl<'arena> Value<'arena> {
             _ => true,
         }
     }
-
-    pub fn clone_static(&self) -> TBResult<Value<'static>> {
-        match self {
-            Value::Unit => Ok(Value::Unit),
-            Value::Bool(b) => Ok(Value::Bool(*b)),
-            Value::Int(i) => Ok(Value::Int(*i)),
-            Value::Float(f) => Ok(Value::Float(*f)),
-            Value::String(s) => Ok(Value::String(s.clone())),
-            Value::List(items) => {
-                let static_items: TBResult<Vec<_>> = items.iter().map(|v| v.clone_static()).collect();
-                Ok(Value::List(static_items?))
-            }
-            Value::Dict(map) => {
-                let mut static_map = HashMap::new();
-                for (k, v) in map {
-                    static_map.insert(k.clone(), v.clone_static()?);
-                }
-                Ok(Value::Dict(static_map))
-            }
-            Value::Option(opt) => {
-                if let Some(val) = opt {
-                    Ok(Value::Option(Some(Box::new(val.clone_static()?))))
-                } else {
-                    Ok(Value::Option(None))
-                }
-            }
-            Value::Result(res) => match res {
-                Ok(ok_val) => Ok(Value::Result(Ok(Box::new(ok_val.clone_static()?)))),
-                Err(err_val) => Ok(Value::Result(Err(Box::new(err_val.clone_static()?)))),
-            },
-            Value::Tuple(items) => {
-                let static_items: TBResult<Vec<_>> = items.iter().map(|v| v.clone_static()).collect();
-                Ok(Value::Tuple(static_items?))
-            }
-            Value::Native { language, type_name, handle } => Ok(Value::Native {
-                language: *language,
-                type_name: type_name.clone(),
-                handle: handle.clone(),
-            }),
-            // Function kann nicht 'static gemacht werden, da sie den AST referenziert.
-            Value::Function { .. } => Err(TBError::InvalidOperation(
-                STRING_INTERNER.intern("Cannot return a function closure from the main execution scope."),
-            )),
-        }
-    }
 }
 
-impl<'arena> Display for Value<'arena> {
+impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Value::Unit => write!(f, ""),
@@ -1416,20 +1066,20 @@ pub enum VarScope {
 
 /// Thread-safe value wrapper for parallel execution
 #[derive(Debug, Clone)]
-pub enum ScopedValue<'arena> {
+pub enum ScopedValue {
     /// Local to single thread
-    Local(Value<'arena>),
+    Local(Value),
 
     /// Shared with read-write lock
-    Shared(Arc<RwLock<Value<'arena>>>),
+    Shared(Arc<RwLock<Value>>),
 
     /// Immutable shared reference
-    Immutable(Arc<Value<'arena>>),
+    Immutable(Arc<Value>),
 }
 
-impl<'arena> ScopedValue<'arena> {
+impl ScopedValue {
     /// Get value (clones for safety)
-    pub fn get(&self) -> TBResult<Value<'arena>> {
+    pub fn get(&self) -> TBResult<Value> {
         match self {
             ScopedValue::Local(v) => Ok(v.clone()),
             ScopedValue::Shared(v) => Ok(v.read().unwrap().clone()),
@@ -1438,7 +1088,7 @@ impl<'arena> ScopedValue<'arena> {
     }
 
     /// Set value (fails for Immutable)
-    pub fn set(&mut self, value: Value<'arena>) -> TBResult<()> {
+    pub fn set(&mut self, value: Value) -> TBResult<()> {
         match self {
             ScopedValue::Local(v) => {
                 *v = value;
@@ -1457,7 +1107,7 @@ impl<'arena> ScopedValue<'arena> {
     }
 
     /// Create from Value with scope
-    pub fn new(value: Value<'arena>, scope: VarScope) -> Self {
+    pub fn new(value: Value, scope: VarScope) -> Self {
         match scope {
             VarScope::Local => ScopedValue::Local(value),
             VarScope::Shared => ScopedValue::Shared(Arc::new(RwLock::new(value))),
@@ -1470,13 +1120,9 @@ impl<'arena> ScopedValue<'arena> {
 // §4 ABSTRACT SYNTAX TREE
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Typ-Aliase für bessere Lesbarkeit
-type AstNode<'arena, T> = &'arena T;
-type ArenaVec<'arena, T> = bumpalo::collections::Vec<'arena, T>;
-
 /// Expression - core AST node
 #[derive(Debug, Clone)]
-pub enum Expr<'arena> {
+pub enum Expr {
     /// Literal value
     Literal(Literal),
 
@@ -1486,112 +1132,110 @@ pub enum Expr<'arena> {
     /// Binary operation
     BinOp {
         op: BinOp,
-        left: AstNode<'arena, Expr<'arena>>,
-        right: AstNode<'arena, Expr<'arena>>,
+        left: Box<Expr>,
+        right: Box<Expr>,
     },
 
     /// Unary operation
     UnaryOp {
         op: UnaryOp,
-        expr: AstNode<'arena, Expr<'arena>>,
+        expr: Box<Expr>,
     },
 
     /// Function call
     Call {
-        function: AstNode<'arena, Expr<'arena>>,
-        args: ArenaVec<'arena, Expr<'arena>>,
+        function: Box<Expr>,
+        args: Vec<Expr>,
     },
 
     /// Method call
     Method {
-        object: AstNode<'arena, Expr<'arena>>,
+        object: Box<Expr>,
         method: Arc<String>,
-        args: ArenaVec<'arena, Expr<'arena>>,
+        args: Vec<Expr>,
     },
 
     /// Index access
     Index {
-        object: AstNode<'arena, Expr<'arena>>,
-        index: AstNode<'arena, Expr<'arena>>,
+        object: Box<Expr>,
+        index: Box<Expr>,
     },
 
     /// Field access
     Field {
-        object: AstNode<'arena, Expr<'arena>>,
+        object: Box<Expr>,
         field: Arc<String>,
     },
 
     /// Block expression
     Block {
-        statements: ArenaVec<'arena, Statement<'arena>>,
-        result: Option<AstNode<'arena, Expr<'arena>>>,
+        statements: Box<Vec<Statement>>,
+        result: Option<Box<Expr>>,
     },
 
     /// If expression
     If {
-        condition: AstNode<'arena, Expr<'arena>>,
-        then_branch: AstNode<'arena, Expr<'arena>>,
-        else_branch: Option<AstNode<'arena, Expr<'arena>>>,
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
     },
 
     /// Match expression
     Match {
-        scrutinee: AstNode<'arena, Expr<'arena>>,
-        arms: ArenaVec<'arena, MatchArm<'arena>>,
+        scrutinee: Box<Expr>,
+        arms: Box<Vec<MatchArm>>,
     },
 
     /// Loop expression
     Loop {
-        body: AstNode<'arena, Expr<'arena>>,
+        body: Box<Expr>,
     },
 
     /// While loop
     While {
-        condition: AstNode<'arena, Expr<'arena>>,
-        body: AstNode<'arena, Expr<'arena>>,
+        condition: Box<Expr>,
+        body: Box<Expr>,
     },
 
     /// For loop
     For {
         variable: Arc<String>,
-        iterable: AstNode<'arena, Expr<'arena>>,
-        body: AstNode<'arena, Expr<'arena>>,
+        iterable: Box<Expr>,
+        body: Box<Expr>,
     },
 
     /// Return expression
-    Return(Option<AstNode<'arena, Expr<'arena>>>),
+    Return(Option<Box<Expr>>),
 
     /// Break expression
-    Break(Option<AstNode<'arena, Expr<'arena>>>),
-
-
+    Break(Option<Box<Expr>>),
 
     /// Continue expression
     Continue,
 
     /// Lambda function
     Lambda {
-        params: ArenaVec<'arena, Parameter<'arena>>,
-        body: AstNode<'arena, Expr<'arena>>,
+        params: Box<Vec<Parameter>>,
+        body: Box<Expr>,
     },
 
     /// List literal
-    List(ArenaVec<'arena, Expr<'arena>>),
+    List(Vec<Expr>),
 
     /// Dict literal
-    Dict(ArenaVec<'arena, (Expr<'arena>, Expr<'arena>)>),
+    Dict(Vec<(Expr, Expr)>),
 
     /// Tuple literal
-    Tuple(ArenaVec<'arena, Expr<'arena>>),
+    Tuple(Vec<Expr>),
 
     /// Pipeline operation
     Pipeline {
-        value: AstNode<'arena, Expr<'arena>>,
-        operations: ArenaVec<'arena, Expr<'arena>>,
+        value: Box<Expr>,
+        operations: Box<Vec<Expr>>,
     },
 
     /// Parallel execution -
-    Parallel(bumpalo::collections::Vec<'arena, Expr<'arena>>),
+    Parallel(Box<Vec<Expr>>),
 
     /// Native code block
     Native {
@@ -1600,36 +1244,36 @@ pub enum Expr<'arena> {
     },
 
     /// Try expression (? operator)
-    Try(AstNode<'arena, Expr<'arena>>),
+    Try(Box<Expr>),
 }
 
 /// Statement
 #[derive(Debug, Clone)]
-pub enum Statement<'arena> {
+pub enum Statement {
     /// Let binding
     Let {
         name: Arc<String>,
         mutable: bool,
         type_annotation: Option<Type>,
-        value: Expr<'arena>,
+        value: Expr,
         scope: VarScope,
     },
 
     /// Assignment
     Assign {
-        target: Expr<'arena>,
-        value: Expr<'arena>,
+        target: Expr,
+        value: Expr,
     },
 
     /// Expression statement
-    Expr(Expr<'arena>),
+    Expr(Expr),
 
     /// Function definition
     Function {
         name: Arc<String>,
-        params: ArenaVec<'arena, Parameter<'arena>>,
+        params: Box<Vec<Parameter>>,
         return_type: Option<Type>,
-        body: Expr<'arena>,
+        body: Expr,
     },
 
     /// Import statement
@@ -1641,23 +1285,23 @@ pub enum Statement<'arena> {
 
 /// Function parameter
 #[derive(Debug, Clone)]
-pub struct Parameter<'arena> {
+pub struct Parameter {
     pub name: Arc<String>,
     pub type_annotation: Option<Type>,
-    pub default: Option<Expr<'arena>>,
+    pub default: Option<Expr>,
 }
 
 /// Match arm
 #[derive(Debug, Clone)]
-pub struct MatchArm<'arena> {
-    pub pattern: Pattern<'arena>,
-    pub guard: Option<Expr<'arena>>,
-    pub body: Expr<'arena>,
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
 }
 
 /// Pattern matching
 #[derive(Debug, Clone)]
-pub enum Pattern<'arena> {
+pub enum Pattern {
     /// Wildcard pattern
     Wildcard,
 
@@ -1668,13 +1312,13 @@ pub enum Pattern<'arena> {
     Variable(Arc<String>),
 
     /// Tuple pattern
-    Tuple(ArenaVec<'arena, Pattern<'arena>>),
+    Tuple(Vec<Pattern>),
 
     /// List pattern
-    List(ArenaVec<'arena, Pattern<'arena>>),
+    List(Vec<Pattern>),
 
     /// Or pattern
-    Or(ArenaVec<'arena, Pattern<'arena>>),
+    Or(Vec<Pattern>),
 }
 
 /// Literal values
@@ -1709,9 +1353,7 @@ pub enum BinOp {
 /// Unary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Not,
-    Neg,
-    BitNot,
+    Not, Neg, BitNot,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1720,7 +1362,7 @@ pub enum UnaryOp {
 
 /// Top-level configuration (from @config block)
 #[derive(Debug, Clone)]
-pub struct Config<'arena> {
+pub struct Config {
     /// Execution mode
     pub mode: ExecutionMode,
 
@@ -1746,7 +1388,7 @@ pub struct Config<'arena> {
     pub env: HashMap<String, Arc<String>>,
 
     /// Shared variables
-    pub shared: HashMap<Arc<String>, Value<'arena>>,
+    pub shared: HashMap<Arc<String>, Value>,
 
     pub runtime_mode: RuntimeMode,
     /// Loaded plugins
@@ -1754,7 +1396,7 @@ pub struct Config<'arena> {
     pub imports: Vec<PathBuf>,
 }
 
-impl<'arena> Default for Config<'arena> {
+impl Default for Config {
     fn default() -> Self {
         Self {
             mode: ExecutionMode::Jit { cache_enabled: true },
@@ -1773,7 +1415,7 @@ impl<'arena> Default for Config<'arena> {
     }
 }
 
-impl<'arena> Config<'arena> {
+impl Config {
     /// Parse config from YAML-like text
     pub fn parse(source: &str) -> TBResult<Self> {
         let mut config = Self::default();
@@ -2188,7 +1830,7 @@ impl TBError {
 pub type TBResult<T> = Result<T, TBError>;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// §7 PARSING
+// §7 PARSER
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Lexer - tokenizes source code
@@ -2280,7 +1922,6 @@ impl Lexer {
         let mut tokens = Vec::new();
         let mut iterations = 0;
         let max_iterations = self.source.len() + 100;
-        let last_token_line = self.line;
 
         loop {
             iterations += 1;
@@ -2305,11 +1946,9 @@ impl Lexer {
             if self.current() == '\n' {
                 self.advance(); // consume newline
 
-                // Only insert Newline token if we're not nested (depth = 0)
-                // and if the previous token wasn't already a separator
+                // Only insert Newline token if we're not nested
                 if self.paren_depth == 0 && self.brace_depth == 0 && self.bracket_depth == 0 {
                     if !tokens.is_empty() {
-                        // Don't insert Newline after another Newline, Semicolon, or LBrace
                         let needs_separator = !matches!(
                         tokens.last(),
                         Some(Token::Newline) | Some(Token::Semicolon) |
@@ -2326,14 +1965,20 @@ impl Lexer {
                 continue;
             }
 
-            // Skip comments
+            // ✅ NEW: Skip Python-style comments (#)
             if self.current() == '#' {
-                debug_log!("Skipping comment at line {}", self.line);
+                debug_log!("Skipping Python-style comment at line {}", self.line);
                 self.skip_line();
                 continue;
             }
 
-            //debug_log!("Tokenizing at position {}, char: '{}'", self.position, self.current());
+            // ✅ NEW: Skip C-style comments (//)
+            if self.current() == '/' && self.peek_ahead(1) == Some('/') {
+                debug_log!("Skipping C-style comment at line {}", self.line);
+                self.skip_line();
+                continue;  // ✅ Don't advance, let main loop handle \n
+            }
+
             let token = self.next_token()?;
 
             // Update depth tracking
@@ -2347,8 +1992,6 @@ impl Lexer {
                 _ => {}
             }
 
-            // debug_log!("Token created: {:?} (depth: p={}, b={}, br={})",
-            //        token, self.paren_depth, self.brace_depth, self.bracket_depth);
             tokens.push(token);
         }
 
@@ -2364,21 +2007,6 @@ impl Lexer {
 
     fn next_token(&mut self) -> TBResult<Token> {
         let ch = self.current();
-
-        if ch == '/' && self.peek_ahead(1) == Some('/') {
-            debug_log!("Skipping C-style comment at line {}", self.line);
-            self.skip_line();
-            self.advance(); // Skip newline
-            return self.next_token(); // Recursive call for next token
-        }
-
-
-        if ch == '#' {
-            debug_log!("Skipping Python-style comment at line {}", self.line);
-            self.skip_line();
-            self.advance(); // Skip newline
-            return self.next_token(); // Recursive call for next token
-        }
 
         if ch == '@' {
             return self.read_identifier();
@@ -2709,24 +2337,18 @@ impl Lexer {
         }
     }
 }
-// ═══════════════════════════════════════════════════════════════════════════
-// §7.5 PARSER
-// ═══════════════════════════════════════════════════════════════════════════
-
 
 /// Parser - builds AST from tokens
-pub struct Parser<'arena> {
-    arena: &'arena Bump,
+pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
     recursion_depth: usize,
     max_recursion_depth: usize,
 }
 
-impl<'arena> Parser<'arena> {
-    pub fn new(tokens: Vec<Token>, arena: &'arena Bump) -> Self {
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
         Self {
-            arena,
             tokens,
             position: 0,
             recursion_depth: 0,
@@ -2734,7 +2356,7 @@ impl<'arena> Parser<'arena> {
         }
     }
 
-    pub fn parse(&mut self) -> TBResult<Vec<Statement<'arena>>> {
+    pub fn parse(&mut self) -> TBResult<Vec<Statement>> {
         debug_log!("Parser::parse() started, tokens: {}", self.tokens.len());
         let mut statements = Vec::new();
         let mut iterations = 0;
@@ -2748,23 +2370,38 @@ impl<'arena> Parser<'arena> {
                         "Parser exceeded {} iterations. Infinite loop at position {}",
                         max_iterations, self.position
                     )),
-                    line: iterations,
-                    column: iterations,
+                    line: 0,
+                    column: 0,
                 });
+            }
+
+            // ✅ CRITICAL FIX: Skip separators BEFORE parse_statement
+            while (self.match_token(&Token::Semicolon)
+                || self.match_token(&Token::Newline))
+                && !self.is_eof()
+            {
+                debug_log!("Skipping separator at position {}", self.position);
+                self.advance();
+            }
+
+            // ✅ Check EOF after skipping separators
+            if self.is_eof() {
+                debug_log!("Reached EOF after skipping separators");
+                break;
             }
 
             let position_before = self.position;
 
             debug_log!("Parsing statement {}, position: {}, token: {:?}",
-                   iterations, self.position, self.current());
+               iterations, self.position, self.current());
 
             let stmt = self.parse_statement()?;
 
-            // CRITICAL: Ensure we made progress!
+            // Ensure we made progress
             if self.position == position_before && !self.is_eof() {
                 return Err(TBError::ParseError {
                     message: Arc::new(format!(
-                        "Parser stuck at position {} with token {:?}. Statement parsing made no progress.",
+                        "Parser stuck at position {} with token {:?}.",
                         self.position, self.current()
                     )),
                     line: 0,
@@ -2780,21 +2417,21 @@ impl<'arena> Parser<'arena> {
         Ok(statements)
     }
 
-    fn parse_statement(&mut self) -> TBResult<Statement<'arena>> {
+    fn parse_statement(&mut self) -> TBResult<Statement> {
         debug_log!("parse_statement at position {}, token: {:?}", self.position, self.current());
 
         // Skip any stray semicolons OR newlines
-        while self.match_token(&Token::Semicolon) || self.match_token(&Token::Newline) {
-            debug_log!("Skipping separator at position {}", self.position);
-            self.advance();
-            if self.is_eof() {
-                return Err(TBError::ParseError {
-                    message: Arc::from("Unexpected end of input".to_string()),
-                    line: 0,
-                    column: 0,
-                });
-            }
-        }
+        // while self.match_token(&Token::Semicolon) || self.match_token(&Token::Newline) {
+        //     debug_log!("Skipping separator at position {}", self.position);
+        //     self.advance();
+        //     if self.is_eof() {
+        //         return Err(TBError::ParseError {
+        //             message: Arc::from("Unexpected end of input".to_string()),
+        //             line: 0,
+        //             column: 0,
+        //         });
+        //     }
+        // }
 
         let result = match self.current().clone() {
             Token::Let => {
@@ -2805,13 +2442,13 @@ impl<'arena> Parser<'arena> {
                 debug_log!("Parsing function statement");
                 self.parse_function()
             }
-            Token::Eof => {
-                return Err(TBError::ParseError {
-                    message: Arc::from("Unexpected EOF".to_string()),
-                    line: 0,
-                    column: 0,
-                });
-            }
+            // Token::Eof => {
+            //     return Err(TBError::ParseError {
+            //         message: Arc::from("Unexpected EOF".to_string()),
+            //         line: 0,
+            //         column: 0,
+            //     });
+            // }
             _ => {
                 debug_log!("Parsing expression statement or assignment");
 
@@ -2851,7 +2488,7 @@ impl<'arena> Parser<'arena> {
         result
     }
 
-    fn parse_let(&mut self) -> TBResult<Statement<'arena>> {
+    fn parse_let(&mut self) -> TBResult<Statement> {
         self.advance(); // consume 'let'
 
         let mutable = self.match_token(&Token::Mut);
@@ -2877,7 +2514,7 @@ impl<'arena> Parser<'arena> {
             name
         } else {
             return Err(TBError::ParseError {
-                message: STRING_INTERNER.intern("Expected identifier after 'let'"),
+                message: Arc::from("Expected identifier after 'let'".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2892,7 +2529,7 @@ impl<'arena> Parser<'arena> {
 
         if !self.match_token(&Token::Assign) {
             return Err(TBError::ParseError {
-                message: STRING_INTERNER.intern("Expected '=' after variable name"),
+                message: Arc::from("Expected '=' after variable name".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2914,7 +2551,7 @@ impl<'arena> Parser<'arena> {
         })
     }
 
-    fn parse_function(&mut self) -> TBResult<Statement<'arena>> {
+    fn parse_function(&mut self) -> TBResult<Statement> {
         self.advance(); // consume 'fn'
         let name = if let Token::Identifier(n) = self.current() {
             let name = Arc::clone(n);
@@ -2922,7 +2559,7 @@ impl<'arena> Parser<'arena> {
             name
         } else {
             return Err(TBError::ParseError {
-                message: STRING_INTERNER.intern("Expected function name"),
+                message: Arc::from("Expected function name".to_string()),
                 line: 0,
                 column: 0,
             });
@@ -2988,13 +2625,13 @@ impl<'arena> Parser<'arena> {
 
         Ok(Statement::Function {
             name,
-            params: ArenaVec::from_iter_in(params, self.arena),
+            params: Box::new(params),
             return_type,
             body,
         })
     }
 
-    fn parse_expression(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_expression(&mut self) -> TBResult<Expr> {
         self.enter_recursion()?;
         let result = self.parse_pipeline();
 
@@ -3002,18 +2639,18 @@ impl<'arena> Parser<'arena> {
         result
     }
 
-    fn parse_pipeline(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_pipeline(&mut self) -> TBResult<Expr> {
         let mut expr = self.parse_logical_or()?;
 
         if self.match_token(&Token::Pipe) {
-            let mut operations =  ArenaVec::new_in(self.arena);
+            let mut operations = Vec::new();
             while self.match_token(&Token::Pipe) {
                 self.advance();
                 operations.push(self.parse_logical_or()?);
             }
             expr = Expr::Pipeline {
-                value: self.arena.alloc(expr),
-                operations,
+                value: Box::new(expr),
+                operations: Box::new(operations),
             };
         }
 
@@ -3022,16 +2659,16 @@ impl<'arena> Parser<'arena> {
         Ok(expr)
     }
 
-    fn parse_try(&mut self, expr: Expr<'arena>) ->  TBResult<Expr<'arena>> {
+    fn parse_try(&mut self, expr: Expr) -> TBResult<Expr> {
         if self.match_token(&Token::Question) {
             self.advance();
-            Ok(Expr::Try(self.arena.alloc(expr)))
+            Ok(Expr::Try(Box::new(expr)))
         } else {
             Ok(expr)
         }
     }
 
-    fn parse_logical_or(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_logical_or(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_logical_and()?;
 
         while self.match_token(&Token::Or) {
@@ -3039,15 +2676,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_logical_and()?;
             left = Expr::BinOp {
                 op: BinOp::Or,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_logical_and(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_logical_and(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_equality()?;
 
         while self.match_token(&Token::And) {
@@ -3055,15 +2692,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_equality()?;
             left = Expr::BinOp {
                 op: BinOp::And,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_equality(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_equality(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_comparison()?;
 
         while matches!(self.current(), Token::Eq | Token::Ne) {
@@ -3076,15 +2713,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_comparison()?;
             left = Expr::BinOp {
                 op,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_comparison(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_comparison(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_term()?;
 
         while matches!(self.current(), Token::Lt | Token::Le | Token::Gt | Token::Ge) {
@@ -3099,15 +2736,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_term()?;
             left = Expr::BinOp {
                 op,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_term(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_term(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_factor()?;
 
         while matches!(self.current(), Token::Plus | Token::Minus) {
@@ -3120,15 +2757,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_factor()?;
             left = Expr::BinOp {
                 op,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_factor(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_factor(&mut self) -> TBResult<Expr> {
         let mut left = self.parse_unary()?;
 
         while matches!(self.current(), Token::Star | Token::Slash | Token::Percent) {
@@ -3142,15 +2779,15 @@ impl<'arena> Parser<'arena> {
             let right = self.parse_unary()?;
             left = Expr::BinOp {
                 op,
-                left: self.arena.alloc(left),
-                right: self.arena.alloc(right),
+                left: Box::new(left),
+                right: Box::new(right),
             };
         }
 
         Ok(left)
     }
 
-    fn parse_unary(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_unary(&mut self) -> TBResult<Expr> {
         // Check for unary operators FIRST
         match self.current() {
             Token::Not | Token::Minus => {
@@ -3160,7 +2797,7 @@ impl<'arena> Parser<'arena> {
                     _ => unreachable!(),
                 };
                 self.advance();
-                let expr = self.arena.alloc(self.parse_unary()?); // Recursive for chaining
+                let expr = Box::new(self.parse_unary()?); // Recursive for chaining
                 return Ok(Expr::UnaryOp { op, expr });
             }
             _ => {}
@@ -3174,7 +2811,7 @@ impl<'arena> Parser<'arena> {
                 Token::LParen => {
                     // Explicit function call with parentheses
                     self.advance();
-                    let mut args = ArenaVec::new_in(self.arena);
+                    let mut args = Vec::new();
                     while !self.match_token(&Token::RParen) {
                         args.push(self.parse_expression()?);
                         if !self.match_token(&Token::RParen) {
@@ -3190,7 +2827,7 @@ impl<'arena> Parser<'arena> {
                     }
                     self.advance();
                     expr = Expr::Call {
-                        function: self.arena.alloc(expr),
+                        function: Box::new(expr),
                         args,
                     };
                 }
@@ -3203,7 +2840,7 @@ impl<'arena> Parser<'arena> {
 
                         if self.match_token(&Token::LParen) {
                             self.advance();
-                            let mut args = ArenaVec::new_in(self.arena);
+                            let mut args = Vec::new();
                             while !self.match_token(&Token::RParen) {
                                 args.push(self.parse_expression()?);
                                 if !self.match_token(&Token::RParen) {
@@ -3219,13 +2856,13 @@ impl<'arena> Parser<'arena> {
                             }
                             self.advance();
                             expr = Expr::Method {
-                                object: self.arena.alloc(expr),
+                                object: Box::new(expr),
                                 method: field,
                                 args,
                             };
                         } else {
                             expr = Expr::Field {
-                                object: self.arena.alloc(expr),
+                                object: Box::new(expr),
                                 field,
                             };
                         }
@@ -3250,8 +2887,8 @@ impl<'arena> Parser<'arena> {
                     }
                     self.advance();
                     expr = Expr::Index {
-                        object: self.arena.alloc(expr),
-                        index: self.arena.alloc(index),
+                        object: Box::new(expr),
+                        index: Box::new(index),
                     };
                 }
 
@@ -3262,7 +2899,7 @@ impl<'arena> Parser<'arena> {
                         debug_log!("Detected implicit builtin call for: {}",
                         if let Expr::Variable(ref n) = expr { n } else { "unknown" });
 
-                        let mut args =ArenaVec::new_in(self.arena);
+                        let mut args = Vec::new();
 
                         // Collect arguments until statement terminator
                         while self.is_argument_start() && !self.is_statement_end() {
@@ -3286,7 +2923,7 @@ impl<'arena> Parser<'arena> {
                         }
 
                         expr = Expr::Call {
-                            function: self.arena.alloc(expr),
+                            function: Box::new(expr),
                             args,
                         };
                     }
@@ -3342,7 +2979,7 @@ impl<'arena> Parser<'arena> {
 
     /// Parse a single argument in implicit call
     /// Parse a single argument in implicit call (NOW SUPPORTS NESTED CALLS)
-    fn parse_argument(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_argument(&mut self) -> TBResult<Expr> {
         match self.current().clone() {
             Token::String(s) => {
                 self.advance();
@@ -3368,7 +3005,7 @@ impl<'arena> Parser<'arena> {
                 if self.match_token(&Token::LParen) {
                     self.advance(); // consume '('
 
-                    let mut args = ArenaVec::new_in(self.arena);
+                    let mut args = Vec::new();
                     while !self.match_token(&Token::RParen) {
                         args.push(self.parse_expression()?);
                         if !self.match_token(&Token::RParen) {
@@ -3385,7 +3022,7 @@ impl<'arena> Parser<'arena> {
                     self.advance(); // consume ')'
 
                     Ok(Expr::Call {
-                        function: self.arena.alloc(Expr::Variable(name)),
+                        function: Box::new(Expr::Variable(name)),
                         args,
                     })
                 } else {
@@ -3396,7 +3033,7 @@ impl<'arena> Parser<'arena> {
             Token::LBracket => {
                 // Parse list literal as argument
                 self.advance();
-                let mut items = ArenaVec::new_in(self.arena);
+                let mut items = Vec::new();
                 while !self.match_token(&Token::RBracket) {
                     items.push(self.parse_expression()?);
                     if !self.match_token(&Token::RBracket) {
@@ -3421,14 +3058,14 @@ impl<'arena> Parser<'arena> {
         }
     }
 
-    fn parse_postfix(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_postfix(&mut self) -> TBResult<Expr> {
         let mut expr = self.parse_primary()?;
 
         loop {
             match self.current() {
                 Token::LParen => {
                     self.advance();
-                    let mut args =  ArenaVec::new_in(self.arena);
+                    let mut args = Vec::new();
                     while !self.match_token(&Token::RParen) {
                         args.push(self.parse_expression()?);
                         if !self.match_token(&Token::RParen) {
@@ -3444,7 +3081,7 @@ impl<'arena> Parser<'arena> {
                     }
                     self.advance();
                     expr = Expr::Call {
-                        function: self.arena.alloc(expr),
+                        function: Box::new(expr),
                         args,
                     };
                 }
@@ -3457,7 +3094,7 @@ impl<'arena> Parser<'arena> {
                         // Check if it's a method call
                         if self.match_token(&Token::LParen) {
                             self.advance();
-                            let mut args =  ArenaVec::new_in(self.arena);
+                            let mut args = Vec::new();
                             while !self.match_token(&Token::RParen) {
                                 args.push(self.parse_expression()?);
                                 if !self.match_token(&Token::RParen) {
@@ -3473,13 +3110,13 @@ impl<'arena> Parser<'arena> {
                             }
                             self.advance();
                             expr = Expr::Method {
-                                object: self.arena.alloc(expr),
+                                object: Box::new(expr),
                                 method: field,
                                 args,
                             };
                         } else {
                             expr = Expr::Field {
-                                object: self.arena.alloc(expr),
+                                object: Box::new(expr),
                                 field,
                             };
                         }
@@ -3503,8 +3140,8 @@ impl<'arena> Parser<'arena> {
                     }
                     self.advance();
                     expr = Expr::Index {
-                        object: self.arena.alloc(expr),
-                        index: self.arena.alloc(index),
+                        object: Box::new(expr),
+                        index: Box::new(index),
                     };
                 }
                 _ => break,
@@ -3514,7 +3151,7 @@ impl<'arena> Parser<'arena> {
         Ok(expr)
     }
 
-    fn parse_primary(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_primary(&mut self) -> TBResult<Expr> {
         self.enter_recursion()?;
         debug_log!("parse_primary() at position {}, token: {:?}", self.position, self.current());
 
@@ -3571,7 +3208,7 @@ impl<'arena> Parser<'arena> {
             }
             Token::LBracket => {
                 self.advance();
-                let mut items = ArenaVec::new_in(self.arena);
+                let mut items = Vec::new();
                 while !self.match_token(&Token::RBracket) {
                     items.push(self.parse_expression()?);
                     if !self.match_token(&Token::RBracket) {
@@ -3611,7 +3248,7 @@ impl<'arena> Parser<'arena> {
                 if self.match_token(&Token::Semicolon) || self.is_eof() {
                     Ok(Expr::Return(None))
                 } else {
-                    Ok(Expr::Return(Some(self.arena.alloc(self.parse_expression()?))))
+                    Ok(Expr::Return(Some(Box::new(self.parse_expression()?))))
                 }
             }
             Token::Break => {
@@ -3672,10 +3309,10 @@ impl<'arena> Parser<'arena> {
     }
 
     /// Parse dict literal: { key: value, key2: value2 }
-    fn parse_dict_literal(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_dict_literal(&mut self) -> TBResult<Expr> {
         self.advance(); // consume '{'
 
-        let mut pairs =  ArenaVec::new_in(self.arena);
+        let mut pairs = Vec::new();
 
         while !self.match_token(&Token::RBrace) {
             // Parse key (string or identifier)
@@ -3730,12 +3367,12 @@ impl<'arena> Parser<'arena> {
         Ok(Expr::Dict(pairs))
     }
 
-    fn parse_block(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_block(&mut self) -> TBResult<Expr> {
         debug_log!("parse_block() starting at position {}", self.position);
         self.advance(); // consume '{'
 
-        let mut statements = ArenaVec::new_in(self.arena);
-        let mut result_expr: Option<Expr<'arena>> = None;
+        let mut statements = Vec::new();
+        let mut result = None;
         let mut iterations = 0;
         let max_iterations = 1000; // Safety limit
 
@@ -3765,8 +3402,10 @@ impl<'arena> Parser<'arena> {
 
             let position_before = self.position;
 
+            // Check if this is the last expression (no semicolon)
             let stmt_or_expr = self.parse_statement()?;
 
+            // Ensure we made progress
             if self.position == position_before && !self.match_token(&Token::RBrace) {
                 return Err(TBError::ParseError {
                     message: format!(
@@ -3781,7 +3420,7 @@ impl<'arena> Parser<'arena> {
             match stmt_or_expr {
                 Statement::Expr(expr) => {
                     if self.match_token(&Token::RBrace) {
-                        result_expr = Some(expr);
+                        result = Some(Box::new(expr));
                     } else {
                         statements.push(Statement::Expr(expr));
                     }
@@ -3793,21 +3432,18 @@ impl<'arena> Parser<'arena> {
         self.advance(); // consume '}'
         debug_log!("parse_block() completed with {} statements", statements.len());
 
-        Ok(Expr::Block {
-            statements,
-            result: result_expr.map(|e| self.arena.alloc(e) as &_)
-        })
+        Ok(Expr::Block {  statements: Box::new(statements) , result })
     }
 
-    fn parse_if(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_if(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'if'
 
-        let condition = self.arena.alloc(self.parse_expression()?);
-        let then_branch = self.arena.alloc(self.parse_expression()?);
+        let condition = Box::new(self.parse_expression()?);
+        let then_branch = Box::new(self.parse_expression()?);
 
         let else_branch = if self.match_token(&Token::Else) {
             self.advance();
-            Some(self.parse_expression()?)
+            Some(Box::new(self.parse_expression()?))
         } else {
             None
         };
@@ -3815,161 +3451,104 @@ impl<'arena> Parser<'arena> {
         Ok(Expr::If {
             condition,
             then_branch,
-            else_branch: else_branch.map(|e| self.arena.alloc(e) as &_)
+            else_branch,
         })
     }
 
-    fn parse_match(&mut self) -> TBResult<Expr<'arena>> {
+    fn parse_match(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'match'
 
-        let scrutinee = self.arena.alloc(self.parse_expression()?);
+        let scrutinee = Box::new(self.parse_expression()?);
 
         if !self.match_token(&Token::LBrace) {
             return Err(TBError::ParseError {
-                message: STRING_INTERNER.intern("Expected '{' after match scrutinee"),
+                message: Arc::from("Expected '{' after match scrutinee".to_string()),
                 line: 0,
                 column: 0,
             });
         }
         self.advance();
 
-        let mut arms = ArenaVec::new_in(self.arena);
+        let mut arms = Vec::new();
+        while !self.match_token(&Token::RBrace) {
+            let pattern = self.parse_pattern()?;
 
-        // FIX: Parse arms in separate method to avoid borrow conflicts
-        self.parse_match_arms(&mut arms)?;
-
-        Ok(Expr::Match { scrutinee, arms })
-    }
-
-    // Helper method - separate lifetime scope
-    // FIX: Explizite Lifetime-Trennung
-    fn parse_match_arms(&mut self, arms: &mut ArenaVec<'arena, MatchArm<'arena>>) -> TBResult<()> {
-        loop {
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 1: Boundary Check
-            // ═══════════════════════════════════════════════════════════════
-            if self.position >= self.tokens.len() {
+            if !self.match_token(&Token::FatArrow) {
                 return Err(TBError::ParseError {
-                    message: STRING_INTERNER.intern("Unexpected EOF in match"),
+                    message: Arc::from("Expected '=>' after pattern".to_string()),
                     line: 0,
                     column: 0,
                 });
             }
+            self.advance();
 
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 2: Clone current token (ends borrow of self.tokens)
-            // ═══════════════════════════════════════════════════════════════
-            let current_token = self.tokens[self.position].clone();
-
-            // Check for end
-            if matches!(current_token, Token::RBrace) {
-                self.position += 1;
-                break;
-            }
-
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 3: Parse pattern inline (avoid method call)
-            // ═══════════════════════════════════════════════════════════════
-            let pattern = match current_token {
-                Token::Identifier(ref name) if name.as_str() == "_" => {
-                    self.position += 1; // Manual advance
-                    Pattern::Wildcard
-                }
-                Token::Identifier(ref name) => {
-                    let name = Arc::clone(name);
-                    self.position += 1; // Manual advance
-                    Pattern::Variable(name)
-                }
-                Token::Int(n) => {
-                    self.position += 1; // Manual advance
-                    Pattern::Literal(Literal::Int(n))
-                }
-                Token::Bool(b) => {
-                    self.position += 1; // Manual advance
-                    Pattern::Literal(Literal::Bool(b))
-                }
-                _ => {
-                    return Err(TBError::ParseError {
-                        message: Arc::from("Invalid pattern".to_string()),
-                        line: 0,
-                        column: 0,
-                    });
-                }
-            };
-
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 4: Check arrow (fresh borrow, pattern is independent)
-            // ═══════════════════════════════════════════════════════════════
-            if self.position >= self.tokens.len() {
-                return Err(TBError::ParseError {
-                    message: STRING_INTERNER.intern("Expected '=>' after pattern"),
-                    line: 0,
-                    column: 0,
-                });
-            }
-
-            if !matches!(&self.tokens[self.position], Token::FatArrow) {
-                return Err(TBError::ParseError {
-                    message: STRING_INTERNER.intern("Expected '=>' after pattern"),
-                    line: 0,
-                    column: 0,
-                });
-            }
-            self.position += 1;
-
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 5: Parse body
-            // ═══════════════════════════════════════════════════════════════
             let body = self.parse_expression()?;
 
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 6: Store arm
-            // ═══════════════════════════════════════════════════════════════
             arms.push(MatchArm {
                 pattern,
                 guard: None,
                 body,
             });
 
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 7: Check continuation
-            // ═══════════════════════════════════════════════════════════════
-            if self.position >= self.tokens.len() {
-                break;
+            if !self.match_token(&Token::RBrace) {
+                if !self.match_token(&Token::Comma) {
+                    return Err(TBError::ParseError {
+                        message: Arc::from("Expected ',' or '}' after match arm".to_string()),
+                        line: 0,
+                        column: 0,
+                    });
+                }
+                self.advance();
             }
-
-            if matches!(&self.tokens[self.position], Token::RBrace) {
-                self.position += 1;
-                break;
-            }
-
-            if !matches!(&self.tokens[self.position], Token::Comma) {
-                return Err(TBError::ParseError {
-                    message: STRING_INTERNER.intern("Expected ',' or '}' after match arm"),
-                    line: 0,
-                    column: 0,
-                });
-            }
-            self.position += 1;
         }
+        self.advance(); // consume '}'
 
-        Ok(())
+        Ok(Expr::Match { scrutinee, arms: Box::new(arms) })
     }
 
-    fn parse_loop(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_pattern(&mut self) -> TBResult<Pattern> {
+        match self.current() {
+            Token::Identifier(name) if name.as_str() == "_" => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            Token::Identifier(name) => {
+                let name = Arc::clone(name);
+                self.advance();
+                Ok(Pattern::Variable(name))
+            }
+            Token::Int(n) => {
+                let n = *n;
+                self.advance();
+                Ok(Pattern::Literal(Literal::Int(n)))
+            }
+            Token::Bool(b) => {
+                let b = *b;
+                self.advance();
+                Ok(Pattern::Literal(Literal::Bool(b)))
+            }
+            _ => Err(TBError::ParseError {
+                message: Arc::from("Invalid pattern".to_string()),
+                line: 0,
+                column: 0,
+            }),
+        }
+    }
+
+    fn parse_loop(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'loop'
-        let body = self.arena.alloc(self.parse_expression()?);
+        let body = Box::new(self.parse_expression()?);
         Ok(Expr::Loop { body })
     }
 
-    fn parse_while(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_while(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'while'
-        let condition = self.arena.alloc(self.parse_expression()?);
-        let body = self.arena.alloc(self.parse_expression()?);
+        let condition = Box::new(self.parse_expression()?);
+        let body = Box::new(self.parse_expression()?);
         Ok(Expr::While { condition, body })
     }
 
-    fn parse_for(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_for(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'for'
 
         let variable = if let Token::Identifier(name) = self.current() {
@@ -3993,8 +3572,8 @@ impl<'arena> Parser<'arena> {
         }
         self.advance();
 
-        let iterable = self.arena.alloc(self.parse_expression()?);
-        let body = self.arena.alloc(self.parse_expression()?);
+        let iterable = Box::new(self.parse_expression()?);
+        let body = Box::new(self.parse_expression()?);
 
         Ok(Expr::For {
             variable,
@@ -4003,7 +3582,7 @@ impl<'arena> Parser<'arena> {
         })
     }
 
-    fn parse_parallel(&mut self) ->  TBResult<Expr<'arena>> {
+    fn parse_parallel(&mut self) -> TBResult<Expr> {
         self.advance(); // consume 'parallel'
 
         if !self.match_token(&Token::LBrace) {
@@ -4015,7 +3594,7 @@ impl<'arena> Parser<'arena> {
         }
         self.advance();
 
-        let mut tasks = ArenaVec::new_in(self.arena);
+        let mut tasks = Vec::new();
 
         // Support both comma and newline as separators
         while !self.match_token(&Token::RBrace) {
@@ -4041,23 +3620,236 @@ impl<'arena> Parser<'arena> {
 
         self.advance(); // consume '}'
 
-        Ok(Expr::Parallel(tasks))
+        Ok(Expr::Parallel(Box::new(tasks)))
     }
 
     fn parse_type(&mut self) -> TBResult<Type> {
+        debug_log!("parse_type() at position {}, token: {:?}", self.position, self.current());
+
         match self.current() {
             Token::Identifier(name) => {
                 let name = Arc::clone(name);
                 self.advance();
+
                 match name.as_str() {
+                    // ═══════════════════════════════════════════════════════════
+                    // PRIMITIVE TYPES
+                    // ═══════════════════════════════════════════════════════════
                     "int" => Ok(Type::Int),
                     "float" => Ok(Type::Float),
                     "bool" => Ok(Type::Bool),
                     "string" => Ok(Type::String),
-                    _ => Ok(Type::Dynamic),
+                    "unit" => Ok(Type::Unit),
+
+                    // ═══════════════════════════════════════════════════════════
+                    // GENERIC TYPES: list<T>
+                    // ═══════════════════════════════════════════════════════════
+                    "list" => {
+                        if self.match_token(&Token::Lt) {
+                            debug_log!("  Parsing generic list type");
+                            self.advance(); // consume '<'
+
+                            let inner = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Gt) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected '>' after list type parameter".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume '>'
+
+                            debug_log!("  ✓ Parsed list<{:?}>", inner);
+                            Ok(Type::List(inner))
+                        } else {
+                            // list without type parameter → list<dynamic>
+                            debug_log!("  List without type parameter, using Dynamic");
+                            Ok(Type::List(Box::new(Type::Dynamic)))
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════
+                    // GENERIC TYPES: dict<K, V>
+                    // ═══════════════════════════════════════════════════════════
+                    "dict" => {
+                        if self.match_token(&Token::Lt) {
+                            debug_log!("  Parsing generic dict type");
+                            self.advance(); // consume '<'
+
+                            let key = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Comma) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected ',' between dict type parameters".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume ','
+
+                            let value = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Gt) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected '>' after dict type parameters".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume '>'
+
+                            debug_log!("  ✓ Parsed dict<{:?}, {:?}>", key, value);
+                            Ok(Type::Dict { key, value })
+                        } else {
+                            Ok(Type::Dict {
+                                key: Box::new(Type::String),
+                                value: Box::new(Type::Dynamic),
+                            })
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════
+                    // GENERIC TYPES: option<T>
+                    // ═══════════════════════════════════════════════════════════
+                    "option" => {
+                        if self.match_token(&Token::Lt) {
+                            debug_log!("  Parsing generic option type");
+                            self.advance(); // consume '<'
+
+                            let inner = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Gt) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected '>' after option type parameter".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume '>'
+
+                            debug_log!("  ✓ Parsed option<{:?}>", inner);
+                            Ok(Type::Option(inner))
+                        } else {
+                            Ok(Type::Option(Box::new(Type::Dynamic)))
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════
+                    // GENERIC TYPES: result<T, E>
+                    // ═══════════════════════════════════════════════════════════
+                    "result" => {
+                        if self.match_token(&Token::Lt) {
+                            debug_log!("  Parsing generic result type");
+                            self.advance(); // consume '<'
+
+                            let ok = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Comma) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected ',' between result type parameters".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume ','
+
+                            let err = Box::new(self.parse_type()?);
+
+                            if !self.match_token(&Token::Gt) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected '>' after result type parameters".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume '>'
+
+                            debug_log!("  ✓ Parsed result<{:?}, {:?}>", ok, err);
+                            Ok(Type::Result { ok, err })
+                        } else {
+                            Ok(Type::Result {
+                                ok: Box::new(Type::Dynamic),
+                                err: Box::new(Type::Dynamic),
+                            })
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════
+                    // TUPLE TYPES: (T1, T2, ...)
+                    // ═══════════════════════════════════════════════════════════
+                    "tuple" => {
+                        if self.match_token(&Token::Lt) {
+                            debug_log!("  Parsing generic tuple type");
+                            self.advance(); // consume '<'
+
+                            let mut types = vec![self.parse_type()?];
+
+                            while self.match_token(&Token::Comma) {
+                                self.advance();
+                                types.push(self.parse_type()?);
+                            }
+
+                            if !self.match_token(&Token::Gt) {
+                                return Err(TBError::ParseError {
+                                    message: Arc::from("Expected '>' after tuple type parameters".to_string()),
+                                    line: 0,
+                                    column: 0,
+                                });
+                            }
+                            self.advance(); // consume '>'
+
+                            debug_log!("  ✓ Parsed tuple with {} elements", types.len());
+                            Ok(Type::Tuple(types))
+                        } else {
+                            Ok(Type::Tuple(vec![]))
+                        }
+                    }
+
+                    // ═══════════════════════════════════════════════════════════
+                    // UNKNOWN TYPE → Dynamic
+                    // ═══════════════════════════════════════════════════════════
+                    _ => {
+                        debug_log!("  Unknown type '{}', using Dynamic", name);
+                        Ok(Type::Dynamic)
+                    }
                 }
             }
-            _ => Ok(Type::Dynamic),
+
+            // ═══════════════════════════════════════════════════════════
+            // PARENTHESIZED TUPLE TYPES: (int, string)
+            // ═══════════════════════════════════════════════════════════
+            Token::LParen => {
+                debug_log!("  Parsing tuple type with parentheses");
+                self.advance(); // consume '('
+
+                let mut types = vec![self.parse_type()?];
+
+                while self.match_token(&Token::Comma) {
+                    self.advance();
+                    types.push(self.parse_type()?);
+                }
+
+                if !self.match_token(&Token::RParen) {
+                    return Err(TBError::ParseError {
+                        message: Arc::from("Expected ')' after tuple types".to_string()),
+                        line: 0,
+                        column: 0,
+                    });
+                }
+                self.advance(); // consume ')'
+
+                debug_log!("  ✓ Parsed tuple with {} elements", types.len());
+                Ok(Type::Tuple(types))
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            // FALLBACK: Dynamic
+            // ═══════════════════════════════════════════════════════════
+            _ => {
+                debug_log!("  No type annotation, using Dynamic");
+                Ok(Type::Dynamic)
+            }
         }
     }
 
@@ -4124,9 +3916,6 @@ impl<'arena> Parser<'arena> {
     }
 }
 
-
-
-
 // ═══════════════════════════════════════════════════════════════════════════
 // §8 TYPE CHECKER
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4171,16 +3960,28 @@ impl TypeChecker {
                 let value_type = self.infer_type(value)?;
 
                 if let Some(expected) = type_annotation {
-                    if &value_type != expected {
+                    // ✅ NEW: Wenn User explizit annotiert hat, vertraue ihm!
+                    // Er übernimmt Verantwortung für Type Safety zur Laufzeit
+                    // (z.B. python() gibt String zurück, aber User parst zu Int)
+
+                    // Nur warnen bei offensichtlichem Konflikt (nicht Dynamic)
+                    if value_type != Type::Dynamic && &value_type != expected {
+                        // Nur Fehler wenn BEIDE Typen bekannt sind UND unterschiedlich
+                        // Erlaube Dynamic → konkret (User weiß was er tut)
                         return Err(TBError::TypeError {
                             expected: expected.clone(),
                             found: value_type,
                             context: format!("let binding '{}'", name).into(),
                         });
                     }
+
+                    // ✅ Use explicit annotation (User knows best)
+                    self.env.variables.insert(name.clone(), expected.clone());
+                } else {
+                    // No annotation, use inferred type
+                    self.env.variables.insert(name.clone(), value_type);
                 }
 
-                self.env.variables.insert(name.clone(), value_type);
                 Ok(())
             }
 
@@ -4225,7 +4026,7 @@ impl TypeChecker {
                 "debug" | "len" | "str" | "int" | "float" | "type_of"
             ) {
                     return Ok(Type::Function {
-                        params:vec![],
+                        params: vec![Type::Dynamic],
                         ret: Box::new(Type::Dynamic),
                     });
                 }
@@ -4275,6 +4076,7 @@ impl TypeChecker {
 
                 if let Some(else_branch) = else_branch {
                     let else_type = self.infer_type(else_branch)?;
+                    // TODO: Unify types
                     Ok(then_type)
                 } else {
                     Ok(Type::Option(Box::new(then_type)))
@@ -4333,80 +4135,81 @@ impl Optimizer {
         Self { config }
     }
 
-    pub fn optimize<'arena>(&self, expr: Expr<'arena>) -> TBResult<Expr<'arena>> {
+    pub fn optimize(&self, expr: Expr) -> TBResult<Expr> {
         let mut expr = expr;
+
         if self.config.const_fold {
             expr = self.constant_folding(expr)?;
         }
+
         Ok(expr)
     }
 
-    fn constant_folding<'arena>(&self, expr: Expr<'arena>) -> TBResult<Expr<'arena>> {
+    fn constant_folding(&self, expr: Expr) -> TBResult<Expr> {
         match expr {
             Expr::BinOp { op, left, right } => {
-                // Clone statt alloc
-                let left_opt = self.constant_folding((*left).clone())?;
-                let right_opt = self.constant_folding((*right).clone())?;
+                let left = self.constant_folding(*left)?;
+                let right = self.constant_folding(*right)?;
 
-                if let (Expr::Literal(l), Expr::Literal(r)) = (&left_opt, &right_opt) {
-                    if let Some(result) = self.eval_const_binop(op, &l, &r) {
+                if let (Expr::Literal(l), Expr::Literal(r)) = (&left, &right) {
+                    if let Some(result) = self.eval_const_binop(op, l, r) {
                         return Ok(Expr::Literal(result));
                     }
                 }
 
-                // Neues BinOp OHNE Arena-Alloc
                 Ok(Expr::BinOp {
                     op,
-                    left: Box::leak(Box::new(left_opt)),
-                    right: Box::leak(Box::new(right_opt)),
+                    left: Box::new(left),
+                    right: Box::new(right),
                 })
             }
 
-            Expr::UnaryOp { op, expr: inner } => {
-                let expr_opt = self.constant_folding((*inner).clone())?;
+            Expr::UnaryOp { op, expr } => {
+                let expr = self.constant_folding(*expr)?;
 
-                if let Expr::Literal(lit) = &expr_opt {
-                    if let Some(result) = self.eval_const_unaryop(op, &lit) {
+                if let Expr::Literal(lit) = &expr {
+                    if let Some(result) = self.eval_const_unaryop(op, lit) {
                         return Ok(Expr::Literal(result));
                     }
                 }
 
                 Ok(Expr::UnaryOp {
                     op,
-                    expr: Box::leak(Box::new(expr_opt)),
+                    expr: Box::new(expr),
                 })
             }
 
             Expr::If { condition, then_branch, else_branch } => {
-                let condition_opt = self.constant_folding((*condition).clone())?;
+                let condition = self.constant_folding(*condition)?;
 
-                if let Expr::Literal(Literal::Bool(b)) = condition_opt {
+                if let Expr::Literal(Literal::Bool(b)) = condition {
                     return if b {
-                        self.constant_folding((*then_branch).clone())
-                    } else if let Some(else_b) = else_branch {
-                        self.constant_folding((*else_b).clone())
+                        self.constant_folding(*then_branch)
+                    } else if let Some(else_branch) = else_branch {
+                        self.constant_folding(*else_branch)
                     } else {
                         Ok(Expr::Literal(Literal::Unit))
                     };
                 }
 
-                let then_opt = self.constant_folding((*then_branch).clone())?;
-                let else_opt = else_branch
-                    .map(|e| self.constant_folding((*e).clone()))
-                    .transpose()?;
-
                 Ok(Expr::If {
-                    condition: Box::leak(Box::new(condition_opt)),
-                    then_branch: Box::leak(Box::new(then_opt)),
-                    else_branch: else_opt.map(|e| Box::leak(Box::new(e)) as &_),
+                    condition: Box::new(condition),
+                    then_branch: Box::new(self.constant_folding(*then_branch)?),
+                    else_branch: else_branch.map(|e| self.constant_folding(*e)).transpose()?.map(Box::new),
                 })
             }
 
-            // Für andere Expr-Typen: einfach zurückgeben
+            Expr::Block { statements, result } => {
+                // TODO: Optimize statements
+                Ok(Expr::Block {
+                    statements,
+                    result: result.map(|e| self.constant_folding(*e)).transpose()?.map(Box::new),
+                })
+            }
+
             _ => Ok(expr),
         }
     }
-
 
     fn eval_const_binop(&self, op: BinOp, left: &Literal, right: &Literal) -> Option<Literal> {
         match (op, left, right) {
@@ -4449,49 +4252,13 @@ impl Optimizer {
 // §10 CODE GENERATOR
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn parse_string_interpolation_standalone(s: &str) -> (String, Vec<Expr<'static>>) {
-    let mut result = String::new();
-    let mut variables = Vec::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '$' {
-            if let Some(&next_ch) = chars.peek() {
-                if next_ch.is_alphabetic() || next_ch == '_' {
-                    let mut var_name = String::new();
-                    while let Some(&ch) = chars.peek() {
-                        if ch.is_alphanumeric() || ch == '_' {
-                            var_name.push(ch);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    result.push_str("{}");
-                    variables.push(Expr::Variable(Arc::new(var_name)));
-                    continue;
-                }
-            }
-            result.push('$');
-        } else if ch == '{' || ch == '}' {
-            result.push(ch);
-            result.push(ch);
-        } else {
-            result.push(ch);
-        }
-    }
-
-    (result, variables)
-}
-
 pub struct CodeGenerator {
     target_language: Language,
     buffer: String,
     indent: usize,
     variables_in_scope: Vec<(Arc<String>, Type)>,
-    compiled_deps: Vec<CompiledDependency>,
+    compiled_deps: HashMap<Arc<String>, PathBuf>,
     mutable_vars: std::collections::HashSet<Arc<String>>,
-    builtin_registry: Option<BuiltinRegistry>,
 }
 
 impl CodeGenerator {
@@ -4501,142 +4268,19 @@ impl CodeGenerator {
             buffer: String::new(),
             indent: 0,
             variables_in_scope: Vec::new(),
-            compiled_deps: Vec::new(),
+            compiled_deps: HashMap::new(),
             mutable_vars: std::collections::HashSet::new(),
-            builtin_registry: None,
         }
-    }
-    pub fn set_builtin_registry(&mut self, registry: BuiltinRegistry) {
-        self.builtin_registry = Some(registry);
     }
 
     /// Set compiled dependencies (called by Compiler)
     pub fn set_compiled_dependencies(&mut self, deps: &[CompiledDependency]) {
-        self.compiled_deps = deps.to_vec();
-    }
-
-    /// Generate builtin helper functions (echo, print, etc.)
-    fn generate_builtin_functions(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════");
-        self.emit_line("// Builtin Functions");
-        self.emit_line("// ═══════════════════════════════════════════════════");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // echo - Print with newline (Generic für alle Display-Typen)
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn echo<T: std::fmt::Display>(s: T) {");
-        self.indent += 1;
-        self.emit_line("println!(\"{}\", s);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // print - Print without newline (Generic für alle Display-Typen)
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn print<T: std::fmt::Display>(s: T) {");
-        self.indent += 1;
-        self.emit_line("print!(\"{}\", s);");
-        self.emit_line("use std::io::Write;");
-        self.emit_line("std::io::stdout().flush().ok();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // println - Alias for echo (Generic für alle Display-Typen)
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn println<T: std::fmt::Display>(s: T) {");
-        self.indent += 1;
-        self.emit_line("echo(s);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.generate_builtin_wrappers();
-    }
-
-    /// Generate wrappers for all registered builtin functions
-    fn generate_builtin_wrappers(&mut self) {
-
-        self.emit_line("// ═══════════════════════════════════════════════════");
-        self.emit_line("// Auto-Generated Builtin Function Wrappers");
-        self.emit_line("// ═══════════════════════════════════════════════════");
-        self.emit_line("");
-
-        let binding = self.builtin_registry.clone().unwrap();
-        let function_names = binding.list();
-        // Filtere bereits manuell definierte Funktionen
-        let skip_functions = ["echo", "print", "println"];
-
-        for func_name in function_names {
-            if skip_functions.contains(&func_name) {
-                continue; // Überspringen, bereits manuell definiert
-            }
-
-            if let Some(builtin) = self.builtin_registry.clone().unwrap().get(func_name) {
-                self.generate_builtin_wrapper(&builtin);
-            }
+        for dep in deps {
+            self.compiled_deps.insert(dep.id.clone(), dep.output_path.clone());
         }
-
-        self.emit_line("");
     }
 
-    /// Generate a single builtin function wrapper
-    fn generate_builtin_wrapper(&mut self, builtin: &Arc<BuiltinFunction>) {
-        let name = builtin.name.as_str();
-        let min_args = builtin.min_args;
-        let max_args = builtin.max_args;
-
-        self.emit_line(&format!("/// {}", builtin.description));
-        self.emit_line("#[allow(dead_code)]");
-
-        // Generiere Funktionssignatur basierend auf Argumentanzahl
-        if min_args == 0 && max_args == Some(0) {
-            // Keine Argumente
-            self.emit_line(&format!("fn {}() -> String {{", name));
-            self.indent += 1;
-            self.emit_line(&format!("// TODO: Implement {} via runtime", name));
-            self.emit_line("String::from(\"Not implemented in compiled mode\")");
-            self.indent -= 1;
-            self.emit_line("}");
-        } else if min_args == max_args.unwrap_or(min_args) {
-            // Feste Argumentanzahl
-            let args: Vec<String> = (0..min_args)
-                .map(|i| format!("arg{}: &str", i))
-                .collect();
-
-            self.emit_line(&format!("fn {}({}) -> String {{", name, args.join(", ")));
-            self.indent += 1;
-            self.emit_line(&format!("// TODO: Implement {} via runtime", name));
-            self.emit_line("String::from(\"Not implemented in compiled mode\")");
-            self.indent -= 1;
-            self.emit_line("}");
-        } else {
-            // Variable Argumentanzahl - verwende Macro
-            self.emit_line(&format!("macro_rules! {} {{", name));
-            self.indent += 1;
-            self.emit_line("($($arg:expr),*) => {{");
-            self.indent += 1;
-            self.emit_line(&format!("// TODO: Implement {} via runtime", name));
-            self.emit_line("String::from(\"Not implemented in compiled mode\")");
-            self.indent -= 1;
-            self.emit_line("}};");
-            self.indent -= 1;
-            self.emit_line("}");
-        }
-
-        self.emit_line("");
-    }
-
-    /// NEW: Set mutable variables info
+    ///  NEW: Set mutable variables info
     pub fn set_mutable_vars(&mut self, vars: &std::collections::HashSet<Arc<String>>) {
         self.mutable_vars = vars.clone();
         debug_log!("CodeGenerator: mutable_vars = {:?}", self.mutable_vars);
@@ -4655,7 +4299,7 @@ impl CodeGenerator {
         self.emit_line("// Auto-generated by TB Compiler");
         self.emit_line("// Optimized for native execution");
         self.emit_line("");
-        self.emit_line("#[allow(unused)]");
+        self.emit_line("#![allow(unused)]");
         self.emit_line("");
 
         // Core imports
@@ -4663,24 +4307,25 @@ impl CodeGenerator {
         self.emit_line("use std::io::Write;");
         self.emit_line("");
 
-        // NEW: Pre-analyze variable mutability
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 1: Analyze what helpers we need
+        // ═══════════════════════════════════════════════════════════════
         let mut mutable_vars = std::collections::HashSet::new();
         for stmt in statements {
             if let Statement::Let { name, .. } = stmt {
-                // Check if this variable is assigned later
                 if self.is_variable_assigned(name, statements) {
                     mutable_vars.insert(name.clone());
                     debug_log!("Variable '{}' detected as mutable", name);
                 }
             }
         }
-
-        // Store for use in generate_rust_statement
         self.mutable_vars = mutable_vars;
 
-        // Check if we need language bridges
         let needs_bridges = self.statements_use_language_bridges(statements);
 
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 2: Generate Language Bridge Helpers (if needed)
+        // ═══════════════════════════════════════════════════════════════
         if needs_bridges {
             self.emit_line("// ═══════════════════════════════════════════════════");
             self.emit_line("// Language Bridge Helper Functions");
@@ -4690,25 +4335,32 @@ impl CodeGenerator {
             self.emit_line("");
         }
 
-        // Add fmt_display
-        self.emit_line("");
-        self.emit_line("/// Format any value for display in println!");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn fmt_display<T: std::fmt::Debug>(val: &T) -> String {");
-        self.indent += 1;
-        self.emit_line("format!(\"{:?}\", val)");
-        self.indent -= 1;
-        self.emit_line("}");
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 3: Generate Type Parser Helpers (always needed)
+        // ═══════════════════════════════════════════════════════════════
+        // Note: These are separate from builtin helpers!
+        // They are used internally by the generated code for parsing
+        self.generate_type_parser_helpers();
         self.emit_line("");
 
-        // Generate functions
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 4: Generate Builtin Function Helpers (ONLY ONCE!)
+        // ═══════════════════════════════════════════════════════════════
+        self.generate_builtin_helpers();
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 5: Generate user-defined functions
+        // ═══════════════════════════════════════════════════════════════
         for stmt in statements {
             if let Statement::Function { .. } = stmt {
                 self.generate_rust_statement(stmt)?;
             }
         }
 
-        // Main function
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 6: Generate main function
+        // ═══════════════════════════════════════════════════════════════
         self.emit_line("fn main() {");
         self.indent += 1;
 
@@ -4782,7 +4434,7 @@ impl CodeGenerator {
     fn expr_uses_bridges(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Call { function, args } => {
-                if let Expr::Variable(name) = function {
+                if let Expr::Variable(name) = function.as_ref() {
                     if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
                         return true;
                     }
@@ -4803,1477 +4455,1133 @@ impl CodeGenerator {
     /// Generate language bridge helper functions
     /// Generate language bridge helper functions with JSON support
     /// Generate language bridge helper functions with JSON support
-    /// Generate high-performance language bridge helper functions
     fn generate_language_bridge_helpers(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("// HIGH-PERFORMANCE LANGUAGE BRIDGES");
-        self.emit_line("// Zero-copy variable injection, optimized execution paths");
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
+        self.emit_line("// Note: For complex types, ensure serde_json is available");
+        self.emit_line("// or results will be returned as strings");
         self.emit_line("");
 
         // ═══════════════════════════════════════════════════════════════
-        // PYTHON BRIDGE - Full Implementation with Variable Injection
+        // Python executor WITH variable detection
         // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn python(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("use std::process::{Command, Stdio};");
-        self.emit_line("use std::io::Write;");
-        self.emit_line("");
-
-        self.emit_line("// Detect Python executable (venv-aware)");
-        self.emit_line("let python_exe = detect_python_exe();");
-        self.emit_line("");
-
-        self.emit_line("// Auto-wrap for return values");
         self.emit_line("let wrapped = wrap_python_auto_return(code);");
-        self.emit_line("");
-
-        self.emit_line("// Execute with UTF-8 encoding");
-        self.emit_line("let mut child = Command::new(&python_exe)");
+        self.emit_line("let output = Command::new(\"python\")");
         self.indent += 1;
-        self.emit_line(".arg(\"-c\")");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".env(\"PYTHONIOENCODING\", \"utf-8\")");
-        self.emit_line(".stdin(Stdio::null())");
-        self.emit_line(".stdout(Stdio::piped())");
-        self.emit_line(".stderr(Stdio::piped())");
-        self.emit_line(".spawn()");
-        self.emit_line(".expect(\"Failed to spawn Python process\");");
+        self.emit_line(".arg(\"-c\").arg(&wrapped).output().expect(\"Failed to execute Python\");");
         self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("// Wait with timeout");
-        self.emit_line("let output = child.wait_with_output()");
-        self.indent += 1;
-        self.emit_line(".expect(\"Failed to wait for Python\");");
-        self.indent -= 1;
-        self.emit_line("");
-
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
-
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
-        self.emit_line("eprintln!(\"[Python Error] {}\", stderr);");
+        self.emit_line("eprintln!(\"Python error: {}\", stderr);");
+        self.emit_line("return String::new();");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("");
+        //self.emit_line("print!(\"{}\", stdout);");
+        self.emit_line("// ✅ NEW: Split output into display (stdout) and return value (last line)");
+        self.emit_line("let lines: Vec<&str> = stdout.lines().collect();");
+        self.emit_line("if lines.is_empty() {");
+        self.indent += 1;
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
+        self.emit_line("// Print all lines EXCEPT last (visible output)");
+        self.emit_line("for line in &lines[..lines.len().saturating_sub(1)] {");
+        self.indent += 1;
+        self.emit_line("println!(\"{}\", line);");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Return ONLY last line (for variable assignment)");
+        self.emit_line("lines.last().unwrap_or(&\"\").trim().to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
 
-        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
-        self.emit_line("print!(\"{}\", stdout);");
-        self.emit_line("stdout.trim().to_string()");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn wrap_python_auto_return(code: &str) -> String {");
+        self.indent += 1;
+        self.emit_line("let trimmed = code.trim();");
+        self.emit_line("let lines: Vec<&str> = trimmed.lines().collect();");
+        self.emit_line("if lines.is_empty() { return code.to_string(); }");
+        self.emit_line("let last_line = lines.last().unwrap().trim();");
+        self.emit_line("");
+        self.emit_line("// Skip wrapping if:");
+        self.emit_line("// - Empty line");
+        self.emit_line("// - Comment");
+        self.emit_line("// - Already has print() → IT PRINTS, no return needed!");
+        self.emit_line("// - Assignment");
+        self.emit_line("// - Block start");
+        self.emit_line("if last_line.is_empty()");
+        self.indent += 1;
+        self.emit_line("|| last_line.starts_with('#')");
+        self.emit_line("|| last_line.starts_with(\"print(\")");
+        self.emit_line("|| (last_line.contains(\" = \") && !last_line.contains(\"==\"))");
+        self.emit_line("|| last_line.ends_with(':')");
+        self.indent -= 1;
+        self.emit_line("{");
+        self.indent += 1;
+        self.emit_line("return code.to_string();");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Extract defined variables");
+        self.emit_line("let defined_vars = extract_python_variables(&lines);");
+        self.emit_line("let is_variable = defined_vars.contains(&last_line.to_string());");
+        self.emit_line("let is_bare_string = !is_variable && is_bare_string_literal(last_line);");
+        self.emit_line("");
+        self.emit_line("let mut wrapped = lines.iter().take(lines.len() - 1).map(|&s| s).collect::<Vec<&str>>().join(\"\\n\");");
+        self.emit_line("if !wrapped.is_empty() { wrapped.push('\\n'); }");
+        self.emit_line("");
+        self.emit_line("if is_bare_string {");
+        self.indent += 1;
+        self.emit_line("wrapped.push_str(&format!(\"__tb_result = (\\\"{}\\\")\\nprint(__tb_result, end='')\", last_line));");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("wrapped.push_str(&format!(\"__tb_result = ({})\\nprint(__tb_result, end='')\", last_line));");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("wrapped");
+        self.indent -= 1;
+        self.emit_line("}");
+
+        // --- Helper: Extract Python variables ---
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn extract_python_variables(lines: &[&str]) -> Vec<String> {");
+        self.indent += 1;
+        self.emit_line("let mut vars = Vec::new();");
+        self.emit_line("for line in lines {");
+        self.indent += 1;
+        self.emit_line("let trimmed = line.trim();");
+        self.emit_line("if trimmed.is_empty() || trimmed.starts_with('#') { continue; }");
+        self.emit_line("if let Some(eq_pos) = trimmed.find('=') {");
+        self.indent += 1;
+        self.emit_line("let before = &trimmed[..eq_pos];");
+        self.emit_line("if before.ends_with('!') || before.ends_with('<') || before.ends_with('>') || before.ends_with('=') { continue; }");
+        self.emit_line("let var_part = before.trim();");
+        self.emit_line("if var_part.contains(',') {");
+        self.indent += 1;
+        self.emit_line("for var in var_part.split(',') {");
+        self.indent += 1;
+        self.emit_line("let clean_var = var.trim().to_string();");
+        self.emit_line("if !clean_var.is_empty() && is_valid_python_identifier(&clean_var) { vars.push(clean_var); }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("let clean_var = var_part.to_string();");
+        self.emit_line("if is_valid_python_identifier(&clean_var) { vars.push(clean_var); }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("vars");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // Python helper functions
-        self.generate_python_helpers();
+        // --- Helper: Validate Python identifier ---
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn is_valid_python_identifier(s: &str) -> bool {");
+        self.indent += 1;
+        self.emit_line("if s.is_empty() { return false; }");
+        self.emit_line("let first = s.chars().next().unwrap();");
+        self.emit_line("if !first.is_alphabetic() && first != '_' { return false; }");
+        self.emit_line("s.chars().all(|c| c.is_alphanumeric() || c == '_')");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // --- Helper: Check if bare string literal ---
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn is_bare_string_literal(s: &str) -> bool {");
+        self.indent += 1;
+        self.emit_line("let trimmed = s.trim();");
+        self.emit_line("if (trimmed.starts_with('\"') && trimmed.ends_with('\"')) || (trimmed.starts_with('\\'') && trimmed.ends_with('\\'')) { return false; }");
+        self.emit_line("if trimmed.contains('+') || trimmed.contains('-') || trimmed.contains('*') || trimmed.contains('/') || trimmed.contains('(') || trimmed.contains('[') || trimmed.contains('.') || trimmed.chars().any(|c| c.is_numeric()) { return false; }");
+        self.emit_line("if matches!(trimmed, \"True\" | \"False\" | \"None\" | \"and\" | \"or\" | \"not\" | \"if\" | \"else\") { return false; }");
+        self.emit_line("trimmed.chars().all(|c| c.is_alphabetic() || c == '_')");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
 
         // ═══════════════════════════════════════════════════════════════
-        // JAVASCRIPT BRIDGE - Full Implementation
+        // JavaScript executor
         // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn javascript(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("use std::process::{Command, Stdio};");
-        self.emit_line("");
-
-        self.emit_line("// Detect Node.js/Bun/Deno");
-        self.emit_line("let runtime = detect_js_runtime();");
-        self.emit_line("");
-
-        self.emit_line("// Auto-wrap for return values");
-        self.emit_line("let wrapped = wrap_js_auto_return(code);");
-        self.emit_line("");
-
-        self.emit_line("// Execute based on runtime");
-        self.emit_line("let output = match runtime.as_str() {");
-        self.indent += 1;
-        self.emit_line("\"node\" => Command::new(\"node\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"-e\")");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".output(),");
-        self.indent -= 1;
-        self.emit_line("\"bun\" => Command::new(\"bun\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"run\")");
-        self.emit_line(".arg(\"-e\")");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".output(),");
-        self.indent -= 1;
-        self.emit_line("\"deno\" => Command::new(\"deno\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"eval\")");
-        self.emit_line(".arg(\"--no-check\")");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".output(),");
-        self.indent -= 1;
-        self.emit_line("_ => panic!(\"No JavaScript runtime found\"),");
-        self.indent -= 1;
-        self.emit_line("}.expect(\"Failed to execute JavaScript\");");
-        self.emit_line("");
-
+        self.emit_line("let output = Command::new(\"node\").arg(\"-e\").arg(code).output().expect(\"Failed to execute JavaScript\");");
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
-
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
-        self.emit_line("eprintln!(\"[JavaScript Error] {}\", stderr);");
+        self.emit_line("eprintln!(\"JavaScript error: {}\", stderr);");
+        self.emit_line("return String::new();");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("");
+        self.emit_line("// ✅ FIX: Split output into display (stdout) and return value (last line)");
+        self.emit_line("let lines: Vec<&str> = stdout.lines().collect();");
+        self.emit_line("if lines.is_empty() {");
+        self.indent += 1;
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
-
-        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
-        self.emit_line("print!(\"{}\", stdout);");
-        self.emit_line("stdout.trim().to_string()");
+        self.emit_line("// Print all lines EXCEPT last (visible output)");
+        self.emit_line("for line in &lines[..lines.len().saturating_sub(1)] {");
+        self.indent += 1;
+        self.emit_line("println!(\"{}\", line);");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Return ONLY last line (for variable assignment)");
+        self.emit_line("lines.last().unwrap_or(&\"\").trim().to_string()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // JavaScript helper functions
-        self.generate_js_helpers();
 
         // ═══════════════════════════════════════════════════════════════
-        // GO BRIDGE - Full Implementation with Proper Variable Handling
+        // Go executor WITH CORRECT parseInt PLACEMENT
         // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn go(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("use std::process::Command;");
-        self.emit_line("use std::fs;");
         self.emit_line("use std::env;");
-        self.emit_line("");
-
-        self.emit_line("// Create temporary directory");
+        self.emit_line("use std::fs;");
         self.emit_line("let temp_dir = env::temp_dir().join(format!(\"tb_go_{}\", std::process::id()));");
         self.emit_line("fs::create_dir_all(&temp_dir).ok();");
-        self.emit_line("");
 
-        self.emit_line("// Split injection and user code");
+        // ✅ FIX: Split injection and user code FIRST
         self.emit_line("let (injection, user_code) = split_go_injection(code);");
-        self.emit_line("");
-
-        self.emit_line("// Extract variable names from injection");
         self.emit_line("let var_names = extract_go_var_names(&injection);");
-        self.emit_line("");
-
-        self.emit_line("// Fix redeclarations in user code");
         self.emit_line("let fixed_user = fix_go_redeclarations(&user_code, &var_names);");
-        self.emit_line("");
-
-        self.emit_line("// Auto-wrap for return values");
         self.emit_line("let wrapped = wrap_go_auto_return(&fixed_user);");
-        self.emit_line("");
 
-        self.emit_line("// Combine injection + wrapped user code");
-        self.emit_line("let combined = if injection.is_empty() {");
-        self.indent += 1;
-        self.emit_line("wrapped");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("format!(\"{}\\n{}\", injection, wrapped)");
-        self.indent -= 1;
-        self.emit_line("};");
-        self.emit_line("");
-
-        self.emit_line("// Extract imports from combined code");
-        self.emit_line("let (imports, clean_code) = extract_go_imports(&combined);");
-        self.emit_line("");
-
-        self.emit_line("// Build complete Go file");
+        // ✅ FIX: Build complete Go file with proper structure
         self.emit_line("let mut full_code = String::from(\"package main\\n\\n\");");
-        self.emit_line("");
 
-        self.emit_line("// Add imports");
-        self.emit_line("if !imports.is_empty() {");
-        self.indent += 1;
+        // Add imports
         self.emit_line("full_code.push_str(\"import (\\n\");");
-        self.emit_line("let mut import_set: std::collections::HashSet<String> = imports.into_iter().collect();");
-        self.emit_line("import_set.insert(\"fmt\".to_string());");
-        self.emit_line("let mut sorted_imports: Vec<String> = import_set.into_iter().collect();");
-        self.emit_line("sorted_imports.sort();");
-        self.emit_line("for imp in sorted_imports {");
-        self.indent += 1;
-        self.emit_line("full_code.push_str(&format!(\"    \\\"{}\\\"\\n\", imp));");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("full_code.push_str(\"    \\\"fmt\\\"\\n\");");
+        self.emit_line("full_code.push_str(\"    \\\"strconv\\\"\\n\");");
+        self.emit_line("full_code.push_str(\"    \\\"strings\\\"\\n\");");
         self.emit_line("full_code.push_str(\")\\n\\n\");");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("full_code.push_str(\"import \\\"fmt\\\"\\n\\n\");");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
 
-        self.emit_line("// Add main function with indented code");
+        // ✅ CRITICAL: Define helper functions BEFORE main()
+        self.emit_line("full_code.push_str(\"// Helper functions\\n\");");
+        self.emit_line("full_code.push_str(\"func parseInt(s string) int64 {\\n\");");
+        self.emit_line("full_code.push_str(\"    i, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)\\n\");");
+        self.emit_line("full_code.push_str(\"    return i\\n\");");
+        self.emit_line("full_code.push_str(\"}\\n\\n\");");
+
+        // Add main function
         self.emit_line("full_code.push_str(\"func main() {\\n\");");
-        self.emit_line("for line in clean_code.lines() {");
+
+        // Add variable injection
+        self.emit_line("if !injection.is_empty() {");
+        self.indent += 1;
+        self.emit_line("for line in injection.lines() {");
         self.indent += 1;
         self.emit_line("if !line.trim().is_empty() {");
         self.indent += 1;
-        self.emit_line("full_code.push_str(\"    \");");
-        self.emit_line("full_code.push_str(line);");
-        self.emit_line("full_code.push('\\n');");
+        self.emit_line("full_code.push_str(&format!(\"    {}\\n\", line));");
         self.indent -= 1;
         self.emit_line("}");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("full_code.push_str(\"}\\n\");");
-        self.emit_line("");
+        self.emit_line("full_code.push_str(\"\\n\");");
+        self.indent -= 1;
+        self.emit_line("}");
 
-        self.emit_line("// Write and compile");
+        // Add user code
+        self.emit_line("for line in wrapped.lines() {");
+        self.indent += 1;
+        self.emit_line("if !line.trim().is_empty() {");
+        self.indent += 1;
+        self.emit_line("full_code.push_str(&format!(\"    {}\\n\", line));");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+
+        // Close main function
+        self.emit_line("full_code.push_str(\"}\\n\");");
+
+        // Write and execute
         self.emit_line("let go_file = temp_dir.join(\"main.go\");");
         self.emit_line("fs::write(&go_file, &full_code).ok();");
-        self.emit_line("");
-
-        self.emit_line("let output = Command::new(\"go\")");
-        self.indent += 1;
-        self.emit_line(".arg(\"run\")");
-        self.emit_line(".arg(&go_file)");
-        self.emit_line(".current_dir(&temp_dir)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute Go\");");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("// Cleanup");
+        self.emit_line("let output = Command::new(\"go\").arg(\"run\").arg(&go_file).current_dir(&temp_dir).output().expect(\"Failed to execute Go\");");
         self.emit_line("fs::remove_dir_all(&temp_dir).ok();");
-        self.emit_line("");
 
         self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
         self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
-
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
         self.emit_line("eprintln!(\"[Go Error] {}\\n[Generated Code]\\n{}\", stderr, full_code);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-
         self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
-        self.emit_line("print!(\"{}\", stdout);");
-        self.emit_line("stdout.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or(\"\").trim().to_string()");
-        self.indent -= 1;
-        self.emit_line("}");
         self.emit_line("");
 
-        // Go helper functions
-        self.generate_go_helpers();
-
-        // ═══════════════════════════════════════════════════════════════
-        // BASH BRIDGE - Full Implementation
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn bash(code: &str) -> String {");
+        // ✅ FIX: Apply the same return value logic as Python and JavaScript
+        self.emit_line("// ✅ FIX: Split output into display and return value");
+        self.emit_line("let lines: Vec<&str> = stdout.lines().collect();");
+        self.emit_line("if lines.is_empty() {");
         self.indent += 1;
-        self.emit_line("use std::process::Command;");
-        self.emit_line("");
-
-        self.emit_line("// Detect shell (bash/zsh/sh)");
-        self.emit_line("let (shell, flag) = detect_shell();");
-        self.emit_line("");
-
-        self.emit_line("// Auto-wrap for return values");
-        self.emit_line("let wrapped = wrap_bash_auto_return(code);");
-        self.emit_line("");
-
-        self.emit_line("let output = Command::new(shell)");
-        self.indent += 1;
-        self.emit_line(".arg(flag)");
-        self.emit_line(".arg(&wrapped)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(\"Failed to execute Bash\");");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
-        self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("");
-
-        self.emit_line("if !output.status.success() {");
-        self.indent += 1;
-        self.emit_line("eprintln!(\"[Bash Error] {}\", stderr);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
+        self.emit_line("// Print all lines EXCEPT last");
+        self.emit_line("for line in &lines[..lines.len().saturating_sub(1)] {");
+        self.indent += 1;
+        self.emit_line("println!(\"{}\", line);");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Return ONLY last line as value");
+        self.emit_line("lines.last().unwrap_or(&\"\").trim().to_string()");
 
-        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
-        self.emit_line("print!(\"{}\", stdout);");
-        self.emit_line("stdout.trim().to_string()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // Bash helper functions
-        self.generate_bash_helpers();
-
-        // Type parser helpers (existing)
-        self.generate_type_parser_helpers();
-    }
-
-    /// Generate Python-specific helper functions
-    fn generate_python_helpers(&mut self) {
-        // Detect Python executable
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn detect_python_exe() -> String {");
-        self.indent += 1;
-        self.emit_line("use std::env;");
-        self.emit_line("use std::path::Path;");
-        self.emit_line("use std::process::Command;");
-        self.emit_line("");
-
-        self.emit_line("// Priority: VIRTUAL_ENV > CONDA_PREFIX > UV > Poetry > python3 > python");
-        self.emit_line("if let Ok(venv) = env::var(\"VIRTUAL_ENV\") {");
-        self.indent += 1;
-        self.emit_line("let python = Path::new(&venv).join(if cfg!(windows) { \"Scripts\\\\python.exe\" } else { \"bin/python\" });");
-        self.emit_line("if python.exists() { return python.to_string_lossy().to_string(); }");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("if let Ok(conda) = env::var(\"CONDA_PREFIX\") {");
-        self.indent += 1;
-        self.emit_line("let python = Path::new(&conda).join(if cfg!(windows) { \"python.exe\" } else { \"bin/python\" });");
-        self.emit_line("if python.exists() { return python.to_string_lossy().to_string(); }");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("if Command::new(\"python3\").arg(\"--version\").output().map(|o| o.status.success()).unwrap_or(false) {");
-        self.indent += 1;
-        self.emit_line("return \"python3\".to_string();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("\"python\".to_string()");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Auto-return wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn wrap_python_auto_return(code: &str) -> String {");
-        self.indent += 1;
-        self.emit_line("let lines: Vec<&str> = code.trim().lines().collect();");
-        self.emit_line("if lines.is_empty() { return code.to_string(); }");
-        self.emit_line("");
-
-        self.emit_line("let last = lines.last().unwrap().trim();");
-        self.emit_line("if last.is_empty() || last.starts_with('#') || last.starts_with(\"print(\")");
-        self.indent += 1;
-        self.emit_line("|| (last.contains(\" = \") && !last.contains(\"==\"))");
-        self.emit_line("|| last.starts_with(\"if \") || last.starts_with(\"for \")");
-        self.emit_line("|| last.starts_with(\"def \") || last.ends_with(':')");
-        self.emit_line("{ return code.to_string(); }");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("let mut result = lines[..lines.len()-1].join(\"\\n\");");
-        self.emit_line("if !result.is_empty() { result.push('\\n'); }");
-        self.emit_line("result.push_str(&format!(\"__tb_result = ({})\\nprint(__tb_result, end='')\", last));");
-        self.emit_line("result");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-    }
-
-    /// Generate JavaScript-specific helper functions
-    fn generate_js_helpers(&mut self) {
-        // Detect JS runtime
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn detect_js_runtime() -> String {");
-        self.indent += 1;
-        self.emit_line("use std::process::Command;");
-        self.emit_line("");
-
-        self.emit_line("// Try Node.js");
-        self.emit_line("if Command::new(\"node\").arg(\"--version\").output().map(|o| o.status.success()).unwrap_or(false) {");
-        self.indent += 1;
-        self.emit_line("return \"node\".to_string();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try Bun");
-        self.emit_line("if Command::new(\"bun\").arg(\"--version\").output().map(|o| o.status.success()).unwrap_or(false) {");
-        self.indent += 1;
-        self.emit_line("return \"bun\".to_string();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try Deno");
-        self.emit_line("if Command::new(\"deno\").arg(\"--version\").output().map(|o| o.status.success()).unwrap_or(false) {");
-        self.indent += 1;
-        self.emit_line("return \"deno\".to_string();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("panic!(\"No JavaScript runtime found. Install Node.js, Bun, or Deno.\");");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Auto-return wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn wrap_js_auto_return(code: &str) -> String {");
-        self.indent += 1;
-        self.emit_line("let lines: Vec<&str> = code.trim().lines().collect();");
-        self.emit_line("if lines.is_empty() { return code.to_string(); }");
-        self.emit_line("");
-
-        self.emit_line("let last = lines.last().unwrap().trim();");
-        self.emit_line("if last.is_empty() || last.starts_with(\"//\") || last.starts_with(\"console.log\")");
-        self.indent += 1;
-        self.emit_line("|| last.starts_with(\"const \") || last.starts_with(\"let \") || last.starts_with(\"var \")");
-        self.emit_line("|| last.starts_with(\"if \") || last.starts_with(\"for \") || last.ends_with('{')");
-        self.emit_line("{ return code.to_string(); }");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("let mut result = lines[..lines.len()-1].join(\"\\n\");");
-        self.emit_line("if !result.is_empty() { result.push('\\n'); }");
-        self.emit_line("result.push_str(&format!(\"const __tb_result = ({});\\nprocess.stdout.write(String(__tb_result));\", last));");
-        self.emit_line("result");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-    }
-
-    /// Generate Go-specific helper functions with PRODUCTION-READY variable handling
-    fn generate_go_helpers(&mut self) {
-        // Split injection block
-        self.emit_line("#[inline(always)]");
+        // --- Go helper: Split injection ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn split_go_injection(code: &str) -> (String, String) {");
         self.indent += 1;
         self.emit_line("let mut injection = String::new();");
         self.emit_line("let mut user_code = String::new();");
         self.emit_line("let mut in_injection = false;");
-        self.emit_line("");
-
         self.emit_line("for line in code.lines() {");
         self.indent += 1;
-        self.emit_line("if line.contains(\"TB Variables (auto-injected)\") {");
-        self.indent += 1;
-        self.emit_line("in_injection = true;");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
+        self.emit_line("if line.contains(\"TB Variables (auto-injected)\") { in_injection = true; continue; }");
         self.emit_line("if in_injection {");
         self.indent += 1;
         self.emit_line("if line.trim().is_empty() { continue; }");
-        self.emit_line("if line.trim().starts_with(\"var \") || line.trim().starts_with(\"_\") || line.trim().contains(\" := \") {");
-        self.indent += 1;
-        self.emit_line("injection.push_str(line);");
-        self.emit_line("injection.push('\\n');");
+        self.emit_line("if line.trim().starts_with(\"var \") || line.trim().starts_with(\"_\") || line.trim().contains(\" := \") { injection.push_str(line); injection.push('\\n'); } else { in_injection = false; user_code.push_str(line); user_code.push('\\n'); }");
         self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("in_injection = false;");
-        self.emit_line("user_code.push_str(line);");
-        self.emit_line("user_code.push('\\n');");
+        self.emit_line("} else { user_code.push_str(line); user_code.push('\\n'); }");
         self.indent -= 1;
         self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("} else {");
-        self.indent += 1;
-        self.emit_line("user_code.push_str(line);");
-        self.emit_line("user_code.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
         self.emit_line("(injection, user_code)");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        // Extract variable names
-        self.emit_line("#[inline(always)]");
+        // --- Go helper: Extract var names ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn extract_go_var_names(injection: &str) -> Vec<String> {");
         self.indent += 1;
-        self.emit_line("let mut names = Vec::new();");
-        self.emit_line("for line in injection.lines() {");
-        self.indent += 1;
-        self.emit_line("let trimmed = line.trim();");
-        self.emit_line("");
-
-        self.emit_line("// Match: var name type = value");
-        self.emit_line("if trimmed.starts_with(\"var \") {");
-        self.indent += 1;
-        self.emit_line("if let Some(rest) = trimmed.strip_prefix(\"var \") {");
-        self.indent += 1;
-        self.emit_line("if let Some(name) = rest.split_whitespace().next() {");
-        self.indent += 1;
-        self.emit_line("names.push(name.to_string());");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("injection.lines().filter_map(|line| { if line.trim().starts_with(\"var \") { line.trim().strip_prefix(\"var \").and_then(|r| r.split_whitespace().next().map(String::from)) } else if line.contains(\" := \") { line.split(\" := \").next().map(|s| s.trim().to_string()) } else { None } }).collect()");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        self.emit_line("// Match: name := value");
-        self.emit_line("if trimmed.contains(\" := \") {");
-        self.indent += 1;
-        self.emit_line("if let Some(name) = trimmed.split(\" := \").next() {");
-        self.indent += 1;
-        self.emit_line("names.push(name.trim().to_string());");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("names");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Fix redeclarations
-        self.emit_line("#[inline(always)]");
+        // --- Go helper: Fix redeclarations ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn fix_go_redeclarations(code: &str, existing_vars: &[String]) -> String {");
         self.indent += 1;
-        self.emit_line("let mut result = String::new();");
-        self.emit_line("");
-
-        self.emit_line("for line in code.lines() {");
-        self.indent += 1;
-        self.emit_line("let mut fixed = line.to_string();");
-        self.emit_line("");
-
-        self.emit_line("// Replace 'name :=' with 'name =' if variable exists");
-        self.emit_line("for var in existing_vars {");
-        self.indent += 1;
-        self.emit_line("let pattern = format!(\"{} :=\", var);");
-        self.emit_line("if fixed.contains(&pattern) {");
-        self.indent += 1;
-        self.emit_line("let replacement = format!(\"{} =\", var);");
-        self.emit_line("fixed = fixed.replace(&pattern, &replacement);");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("code.lines().map(|line| { let mut fixed = line.to_string(); for var in existing_vars { let pattern = format!(\"{} :=\", var); if fixed.contains(&pattern) { fixed = fixed.replace(&pattern, &format!(\"{} =\", var)); } } fixed }).collect::<Vec<_>>().join(\"\\n\")");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        self.emit_line("result.push_str(&fixed);");
-        self.emit_line("result.push('\\n');");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("result");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Extract imports
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn extract_go_imports(code: &str) -> (Vec<String>, String) {");
-        self.indent += 1;
-        self.emit_line("let mut imports = Vec::new();");
-        self.emit_line("let mut clean_lines = Vec::new();");
-        self.emit_line("let mut in_import_block = false;");
-        self.emit_line("let mut paren_depth = 0;");
-        self.emit_line("");
-
-        self.emit_line("for line in code.lines() {");
-        self.indent += 1;
-        self.emit_line("let trimmed = line.trim();");
-        self.emit_line("");
-
-        self.emit_line("// Skip empty lines at start");
-        self.emit_line("if trimmed.is_empty() || trimmed.starts_with(\"//\") {");
-        self.indent += 1;
-        self.emit_line("if !in_import_block && imports.is_empty() { continue; }");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Detect import block");
-        self.emit_line("if trimmed.starts_with(\"import (\") {");
-        self.indent += 1;
-        self.emit_line("in_import_block = true;");
-        self.emit_line("paren_depth = 1;");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Single import");
-        self.emit_line("if trimmed.starts_with(\"import \\\"\") && !trimmed.contains('(') {");
-        self.indent += 1;
-        self.emit_line("if let Some(path) = trimmed.strip_prefix(\"import \\\"\") {");
-        self.indent += 1;
-        self.emit_line("let path = path.trim_end_matches('\\\"');");
-        self.emit_line("imports.push(path.to_string());");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Inside import block");
-        self.emit_line("if in_import_block {");
-        self.indent += 1;
-        self.emit_line("if trimmed.contains(')') {");
-        self.indent += 1;
-        self.emit_line("paren_depth -= 1;");
-        self.emit_line("if paren_depth == 0 { in_import_block = false; }");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("if trimmed.starts_with('\\\"') {");
-        self.indent += 1;
-        self.emit_line("let path = trimmed.trim_matches('\\\"');");
-        self.emit_line("imports.push(path.to_string());");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("continue;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("clean_lines.push(line);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("(imports, clean_lines.join(\"\\n\"))");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Auto-return wrapper
-        self.emit_line("#[inline(always)]");
+        // --- Go helper: Wrap auto-return ---
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn wrap_go_auto_return(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("let lines: Vec<&str> = code.trim().lines().collect();");
+        self.emit_line("let trimmed = code.trim();");
+        self.emit_line("let lines: Vec<&str> = trimmed.lines().collect();");
         self.emit_line("if lines.is_empty() { return code.to_string(); }");
-        self.emit_line("");
-
-        self.emit_line("let last = lines.last().unwrap().trim();");
-        self.emit_line("");
-
-        self.emit_line("// Skip wrapping for statements/declarations");
-        self.emit_line("if last.is_empty() || last.starts_with(\"//\")");
-        self.indent += 1;
-        self.emit_line("|| last.starts_with(\"if \") || last.starts_with(\"for \")");
-        self.emit_line("|| last.starts_with(\"var \") || last.contains(\" := \")");
-        self.emit_line("|| (last.contains(\" = \") && !last.contains(\"==\"))");
-        self.emit_line("|| last.starts_with(\"fmt.Print\") || last == \"}\"");
-        self.emit_line("{ return code.to_string(); }");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("let mut result = lines[..lines.len()-1].join(\"\\n\");");
-        self.emit_line("if !result.is_empty() { result.push('\\n'); }");
-        self.emit_line("result.push_str(&format!(\"__tb_result := ({})\\nfmt.Print(__tb_result)\", last));");
-        self.emit_line("result");
+        self.emit_line("let last_line = lines.last().unwrap().trim();");
+        self.emit_line("let skip_wrap = last_line.is_empty() || last_line.starts_with(\"//\") || last_line.starts_with(\"if \") || last_line.starts_with(\"for \") || last_line.starts_with(\"var \") || last_line.contains(\" := \") || (last_line.contains(\" = \") && !last_line.contains(\"==\")) || last_line.starts_with(\"fmt.Print\") || last_line == \"}\" || last_line.ends_with('{');");
+        self.emit_line("if skip_wrap { return code.to_string(); }");
+        self.emit_line("let mut wrapped = lines.iter().take(lines.len() - 1).map(|&s| s).collect::<Vec<&str>>().join(\"\\n\");");
+        self.emit_line("if !wrapped.is_empty() { wrapped.push('\\n'); }");
+        self.emit_line("wrapped.push_str(&format!(\"__tb_result := ({})\\nfmt.Print(__tb_result)\", last_line));");
+        self.emit_line("wrapped");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
-    }
 
-    /// Generate Bash-specific helper functions
-    fn generate_bash_helpers(&mut self) {
-        // Detect shell
-        self.emit_line("#[inline(always)]");
+        // ═══════════════════════════════════════════════════════════════
+        // Bash executor
+        // ═══════════════════════════════════════════════════════════════
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn detect_shell() -> (&'static str, &'static str) {");
+        self.emit_line("fn bash(code: &str) -> String {");
         self.indent += 1;
-        self.emit_line("use std::process::Command;");
+        self.emit_line("// ✅ NEW: Find real bash on Windows");
+        self.emit_line("let (shell, flag) = if cfg!(windows) {");
+        self.indent += 1;
+        self.emit_line("// Try to find bash.exe (Git Bash, WSL, MSYS2)");
+        self.emit_line("let bash_candidates = vec![");
+        self.indent += 1;
+        self.emit_line("\"bash\",  // In PATH");
+        self.emit_line("\"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\",");
+        self.emit_line("\"C:\\\\msys64\\\\usr\\\\bin\\\\bash.exe\",");
+        self.emit_line("\"C:\\\\cygwin64\\\\bin\\\\bash.exe\",");
+        self.indent -= 1;
+        self.emit_line("];");
         self.emit_line("");
-
-        self.emit_line("if cfg!(windows) {");
+        self.emit_line("let mut found_bash = None;");
+        self.emit_line("for candidate in &bash_candidates {");
         self.indent += 1;
-        self.emit_line("// Try Git Bash, WSL bash, then fallback to cmd");
-        self.emit_line("let bash_paths = [\"bash\", \"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe\"];");
-        self.emit_line("for path in &bash_paths {");
+        self.emit_line("if Command::new(candidate).arg(\"--version\").output().is_ok() {");
         self.indent += 1;
-        self.emit_line("if Command::new(path).arg(\"--version\").output().map(|o| o.status.success()).unwrap_or(false) {");
-        self.indent += 1;
-        self.emit_line("return (path, \"-c\");");
+        self.emit_line("found_bash = Some(*candidate);");
+        self.emit_line("break;");
         self.indent -= 1;
         self.emit_line("}");
         self.indent -= 1;
         self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("if let Some(bash_path) = found_bash {");
+        self.indent += 1;
+        self.emit_line("(bash_path, \"-c\")");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("eprintln!(\"Warning: Bash not found on Windows, using cmd (limited compatibility)\");");
         self.emit_line("(\"cmd\", \"/C\")");
+        self.indent -= 1;
+        self.emit_line("}");
         self.indent -= 1;
         self.emit_line("} else {");
         self.indent += 1;
         self.emit_line("(\"bash\", \"-c\")");
         self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("};");
         self.emit_line("");
-
-        // Auto-return wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn wrap_bash_auto_return(code: &str) -> String {");
-        self.indent += 1;
-        self.emit_line("let lines: Vec<&str> = code.trim().lines().collect();");
-        self.emit_line("if lines.is_empty() { return code.to_string(); }");
-        self.emit_line("");
-
-        self.emit_line("let last = lines.last().unwrap().trim();");
-        self.emit_line("if last.is_empty() || last.starts_with('#') || last.starts_with(\"echo\")");
-        self.indent += 1;
-        self.emit_line("|| last.contains('=') || last == \"fi\" || last == \"done\"");
-        self.emit_line("{ return code.to_string(); }");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("let mut result = lines[..lines.len()-1].join(\"\\n\");");
-        self.emit_line("if !result.is_empty() { result.push('\\n'); }");
-        self.emit_line("result.push_str(&format!(\"__tb_result=$(echo \\\"{}\\\" | bc -l 2>/dev/null || echo $(({}))); echo -n $__tb_result\", last, last));");
-        self.emit_line("result");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-    }
-
-    /// Generate ZERO-OVERHEAD language bridges for compiled mode
-    /// Uses FFI, native libraries, and direct linking instead of subprocesses
-    fn generate_compiled_language_bridges(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("// ZERO-OVERHEAD COMPILED LANGUAGE BRIDGES");
-        self.emit_line("// Direct FFI calls, native library linking, no subprocess overhead");
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("");
-
-        // Add necessary imports
-        self.emit_line("use std::ffi::{CString, CStr};");
-        self.emit_line("use std::os::raw::c_char;");
-        self.emit_line("use std::sync::OnceLock;");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // COMPILED DEPENDENCY REGISTRY
-        // ═══════════════════════════════════════════════════════════════
-        self.emit_line("/// Registry of compiled dependencies with lazy loading");
-        self.emit_line("struct CompiledDepRegistry {");
-        self.indent += 1;
-        self.emit_line("python_libs: std::collections::HashMap<String, libloading::Library>,");
-        self.emit_line("js_binaries: std::collections::HashMap<String, std::path::PathBuf>,");
-        self.emit_line("go_plugins: std::collections::HashMap<String, libloading::Library>,");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("static DEP_REGISTRY: OnceLock<std::sync::Mutex<CompiledDepRegistry>> = OnceLock::new();");
-        self.emit_line("");
-
-        self.emit_line("fn get_dep_registry() -> &'static std::sync::Mutex<CompiledDepRegistry> {");
-        self.indent += 1;
-        self.emit_line("DEP_REGISTRY.get_or_init(|| {");
-        self.indent += 1;
-        self.emit_line("std::sync::Mutex::new(CompiledDepRegistry {");
-        self.indent += 1;
-        self.emit_line("python_libs: std::collections::HashMap::new(),");
-        self.emit_line("js_binaries: std::collections::HashMap::new(),");
-        self.emit_line("go_plugins: std::collections::HashMap::new(),");
-        self.indent -= 1;
-        self.emit_line("})");
-        self.indent -= 1;
-        self.emit_line("})");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // GO PLUGIN FFI BRIDGE (Zero Overhead)
-        // ═══════════════════════════════════════════════════════════════
-        self.generate_go_ffi_bridge();
-
-        // ═══════════════════════════════════════════════════════════════
-        // PYTHON NUITKA/PYOXIDIZER FFI BRIDGE
-        // ═══════════════════════════════════════════════════════════════
-        self.generate_python_ffi_bridge();
-
-        // ═══════════════════════════════════════════════════════════════
-        // JAVASCRIPT BUN BINARY BRIDGE (Cached Execution)
-        // ═══════════════════════════════════════════════════════════════
-        self.generate_js_binary_bridge();
-
-        // ═══════════════════════════════════════════════════════════════
-        // SMART WRAPPER: Auto-select compiled vs JIT
-        // ═══════════════════════════════════════════════════════════════
-        self.generate_smart_bridge_wrappers();
-    }
-
-    fn generate_go_ffi_bridge(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("// GO FFI BRIDGE - Direct plugin loading via libloading");
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("");
-
-        self.emit_line("#[inline(always)]");
-        self.emit_line("unsafe fn go_ffi(plugin_path: &str, code: &str) -> String {");
-        self.indent += 1;
-        self.emit_line("use libloading::{Library, Symbol};");
-        self.emit_line("");
-
-        self.emit_line("// Load library (cached in registry)");
-        self.emit_line("let mut registry = get_dep_registry().lock().unwrap();");
-        self.emit_line("");
-
-        self.emit_line("let lib = registry.go_plugins.entry(plugin_path.to_string())");
-        self.indent += 1;
-        self.emit_line(".or_insert_with(|| {");
-        self.indent += 1;
-        self.emit_line("Library::new(plugin_path).expect(&format!(\"Failed to load Go plugin: {}\", plugin_path))");
-        self.indent -= 1;
-        self.emit_line("});");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("// Get Execute function pointer");
-        self.emit_line("type ExecuteFunc = unsafe extern \"C\" fn(*const c_char) -> *mut c_char;");
-        self.emit_line("let execute: Symbol<ExecuteFunc> = lib.get(b\"Execute\")");
-        self.indent += 1;
-        self.emit_line(".expect(\"Failed to find Execute function in Go plugin\");");
-        self.indent -= 1;
-        self.emit_line("");
-
-        self.emit_line("// Call with zero-copy");
-        self.emit_line("let input = CString::new(code).unwrap();");
-        self.emit_line("let result_ptr = execute(input.as_ptr());");
-        self.emit_line("");
-
-        self.emit_line("// Convert result");
-        self.emit_line("if result_ptr.is_null() {");
-        self.indent += 1;
-        self.emit_line("return String::new();");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("let result = CStr::from_ptr(result_ptr).to_string_lossy().to_string();");
-        self.emit_line("");
-
-        self.emit_line("// Free C string (Go's responsibility via C.free)");
-        self.emit_line("libc::free(result_ptr as *mut libc::c_void);");
-        self.emit_line("");
-
-        self.emit_line("result");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-    }
-
-    fn generate_python_ffi_bridge(&mut self) {
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PYTHON FFI BRIDGE - Direct library calls with OUTPUT CAPTURE");
-    self.emit_line("// Supports Nuitka, PyOxidizer, and standard Python extensions");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("#[inline(always)]");
-    self.emit_line("unsafe fn python_ffi(lib_path: &str, code: &str) -> String {");
-    self.indent += 1;
-    self.emit_line("use libloading::{Library, Symbol};");
-    self.emit_line("use std::ffi::{CString, CStr};");
-    self.emit_line("use std::os::raw::c_char;");
-    self.emit_line("");
-
-    self.emit_line("// Load Python library");
-    self.emit_line("let lib = Library::new(lib_path)");
-    self.indent += 1;
-    self.emit_line(".expect(&format!(\"Failed to load Python library: {}\", lib_path));");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PHASE 1: Initialize Python Interpreter");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("// Check if already initialized");
-    self.emit_line("type PyIsInitialized = unsafe extern \"C\" fn() -> i32;");
-    self.emit_line("let py_is_initialized: Symbol<PyIsInitialized> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"Py_IsInitialized\")");
-    self.emit_line(".expect(\"Failed to find Py_IsInitialized\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("if py_is_initialized() == 0 {");
-    self.indent += 1;
-    self.emit_line("// Initialize Python");
-    self.emit_line("type PyInitialize = unsafe extern \"C\" fn();");
-    self.emit_line("let py_initialize: Symbol<PyInitialize> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"Py_Initialize\")");
-    self.emit_line(".expect(\"Failed to find Py_Initialize\");");
-    self.indent -= 1;
-    self.emit_line("py_initialize();");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PHASE 2: Redirect stdout to capture output");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("// Create StringIO object to capture output");
-    self.emit_line("let capture_setup = CString::new(r#\"");
-    self.emit_line("import sys");
-    self.emit_line("from io import StringIO");
-    self.emit_line("__tb_stdout_capture = StringIO()");
-    self.emit_line("__tb_old_stdout = sys.stdout");
-    self.emit_line("sys.stdout = __tb_stdout_capture");
-    self.emit_line("\"#).unwrap();");
-    self.emit_line("");
-
-    self.emit_line("type PyRunFunc = unsafe extern \"C\" fn(*const c_char) -> i32;");
-    self.emit_line("let py_run: Symbol<PyRunFunc> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"PyRun_SimpleString\")");
-    self.emit_line(".expect(\"Failed to find PyRun_SimpleString\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("// Setup capture");
-    self.emit_line("if py_run(capture_setup.as_ptr()) != 0 {");
-    self.indent += 1;
-    self.emit_line("eprintln!(\"Failed to setup Python output capture\");");
-    self.emit_line("return String::new();");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PHASE 3: Execute user code");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("let c_code = CString::new(code).unwrap();");
-    self.emit_line("let result_code = py_run(c_code.as_ptr());");
-    self.emit_line("");
-
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PHASE 4: Retrieve captured output");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("let get_output = CString::new(r#\"");
-    self.emit_line("sys.stdout = __tb_old_stdout");
-    self.emit_line("__tb_result = __tb_stdout_capture.getvalue()");
-    self.emit_line("print(__tb_result, end='')");
-    self.emit_line("\"#).unwrap();");
-    self.emit_line("");
-
-    self.emit_line("py_run(get_output.as_ptr());");
-    self.emit_line("");
-
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("// PHASE 5: Extract result using Python API");
-    self.emit_line("// ═══════════════════════════════════════════════════════════════");
-    self.emit_line("");
-
-    self.emit_line("// Get __main__ module");
-    self.emit_line("type PyImportAddModule = unsafe extern \"C\" fn(*const c_char) -> *mut std::ffi::c_void;");
-    self.emit_line("let py_import_add_module: Symbol<PyImportAddModule> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"PyImport_AddModule\")");
-    self.emit_line(".expect(\"Failed to find PyImport_AddModule\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("let main_name = CString::new(\"__main__\").unwrap();");
-    self.emit_line("let main_module = py_import_add_module(main_name.as_ptr());");
-    self.emit_line("");
-
-    self.emit_line("if main_module.is_null() {");
-    self.indent += 1;
-    self.emit_line("eprintln!(\"Failed to get __main__ module\");");
-    self.emit_line("return String::new();");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("// Get __tb_result variable");
-    self.emit_line("type PyObjectGetAttrString = unsafe extern \"C\" fn(*mut std::ffi::c_void, *const c_char) -> *mut std::ffi::c_void;");
-    self.emit_line("let py_object_get_attr: Symbol<PyObjectGetAttrString> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"PyObject_GetAttrString\")");
-    self.emit_line(".expect(\"Failed to find PyObject_GetAttrString\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("let result_name = CString::new(\"__tb_result\").unwrap();");
-    self.emit_line("let result_obj = py_object_get_attr(main_module, result_name.as_ptr());");
-    self.emit_line("");
-
-    self.emit_line("if result_obj.is_null() {");
-    self.indent += 1;
-    self.emit_line("return String::new();");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("// Convert to string");
-    self.emit_line("type PyObjectStr = unsafe extern \"C\" fn(*mut std::ffi::c_void) -> *mut std::ffi::c_void;");
-    self.emit_line("let py_object_str: Symbol<PyObjectStr> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"PyObject_Str\")");
-    self.emit_line(".expect(\"Failed to find PyObject_Str\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("let str_obj = py_object_str(result_obj);");
-    self.emit_line("");
-
-    self.emit_line("// Get C string");
-    self.emit_line("type PyUnicodeAsUTF8 = unsafe extern \"C\" fn(*mut std::ffi::c_void) -> *const c_char;");
-    self.emit_line("let py_unicode_as_utf8: Symbol<PyUnicodeAsUTF8> = lib");
-    self.indent += 1;
-    self.emit_line(".get(b\"PyUnicode_AsUTF8\")");
-    self.emit_line(".expect(\"Failed to find PyUnicode_AsUTF8\");");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("let c_str = py_unicode_as_utf8(str_obj);");
-    self.emit_line("");
-
-    self.emit_line("if c_str.is_null() {");
-    self.indent += 1;
-    self.emit_line("return String::new();");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("// Convert to Rust String");
-    self.emit_line("let rust_string = CStr::from_ptr(c_str)");
-    self.indent += 1;
-    self.emit_line(".to_string_lossy()");
-    self.emit_line(".to_string();");
-    self.indent -= 1;
-    self.emit_line("");
-
-    self.emit_line("// Cleanup references");
-    self.emit_line("type PyDecRef = unsafe extern \"C\" fn(*mut std::ffi::c_void);");
-    self.emit_line("if let Ok(py_decref) = lib.get::<Symbol<PyDecRef>>(b\"Py_DecRef\") {");
-    self.indent += 1;
-    self.emit_line("py_decref(result_obj);");
-    self.emit_line("py_decref(str_obj);");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("if result_code != 0 {");
-    self.indent += 1;
-    self.emit_line("eprintln!(\"Python FFI execution failed with code {}\", result_code);");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-
-    self.emit_line("rust_string");
-    self.indent -= 1;
-    self.emit_line("}");
-    self.emit_line("");
-}
-
-    fn generate_js_binary_bridge(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("// JAVASCRIPT BINARY BRIDGE - Execute BUN-compiled binaries");
-        self.emit_line("// Uses memory-mapped execution for zero I/O overhead");
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("");
-
-        self.emit_line("#[inline(always)]");
-        self.emit_line("fn js_binary(binary_path: &str, args: &[&str]) -> String {");
-        self.indent += 1;
-        self.emit_line("use std::process::Command;");
-        self.emit_line("");
-
-        self.emit_line("// Execute compiled binary (faster than Node.js startup)");
-        self.emit_line("let output = Command::new(binary_path)");
-        self.indent += 1;
-        self.emit_line(".args(args)");
-        self.emit_line(".output()");
-        self.emit_line(".expect(&format!(\"Failed to execute JS binary: {}\", binary_path));");
-        self.indent -= 1;
-        self.emit_line("");
-
+        self.emit_line("let output = Command::new(shell).arg(flag).arg(code).output().expect(\"Failed to execute Bash\");");
+        self.emit_line("let stdout = String::from_utf8_lossy(&output.stdout);");
+        self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
         self.emit_line("if !output.status.success() {");
         self.indent += 1;
-        self.emit_line("let stderr = String::from_utf8_lossy(&output.stderr);");
-        self.emit_line("eprintln!(\"JS binary failed: {}\", stderr);");
+        self.emit_line("eprintln!(\"Bash error: {}\", stderr);");
         self.emit_line("return String::new();");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("String::from_utf8_lossy(&output.stdout).to_string()");
+        self.emit_line("if !stderr.is_empty() { eprint!(\"{}\", stderr); }");
+        self.emit_line("print!(\"{}\", stdout);");
+        self.emit_line("stdout.trim().to_string()");
         self.indent -= 1;
         self.emit_line("}");
-        self.emit_line("");
     }
 
-    fn generate_smart_bridge_wrappers(&mut self) {
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("// SMART BRIDGE WRAPPERS - Auto-select compiled vs JIT");
-        self.emit_line("// ═══════════════════════════════════════════════════════════════");
-        self.emit_line("");
-
-        // Python wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("fn python_smart(code: &str, dep_id: Option<&str>) -> String {");
-        self.indent += 1;
-        self.emit_line("if let Some(id) = dep_id {");
-        self.indent += 1;
-        self.emit_line("// Try compiled library first");
-        self.emit_line("let lib_path = format!(\"deps/python/{}.so\", id);");
-        self.emit_line("if std::path::Path::new(&lib_path).exists() {");
-        self.indent += 1;
-        self.emit_line("unsafe { return python_ffi(&lib_path, code); }");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("// Fallback to JIT execution");
-        self.emit_line("python(code)");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // Go wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("fn go_smart(code: &str, dep_id: Option<&str>) -> String {");
-        self.indent += 1;
-        self.emit_line("if let Some(id) = dep_id {");
-        self.indent += 1;
-        self.emit_line("let plugin_ext = if cfg!(windows) { \"dll\" } else if cfg!(target_os = \"macos\") { \"dylib\" } else { \"so\" };");
-        self.emit_line("let plugin_path = format!(\"deps/go/plugin_{}.{}\", id, plugin_ext);");
-        self.emit_line("");
-        self.emit_line("if std::path::Path::new(&plugin_path).exists() {");
-        self.indent += 1;
-        self.emit_line("unsafe { return go_ffi(&plugin_path, code); }");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("go(code)");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // JavaScript wrapper
-        self.emit_line("#[inline(always)]");
-        self.emit_line("fn javascript_smart(code: &str, dep_id: Option<&str>) -> String {");
-        self.indent += 1;
-        self.emit_line("if let Some(id) = dep_id {");
-        self.indent += 1;
-        self.emit_line("let binary_ext = if cfg!(windows) { \".exe\" } else { \"\" };");
-        self.emit_line("let binary_path = format!(\"deps/js/{}{}\", id, binary_ext);");
-        self.emit_line("");
-        self.emit_line("if std::path::Path::new(&binary_path).exists() {");
-        self.indent += 1;
-        self.emit_line("return js_binary(&binary_path, &[]);");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-        self.emit_line("javascript(code)");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-    }
-
-    /// Generate helper functions for parsing different types
     /// Generate helper functions for parsing different types
     fn generate_type_parser_helpers(&mut self) {
         self.emit_line("// ═══════════════════════════════════════════════════");
-        self.emit_line("// Type Parsing Helpers (Production-Grade)");
+        self.emit_line("// Type Parsing Helpers");
         self.emit_line("// ═══════════════════════════════════════════════════");
         self.emit_line("");
 
-        // ═══════════════════════════════════════════════════════════════
-        // Parse to i64 (robust, handles multiple formats)
-        // ═══════════════════════════════════════════════════════════════
+        // Parse to i64
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_i64(s: &str) -> i64 {");
-        self.indent += 1;
-        self.emit_line("let cleaned = s.trim()");
-        self.indent += 1;
-        self.emit_line(".replace('_', \"\")     // 1_000_000");
-        self.emit_line(".replace(' ', \"\")     // 1 000 000");
-        self.emit_line(".replace(',', \"\");    // 1,000,000");
-        self.indent -= 1;
+        self.emit_line("fn parse_i64(s: &str) -> i64 { s.trim().parse::<i64>().or_else(|_| s.trim().parse::<f64>().map(|f| f as i64)).unwrap_or(0) }");
         self.emit_line("");
 
-        self.emit_line("// Try direct int parse");
-        self.emit_line("if let Ok(n) = cleaned.parse::<i64>() {");
-        self.indent += 1;
-        self.emit_line("return n;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try float → int (handles \"42.0\")");
-        self.emit_line("if let Ok(f) = cleaned.parse::<f64>() {");
-        self.indent += 1;
-        self.emit_line("return f as i64;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try JSON integer");
-        self.emit_line("if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {");
-        self.indent += 1;
-        self.emit_line("if let Some(n) = val.as_i64() {");
-        self.indent += 1;
-        self.emit_line("return n;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("eprintln!(\"⚠️  parse_i64: Cannot parse '{}' as integer\", s);");
-        self.emit_line("0 // Fallback");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // Parse to f64 (robust)
-        // ═══════════════════════════════════════════════════════════════
+        // Parse to f64
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_f64(s: &str) -> f64 {");
-        self.indent += 1;
-        self.emit_line("let cleaned = s.trim()");
-        self.indent += 1;
-        self.emit_line(".replace('_', \"\")");
-        self.emit_line(".replace(' ', \"\");");
-        self.indent -= 1;
+        self.emit_line("fn parse_f64(s: &str) -> f64 { s.trim().parse::<f64>().unwrap_or(0.0) }");
         self.emit_line("");
 
-        self.emit_line("// Try direct parse");
-        self.emit_line("if let Ok(f) = cleaned.parse::<f64>() {");
-        self.indent += 1;
-        self.emit_line("return f;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try German format (1.234,56 → 1234.56)");
-        self.emit_line("let german_style = cleaned.replace('.', \"\").replace(',', \".\");");
-        self.emit_line("if let Ok(f) = german_style.parse::<f64>() {");
-        self.indent += 1;
-        self.emit_line("return f;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Try JSON number");
-        self.emit_line("if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {");
-        self.indent += 1;
-        self.emit_line("if let Some(f) = val.as_f64() {");
-        self.indent += 1;
-        self.emit_line("return f;");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("eprintln!(\"⚠️  parse_f64: Cannot parse '{}' as float\", s);");
-        self.emit_line("0.0");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
-        // Parse to bool (robust)
-        // ═══════════════════════════════════════════════════════════════
+        // Parse to bool
         self.emit_line("#[allow(dead_code)]");
-        self.emit_line("fn parse_bool(s: &str) -> bool {");
-        self.indent += 1;
-        self.emit_line("match s.trim().to_lowercase().as_str() {");
-        self.indent += 1;
-        self.emit_line("\"true\" | \"1\" | \"yes\" | \"y\" | \"on\" => true,");
-        self.emit_line("\"false\" | \"0\" | \"no\" | \"n\" | \"off\" | \"\" => false,");
-        self.emit_line("_ => {");
-        self.indent += 1;
-        self.emit_line("eprintln!(\"⚠️  parse_bool: Cannot parse '{}' as bool\", s);");
-        self.emit_line("false");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
+        self.emit_line("fn parse_bool(s: &str) -> bool { matches!(s.trim().to_lowercase().as_str(), \"true\" | \"True\" | \"1\" | \"yes\" | \"on\") }");
         self.emit_line("");
 
-        // ═══════════════════════════════════════════════════════════════
-        // Parse to Vec<i64> (robust, JSON + bracket format)
-        // ═══════════════════════════════════════════════════════════════
+        // Parse to Vec<i64>
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn parse_vec_i64(s: &str) -> Vec<i64> {");
         self.indent += 1;
         self.emit_line("let trimmed = s.trim();");
-        self.emit_line("");
-
-        self.emit_line("// Try JSON array parse first");
-        self.emit_line("if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {");
-        self.indent += 1;
-        self.emit_line("if let Some(arr) = val.as_array() {");
-        self.indent += 1;
-        self.emit_line("return arr.iter()");
-        self.indent += 1;
-        self.emit_line(".filter_map(|v| v.as_i64())");
-        self.emit_line(".collect();");
-        self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Fallback: Manual bracket parsing");
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("return inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| parse_i64(item.trim()))");
-        self.emit_line(".collect();");
+        self.emit_line("inner.split(',').map(|item| parse_i64(item.trim())).collect()");
         self.indent -= 1;
+        self.emit_line("} else { Vec::new() }");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        self.emit_line("Vec::new()");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
         // Parse to Vec<f64>
-        // ═══════════════════════════════════════════════════════════════
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn parse_vec_f64(s: &str) -> Vec<f64> {");
         self.indent += 1;
         self.emit_line("let trimmed = s.trim();");
-        self.emit_line("");
-
-        self.emit_line("// Try JSON");
-        self.emit_line("if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {");
-        self.indent += 1;
-        self.emit_line("if let Some(arr) = val.as_array() {");
-        self.indent += 1;
-        self.emit_line("return arr.iter()");
-        self.indent += 1;
-        self.emit_line(".filter_map(|v| v.as_f64())");
-        self.emit_line(".collect();");
-        self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Manual parsing");
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("return inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| parse_f64(item.trim()))");
-        self.emit_line(".collect();");
+        self.emit_line("inner.split(',').map(|item| parse_f64(item.trim())).collect()");
         self.indent -= 1;
+        self.emit_line("} else { Vec::new() }");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        self.emit_line("Vec::new()");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        // ═══════════════════════════════════════════════════════════════
         // Parse to Vec<String>
-        // ═══════════════════════════════════════════════════════════════
         self.emit_line("#[allow(dead_code)]");
         self.emit_line("fn parse_vec_string(s: &str) -> Vec<String> {");
         self.indent += 1;
         self.emit_line("let trimmed = s.trim();");
-        self.emit_line("");
-
-        self.emit_line("// Try JSON");
-        self.emit_line("if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {");
-        self.indent += 1;
-        self.emit_line("if let Some(arr) = val.as_array() {");
-        self.indent += 1;
-        self.emit_line("return arr.iter()");
-        self.indent += 1;
-        self.emit_line(".filter_map(|v| v.as_str())");
-        self.emit_line(".map(|s| s.to_string())");
-        self.emit_line(".collect();");
-        self.indent -= 1;
-        self.indent -= 1;
-        self.emit_line("}");
-        self.indent -= 1;
-        self.emit_line("}");
-        self.emit_line("");
-
-        self.emit_line("// Manual parsing");
         self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
         self.indent += 1;
         self.emit_line("let inner = &trimmed[1..trimmed.len()-1];");
-        self.emit_line("return inner.split(',')");
-        self.indent += 1;
-        self.emit_line(".map(|item| item.trim().trim_matches('\"').trim_matches('\\'').to_string())");
-        self.emit_line(".collect();");
+        self.emit_line("inner.split(',').map(|item| item.trim().trim_matches('\"').trim_matches('\\'').to_string()).collect()");
         self.indent -= 1;
+        self.emit_line("} else { Vec::new() }");
+        self.indent -= 1;
+        self.emit_line("}");
+    }
+
+    fn generate_builtin_helpers(&mut self) {
+        self.emit_line("// ═══════════════════════════════════════════════════");
+        self.emit_line("// Builtin Functions");
+        self.emit_line("// ═══════════════════════════════════════════════════");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // SMART MATH OPERATIONS - Polymorphic for all types
+        // Supports: i64, f64, String, &str with automatic type conversion
+        // ═══════════════════════════════════════════════════════════════
+
+        // ───────────────────────────────────────────────────────────────
+        // Trait Definitions
+        // ───────────────────────────────────────────────────────────────
+        self.emit_line("// Smart arithmetic traits for polymorphic operations");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait SmartAdd<Rhs = Self> {");
+        self.indent += 1;
+        self.emit_line("type Output;");
+        self.emit_line("fn smart_add(&self, other: &Rhs) -> Self::Output;");
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
 
-        self.emit_line("Vec::new()");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait SmartSub<Rhs = Self> {");
+        self.indent += 1;
+        self.emit_line("type Output;");
+        self.emit_line("fn smart_sub(&self, other: &Rhs) -> Self::Output;");
         self.indent -= 1;
         self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait SmartMul<Rhs = Self> {");
+        self.indent += 1;
+        self.emit_line("type Output;");
+        self.emit_line("fn smart_mul(&self, other: &Rhs) -> Self::Output;");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait SmartDiv<Rhs = Self> {");
+        self.indent += 1;
+        self.emit_line("type Output;");
+        self.emit_line("fn smart_div(&self, other: &Rhs) -> Self::Output;");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // i64 Implementations
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// i64 operations");
+        self.emit_line("impl SmartAdd for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = i64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &i64) -> i64 { self + other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = i64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &i64) -> i64 { self - other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = i64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &i64) -> i64 { self * other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = i64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &i64) -> i64 {");
+        self.indent += 1;
+        self.emit_line("if *other == 0 { 0 } else { self / other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // f64 Implementations
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// f64 operations");
+        self.emit_line("impl SmartAdd for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &f64) -> f64 { self + other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &f64) -> f64 { self - other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &f64) -> f64 { self * other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &f64) -> f64 {");
+        self.indent += 1;
+        self.emit_line("if *other == 0.0 { 0.0 } else { self / other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // String Implementations (with numeric parsing)
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// String operations (with smart numeric detection)");
+        self.emit_line("impl SmartAdd for String {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &String) -> String {");
+        self.indent += 1;
+        self.emit_line("if let (Ok(a), Ok(b)) = (self.trim().parse::<f64>(), other.trim().parse::<f64>()) {");
+        self.indent += 1;
+        self.emit_line("let result = a + b;");
+        self.emit_line("if result.fract() == 0.0 { (result as i64).to_string() } else { result.to_string() }");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("format!(\"{}{}\", self, other)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub for String {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &String) -> String {");
+        self.indent += 1;
+        self.emit_line("if let (Ok(a), Ok(b)) = (self.trim().parse::<f64>(), other.trim().parse::<f64>()) {");
+        self.indent += 1;
+        self.emit_line("let result = a - b;");
+        self.emit_line("if result.fract() == 0.0 { (result as i64).to_string() } else { result.to_string() }");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("\"0\".to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul for String {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &String) -> String {");
+        self.indent += 1;
+        self.emit_line("if let (Ok(a), Ok(b)) = (self.trim().parse::<f64>(), other.trim().parse::<f64>()) {");
+        self.indent += 1;
+        self.emit_line("let result = a * b;");
+        self.emit_line("if result.fract() == 0.0 { (result as i64).to_string() } else { result.to_string() }");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("\"0\".to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv for String {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &String) -> String {");
+        self.indent += 1;
+        self.emit_line("if let (Ok(a), Ok(b)) = (self.trim().parse::<f64>(), other.trim().parse::<f64>()) {");
+        self.indent += 1;
+        self.emit_line("if b == 0.0 { return \"0\".to_string(); }");
+        self.emit_line("let result = a / b;");
+        self.emit_line("if result.fract() == 0.0 { (result as i64).to_string() } else { result.to_string() }");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("\"0\".to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // &str Implementations (delegate to String)
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// &str operations (delegate to String)");
+        self.emit_line("impl SmartAdd for &str {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &&str) -> String {");
+        self.indent += 1;
+        self.emit_line("self.to_string().smart_add(&other.to_string())");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub for &str {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &&str) -> String {");
+        self.indent += 1;
+        self.emit_line("self.to_string().smart_sub(&other.to_string())");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul for &str {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &&str) -> String {");
+        self.indent += 1;
+        self.emit_line("self.to_string().smart_mul(&other.to_string())");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv for &str {");
+        self.indent += 1;
+        self.emit_line("type Output = String;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &&str) -> String {");
+        self.indent += 1;
+        self.emit_line("self.to_string().smart_div(&other.to_string())");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // Cross-type implementations: i64 ↔ f64
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// Cross-type operations: i64 <-> f64");
+        self.emit_line("impl SmartAdd<f64> for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &f64) -> f64 { (*self as f64) + other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartAdd<i64> for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_add(&self, other: &i64) -> f64 { self + (*other as f64) }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub<f64> for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &f64) -> f64 { (*self as f64) - other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartSub<i64> for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_sub(&self, other: &i64) -> f64 { self - (*other as f64) }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul<f64> for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &f64) -> f64 { (*self as f64) * other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartMul<i64> for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_mul(&self, other: &i64) -> f64 { self * (*other as f64) }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv<f64> for i64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &f64) -> f64 {");
+        self.indent += 1;
+        self.emit_line("if *other == 0.0 { 0.0 } else { (*self as f64) / other }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl SmartDiv<i64> for f64 {");
+        self.indent += 1;
+        self.emit_line("type Output = f64;");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("fn smart_div(&self, other: &i64) -> f64 {");
+        self.indent += 1;
+        self.emit_line("if *other == 0 { 0.0 } else { self / (*other as f64) }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // Helper functions for convenient calling
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// Helper functions for ergonomic usage");
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn smart_add<T, U>(left: &T, right: &U) -> T::Output");
+        self.emit_line("where T: SmartAdd<U> {");
+        self.indent += 1;
+        self.emit_line("left.smart_add(right)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn smart_sub<T, U>(left: &T, right: &U) -> T::Output");
+        self.emit_line("where T: SmartSub<U> {");
+        self.indent += 1;
+        self.emit_line("left.smart_sub(right)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn smart_mul<T, U>(left: &T, right: &U) -> T::Output");
+        self.emit_line("where T: SmartMul<U> {");
+        self.indent += 1;
+        self.emit_line("left.smart_mul(right)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn smart_div<T, U>(left: &T, right: &U) -> T::Output");
+        self.emit_line("where T: SmartDiv<U> {");
+        self.indent += 1;
+        self.emit_line("left.smart_div(right)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // TYPE_OF - Trait-based polymorphic implementation
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait TypeName {");
+        self.indent += 1;
+        self.emit_line("fn type_name(&self) -> &'static str;");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl TypeName for i64 { fn type_name(&self) -> &'static str { \"int\" } }");
+        self.emit_line("impl TypeName for f64 { fn type_name(&self) -> &'static str { \"float\" } }");
+        self.emit_line("impl TypeName for bool { fn type_name(&self) -> &'static str { \"bool\" } }");
+        self.emit_line("impl TypeName for String { fn type_name(&self) -> &'static str { \"string\" } }");
+        self.emit_line("impl TypeName for &str { fn type_name(&self) -> &'static str { \"string\" } }");
+
+        // ✅ Specific Vec implementations with proper type names
+        self.emit_line("impl TypeName for Vec<i64> { fn type_name(&self) -> &'static str { \"list<int>\" } }");
+        self.emit_line("impl TypeName for Vec<f64> { fn type_name(&self) -> &'static str { \"list<float>\" } }");
+        self.emit_line("impl TypeName for Vec<String> { fn type_name(&self) -> &'static str { \"list<string>\" } }");
+        self.emit_line("impl TypeName for Vec<bool> { fn type_name(&self) -> &'static str { \"list<bool>\" } }");
+        self.emit_line("impl TypeName for Vec<&str> { fn type_name(&self) -> &'static str { \"list<string>\" } }");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn type_of<T: TypeName>(val: &T) -> &'static str {");
+        self.indent += 1;
+        self.emit_line("val.type_name()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // LEN - Trait-based polymorphic implementation
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("trait Len {");
+        self.indent += 1;
+        self.emit_line("fn len_tb(&self) -> usize;");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("impl Len for String { fn len_tb(&self) -> usize { self.len() } }");
+        self.emit_line("impl Len for &str { fn len_tb(&self) -> usize { self.len() } }");
+        self.emit_line("impl Len for Vec<i64> { fn len_tb(&self) -> usize { self.len() } }");
+        self.emit_line("impl Len for Vec<f64> { fn len_tb(&self) -> usize { self.len() } }");
+        self.emit_line("impl Len for Vec<String> { fn len_tb(&self) -> usize { self.len() } }");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn len<T: Len>(val: &T) -> usize {");
+        self.indent += 1;
+        self.emit_line("val.len_tb()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // STR - Convert to string
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn str<T: std::fmt::Display>(val: T) -> String {");
+        self.indent += 1;
+        self.emit_line("format!(\"{}\", val)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // INT - Convert to i64
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn int_from_str(s: &str) -> i64 {");
+        self.indent += 1;
+        self.emit_line("s.trim().parse::<i64>().unwrap_or(0)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn int_from_f64(f: f64) -> i64 {");
+        self.indent += 1;
+        self.emit_line("f as i64");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn int_from_bool(b: bool) -> i64 {");
+        self.indent += 1;
+        self.emit_line("if b { 1 } else { 0 }");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // FLOAT - Convert to f64
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn float_from_str(s: &str) -> f64 {");
+        self.indent += 1;
+        self.emit_line("s.trim().parse::<f64>().unwrap_or(0.0)");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn float_from_i64(i: i64) -> f64 {");
+        self.indent += 1;
+        self.emit_line("i as f64");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // PRETTY - Pretty print with indentation
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn pretty<T: std::fmt::Debug>(val: &T) {");
+        self.indent += 1;
+        self.emit_line("println!(\"[PRETTY] {:#?}\", val);");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // PYTHON_INFO - Show Python environment
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn python_info() {");
+        self.indent += 1;
+        self.emit_line("use std::process::Command;");
+        self.emit_line("");
+        self.emit_line("let version = Command::new(\"python\")");
+        self.indent += 1;
+        self.emit_line(".arg(\"--version\")");
+        self.emit_line(".output()");
+        self.emit_line(".ok();");
+        self.indent -= 1;
+        self.emit_line("");
+        self.emit_line("if let Some(out) = version {");
+        self.indent += 1;
+        self.emit_line("let ver = String::from_utf8_lossy(&out.stdout);");
+        self.emit_line("println!(\"╔════════════════════════════════════════════════════════════════╗\");");
+        self.emit_line("println!(\"║                Python Environment Info                         ║\");");
+        self.emit_line("println!(\"╠════════════════════════════════════════════════════════════════╣\");");
+        self.emit_line("println!(\"║ Version: {:<51} ║\", ver.trim());");
+        self.emit_line("println!(\"╚════════════════════════════════════════════════════════════════╝\");");
+        self.indent -= 1;
+        self.emit_line("} else {");
+        self.indent += 1;
+        self.emit_line("eprintln!(\"Python not found\");");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // DEBUG - Debug print
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("#[inline(always)]");
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn debug<T: std::fmt::Debug>(val: &T) {");
+        self.indent += 1;
+        self.emit_line("eprintln!(\"[DEBUG] {:?}\", val);");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+
+        // ═══════════════════════════════════════════════════════════════
+        // DYNAMIC TYPE PARSER - Detect type from string
+        // ═══════════════════════════════════════════════════════════════
+        self.emit_line("// ═══════════════════════════════════════════════════");
+        self.emit_line("// Dynamic Type Parser");
+        self.emit_line("// ═══════════════════════════════════════════════════");
+        self.emit_line("");
+
+        self.emit_line("#[allow(dead_code)]");
+        self.emit_line("fn parse_dynamic_type(s: &str) -> String {");
+        self.indent += 1;
+        self.emit_line("let trimmed = s.trim();");
+        self.emit_line("");
+        self.emit_line("// Empty string");
+        self.emit_line("if trimmed.is_empty() { return String::new(); }");
+        self.emit_line("");
+        self.emit_line("// Try parse as list");
+        self.emit_line("if trimmed.starts_with('[') && trimmed.ends_with(']') {");
+        self.indent += 1;
+        self.emit_line("return trimmed.to_string();  // Keep as string representation");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Try parse as dict");
+        self.emit_line("if trimmed.starts_with('{') && trimmed.ends_with('}') {");
+        self.indent += 1;
+        self.emit_line("return trimmed.to_string();");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
+        self.emit_line("// Default: return as-is");
+        self.emit_line("trimmed.to_string()");
+        self.indent -= 1;
+        self.emit_line("}");
+        self.emit_line("");
     }
 
     /// Check if variable is assigned in any statement
@@ -6329,71 +5637,45 @@ impl CodeGenerator {
                 let is_mutable = *mutable || self.mutable_vars.contains(name);
                 let keyword = if is_mutable { "let mut" } else { "let" };
 
-                debug_log!("Generating let for '{}': mutable={} (explicit={}, detected={})",
-            name, is_mutable, *mutable, self.mutable_vars.contains(name));
-
-                // Check if value is a language bridge call
                 let is_bridge = self.is_language_bridge_call(value);
-                let is_parallel = matches!(value, Expr::Parallel(_));
 
-                // Use type_annotation if provided, otherwise infer
-                let actual_type = if let Some(ann) = type_annotation.as_ref() {
-                    debug_log!("  Using explicit type annotation: {:?}", ann);
-                    ann.clone()
-                } else {
-                    let inferred = self.infer_type_from_expr(value);
-                    debug_log!("  Inferred type for '{}': {:?}", name, inferred);
-
-                    // Override String to actual type for bridge calls
-                    if is_bridge {
-                        if let Expr::Call { args, .. } = value {
-                            if let Some(Expr::Literal(Literal::String(code))) = args.first() {
-                                // Try to detect type from code
-                                let detected_type = self.infer_type_from_bridge_code(
-                                    "python", // Detect language from function name
-                                    code
-                                );
-
-                                debug_log!("  Override bridge return type: {:?} -> {:?}",
-                              inferred, detected_type);
-                                detected_type
-                            } else {
-                                inferred
-                            }
-                        } else {
-                            inferred
-                        }
-                    } else {
-                        inferred
-                    }
-                };
-
-                // Generate code based on type
                 if is_bridge {
-                    // Step 1: Get string result
-                    self.emit(&format!("let {}_str = ", name));
-                    self.generate_rust_expr(value)?;
-                    self.emit_line(";");
 
-                    // Step 2: Parse to actual_type
-                    if actual_type == Type::String {
-                        self.emit(&format!("let {} = {}_str;", name, name));
-                        self.emit_line("");
+                    if type_annotation.is_none() {
+                        self.emit(&format!("{} {} = ", keyword, name));
+                        self.generate_rust_expr(value)?;
+                        self.emit_line(";");
                     } else {
-                        self.generate_typed_parser(name, &actual_type);
+                        let actual_type = type_annotation.as_ref().unwrap().clone();
+
+                        self.emit(&format!("let {}_str = ", name));
+                        self.generate_rust_expr(value)?;
+                        self.emit_line(";");
+
+                        if actual_type == Type::String {
+                            self.emit(&format!("let {} = {}_str;", name, name));
+                            self.emit_line("");
+                        } else {
+                            self.generate_typed_parser(name, &actual_type);
+                        }
                     }
-                } else if is_parallel {
-                    self.emit(&format!("let {} = ", name));
-                    self.generate_rust_expr(value)?;
-                    self.emit_line(";");
-                } else {
+
+                   } else {
+                    // Regular assignment
                     self.emit(&format!("{} {} = ", keyword, name));
                     self.generate_rust_expr(value)?;
                     self.emit_line(";");
+
                 }
+                // ✅ Infer type from value if no annotation
+                let var_type = type_annotation.clone().unwrap_or_else(|| {
+                    self.infer_type_from_expr(value)
+                });
 
-                self.variables_in_scope.push((name.clone(), actual_type));
-
+                // ✅ Add to scope
+                self.variables_in_scope.push((name.clone(), var_type.clone()));
+                // ✅ CRITICAL: Generate _formatted version IMMEDIATELY
+                self.generate_single_formatted_var(name, &var_type);
                 Ok(())
             }
 
@@ -6476,64 +5758,138 @@ impl CodeGenerator {
         }
     }
 
-    fn bridge_code_looks_numeric(&self, expr: &Expr) -> bool {
-        if let Expr::Call { function, args } = expr {
-            if let Expr::Variable(name) = function {
-                if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
-                    if let Some(Expr::Literal(Literal::String(code))) = args.first() {
-                        let code_lower = code.to_lowercase();
+    /// Generate formatted version of a single variable (for language bridge injection)
+    fn generate_single_formatted_var(&mut self, name: &Arc<String>, ty: &Type) {
+        self.emit_line(&format!("let {}_formatted =", name));
+        self.indent += 1;
 
-                        // Check for arithmetic operators
-                        let has_arithmetic = code_lower.contains(" + ")
-                            || code_lower.contains(" - ")
-                            || code_lower.contains(" * ")
-                            || code_lower.contains(" / ")
-                            || code_lower.contains("+=")
-                            || code_lower.contains("-=")
-                            || code_lower.contains("*=")
-                            || code_lower.contains("/=");
-
-                        // Check for numeric literals
-                        let has_numbers = code.chars().any(|c| c.is_ascii_digit());
-
-                        // Check for numeric function calls
-                        let has_numeric_funcs = code_lower.contains("math.")
-                            || code_lower.contains("len(")
-                            || code_lower.contains("count")
-                            || code_lower.contains("parseint")
-                            || code_lower.contains("parsefloat")
-                            || code_lower.contains("number(");
-
-                        return (has_arithmetic && has_numbers) || has_numeric_funcs;
+        match ty {
+            Type::List(inner) => {
+                match inner.as_ref() {
+                    Type::Int | Type::Float | Type::Bool => {
+                        // [1, 2, 3]
+                        self.emit_line(&format!(
+                            "format!(\"[{{}}]\", {}.iter().map(|x| format!(\"{{}}\", x)).collect::<Vec<_>>().join(\", \"));",
+                            name
+                        ));
+                    }
+                    Type::String => {
+                        // ["a", "b", "c"]
+                        self.emit_line(&format!(
+                            "format!(\"[{{}}]\", {}.iter().map(|x| format!(r#\"\\\"{{}}\\\"\"#, x)).collect::<Vec<_>>().join(\", \"));",
+                            name
+                        ));
+                    }
+                    _ => {
+                        self.emit_line(&format!("format!(\"{{:?}}\", {});", name));
                     }
                 }
             }
-        }
-        false
-    }
 
-
-    /// Generate type-specific parser
-    fn generate_typed_parser(&mut self, name: &str, target_type: &Type) {
-        debug_log!("  Generating parser for '{}' -> {:?}", name, target_type);
-        match target_type {
-            Type::Int => {
-                self.emit(&format!("let {} = parse_i64(&{}_str);", name, name));
-                self.emit_line("");
-            }
-
-            Type::Float => {
-                self.emit(&format!("let {} = parse_f64(&{}_str);", name, name));
-                self.emit_line("");
+            Type::Dict { .. } | Type::Tuple(_) => {
+                self.emit_line(&format!("format!(\"{{:?}}\", {});", name));
             }
 
             Type::Bool => {
-                self.emit(&format!("let {} = parse_bool(&{}_str);", name, name));
+                self.emit_line(&format!(
+                    "if {} {{ \"true\".to_string() }} else {{ \"false\".to_string() }};",
+                    name
+                ));
+            }
+
+            // ═══════════════════════════════════════════════════════════
+            // STRING - NO QUOTES HERE! Quotes added in injection template
+            // ═══════════════════════════════════════════════════════════
+            Type::String => {
+                // ✅ NEW: Escape for multi-line strings
+                self.emit_line(&format!(
+                    "format!(\"{{}}\", {}.replace('\\n', \"\\\\n\").replace('\\r', \"\\\\r\").replace('\\t', \"\\\\t\"));",
+                    name
+                ));
+            }
+
+            Type::Int | Type::Float => {
+                self.emit_line(&format!("format!(\"{{}}\", {});", name));
+            }
+
+            _ => {
+                self.emit_line(&format!("format!(\"{{:?}}\", {});", name));
+            }
+        }
+
+        self.indent -= 1;
+    }
+
+    /// Generate type-specific parser
+    fn generate_typed_parser(&mut self, name: &str, target_type: &Type) {
+        debug_log!("Generating parser for '{}' -> {:?}", name, target_type);
+
+        match target_type {
+            Type::Int => {
+                // ✅ Enhanced: Parse "42", "42.0", "42\n", " 42 ", "" (empty)
+                self.emit(&format!("let {} = {{", name));
                 self.emit_line("");
+                self.indent += 1;
+
+                // ✅ NEW: Check for empty string first
+                self.emit_line(&format!("let trimmed = {}_str.trim();", name));
+                self.emit_line("if trimmed.is_empty() {");
+                self.indent += 1;
+                self.emit_line(&format!("eprintln!(\"Warning: Empty string for '{}', using default 0\");", name));
+                self.emit_line("0");
+                self.indent -= 1;
+                self.emit_line("}");
+
+                // Try direct i64 parse
+                self.emit_line("else if let Ok(i) = trimmed.parse::<i64>() {");
+                self.indent += 1;
+                self.emit_line("i");
+                self.indent -= 1;
+                self.emit_line("}");
+
+                // Fallback: Try f64 parse and cast to i64
+                self.emit_line("else if let Ok(f) = trimmed.parse::<f64>() {");
+                self.indent += 1;
+                self.emit_line("f as i64");
+                self.indent -= 1;
+                self.emit_line("}");
+
+                // Last resort: 0
+                self.emit_line("else {");
+                self.indent += 1;
+                self.emit_line(&format!("eprintln!(\"Failed to parse '{{}}' as int: not a number\", trimmed);"));
+                self.emit_line("0");
+                self.indent -= 1;
+                self.emit_line("}");
+
+                self.indent -= 1;
+                self.emit_line("};");
+            }
+
+            Type::Float => {
+                self.emit(&format!("let {} = {}_str.trim().parse::<f64>().unwrap_or_else(|e| {{", name, name));
+                self.emit_line("");
+                self.indent += 1;
+                self.emit_line(&format!("eprintln!(\"Failed to parse '{{}}' as float: {{}}\", {}_str, e);", name));
+                self.emit_line("0.0");
+                self.indent -= 1;
+                self.emit_line("});");
+            }
+
+            Type::Bool => {
+                // ✅ Enhanced: "True"/"true"/"1" -> true
+                self.emit(&format!("let {} = match {}_str.trim().to_lowercase().as_str() {{", name, name));
+                self.emit_line("");
+                self.indent += 1;
+                self.emit_line("\"true\" | \"1\" | \"yes\" => true,");
+                self.emit_line("_ => false,");
+                self.indent -= 1;
+                self.emit_line("};");
             }
 
             Type::String => {
-                self.emit(&format!("let {} = {}_str;", name, name));
+                // ✅ Just trim
+                self.emit(&format!("let {} = {}_str.trim().to_string();", name, name));
                 self.emit_line("");
             }
 
@@ -6552,38 +5908,14 @@ impl CodeGenerator {
                         self.emit_line("");
                     }
                     _ => {
-                        // Default to string for unknown list types
-                        self.emit(&format!("let {} = {}_str;", name, name));
+                        self.emit(&format!("let {} = {}_str.trim().to_string();", name, name));
                         self.emit_line("");
                     }
                 }
             }
 
-            Type::Option(inner) => {
-                self.emit(&format!("let {} = if {}_str.trim().is_empty() || {}_str.trim().to_lowercase() == \"none\" {{",
-                                   name, name, name));
-                self.emit_line("");
-                self.indent += 1;
-                self.emit_line("None");
-                self.indent -= 1;
-                self.emit_line("} else {");
-                self.indent += 1;
-
-                // Parse the inner type
-                match inner.as_ref() {
-                    Type::Int => self.emit(&format!("Some(parse_i64(&{}_str))", name)),
-                    Type::Float => self.emit(&format!("Some(parse_f64(&{}_str))", name)),
-                    Type::Bool => self.emit(&format!("Some(parse_bool(&{}_str))", name)),
-                    _ => self.emit(&format!("Some({}_str)", name)),
-                }
-                self.emit_line("");
-                self.indent -= 1;
-                self.emit_line("};");
-            }
-
             _ => {
-                // Default: try int, fallback to string
-                self.emit(&format!("let {} = parse_i64(&{}_str);", name, name));
+                self.emit(&format!("let {} = {}_str.trim().to_string();", name, name));
                 self.emit_line("");
             }
         }
@@ -6598,6 +5930,31 @@ impl CodeGenerator {
                 Literal::String(_) => Type::String,
                 Literal::Unit => Type::Unit,
             },
+
+            // ✅ LIST - Infer element type from first element
+            Expr::List(items) => {
+                if items.is_empty() {
+                    Type::List(Box::new(Type::Dynamic))
+                } else {
+                    let first_type = self.infer_type_from_expr(&items[0]);
+                    Type::List(Box::new(first_type))
+                }
+            }
+
+            // ✅ DICT
+            Expr::Dict(_) => Type::Dict {
+                key: Box::new(Type::String),
+                value: Box::new(Type::Dynamic),
+            },
+
+            // ✅ TUPLE
+            Expr::Tuple(items) => {
+                let types: Vec<Type> = items.iter()
+                    .map(|e| self.infer_type_from_expr(e))
+                    .collect();
+                Type::Tuple(types)
+            },
+
             Expr::BinOp { op, left, right } => {
                 use BinOp::*;
                 match op {
@@ -6615,184 +5972,25 @@ impl CodeGenerator {
                     _ => Type::Dynamic,
                 }
             }
+
             Expr::Call { function, args } => {
-                // IMPROVED: Infer type from language bridge code
-                if let Expr::Variable(name) = function {
+                if let Expr::Variable(name) = function.as_ref() {
                     if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
-                        // Try to infer type from code content
-                        if let Some(Expr::Literal(Literal::String(code))) = args.first() {
-                            return self.infer_type_from_bridge_code(&name, code);
-                        }
-                        return Type::String; // Changed: Default to String (safer)
+                        return Type::String;
                     }
                 }
                 Type::Dynamic
             }
-            Expr::List(_) => Type::List(Box::new(Type::Dynamic)),
+
             _ => Type::Dynamic,
         }
     }
 
-    /// Infer return type from language bridge code
-    /// Infer return type from language bridge code
-    fn infer_type_from_bridge_code(&self, language: &str, code: &str) -> Type {
-        let code_lower = code.to_lowercase();
-
-        if language == "python" {
-            // Match: print(NUMBER)
-            if let Some(start) = code_lower.find("print(") {
-                let after_print = &code[start + 6..];
-                if let Some(end) = after_print.find(')') {
-                    let value = after_print[..end].trim();
-
-                    // Check if it's a number
-                    if value.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
-                        if value.contains('.') {
-                            debug_log!("  Detected Python print(FLOAT): {}", value);
-                            return Type::Float;
-                        } else {
-                            debug_log!("  Detected Python print(INT): {}", value);
-                            return Type::Int;
-                        }
-                    }
-
-                    // Check for boolean literals
-                    if value == "True" || value == "False" {
-                        debug_log!("  Detected Python print(BOOL): {}", value);
-                        return Type::Bool;
-                    }
-
-                    // Check for string literals
-                    if (value.starts_with('"') && value.ends_with('"')) ||
-                        (value.starts_with('\'') && value.ends_with('\'')) {
-                        debug_log!("  Detected Python print(STRING): {}", value);
-                        return Type::String;
-                    }
-
-                    // Check for list literals
-                    if value.starts_with('[') && value.ends_with(']') {
-                        debug_log!("  Detected Python print(LIST): {}", value);
-                        // Try to detect inner type
-                        let inner = &value[1..value.len()-1].trim();
-                        if inner.is_empty() {
-                            return Type::List(Box::new(Type::Dynamic));
-                        }
-                        // Check first element
-                        if let Some(first) = inner.split(',').next() {
-                            let first = first.trim();
-                            if first.chars().all(|c| c.is_numeric() || c == '-') {
-                                return Type::List(Box::new(Type::Int));
-                            } else if first.chars().any(|c| c == '.') {
-                                return Type::List(Box::new(Type::Float));
-                            }
-                        }
-                        return Type::List(Box::new(Type::Dynamic));
-                    }
-                }
-            }
-        }
-
-
-        // ═══════════════════════════════════════════════════════════════════
-        // PRIORITY 1: Detect explicit type conversions
-        // ═══════════════════════════════════════════════════════════════════
-        if code_lower.contains("int(")
-            || code_lower.contains("len(")
-            || code_lower.contains("count(")
-            || code_lower.contains("sum(")
-            || code_lower.contains("range(") {
-            return Type::Int;
-        }
-
-        if code_lower.contains("float(")
-            || code_lower.contains("math.sqrt")
-            || code_lower.contains("math.pow")
-            || code_lower.contains("math.") {
-            // Special case: math.sqrt returns float, but often used in int context
-            // Check if result is multiplied/divided (suggests numeric)
-            if code_lower.contains("* ") || code_lower.contains("/ ") {
-                return Type::Int;  // Default to Int for arithmetic
-            }
-            return Type::Float;
-        }
-
-        if code_lower.contains("bool(")
-            || code_lower.contains("true")
-            || code_lower.contains("false")
-            || code_lower.contains(" and ")
-            || code_lower.contains(" or ") {
-            return Type::Bool;
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // PRIORITY 2: Detect arithmetic operations (NEW)
-        // ═══════════════════════════════════════════════════════════════════
-        let has_arithmetic = code_lower.contains(" + ")
-            || code_lower.contains(" - ")
-            || code_lower.contains(" * ")
-            || code_lower.contains(" / ")
-            || code_lower.contains(" % ")
-            || code_lower.contains("+=")
-            || code_lower.contains("-=")
-            || code_lower.contains("*=")
-            || code_lower.contains("/=");
-
-        let has_numeric_literal = code.chars().any(|c| c.is_numeric());
-
-        if has_arithmetic && has_numeric_literal {
-            debug_log!("  Detected arithmetic: {} -> Type::Int", &code[..code.len().min(50)]);
-            return Type::Int;
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // PRIORITY 3: Language-specific patterns
-        // ═══════════════════════════════════════════════════════════════════
-        match language {
-            "python" => {
-                // Check for numeric variables being printed
-                if code_lower.contains("print(") && has_numeric_literal {
-                    return Type::Int;
-                }
-            }
-
-            "javascript" => {
-                // const/let with numeric operations
-                if (code_lower.contains("const ") || code_lower.contains("let "))
-                    && has_arithmetic {
-                    return Type::Int;
-                }
-
-                if code_lower.contains("console.log") && has_numeric_literal {
-                    return Type::Int;
-                }
-            }
-
-            "go" => {
-                // Go variable declarations with numeric types
-                if code_lower.contains(":=") && has_arithmetic {
-                    return Type::Int;
-                }
-
-                if code_lower.contains("fmt.println") && has_numeric_literal {
-                    return Type::Int;
-                }
-            }
-
-            _ => {}
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // DEFAULT: String (safest fallback - can always be parsed later)
-        // ═══════════════════════════════════════════════════════════════════
-        debug_log!("  No type detected, defaulting to String for: {}",
-               &code[..code.len().min(50)]);
-        Type::String
-    }
 
     /// Check if expression is a language bridge call
     fn is_language_bridge_call(&self, expr: &Expr) -> bool {
         if let Expr::Call { function, .. } = expr {
-            if let Expr::Variable(name) = function {
+            if let Expr::Variable(name) = function.as_ref() {
                 return matches!(name.as_str(), "python" | "javascript" | "go" | "bash");
             }
         }
@@ -6805,7 +6003,7 @@ impl CodeGenerator {
             Expr::Literal(Literal::Unit) => true,
             Expr::Call { function, .. } => {
                 // Check if calling echo/print/println
-                if let Expr::Variable(name) = function {
+                if let Expr::Variable(name) = function.as_ref() {
                     matches!(name.as_str(), "echo" | "print" | "println")
                 } else {
                     false
@@ -6850,9 +6048,7 @@ impl CodeGenerator {
         }
     }
 
-    /// Generate language bridge call with automatic variable injection
-    /// Generate language bridge call with automatic variable injection
-    /// Generate language bridge call with automatic variable injection
+    // Generate language bridge call with automatic variable injection
     fn generate_language_bridge_call_with_context(
         &mut self,
         language: &str,
@@ -6865,76 +6061,73 @@ impl CodeGenerator {
         }
 
         let code_expr = &args[0];
-
-        // Build variable injection code
         let var_injection = self.generate_var_injection_for_language(language);
 
         if var_injection.is_empty() {
-            // No variables to inject, simple call WITHOUT extra arguments
             self.emit(language);
             self.emit("(");
             self.generate_rust_expr(code_expr)?;
-            self.emit(")");  // ← KEIN ", None)" mehr!
+            self.emit(")");
+            return Ok(());
+        }
+
+        // ✅ Use normal strings for Go, raw for others
+        if language == "go" || language == "javascript" {
+            self.emit(&format!("{}(&format!(\"", language));
+
+            // Escape für normale Strings
+            let escaped_injection = var_injection
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('"', "\\\"");
+
+            self.emit(&escaped_injection);
+            self.emit("\\n{}");
+            self.emit("\"");
         } else {
-            // Collect ALL variable data BEFORE any emit() calls
-            let var_data: Vec<(Arc<String>, Type, bool)> = self.variables_in_scope.iter()
-                .map(|(name, ty)| {
-                    let is_list = matches!(ty, Type::List(_));
-                    (Arc::clone(name), ty.clone(), is_list)
-                })
-                .collect();
-
-            let is_javascript = language == "javascript";
-            let is_go = language == "go";
-
-            // Generate format! call with variable injection
+            // Python und Bash nutzen raw strings
             self.emit(&format!("{}(&format!(r#\"", language));
             self.emit(&var_injection);
-            self.emit("\n{}");  // Placeholder for user code
+            self.emit("\n{}");
             self.emit("\"#");
+        }
 
-            // Format arguments - emit variable values with correct formatting
-            for (name, ty, is_list) in &var_data {
-                self.emit(", ");
+        // ✅ FIX: Pre-format ALL variables to strings
+        let var_data: Vec<(Arc<String>, Type)> = self.variables_in_scope.iter()
+            .map(|(name, ty)| (Arc::clone(name), ty.clone()))
+            .collect();
 
-                if *is_list {
-                    if is_javascript {
-                        self.emit("&format!(\"[{}]\", ");
-                        self.emit(name.as_str());
-                        self.emit(".iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"))");
-                    } else if is_go {
-                        let inner_type = if let Type::List(inner) = ty {
-                            match inner.as_ref() {
-                                Type::Int => "int64",
-                                Type::Float => "float64",
-                                Type::String => "string",
-                                _ => "interface{{}}",
-                            }
-                        } else {
-                            "interface{{}}"
-                        };
-                        self.emit(&format!(
-                            "&format!(\"[]{}{{}}{{}}{{}}\", \"{{\", {}.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(\",\"), \"}}\")",
-                            inner_type, name.as_str()
-                        ));
-                    } else {
-                        self.emit(name.as_str());
-                    }
-                } else {
-                    self.emit(name.as_str());
+        // Insert formatted variables
+        for (name, ty) in var_data {
+            self.emit(", ");
+
+            match (language, ty) {
+                ("go", Type::List(_)) => {
+                    // For Go slices, provide just the comma-separated values,
+                    // without the brackets or extra braces.
+                    self.emit(&format!(
+                        "{}_formatted.trim_start_matches('[').trim_end_matches(']')",
+                        name
+                    ));
+                }
+                ("bash", Type::List(_)) => {
+                    self.emit(&format!(
+                        "{}_formatted.trim_start_matches('[').trim_end_matches(']').replace(\", \", \" \")",
+                        name
+                    ));
+                }
+                _ => {
+                    self.emit(&format!("{}_formatted", name));
                 }
             }
-
-            // User code argument
-            self.emit(", ");
-            self.generate_rust_expr(code_expr)?;
-            self.emit("))");  // ← KEIN extra ", None)"
         }
+
+        self.emit(", ");
+        self.generate_rust_expr(code_expr)?;
+        self.emit("))");
 
         Ok(())
     }
-
-    /// Generate variable injection code for specific language
     fn generate_var_injection_for_language(&self, language: &str) -> String {
         if self.variables_in_scope.is_empty() {
             return String::new();
@@ -6946,39 +6139,127 @@ impl CodeGenerator {
             "python" => {
                 injection.push_str("# TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("{} = {}\n", name.as_str(),
-                                                Self::format_spec_for_type(ty, "python")));
+                    match ty {
+                        Type::String => {
+                            injection.push_str(&format!("{} = \"{{}}\"\n", name.as_str()));
+                        }
+                        Type::List(_) => {
+                            injection.push_str(&format!("{} = {}\n", name.as_str(), "{}"));
+                        }
+                        Type::Bool => {
+                            // Python needs capitalized booleans. The formatted string is "true" or "false".
+                            // The expression `'{}' == 'true'` correctly evaluates to True or False in Python.
+                            injection.push_str(&format!("{} = '{{}}' == 'true'\n", name.as_str()));
+                        }
+                        _ => { // Int, Float
+                            injection.push_str(&format!("{} = {}\n", name.as_str(), "{}"));
+                        }
+                    }
                 }
             }
 
             "javascript" => {
                 injection.push_str("// TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("const {} = {};\n", name.as_str(),
-                                                Self::format_spec_for_type(ty, "javascript")));
+                    match ty {
+                        Type::String => {
+                            injection.push_str(&format!("const {} = \"{{}}\";\n", name.as_str()));
+                        }
+                        // The `_formatted` variable already contains "true" or "false",
+                        // which are valid JavaScript literals.
+                        _ => {
+                            injection.push_str(&format!("const {} = {{}};\n", name.as_str()));
+                        }
+                    }
                 }
             }
 
             "go" => {
                 injection.push_str("// TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    // let go_type = Self::go_type_for(ty);
-                    // Use {:?} for List types (Vec doesn't implement Display)
-                    let value_placeholder = Self::format_spec_for_type(ty, "go");
-
-                    // Wir verwenden den `:=` Operator für eine saubere Deklaration und Initialisierung.
-                    // Der Go-Compiler leitet den Typ automatisch vom Wert auf der rechten Seite ab.
-                    injection.push_str(&format!("{} := {}\n", name.as_str(), value_placeholder));
-                    injection.push_str(&format!("_ = {}\n", name.as_str()));
-
+                    match ty {
+                        Type::String => {
+                            injection.push_str(&format!(
+                                "{} := `{{}}`\n_ = {}\n",
+                                name.as_str(),
+                                name.as_str()
+                            ));
+                        }
+                        Type::Bool => {
+                            // Go requires parsing the string "true" or "false"
+                            injection.push_str(&format!(
+                                "{} := `{{}}` == \"true\"\n_ = {}\n",
+                                name.as_str(),
+                                name.as_str()
+                            ));
+                        }
+                        Type::Int => {
+                            injection.push_str(&format!(
+                                "{}Str := `{{}}`\n",
+                                name.as_str()
+                            ));
+                            injection.push_str(&format!(
+                                "{} := parseInt({}Str)\n",
+                                name.as_str(),
+                                name.as_str()
+                            ));
+                            injection.push_str(&format!("_ = {}\n", name.as_str()));
+                        }
+                        Type::Float => {
+                            injection.push_str(&format!(
+                                "{}Str := `{{}}`\n",
+                                name.as_str()
+                            ));
+                            injection.push_str(&format!(
+                                "{}, _ := strconv.ParseFloat(strings.TrimSpace({}Str), 64)\n",
+                                name.as_str(),
+                                name.as_str()
+                            ));
+                            injection.push_str(&format!("_ = {}\n", name.as_str()));
+                        }
+                        Type::List(inner) => {
+                            let go_type = match inner.as_ref() {
+                                Type::Int => "[]int64",
+                                Type::Float => "[]float64",
+                                Type::String => "[]string",
+                                Type::Bool => "[]bool",
+                                _ => "[]interface{}",
+                            };
+                            // Manually construct the string to produce `{{{}}}`.
+                            // This ensures the outer format! macro sees a placeholder
+                            // inside literal braces for the Go slice definition.
+                            injection.push_str(&format!("{} := {}{{{{{}}}}}\n_ = {}\n",
+                                                        name.as_str(),
+                                                        go_type,
+                                                        "{}", // This placeholder is for the list values
+                                                        name.as_str()
+                            ));
+                        }
+                        _ => {
+                            injection.push_str(&format!(
+                                "{} := `{{}}`\n_ = {}\n",
+                                name.as_str(),
+                                name.as_str()
+                            ));
+                        }
+                    }
                 }
             }
 
             "bash" => {
                 injection.push_str("# TB Variables (auto-injected)\n");
                 for (name, ty) in &self.variables_in_scope {
-                    injection.push_str(&format!("{}={}\n", name.as_str(),
-                                                Self::format_spec_for_type(ty, "bash")));
+                    match ty {
+                        Type::List(_) => {
+                            // Array assignment is handled differently and remains correct.
+                            injection.push_str(&format!("{}=({})\n", name.as_str(), "{}"));
+                        }
+                        _ => {
+                            // For scalar variables (strings, numbers, etc.), use the safe `printf -v` method.
+                            // This correctly interprets escaped newlines (`\n`) and handles special characters.
+                            injection.push_str(&format!("printf -v {} %b '{{}}'\n", name.as_str()));
+                        }
+                    }
                 }
             }
 
@@ -6988,77 +6269,6 @@ impl CodeGenerator {
         injection
     }
 
-    /// Get format specifier for a type in target language
-    fn format_spec_for_type(ty: &Type, language: &str) -> &'static str {
-        match language {
-            "python" => match ty {
-                Type::String => "\"{}\"",
-                Type::Bool | Type::Int | Type::Float => "{}",
-                Type::List(_) => "{:?}",  // Debug format for Python lists
-                _ => "{}",
-            },
-
-            "javascript" => match ty {
-                Type::String => "\"{}\"",
-                Type::Bool | Type::Int | Type::Float => "{}",
-                Type::List(_) => "{}",  // Custom formatted (via iter().join())
-                _ => "{}",
-            },
-
-            "go" => match ty {
-                Type::String => "\"{}\"",
-                Type::Bool | Type::Int | Type::Float => "{}",
-                Type::List(_) => "{}",  // Debug format for Go slices
-                _ => "{}",
-            },
-
-            "bash" => match ty {
-                Type::String => "\"{}\"",
-                Type::List(_) => "{:?}",  // Debug format
-                _ => "{}",
-            },
-
-            _ => "{}",
-        }
-    }
-
-    /// Get Go type string for TB type
-    /// Get Go type string for TB type (FIXED: Escaped braces for format! macro)
-    fn go_type_for(ty: &Type) -> String {
-        match ty {
-            Type::String => "string".to_string(),
-            Type::Int => "int64".to_string(),
-            Type::Float => "float64".to_string(),
-            Type::Bool => "bool".to_string(),
-            Type::List(inner) => {
-                if matches!(inner.as_ref(), Type::Int) {
-                    "[]int64".to_string()
-                } else if matches!(inner.as_ref(), Type::Float) {
-                    "[]float64".to_string()
-                } else {
-                    // FIXED: Escape braces for format! macro
-                    "[]interface{{}}".to_string()
-                }
-            }
-            _ => "interface{{}}".to_string(),
-        }
-    }
-
-    /// Map language bridge calls to compiled dependency IDs
-    fn get_dependency_id(&self, code: &str) -> Option<String> {
-        for dep in &self.compiled_deps {
-            // Simple ID extraction from path
-            if let Some(name) = dep.output_path.file_stem() {  // ← Jetzt OK!
-                if let Some(name_str) = name.to_str() {
-                    if name_str.contains("dep_") {
-                        return Some(name_str.replace("plugin_", "").to_string());
-                    }
-                }
-            }
-        }
-
-        None
-    }
 
     fn generate_rust_expr(&mut self, expr: &Expr) -> TBResult<()> {
         match expr {
@@ -7088,6 +6298,33 @@ impl CodeGenerator {
             }
 
             Expr::BinOp { op, left, right } => {
+                let left_type = self.infer_type_from_expr(left);
+                let right_type = self.infer_type_from_expr(right);
+
+                // ✅ CRITICAL: Use smart operations for String types
+                let needs_smart_op =
+                    matches!(left_type, Type::String | Type::Dynamic)
+                        || matches!(right_type, Type::String | Type::Dynamic)
+                        || (left_type.is_numeric() && right_type.is_numeric() && left_type != right_type);
+
+                if needs_smart_op && matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
+                    let op_name = match op {
+                        BinOp::Add => "smart_add",
+                        BinOp::Sub => "smart_sub",
+                        BinOp::Mul => "smart_mul",
+                        BinOp::Div => "smart_div",
+                        _ => unreachable!(),
+                    };
+
+                    self.emit(&format!("{}(&", op_name));
+                    self.generate_rust_expr(left)?;
+                    self.emit(", &");
+                    self.generate_rust_expr(right)?;
+                    self.emit(")");
+                    return Ok(());
+                }
+
+                // Normal binary operation (for primitives)
                 self.emit("(");
                 self.generate_rust_expr(left)?;
                 self.emit(&format!(" {} ", self.binop_to_rust(*op)));
@@ -7150,46 +6387,232 @@ impl CodeGenerator {
                 Ok(())
             }
             Expr::Call { function, args } => {
-                if let Expr::Variable(func_name) = function {
-                    // ═══════════════════════════════════════════════════════════
-                    // SPECIAL CASE: Builtin functions (echo, print, println)
-                    // ═══════════════════════════════════════════════════════════
+                // Special handling for builtin functions
+                if let Expr::Variable(func_name) = function.as_ref() {
                     if matches!(func_name.as_str(), "echo" | "print" | "println") {
-                        self.emit(&format!("{}(", func_name));
+                        if args.is_empty() {
+                            self.emit("println!()");
+                            return Ok(());
+                        }
 
-                        // Generate single string argument
-                        if args.len() == 1 {
-                            self.generate_rust_expr(&args[0])?;
-                        } else {
-                            // Multiple args: concatenate
-                            self.emit("&format!(\"");
-                            for (i, _) in args.iter().enumerate() {
-                                if i > 0 { self.emit(" "); }
-                                self.emit("{}");
+                        let mut all_parts = Vec::new();
+                        let mut all_args = Vec::new();
+
+                        for arg in args {
+                            match arg {
+                                Expr::Literal(Literal::String(s)) => {
+                                    let (fmt_str, vars) = self.parse_string_interpolation(s);
+                                    all_parts.push(fmt_str);
+                                    all_args.extend(vars);
+                                }
+                                _ => {
+                                    // ✅ FIX: Dynamically choose {} or {:?} based on type
+                                    let needs_debug = self.expr_needs_debug_format(arg);
+                                    let fmt_str = if needs_debug { "{:?}" } else { "{}" };
+                                    all_parts.push(fmt_str.to_string());
+                                    all_args.push(arg.clone());
+                                }
                             }
-                            self.emit("\"");
-                            for arg in args {
-                                self.emit(", ");
-                                self.generate_rust_expr(arg)?;
-                            }
-                            self.emit(")");
+                        }
+
+                        // Build println! call
+                        self.emit("println!(\"");
+                        self.emit(&all_parts.join(""));
+                        self.emit("\"");
+
+                        for arg_expr in &all_args {
+                            self.emit(", ");
+                            self.generate_rust_expr(arg_expr)?;
                         }
 
                         self.emit(")");
                         return Ok(());
                     }
 
-                    // ═══════════════════════════════════════════════════════════
-                    // SPECIAL CASE: Language bridges
-                    // ═══════════════════════════════════════════════════════════
+                    if func_name.as_str() == "type_of" {
+                        self.emit("type_of(&");
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("type_of requires an argument")
+                            ));
+                        }
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+
+                    // ✅ Special handling für len (pass by reference)
+                    if func_name.as_str() == "len" {
+                        self.emit("len(&");
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("len requires an argument")
+                            ));
+                        }
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ STR - Convert to string
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "str" {
+                        self.emit("str(");
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("str requires an argument")
+                            ));
+                        }
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ INT - Convert to int (polymorphic)
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "int" {
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("int requires an argument")
+                            ));
+                        }
+
+                        // Generate type-aware conversion
+                        self.emit("(");
+                        self.emit("if let Ok(i) = (");
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(").to_string().parse::<i64>() { i } else { 0 }");
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ FLOAT - Convert to float (polymorphic)
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "float" {
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("float requires an argument")
+                            ));
+                        }
+
+                        self.emit("(");
+                        self.emit("if let Ok(f) = (");
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(").to_string().parse::<f64>() { f } else { 0.0 }");
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ DEBUG - Debug print (pass by reference)
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "debug" {
+                        self.emit("debug(&");
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("debug requires an argument")
+                            ));
+                        }
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ READ_LINE - Read from stdin
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "read_line" {
+                        self.emit("({");
+                        self.emit("use std::io::{self, BufRead};");
+                        self.emit("let stdin = io::stdin();");
+                        self.emit("let mut line = String::new();");
+                        self.emit("stdin.lock().read_line(&mut line).ok();");
+                        self.emit("line.trim_end().to_string()");
+                        self.emit("})");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ PUSH - Append to list (mutable operation)
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "push" {
+                        if args.len() < 2 {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("push requires 2 arguments (list, item)")
+                            ));
+                        }
+
+                        self.emit("({");
+                        self.emit("let mut tmp = ");
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(".clone();");
+                        self.emit("tmp.push(");
+                        self.generate_rust_expr(&args[1])?;
+                        self.emit(");");
+                        self.emit("tmp");
+                        self.emit("})");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ POP - Remove from list (mutable operation)
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "pop" {
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("pop requires an argument")
+                            ));
+                        }
+
+                        self.emit("({");
+                        self.emit("let mut tmp = ");
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(".clone();");
+                        self.emit("tmp.pop();");
+                        self.emit("tmp");
+                        self.emit("})");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ PRETTY - Pretty print with indentation
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "pretty" {
+                        self.emit("pretty(&");
+                        if args.is_empty() {
+                            return Err(TBError::InvalidOperation(
+                                STRING_INTERNER.intern("pretty requires an argument")
+                            ));
+                        }
+                        self.generate_rust_expr(&args[0])?;
+                        self.emit(")");
+                        return Ok(());
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // ✅ PYTHON_INFO - Show Python environment info
+                    // ═══════════════════════════════════════════════════════════════
+                    if func_name.as_str() == "python_info" {
+                        self.emit("python_info()");
+                        return Ok(());
+                    }
+
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // SPECIAL CASE: Language bridges (python, javascript, go, bash)
+                    // ═══════════════════════════════════════════════════════════════
                     if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
-                        return self.generate_language_bridge_call_with_context(&func_name, args);
+                        return self.generate_language_bridge_call_with_context(func_name, args);
                     }
                 }
 
-                // ═══════════════════════════════════════════════════════════
+                // ═══════════════════════════════════════════════════════════════
                 // REGULAR FUNCTION CALL
-                // ═══════════════════════════════════════════════════════════
+                // ═══════════════════════════════════════════════════════════════
                 self.generate_rust_expr(function)?;
                 self.emit("(");
                 for (i, arg) in args.iter().enumerate() {
@@ -7204,7 +6627,7 @@ impl CodeGenerator {
                 self.emit_line("{");
                 self.indent += 1;
 
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.generate_rust_statement(stmt)?;
                 }
 
@@ -7283,7 +6706,42 @@ impl CodeGenerator {
         }
     }
 
-    fn parse_string_interpolation_owned(&self, s: &str) -> (String, Vec<Expr>) {
+    /// Check if expression needs Debug formatting ({:?}) instead of Display ({})
+    fn expr_needs_debug_format(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(name) => {
+                // Check variable type from scope
+                let var_type = self.get_variable_type(name.as_str());
+                self.needs_debug_format(&var_type)
+            }
+
+            Expr::List(_) => true,           // Lists always need {:?}
+            Expr::Dict(_) => true,           // Dicts always need {:?}
+            Expr::Tuple(_) => true,          // Tuples always need {:?}
+
+            Expr::Call { function, .. } => {
+                // Check if function returns complex type
+                if let Expr::Variable(func_name) = function.as_ref() {
+                    // Language bridges return strings (safe with {})
+                    if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
+                        return false;
+                    }
+
+                    // Builtin functions that return complex types
+                    if matches!(func_name.as_str(), "push" | "pop") {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            _ => false  // Literals, BinOps etc. use Display
+        }
+    }
+
+
+    /// Parse string with $variable interpolation (TYPE-AWARE)
+    fn parse_string_interpolation(&self, s: &str) -> (String, Vec<Expr>) {
         let mut result = String::new();
         let mut variables = Vec::new();
         let mut chars = s.chars().peekable();
@@ -7293,6 +6751,7 @@ impl CodeGenerator {
                 if let Some(&next_ch) = chars.peek() {
                     if next_ch.is_alphabetic() || next_ch == '_' {
                         let mut var_name = String::new();
+
                         while let Some(&ch) = chars.peek() {
                             if ch.is_alphanumeric() || ch == '_' {
                                 var_name.push(ch);
@@ -7301,7 +6760,18 @@ impl CodeGenerator {
                                 break;
                             }
                         }
-                        result.push_str("{}");
+
+                        // ✅ Get variable type to decide format specifier
+                        let var_type = self.get_variable_type(&var_name);
+
+                        if self.needs_debug_format(&var_type) {
+                            // Use {:?} for complex types
+                            result.push_str("{:?}");
+                        } else {
+                            // Use {} for primitives
+                            result.push_str("{}");
+                        }
+
                         variables.push(Expr::Variable(Arc::new(var_name)));
                         continue;
                     }
@@ -7318,54 +6788,24 @@ impl CodeGenerator {
         (result, variables)
     }
 
+    /// Get type of variable from scope
+    fn get_variable_type(&self, name: &str) -> Type {
+        self.variables_in_scope
+            .iter()
+            .find(|(n, _)| n.as_str() == name)
+            .map(|(_, t)| t.clone())
+            .unwrap_or(Type::Dynamic)
+    }
 
-    /// Parse string with $variable interpolation
-    /// Returns (format_string, variables)
-    ///
-    /// Example:
-    ///   "Hello $name, you are $age years old"
-    /// → ("Hello {}, you are {} years old", [Variable("name"), Variable("age")])
-    fn parse_string_interpolation(&self, s: &str) -> (String, Vec<Expr>) {
-        let mut result = String::new();
-        let mut variables = Vec::new();
-        let mut chars = s.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '$' {
-                // Check if next char is valid identifier start
-                if let Some(&next_ch) = chars.peek() {
-                    if next_ch.is_alphabetic() || next_ch == '_' {
-                        // Parse variable name
-                        let mut var_name = String::new();
-
-                        while let Some(&ch) = chars.peek() {
-                            if ch.is_alphanumeric() || ch == '_' {
-                                var_name.push(ch);
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        // Add placeholder and variable
-                        result.push_str("{}");
-                        variables.push(Expr::Variable(Arc::new(var_name)));
-                        continue;
-                    }
-                }
-
-                // Not a variable reference, just literal $
-                result.push('$');
-            } else if ch == '{' || ch == '}' {
-                // Escape braces for format! macro
-                result.push(ch);
-                result.push(ch);
-            } else {
-                result.push(ch);
-            }
+    /// Check if type needs Debug format ({:?})
+    fn needs_debug_format(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Unit | Type::Bool | Type::Int | Type::Float | Type::String => false,
+            Type::List(_) | Type::Dict { .. } | Type::Tuple(_)
+            | Type::Option(_) | Type::Result { .. } => true,
+            Type::Dynamic => false,
+            _ => true,
         }
-
-        (result, variables)
     }
 
     fn binop_to_rust(&self, op: BinOp) -> &'static str {
@@ -7553,44 +6993,43 @@ impl CodeGenerator {
 // §11 JIT EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub type Environment<'arena> = Arc<RwLock<HashMap<Arc<String>, Value<'arena>>>>;
+pub type Environment = Arc<RwLock<HashMap<Arc<String>, Value>>>;
 
 
 /// Fast single-threaded environment (10x faster than Arc<RwLock>)
-pub type FastEnvironment<'arena> = Rc<RefCell<HashMap<Arc<String>, Value<'arena>>>>;
+pub type FastEnvironment = Rc<RefCell<HashMap<Arc<String>, Value>>>;
 
 /// Function registry for zero-copy function calls
-/// Function registry for zero-copy function calls
-pub struct FunctionRegistry<'arena> {
-    functions: HashMap<String, (Vec<Arc<String>>, Rc<Expr<'arena>>)>,
+pub struct FunctionRegistry {
+    functions: HashMap<String, (Vec<Arc<String>>, Rc<Expr>)>, // name → (params, body)
 }
 
-impl<'arena> FunctionRegistry<'arena> {
+impl FunctionRegistry {
     fn new() -> Self {
-        Self { functions: HashMap::new() }
+        Self {
+            functions: HashMap::new(),
+        }
     }
 
-    fn register(&mut self, name: Arc<String>, params: Vec<Arc<String>>, body: Expr<'arena>) {
-        self.functions.insert(name.to_string(), (params, Rc::new(body)));
+    fn register(&mut self, name: Arc<String>, params: Vec<Arc<String>>, body: Expr) {
+        self.functions.insert(name.to_string(), (params, Rc::new(body)));  //  Konvertiere einmal
     }
 
-    fn get(&self, name: &str) -> Option<&(Vec<Arc<String>>, Rc<Expr<'arena>>)> {
+    fn get(&self, name: &str) -> Option<&(Vec<Arc<String>>, Rc<Expr>)> {
         self.functions.get(name)
     }
 }
-
-pub struct JitExecutor<'arena> {
-    arena: &'arena Bump,
-    env: FastEnvironment<'arena>,
-    config: Config<'arena>,
+pub struct JitExecutor {
+    env: FastEnvironment,
+    config: Config,
     builtins: BuiltinRegistry,
-    functions: FunctionRegistry<'arena>,
+    functions: FunctionRegistry,
     recursion_depth: usize,
     max_recursion_depth: usize,
 }
 
-impl <'arena> JitExecutor<'arena> {
-    pub fn new(config: Config<'arena>, arena: &'arena Bump) -> Self {
+impl JitExecutor {
+    pub fn new(config: Config) -> Self {
         let mut env_map = HashMap::new();
 
         // Initialize with shared variables
@@ -7615,44 +7054,56 @@ impl <'arena> JitExecutor<'arena> {
             functions: FunctionRegistry::new(),
             recursion_depth: 0,
             max_recursion_depth: 10000,
-            arena
         }
     }
 
-    pub fn execute(&mut self, statements: &'arena [Statement<'arena>]) -> TBResult<Value<'arena>> {
+    pub fn execute(&mut self, statements: &[Statement]) -> TBResult<Value> {
         debug_log!("JitExecutor::execute() started with {} statements", statements.len());
+        //  TEMPORARY: Check if we have enough stack space
+        #[cfg(debug_assertions)]
+        {
+            // Try to allocate a large-ish array on stack to test available space
+            fn check_stack_space() -> bool {
+                let _test: [u8; 100_000] = [0; 100_000]; // 100KB test
+                true
+            }
 
+            if !std::panic::catch_unwind(|| check_stack_space()).is_ok() {
+                eprintln!("⚠️  WARNING: Limited stack space detected!");
+                eprintln!("   Consider running with: RUST_MIN_STACK=8388608 cargo run");
+            }
+        }
         let mut last_value = Value::Unit;
 
-        // PHASE 1: Register all functions FIRST
-        for stmt in statements.iter() {
+        //  PHASE 1: Register all functions FIRST (no cloning!)
+        for stmt in statements {
             if let Statement::Function { name, params, body, .. } = stmt {
                 let param_names: Vec<Arc<String>> = params.iter()
                     .map(|p| Arc::clone(&p.name))
                     .collect();
 
-                // FIX: Body muss zu 'static konvertiert werden
-                let body_static: Expr<'static> = unsafe {
-                    std::mem::transmute(body.clone())
-                };
-
                 self.functions.register(
                     Arc::clone(name),
                     param_names,
-                    body_static
+                    body.clone()
                 );
+
+                debug_log!("Registered function: {}", name);
             }
         }
 
-        // PHASE 2: Execute statements
-        for stmt in statements.iter() {
+        //  PHASE 2: Execute non-function statements
+        for (i, stmt) in statements.iter().enumerate() {
+            debug_log!("Executing statement {}/{}", i + 1, statements.len());
             last_value = self.execute_statement(stmt)?;
+            debug_log!("Statement {} result: {:?}", i + 1, last_value);
         }
 
+        debug_log!("JitExecutor::execute() completed");
         Ok(last_value)
     }
 
-    pub fn execute_statement(&mut self, stmt: &'arena Statement<'arena>) -> TBResult<Value<'arena>> {
+    pub fn execute_statement(&mut self, stmt: &Statement) -> TBResult<Value> {
         match stmt {
             Statement::Let { name, value, .. } => {
                 let val = self.eval_expr(value)?;
@@ -7672,7 +7123,10 @@ impl <'arena> JitExecutor<'arena> {
                 }
             }
 
-            Statement::Function { .. } => Ok(Value::Unit),
+            Statement::Function { .. } => {
+                // Already registered in execute()
+                Ok(Value::Unit)
+            }
 
             Statement::Expr(expr) => self.eval_expr(expr),
 
@@ -7680,7 +7134,7 @@ impl <'arena> JitExecutor<'arena> {
         }
     }
 
-    pub fn eval_expr(&mut self, expr:  &'arena Expr<'arena>) -> TBResult<Value<'arena>>{
+    pub fn eval_expr(&mut self, expr: &Expr) -> TBResult<Value> {
         match expr {
             Expr::Literal(lit) => {
                 match lit {
@@ -7692,28 +7146,20 @@ impl <'arena> JitExecutor<'arena> {
             }
 
             Expr::Variable(name) => {
-                // Fast lookup with Rc<RefCell>
+                //  Fast lookup with Rc<RefCell>
                 if let Some(value) = self.env.borrow().get(name).cloned() {
                     return Ok(value);
                 }
 
                 // Check builtin functions
-                //if let Some(_) = self.builtins.get(name.as_str()) {
-                //    return Ok(Value::Native {
-                //        language: Language::Rust,
-                //        type_name: format!("builtin:{}", name).into(),
-                //        handle: NativeHandle {
-                //            id: name.as_ptr() as u64,
-                //            data: Arc::new(name),
-                //        },
-                //    });
-                //}
                 if let Some(_) = self.builtins.get(name.as_str()) {
-                    //  Erstelle einfaches Function-Value statt Native
-                    return Ok(Value::Function {
-                        params: vec![],
-                        body: &Expr::Literal(Literal::Unit), // Dummy
-                        env: Arc::new(RwLock::new(HashMap::new())),
+                    return Ok(Value::Native {
+                        language: Language::Rust,
+                        type_name: format!("builtin:{}", name).into(),
+                        handle: NativeHandle {
+                            id: name.as_ptr() as u64,
+                            data: Arc::new(name.clone()),
+                        },
                     });
                 }
 
@@ -7732,64 +7178,50 @@ impl <'arena> JitExecutor<'arena> {
             }
 
             Expr::Call { function, args } => {
-                // PHASE 1: Collect all arguments
-                let mut arg_vals = Vec::new();
-                for arg in args.iter() {
-                    arg_vals.push(self.eval_expr(arg)?);
-                }
-
-                // PHASE 2: Check for builtin functions (highest priority)
-                if let Expr::Variable(func_name) = function {
-                    // ═══════════════════════════════════════════════════════════
-                    // BUILTIN FUNCTIONS (echo, print, len, etc.)
-                    // ═══════════════════════════════════════════════════════════
-                    if let Some(builtin) = self.builtins.get(func_name.as_str()) {
-                        debug_log!("Calling builtin: {}", func_name);
-
-                        // Convert args to 'arena lifetime
-                        let arena_args: Vec<Value<'arena>> = arg_vals.iter().map(|v| v.clone()).collect();
-                        let args_slice = self.arena.alloc_slice_fill_with(arena_args.len(), |i| {
-                            arena_args[i].clone()
-                        });
-
-                        // Call builtin directly with correct signature
-                        return (builtin.function)(args_slice);
-                    }
-
-                    // ═══════════════════════════════════════════════════════════
-                    // LANGUAGE BRIDGES (python, javascript, go, bash)
-                    // ═══════════════════════════════════════════════════════════
+                //  OPTIMIZED: Check if it's a registered function FIRST
+                if let Expr::Variable(func_name) = function.as_ref() {
+                    // Check language bridges first
                     if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
+                        let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                        let arg_vals = arg_vals?;
+
                         if let Some(Value::String(code)) = arg_vals.first() {
                             let variables = self.env.borrow().clone();
                             let context = LanguageExecutionContext::with_variables(variables);
 
-                            let result_static = match func_name.as_str() {
-                                "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context))?,
-                                "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context))?,
-                                "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context))?,
-                                "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context))?,
+                            return match func_name.as_str() {
+                                "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context)),
+                                "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context)),
+                                "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context)),
+                                "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context)),
                                 _ => unreachable!(),
                             };
-
-                            return Ok(unsafe { std::mem::transmute(result_static) });
                         }
                     }
 
+                    //  ZERO-COPY function call from registry (NO CLONING!)
                     if let Some((params, body_rc)) = self.functions.get(func_name.as_str()) {
+                        //  Clone only the Vec<String>, not the Expr!
                         let params = params.clone();
-                        let body_rc = body_rc.clone();
+                        let body_rc = body_rc.clone(); //  Rc::clone is cheap (just increments ref count)
+
+                        // Evaluate arguments
+                        let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                        let arg_vals = arg_vals?;
+
                         return self.call_function_fast(func_name.as_str(), &params, &body_rc, arg_vals);
                     }
                 }
 
-                // PHASE 3: Fallback - evaluate function expression and call
-                let func = self.eval_expr(function)?;
+                // Fallback: regular function call
+                let func = self.eval_expr(function.as_ref())?;
+                let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                let arg_vals = arg_vals?;
                 self.call_function_legacy(func, arg_vals)
             }
 
             Expr::Block { statements, result } => {
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.execute_statement(stmt)?;
                 }
 
@@ -7822,7 +7254,7 @@ impl <'arena> JitExecutor<'arena> {
                     if iterations > max_iterations {
                         return Err(TBError::RuntimeError {
                             message: format!("Loop exceeded maximum iterations ({})", max_iterations).into(),
-                            trace:  vec![Arc::from("loop execution".to_string())],
+                            trace: vec![Arc::from("loop execution".to_string())],
                         });
                     }
 
@@ -7848,7 +7280,7 @@ impl <'arena> JitExecutor<'arena> {
                     if iterations > max_iterations {
                         return Err(TBError::RuntimeError {
                             message: format!("While loop exceeded maximum iterations ({})", max_iterations).into(),
-                            trace: vec![Arc::from("loop execution".to_string())],
+                            trace: vec![Arc::from("while loop execution".to_string())],
                         });
                     }
 
@@ -7887,12 +7319,8 @@ impl <'arena> JitExecutor<'arena> {
             }
 
             Expr::List(items) => {
-                //  Sammle Werte mit Schleife
-                let mut values = Vec::new();
-                for item in items.iter() {
-                    values.push(self.eval_expr(item)?);
-                }
-                Ok(Value::List(values))
+                let values: TBResult<Vec<_>> = items.iter().map(|e| self.eval_expr(e)).collect();
+                Ok(Value::List(values?))
             }
 
             Expr::Index { object, index } => {
@@ -7921,34 +7349,54 @@ impl <'arena> JitExecutor<'arena> {
             Expr::Pipeline { value, operations } => {
                 let mut result = self.eval_expr(value)?;
 
-                for op in operations {
+                for op in operations.as_ref() {
                     result = match op {
                         Expr::Call { function, args } => {
-                            // Sammle args
-                            let mut all_args = vec![result];
-                            for arg in args.iter() {
-                                all_args.push(self.eval_expr(arg)?);
+                            if let Expr::Variable(func_name) = function.as_ref() {
+                                if matches!(func_name.as_str(), "python" | "javascript" | "go" | "bash") {
+                                    let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                                    let arg_vals = arg_vals?;
+
+                                    if let Some(Value::String(code)) = arg_vals.first() {
+                                        let variables = self.env.borrow().clone();
+                                        let context = LanguageExecutionContext::with_variables(variables);
+
+                                        match func_name.as_str() {
+                                            "python" => execute_python_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "javascript" => execute_js_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "go" => execute_go_code_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            "bash" => execute_bash_command_with_context(code, &arg_vals[1..], Some(&context))?,
+                                            _ => unreachable!(),
+                                        }
+                                    } else {
+                                        result
+                                    }
+                                } else {
+                                    let func = self.eval_expr(function.as_ref())?;
+                                    let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                                    let arg_vals = arg_vals?;
+                                    self.call_function_legacy(func, arg_vals)?
+                                }
+                            } else {
+                                let func = self.eval_expr(function.as_ref())?;
+                                let arg_vals: TBResult<Vec<_>> = args.iter().map(|a| self.eval_expr(a)).collect();
+                                let arg_vals = arg_vals?;
+                                self.call_function_legacy(func, arg_vals)?
                             }
-
-                            let func = self.eval_expr(function)?;
-                             self.call_function_legacy(func, all_args)?
-
                         }
                         Expr::Variable(name) => {
-                            if let Some((params, body_rc)) = self.functions.get(name.as_str()) {
+                            if let Some((params, body_rc)) = self.functions.get(name) {
                                 let params = params.clone();
-                                let body_rc = body_rc.clone();
-                                self.call_function_fast(&name, &params, &body_rc, vec![result])?
-
+                                let body_rc = body_rc.clone(); //  Rc::clone is cheap
+                                self.call_function_fast(name, &params, &body_rc, vec![result])?
                             } else {
                                 let func = self.env.borrow().get(name)
                                     .cloned()
                                     .ok_or_else(|| TBError::UndefinedFunction(name.clone()))?;
-                                 self.call_function_legacy(func, vec![result])?
-
+                                self.call_function_legacy(func, vec![result])?
                             }
                         }
-                        _ => return Err(TBError::InvalidOperation(STRING_INTERNER.intern("Invalid pipeline operation"))),
+                        _ => return Err(TBError::InvalidOperation(Arc::from("Pipeline".to_string()))),
                     };
                 }
 
@@ -7968,7 +7416,7 @@ impl <'arena> JitExecutor<'arena> {
             }
 
             Expr::Parallel(tasks) => {
-                // Ensure this returns Value::List
+                //  Ensure this returns Value::List
                 let results: TBResult<Vec<_>> = tasks
                     .iter()
                     .map(|task| self.eval_expr(task))
@@ -7981,57 +7429,21 @@ impl <'arena> JitExecutor<'arena> {
         }
     }
 
-    fn interpolate_string(&self, s: &str) -> TBResult<String> {
-        let mut result = String::new();
-        let mut chars = s.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '$' {
-                if let Some(&next_ch) = chars.peek() {
-                    if next_ch.is_alphabetic() || next_ch == '_' {
-                        // Parse variable name
-                        let mut var_name = String::new();
-                        while let Some(&ch) = chars.peek() {
-                            if ch.is_alphanumeric() || ch == '_' {
-                                var_name.push(ch);
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-
-                        // Lookup variable
-                        if let Some(value) = self.env.borrow().get(&STRING_INTERNER.intern(&var_name)) {
-                            result.push_str(&format!("{}", value));
-                        } else {
-                            result.push('$');
-                            result.push_str(&var_name);
-                        }
-                        continue;
-                    }
-                }
-                result.push('$');
-            } else {
-                result.push(ch);
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// ULTRA-FAST function call (zero environment cloning!)
+    ///  ULTRA-FAST function call (zero environment cloning!)
     fn call_function_fast(
         &mut self,
-        func_name: &str,
+        func_name: &str,  //  Changed from _func_name to use it
         params: &[Arc<String>],
-        body: &Rc<Expr<'arena>>,
-        args: Vec<Value<'arena>>,
-    ) -> TBResult<Value<'arena>> {
+        body: &Rc<Expr>,
+        args: Vec<Value>,
+    ) -> TBResult<Value> {
+        // Check recursion depth
         self.recursion_depth += 1;
 
+        //  DEBUG: Print current recursion depth and estimated stack usage
         #[cfg(debug_assertions)]
         {
-            let estimated_stack_kb = self.recursion_depth * 4;
+            let estimated_stack_kb = self.recursion_depth * 4; // Rough estimate: ~4KB per call
             let env_size = self.env.borrow().len();
             debug_log!(
             "📞 CALL depth={}/{} func='{}' params={} env_vars={} ~{}KB stack",
@@ -8047,8 +7459,11 @@ impl <'arena> JitExecutor<'arena> {
         if self.recursion_depth > self.max_recursion_depth {
             self.recursion_depth = 0;
             return Err(TBError::RuntimeError {
-                message: format!("Maximum recursion depth exceeded ({})", self.max_recursion_depth).into(),
-                trace: vec![],
+                message: format!(
+                    "Maximum recursion depth exceeded ({})",
+                    self.max_recursion_depth
+                ).into(),
+                trace: vec![Arc::from("function call".to_string())],
             });
         }
 
@@ -8059,22 +7474,17 @@ impl <'arena> JitExecutor<'arena> {
             ));
         }
 
-        // Speichere alte Werte
+        //  CRITICAL OPTIMIZATION: Temporarily push parameters into environment
         let mut saved_params = Vec::new();
         for (param, arg) in params.iter().zip(args.iter()) {
             let old_value = self.env.borrow_mut().insert(Arc::clone(param), arg.clone());
             saved_params.push((Arc::clone(param), old_value));
         }
 
-        //  Evaluiere body mit korrektem Lifetime
-        let body_ref: &'arena Expr<'arena> = unsafe {
-            // SAFETY: Rc<Expr<'arena>> enthält bereits 'arena Daten
-            // Wir casten nur die Referenz
-            std::mem::transmute::<&Expr<'arena>, &'arena Expr<'arena>>(body.as_ref())
-        };
-        let result = self.eval_expr(body_ref);
+        //  Execute body (dereference Rc to get &Expr)
+        let result = self.eval_expr(body);  // body: &Rc<Expr> derefs to &Expr automatically
 
-        // Restore Parameter
+        // Restore old parameter values
         for (param, old_value) in saved_params {
             if let Some(old) = old_value {
                 self.env.borrow_mut().insert(param, old);
@@ -8084,18 +7494,16 @@ impl <'arena> JitExecutor<'arena> {
         }
 
         self.recursion_depth -= 1;
+
         result
     }
 
     /// Legacy function call (for closures)
-    fn call_function_legacy(
-        &mut self,
-        func: Value<'arena>,
-        args: Vec<Value<'arena>>
-    ) -> TBResult<Value<'arena>> {
+    fn call_function_legacy(&mut self, func: Value, args: Vec<Value>) -> TBResult<Value> {
         match func {
             Value::Function { params, body, env: _ } => {
-                let body_rc = Rc::new(body.clone());
+                //  Wrap body in Rc for consistency
+                let body_rc = Rc::new(*body);
                 self.call_function_fast("", &params, &body_rc, args)
             }
 
@@ -8103,27 +7511,76 @@ impl <'arena> JitExecutor<'arena> {
                 let func_name = type_name.strip_prefix("builtin:").unwrap();
 
                 if let Some(builtin) = self.builtins.get(func_name) {
-                    // FIX: Mit HRTB können wir direkt aufrufen
-                    let arena_args: Vec<Value<'arena>> = args.iter().map(|v| v.clone()).collect();
-                    let args_slice = self.arena.alloc_slice_fill_with(arena_args.len(), |i| {
-                        arena_args[i].clone()
-                    });
+                    if args.len() < builtin.min_args {
+                        return Err(TBError::InvalidOperation(
+                            format!("{} requires at least {} arguments, got {}",
+                                    func_name, builtin.min_args, args.len()).into()
+                        ));
+                    }
 
-                    // HRTB erlaubt direkten Call mit 'arena
-                    (builtin.function)(args_slice)
+                    if let Some(max) = builtin.max_args {
+                        if args.len() > max {
+                            return Err(TBError::InvalidOperation(
+                                format!("{} accepts at most {} arguments, got {}",
+                                        func_name, max, args.len()).into()
+                            ));
+                        }
+                    }
+
+                    (builtin.function)(&args)
                 } else {
-                    Err(TBError::UndefinedFunction(STRING_INTERNER.intern(func_name)))
+                    Err(TBError::UndefinedFunction(Arc::from(func_name.to_string())))
                 }
             }
 
-            _ => Err(TBError::InvalidOperation(
-                format!("Not a function: {:?}", func.get_type()).into()
-            )),
+            _ => Err(TBError::InvalidOperation(format!(
+                "Not a function: {:?}", func.get_type()
+            ).into())),
         }
     }
 
-    fn eval_binop(&self, op: BinOp, left: Value<'arena>, right: Value<'arena>) -> TBResult<Value<'arena>> {
-        match (op, &left, &right) {
+    fn interpolate_string(&self, template: &str) -> TBResult<String> {
+        let mut result = String::new();
+        let mut chars = template.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '$' {
+                // Found variable reference
+                let mut var_name = String::new();
+
+                // Read variable name (alphanumeric + underscore)
+                while let Some(&next_ch) = chars.peek() {
+                    if next_ch.is_alphanumeric() || next_ch == '_' {
+                        var_name.push(next_ch);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                if var_name.is_empty() {
+                    // Just a dollar sign, keep it
+                    result.push('$');
+                } else {
+                    // Look up variable and format it
+                    if let Some(value) = self.env.borrow().get(&var_name).cloned() {
+                        result.push_str(&format_value_for_output(&value));
+                    } else {
+                        // Variable not found, keep original
+                        result.push('$');
+                        result.push_str(&var_name);
+                    }
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn eval_binop(&self, op: BinOp, left: Value, right: Value) -> TBResult<Value> {
+        match (op, left, right) {
             // ═══════════════════════════════════════════════════════════
             // INTEGER ARITHMETIC
             // ═══════════════════════════════════════════════════════════
@@ -8131,14 +7588,14 @@ impl <'arena> JitExecutor<'arena> {
             (BinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
             (BinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
             (BinOp::Div, Value::Int(a), Value::Int(b)) => {
-                if b == &0 {
+                if b == 0 {
                     Err(TBError::DivisionByZero)
                 } else {
                     Ok(Value::Int(a / b))
                 }
             }
             (BinOp::Mod, Value::Int(a), Value::Int(b)) => {
-                if b == &0 {
+                if b == 0 {
                     Err(TBError::DivisionByZero)
                 } else {
                     Ok(Value::Int(a % b))
@@ -8156,17 +7613,17 @@ impl <'arena> JitExecutor<'arena> {
             // ═══════════════════════════════════════════════════════════
             // MIXED-TYPE ARITHMETIC (Int + Float → Float)
             // ═══════════════════════════════════════════════════════════
-            (BinOp::Add, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
-            (BinOp::Add, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
+            (BinOp::Add, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
+            (BinOp::Add, Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
 
-            (BinOp::Sub, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
-            (BinOp::Sub, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+            (BinOp::Sub, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - b as f64)),
+            (BinOp::Sub, Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
 
-            (BinOp::Mul, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
-            (BinOp::Mul, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
+            (BinOp::Mul, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * b as f64)),
+            (BinOp::Mul, Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
 
-            (BinOp::Div, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
-            (BinOp::Div, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
+            (BinOp::Div, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / b as f64)),
+            (BinOp::Div, Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 / b)),
 
             // ═══════════════════════════════════════════════════════════
             // STRING CONCATENATION
@@ -8198,23 +7655,23 @@ impl <'arena> JitExecutor<'arena> {
             // ═══════════════════════════════════════════════════════════
             // COMPARISONS (Mixed)
             // ═══════════════════════════════════════════════════════════
-            (BinOp::Eq, Value::Float(a), Value::Int(b)) => Ok(Value::Bool((a - *b as f64).abs() < f64::EPSILON)),
-            (BinOp::Eq, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64 - b).abs() < f64::EPSILON)),
+            (BinOp::Eq, Value::Float(a), Value::Int(b)) => Ok(Value::Bool((a - b as f64).abs() < f64::EPSILON)),
+            (BinOp::Eq, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64 - b).abs() < f64::EPSILON)),
 
-            (BinOp::Ne, Value::Float(a), Value::Int(b)) => Ok(Value::Bool((a - *b as f64).abs() >= f64::EPSILON)),
-            (BinOp::Ne, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64 - b).abs() >= f64::EPSILON)),
+            (BinOp::Ne, Value::Float(a), Value::Int(b)) => Ok(Value::Bool((a - b as f64).abs() >= f64::EPSILON)),
+            (BinOp::Ne, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64 - b).abs() >= f64::EPSILON)),
 
-            (BinOp::Lt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
-            (BinOp::Lt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
+            (BinOp::Lt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a < b as f64)),
+            (BinOp::Lt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
 
-            (BinOp::Le, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
-            (BinOp::Le, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) <= *b)),
+            (BinOp::Le, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a <= b as f64)),
+            (BinOp::Le, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) <= b)),
 
-            (BinOp::Gt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
-            (BinOp::Gt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) > *b)),
+            (BinOp::Gt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a > b as f64)),
+            (BinOp::Gt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
 
-            (BinOp::Ge, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
-            (BinOp::Ge, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) >= *b)),
+            (BinOp::Ge, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a >= b as f64)),
+            (BinOp::Ge, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) >= b)),
 
             // ═══════════════════════════════════════════════════════════
             // GENERIC EQUALITY (works for any type)
@@ -8240,7 +7697,7 @@ impl <'arena> JitExecutor<'arena> {
         }
     }
 
-    fn eval_unaryop(&self, op: UnaryOp, val: Value<'arena>) -> TBResult<Value<'arena>> {
+    fn eval_unaryop(&self, op: UnaryOp, val: Value) -> TBResult<Value> {
         match (op, val) {
             (UnaryOp::Not, val) => Ok(Value::Bool(!val.is_truthy())),
             (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
@@ -8249,7 +7706,7 @@ impl <'arena> JitExecutor<'arena> {
         }
     }
 
-    fn literal_to_value(&self, lit: &Literal) -> Value<'arena>  {
+    fn literal_to_value(&self, lit: &Literal) -> Value {
         match lit {
             Literal::Unit => Value::Unit,
             Literal::Bool(b) => Value::Bool(*b),
@@ -8259,7 +7716,7 @@ impl <'arena> JitExecutor<'arena> {
         }
     }
 
-    fn values_equal(&self, a: &Value<'arena>, b: &Value<'arena>)-> bool {
+    fn values_equal(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Unit, Value::Unit) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
@@ -8284,13 +7741,13 @@ use rayon::prelude::*;
 
 /// Parallel executor using multiple JitExecutor instances
 pub struct ParallelExecutor {
-    config: Config<'static>,
-    shared_state: Arc<Mutex<HashMap<Arc<String>, Value<'static>>>>,
+    config: Config,
+    shared_state: Arc<Mutex<HashMap<Arc<String>, Value>>>,
     worker_threads: usize,
 }
 
 impl ParallelExecutor {
-    pub fn new(config: Config<'static>) -> Self {
+    pub fn new(config: Config) -> Self {
         let worker_threads = match config.runtime_mode {
             RuntimeMode::Parallel { worker_threads } => worker_threads,
             _ => num_cpus::get(),
@@ -8316,131 +7773,52 @@ impl ParallelExecutor {
     }
 
     /// Execute statements with parallel support
-    pub fn execute(&mut self, statements: &'static [Statement<'static>]) -> TBResult<Value<'static>> {
-        debug_log!("ParallelExecutor: {} workers, {} statements", self.worker_threads, statements.len());
+    pub fn execute(&mut self, statements: &[Statement]) -> TBResult<Value> {
+        debug_log!("ParallelExecutor: {} workers, {} statements",
+            self.worker_threads, statements.len());
 
-        let mut sequential_stmts: Vec<&'static Statement<'static>> = Vec::new();
-        let mut parallel_blocks: Vec<&'static Statement<'static>> = Vec::new();
+        // Separate parallel blocks from sequential statements
+        let mut sequential_stmts = Vec::new();
+        let mut parallel_blocks = Vec::new();
 
-        for stmt in statements.iter() {
+        for stmt in statements {
             if self.contains_parallel_expr(stmt) {
-                parallel_blocks.push(stmt);
+                parallel_blocks.push(stmt.clone());
             } else {
-                sequential_stmts.push(stmt);
+                sequential_stmts.push(stmt.clone());
             }
         }
 
+        // Execute sequential statements first
         let mut result = Value::Unit;
-
         if !sequential_stmts.is_empty() {
             result = self.execute_sequential(&sequential_stmts)?;
         }
 
+        // Execute parallel blocks
         for block_stmt in parallel_blocks {
-            result = self.execute_statement_parallel(block_stmt)?;
+            result = self.execute_statement_parallel(&block_stmt)?;
         }
 
         Ok(result)
     }
 
-    fn execute_sequential(&self, statements: &[&'static Statement<'static>]) -> TBResult<Value<'static>> {
-        // FIX: Erstelle Arena als 'static
-        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-
-        let mut executor = JitExecutor::new(self.config.clone(), arena);
-
-        // FIX: Allokiere statements in der 'static Arena
-        let stmts_slice: &'static [Statement<'static>] = {
-            let vec: Vec<Statement<'static>> = statements.iter()
-                .map(|&s| s.clone())
-                .collect();
-
-            // Leak das Vec in die Arena
-            arena.alloc_slice_fill_with(vec.len(), |i| vec[i].clone())
-        };
-
-        executor.execute(stmts_slice)
+    /// Execute sequential statements using single JitExecutor
+    fn execute_sequential(&self, statements: &[Statement]) -> TBResult<Value> {
+        let mut executor = self.create_executor();
+        executor.execute(statements)
     }
 
-    fn clone_statement_to_static<'a>(
-        &self,
-        stmt: &Statement<'a>,
-        arena: &'static Bump
-    ) -> Statement<'static> {
-        // Deep clone implementation
-        match stmt {
-            Statement::Let { name, mutable, type_annotation, value, scope } => {
-                Statement::Let {
-                    name: name.clone(),
-                    mutable: *mutable,
-                    type_annotation: type_annotation.clone(),
-                    value: self.clone_expr_to_static(value, arena),
-                    scope: *scope,
-                }
-            }
-            Statement::Function { name, params, return_type, body } => {
-                let params_static: Vec<_> = params.iter()
-                    .map(|p| Parameter {
-                        name: p.name.clone(),
-                        type_annotation: p.type_annotation.clone(),
-                        default: p.default.as_ref().map(|e| self.clone_expr_to_static(e, arena)),
-                    })
-                    .collect();
-
-                Statement::Function {
-                    name: name.clone(),
-                    params: ArenaVec::from_iter_in(params_static, arena),
-                    return_type: return_type.clone(),
-                    body: self.clone_expr_to_static(body, arena),
-                }
-            }
-            Statement::Expr(expr) => {
-                Statement::Expr(self.clone_expr_to_static(expr, arena))
-            }
-            Statement::Assign { target, value } => {
-                Statement::Assign {
-                    target: self.clone_expr_to_static(target, arena),
-                    value: self.clone_expr_to_static(value, arena),
-                }
-            }
-            Statement::Import { module, items } => {
-                Statement::Import {
-                    module: module.clone(),
-                    items: items.clone(),
-                }
-            }
-        }
-    }
-
-    fn clone_expr_to_static<'a>(
-        &self,
-        expr: &Expr<'a>,
-        arena: &'static Bump
-    ) -> Expr<'static> {
-        // Minimale Implementation für häufigste Fälle
-        match expr {
-            Expr::Literal(lit) => Expr::Literal(lit.clone()),
-            Expr::Variable(name) => Expr::Variable(name.clone()),
-            Expr::BinOp { op, left, right } => {
-                Expr::BinOp {
-                    op: *op,
-                    left: arena.alloc(self.clone_expr_to_static(left, arena)),
-                    right: arena.alloc(self.clone_expr_to_static(right, arena)),
-                }
-            }
-            _ => Expr::Literal(Literal::Unit), // Fallback
-        }
-    }
-
-    fn execute_statement_parallel(&self, stmt: &'static Statement<'static>) -> TBResult<Value<'static>> {
+    /// Execute statement that contains parallel operations
+    fn execute_statement_parallel(&self, stmt: &Statement) -> TBResult<Value> {
         match stmt {
             Statement::Expr(Expr::Parallel(tasks)) => {
-                self.execute_parallel_tasks(&tasks)
+                self.execute_parallel_tasks(tasks)
             }
 
             Statement::Expr(Expr::For { variable, iterable, body }) => {
-                let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-                let mut executor = JitExecutor::new(self.config.clone(), arena);
+                // Evaluate iterable first
+                let mut executor = self.create_executor();
                 let iter_val = executor.eval_expr(iterable)?;
 
                 if let Value::List(items) = iter_val {
@@ -8453,51 +7831,60 @@ impl ParallelExecutor {
             }
 
             _ => {
-                let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-                let mut executor = JitExecutor::new(self.config.clone(), arena);
+                // Fallback to sequential
+                let mut executor = self.create_executor();
                 executor.execute_statement(stmt)
             }
         }
     }
 
-    fn execute_parallel_tasks(&self, tasks: &'static [Expr<'static>]) -> TBResult<Value<'static>> {
+    /// Execute parallel tasks using Rayon
+    fn execute_parallel_tasks(&self, tasks: &[Expr]) -> TBResult<Value> {
         debug_log!("Executing {} tasks in parallel", tasks.len());
 
-        let results: Vec<TBResult<Value<'static>>> = tasks
-            .iter()
+        // Execute each task in parallel with its own JitExecutor
+        let results: Vec<TBResult<Value>> = tasks
+            .par_iter()
             .map(|task| {
-                let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-                let mut executor = JitExecutor::new(self.config.clone(), arena);
+                let mut executor = self.create_executor();
                 executor.eval_expr(task)
             })
             .collect();
 
+        // Collect ALL results, not just last
         let mut values = Vec::new();
         for result in results {
             values.push(result?);
         }
 
+        //  CRITICAL: Return as List, not Unit
         Ok(Value::List(values))
     }
 
+    /// Execute parallel for loop
     fn execute_parallel_for(
         &self,
         variable: &Arc<String>,
-        items: &[Value<'static>],
-        body: &'static Expr<'static>,
-    ) -> TBResult<Value<'static>> {
+        items: &[Value],
+        body: &Expr,
+    ) -> TBResult<Value> {
         debug_log!("Parallel for: {} iterations", items.len());
 
-        let results: Vec<TBResult<Value<'static>>> = items
-            .iter()
+        // Process items in parallel
+        let results: Vec<TBResult<Value>> = items
+            .par_iter()
             .map(|item| {
-                let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-                let mut executor = JitExecutor::new(self.config.clone(), arena);
+                let mut executor = self.create_executor();
+
+                // Set loop variable
                 executor.env.borrow_mut().insert(Arc::clone(variable), item.clone());
+
+                // Execute body
                 executor.eval_expr(body)
             })
             .collect();
 
+        // Return last result or first error
         let mut last_value = Value::Unit;
         for result in results {
             last_value = result?;
@@ -8506,15 +7893,19 @@ impl ParallelExecutor {
         Ok(last_value)
     }
 
-    fn create_executor(&self) -> JitExecutor<'static> {
-        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+    /// Create new JitExecutor with shared config and state
+    fn create_executor(&self) -> JitExecutor {
         let mut config = self.config.clone();
+
+        // Inject current shared state
         let shared_state = self.shared_state.lock().unwrap();
         config.shared = shared_state.clone();
-        JitExecutor::new(config, arena)
+
+        JitExecutor::new(config)
     }
 
-    fn contains_parallel_expr(&self, stmt: &'static Statement<'static>) -> bool {
+    /// Check if statement contains parallel expressions
+    fn contains_parallel_expr(&self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Expr(expr) => self.is_parallel_expr(expr),
             Statement::Let { value, .. } => self.is_parallel_expr(value),
@@ -8523,7 +7914,7 @@ impl ParallelExecutor {
         }
     }
 
-    fn is_parallel_expr(&self, expr: &'static Expr<'static>) -> bool {
+    fn is_parallel_expr(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Parallel(_) => true,
             Expr::For { .. } if matches!(self.config.runtime_mode, RuntimeMode::Parallel { .. }) => true,
@@ -8535,18 +7926,21 @@ impl ParallelExecutor {
         }
     }
 
-    pub fn get_shared(&self, key: &str) -> Option<Value<'static>> {
+    /// Get value from shared state
+    pub fn get_shared(&self, key: &str) -> Option<Value> {
         let state = self.shared_state.lock().unwrap();
         state.iter()
             .find(|(k, _)| k.as_str() == key)
             .map(|(_, v)| v.clone())
     }
 
-    pub fn set_shared(&self, key: Arc<String>, value: Value<'static>) {
+    /// Set value in shared state
+    pub fn set_shared(&self, key: Arc<String>, value: Value) {
         self.shared_state.lock().unwrap().insert(key, value);
     }
 
-    pub fn get_all_shared(&self) -> HashMap<Arc<String>, Value<'static>> {
+    /// Get all shared state
+    pub fn get_all_shared(&self) -> HashMap<Arc<String>, Value> {
         self.shared_state.lock().unwrap().clone()
     }
 }
@@ -8556,11 +7950,12 @@ impl ParallelExecutor {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Native function signature
+type NativeFunction = Arc<dyn Fn(&[Value]) -> TBResult<Value> + Send + Sync>;
 
+/// Native function with metadata
 pub struct BuiltinFunction {
     pub name: Arc<String>,
-    // Box statt Arc für Flexibility
-    pub function: Box<dyn for<'a> Fn(&'a [Value<'a>]) -> TBResult<Value<'a>> + Send + Sync>,
+    pub function: Arc<dyn Fn(&[Value]) -> TBResult<Value> + Send + Sync>,
     pub min_args: usize,
     pub max_args: Option<usize>,
     pub description: Arc<String>,
@@ -8568,15 +7963,20 @@ pub struct BuiltinFunction {
 
 impl Clone for BuiltinFunction {
     fn clone(&self) -> Self {
-        // Cannot clone Box<dyn Fn>, so panic
-        panic!("BuiltinFunction cannot be cloned - use Arc at registry level")
+        Self {
+            name: self.name.clone(),
+            function: self.function.clone(),
+            min_args: self.min_args,
+            max_args: self.max_args,
+            description: self.description.clone(),
+        }
     }
 }
 
 /// Registry for builtin and plugin functions
 #[derive(Clone)]
 pub struct BuiltinRegistry {
-    functions: HashMap<String, Arc<BuiltinFunction>>,  // Arc um Registry
+    functions: HashMap<String, BuiltinFunction>,
 }
 
 impl BuiltinRegistry {
@@ -8594,31 +7994,31 @@ impl BuiltinRegistry {
     /// Register standard library functions
     fn register_stdlib(&mut self) {
         // IO Functions
-        self.register("python", Box::new(builtin_python), 1, Some(1), STRING_INTERNER.intern("Execute Python code").as_str());
-        self.register("javascript", Box::new(builtin_javascript), 1, Some(1), STRING_INTERNER.intern("Execute JavaScript code").as_str());
-        self.register("bash", Box::new(builtin_bash), 1, Some(1), STRING_INTERNER.intern("Execute Bash code").as_str());
-        self.register("go", Box::new(builtin_go), 1, Some(1), STRING_INTERNER.intern("Execute Go code").as_str());
+        self.register("python", Arc::new(builtin_python), 1, Some(1), "Execute Python code");
+        self.register("javascript", Arc::new(builtin_javascript), 1, Some(1), "Execute JavaScript code");
+        self.register("bash", Arc::new(builtin_bash), 1, Some(1), "Execute Bash code");
+        self.register("go", Arc::new(builtin_go), 1, Some(1), "Execute Go code");
 
-        self.register("echo", Box::new(builtin_echo), 1, None, STRING_INTERNER.intern("Print values to stdout").as_str());
-        self.register("print", Box::new(builtin_print), 1, None, STRING_INTERNER.intern("Print values without newline").as_str());
-        self.register("println", Box::new(builtin_println), 1, None, STRING_INTERNER.intern("Print values with newline").as_str());
-        self.register("read_line", Box::new(builtin_read_line), 0, Some(0), STRING_INTERNER.intern("Read a line from stdin").as_str());
+        self.register("echo", Arc::new(builtin_echo), 1, None, "Print values to stdout");
+        self.register("print", Arc::new(builtin_print), 1, None, "Print values without newline");
+        self.register("println", Arc::new(builtin_println), 1, None, "Print values with newline");
+        self.register("read_line", Arc::new(builtin_read_line), 0, Some(0), "Read a line from stdin");
 
         // Type conversion
-        self.register("str", Box::new(builtin_str), 1, Some(1), STRING_INTERNER.intern("Convert to string").as_str());
-        self.register("int", Box::new(builtin_int), 1, Some(1), STRING_INTERNER.intern("Convert to integer").as_str());
-        self.register("float", Box::new(builtin_float), 1, Some(1), STRING_INTERNER.intern("Convert to float").as_str());
-        self.register("pretty", Box::new(builtin_pretty), 1, Some(1), STRING_INTERNER.intern("Pretty print with indentation").as_str());
+        self.register("str", Arc::new(builtin_str), 1, Some(1), "Convert to string");
+        self.register("int", Arc::new(builtin_int), 1, Some(1), "Convert to integer");
+        self.register("float", Arc::new(builtin_float), 1, Some(1), "Convert to float");
+        self.register("pretty", Arc::new(builtin_pretty), 1, Some(1), "Pretty print with indentation");
 
         // List operations
-        self.register("len", Box::new(builtin_len), 1, Some(1), STRING_INTERNER.intern("Get length of collection").as_str());
-        self.register("push", Box::new(builtin_push), 2, Some(2), STRING_INTERNER.intern("Push item to list").as_str());
-        self.register("pop", Box::new(builtin_pop), 1, Some(1), STRING_INTERNER.intern("Pop item from list").as_str());
+        self.register("len", Arc::new(builtin_len), 1, Some(1), "Get length of collection");
+        self.register("push", Arc::new(builtin_push), 2, Some(2), "Push item to list");
+        self.register("pop", Arc::new(builtin_pop), 1, Some(1), "Pop item from list");
 
         // Debug
-        self.register("debug", Box::new(builtin_debug), 1, None, STRING_INTERNER.intern("Debug print with type info").as_str());
-        self.register("type_of", Box::new(builtin_type_of), 1, Some(1), STRING_INTERNER.intern("Get type of value").as_str());
-        self.register("python_info", Box::new(builtin_python_info), 0, Some(0), STRING_INTERNER.intern("Show active Python environment").as_str());
+        self.register("debug", Arc::new(builtin_debug), 1, None, "Debug print with type info");
+        self.register("type_of", Arc::new(builtin_type_of), 1, Some(1), "Get type of value");
+        self.register("python_info", Arc::new(builtin_python_info), 0, Some(0), "Show active Python environment");
 
     }
 
@@ -8626,32 +8026,32 @@ impl BuiltinRegistry {
     pub fn register(
         &mut self,
         name: &str,
-        function:  Box<dyn for<'a> Fn(&'a [Value<'a>]) -> TBResult<Value<'a>> + Send + Sync>,
+        function: NativeFunction,
         min_args: usize,
         max_args: Option<usize>,
         description: &str,
     ) {
         let arc_name = STRING_INTERNER.intern(name);
         self.functions.insert(
-            name.to_string(),
-            Arc::new(BuiltinFunction {
+            name.to_string(),  //
+            BuiltinFunction {
                 name: arc_name,
                 function,
                 min_args,
                 max_args,
                 description: STRING_INTERNER.intern(description),
-            }),
+            },
         );
     }
 
     /// Get a builtin function (O(1) lookup with &str)
-    pub fn get(&self, name: &str) -> Option<Arc<BuiltinFunction>> {
-        self.functions.get(name).cloned()
+    pub fn get(&self, name: &str) -> Option<&BuiltinFunction> {
+        self.functions.get(name)  //  Direkter O(1) lookup
     }
 
     /// Check if function exists (O(1))
     pub fn has(&self, name: &str) -> bool {
-        self.functions.contains_key(name)  // Direkter O(1) lookup
+        self.functions.contains_key(name)  //  Direkter O(1) lookup
     }
 
     /// List all functions
@@ -8692,6 +8092,7 @@ impl BuiltinRegistry {
             let imports = plugin.imports.clone();
             let func_name = func.name.clone();
 
+            // Build code with imports
             let full_code = if !imports.is_empty() {
                 let mut code_with_imports = imports.join("\n");
                 code_with_imports.push_str("\n\n");
@@ -8700,23 +8101,11 @@ impl BuiltinRegistry {
             } else {
                 code
             };
-
-            let description = format!("[Plugin:{}] {}", plugin.name, func.description);
-
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
-                Box::new(move |args| {
-                    // FIX: Transmute Args zu 'static (safe weil Arena geleakt ist)
-                    // SAFETY: In TBCore::execute() wird Arena mit Box::leak geleakt,
-                    // sodass alle Values effektiv 'static leben
-                    let static_args: &'static [Value<'static>] = unsafe {
-                        std::mem::transmute(args)
-                    };
-
-                    let result = execute_python_code(&full_code, static_args)?;
-
-                    // SAFETY: Result kommt aus derselben geleakten Arena
-                    Ok(unsafe { std::mem::transmute(result) })
+                Arc::new(move |args: &[Value]| -> TBResult<Value> {
+                    execute_python_code(&full_code, args)
                 }),
                 func.min_args,
                 func.max_args,
@@ -8729,75 +8118,40 @@ impl BuiltinRegistry {
         Ok(())
     }
 
+    /// Load JavaScript plugin functions
     fn load_javascript_plugin(&mut self, plugin: &PluginConfig) -> TBResult<()> {
         for func in &plugin.functions {
             let code = func.code.clone();
+            let imports = plugin.imports.clone();
             let func_name = func.name.clone();
-            let description = format!("[Plugin:{}] {}", plugin.name, func.description);
 
+            // Build code with imports (require statements)
+            let full_code = if !imports.is_empty() {
+                let mut code_with_imports = String::new();
+                for import in &imports {
+                    code_with_imports.push_str(&format!("const {} = require('{}');\n",
+                                                        import.split('/').last().unwrap_or(import), import));
+                }
+                code_with_imports.push('\n');
+                code_with_imports.push_str(&code);
+                code_with_imports
+            } else {
+                code
+            };
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
             self.register(
                 &func_name,
-                Box::new(move |args| {
-                    let static_args: &'static [Value<'static>] = unsafe {
-                        std::mem::transmute(args)
-                    };
-
-                    let result = execute_js_code(&code, static_args)?;
-                    Ok(unsafe { std::mem::transmute(result) })
+                Arc::new(move |args: &[Value]| -> TBResult<Value> {
+                    execute_js_code(&full_code, args)
                 }),
                 func.min_args,
                 func.max_args,
                 &description,
             );
+
+            debug_log!("  Registered function: {}", func_name);
         }
-        Ok(())
-    }
 
-    fn load_go_plugin(&mut self, plugin: &PluginConfig) -> TBResult<()> {
-        for func in &plugin.functions {
-            let code = func.code.clone();
-            let func_name = func.name.clone();
-            let description = format!("[Plugin:{}] {}", plugin.name, func.description);
-
-            self.register(
-                &func_name,
-                Box::new(move |args| {
-                    let static_args: &'static [Value<'static>] = unsafe {
-                        std::mem::transmute(args)
-                    };
-
-                    let result = execute_go_code(&code, static_args)?;
-                    Ok(unsafe { std::mem::transmute(result) })
-                }),
-                func.min_args,
-                func.max_args,
-                &description,
-            );
-        }
-        Ok(())
-    }
-
-    fn load_bash_plugin(&mut self, plugin: &PluginConfig) -> TBResult<()> {
-        for func in &plugin.functions {
-            let code = func.code.clone();
-            let func_name = func.name.clone();
-            let description = format!("[Plugin:{}] {}", plugin.name, func.description);
-
-            self.register(
-                &func_name,
-                Box::new(move |args| {
-                    let static_args: &'static [Value<'static>] = unsafe {
-                        std::mem::transmute(args)
-                    };
-
-                    let result = execute_bash_command(&code, static_args)?;
-                    Ok(unsafe { std::mem::transmute(result) })
-                }),
-                func.min_args,
-                func.max_args,
-                &description,
-            );
-        }
         Ok(())
     }
 
@@ -8808,13 +8162,68 @@ impl BuiltinRegistry {
         self.load_javascript_plugin(plugin)
     }
 
+    /// Load Go plugin functions
+    fn load_go_plugin(&mut self, plugin: &PluginConfig) -> TBResult<()> {
+        for func in &plugin.functions {
+            let code = func.code.clone();
+            let imports = plugin.imports.clone();
+            let func_name = func.name.clone();
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
+            self.register(
+                &func_name,
+                Arc::new(move |args: &[Value]| -> TBResult<Value> {
+                    // Build complete Go code with imports
+                    let mut full_code = String::new();
+
+                    // Add custom imports
+                    for import in &imports {
+                        full_code.push_str(&format!("    \"{}\"\n", import));
+                    }
+
+                    full_code.push_str(&code);
+
+                    execute_go_code(&full_code, args)
+                }),
+                func.min_args,
+                func.max_args,
+                &description,
+            );
+
+            debug_log!("  Registered function: {}", func_name);
+        }
+
+        Ok(())
+    }
+
+    /// Load Bash plugin functions
+    fn load_bash_plugin(&mut self, plugin: &PluginConfig) -> TBResult<()> {
+        for func in &plugin.functions {
+            let code = func.code.clone();
+            let func_name = func.name.clone();
+            let description = Arc::new(format!("[Plugin:{}] {}", plugin.name, func.description));
+            self.register(
+                &func_name,
+                Arc::new(move |args: &[Value]| -> TBResult<Value> {
+                    execute_bash_command(&code, args)
+                }),
+                func.min_args,
+                func.max_args,
+                &description,
+            );
+
+            debug_log!("  Registered function: {}", func_name);
+        }
+
+        Ok(())
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STANDARD LIBRARY IMPLEMENTATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn builtin_echo<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// echo - Print values to stdout with newline
+fn builtin_echo(args: &[Value]) -> TBResult<Value> {
     for (i, arg) in args.iter().enumerate() {
         if i > 0 {
             print!(" ");
@@ -8825,7 +8234,8 @@ fn builtin_echo<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
     Ok(Value::Unit)
 }
 
-fn builtin_print<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
+/// print - Print values without newline
+fn builtin_print(args: &[Value]) -> TBResult<Value> {
     for (i, arg) in args.iter().enumerate() {
         if i > 0 {
             print!(" ");
@@ -8837,11 +8247,13 @@ fn builtin_print<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
     Ok(Value::Unit)
 }
 
-fn builtin_println<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// println - Print values with newline
+fn builtin_println(args: &[Value]) -> TBResult<Value> {
     builtin_echo(args)
 }
 
-fn builtin_read_line<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
+/// read_line - Read a line from stdin
+fn builtin_read_line(_args: &[Value]) -> TBResult<Value> {
     use std::io::BufRead;
     let stdin = std::io::stdin();
     let mut line = String::new();
@@ -8850,12 +8262,14 @@ fn builtin_read_line<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
     Ok(Value::String(Arc::new(line.trim_end().to_string())))
 }
 
-fn builtin_str<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
+/// str - Convert to string
+fn builtin_str(args: &[Value]) -> TBResult<Value> {
     let formatted = match &args[0] {
         Value::Unit => String::from(""),
         Value::Bool(b) => format!("{}", b),
         Value::Int(n) => format!("{}", n),
         Value::Float(f) => {
+            // Smart float formatting
             if f.fract() == 0.0 && f.is_finite() {
                 format!("{:.0}", f)
             } else {
@@ -8903,23 +8317,31 @@ fn builtin_str<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
     Ok(Value::String(Arc::from(formatted)))
 }
 
-fn builtin_int<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// int - Convert to integer with enhanced parsing
+fn builtin_int(args: &[Value]) -> TBResult<Value> {
     match &args[0] {
         Value::Int(n) => Ok(Value::Int(*n)),
         Value::Float(f) => Ok(Value::Int(*f as i64)),
         Value::String(s) => {
             let cleaned = s.trim();
+
+            // Try direct parse
             if let Ok(n) = cleaned.parse::<i64>() {
                 return Ok(Value::Int(n));
             }
+
+            // Try parsing with underscores (1_000_000)
             let no_underscores = cleaned.replace('_', "");
             if let Ok(n) = no_underscores.parse::<i64>() {
                 return Ok(Value::Int(n));
             }
+
+            // Try parsing with spaces (1 000 000)
             let no_spaces = cleaned.replace(' ', "");
             if let Ok(n) = no_spaces.parse::<i64>() {
                 return Ok(Value::Int(n));
             }
+
             Err(TBError::InvalidOperation(
                 format!("Cannot convert '{}' to int", s).into()
             ))
@@ -8931,32 +8353,47 @@ fn builtin_int<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
     }
 }
 
-fn builtin_float<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// float - Convert to float with German notation support
+fn builtin_float(args: &[Value]) -> TBResult<Value> {
     match &args[0] {
         Value::Int(n) => Ok(Value::Float(*n as f64)),
         Value::Float(f) => Ok(Value::Float(*f)),
         Value::String(s) => {
             let cleaned = s.trim();
+
+            // Try direct parse (English notation: 3.14)
             if let Ok(f) = cleaned.parse::<f64>() {
                 return Ok(Value::Float(f));
             }
+
+            // Try German notation: 3,14 → 3.14
             let german_to_english = cleaned.replace(',', ".");
             if let Ok(f) = german_to_english.parse::<f64>() {
                 return Ok(Value::Float(f));
             }
+
+            // Try parsing with thousand separators
+            // English: 1,234.56 → 1234.56
             let no_thousand_comma = cleaned.replace(",", "");
             if let Ok(f) = no_thousand_comma.parse::<f64>() {
                 return Ok(Value::Float(f));
             }
+
+            // German thousand separator: 1.234,56 → 1234.56
+            // First remove dots (thousand separator)
             let mut german_style = cleaned.replace('.', "");
+            // Then replace comma with dot (decimal separator)
             german_style = german_style.replace(',', ".");
             if let Ok(f) = german_style.parse::<f64>() {
                 return Ok(Value::Float(f));
             }
+
+            // Try with underscores (Rust style: 3.14_159)
             let no_underscores = cleaned.replace('_', "");
             if let Ok(f) = no_underscores.parse::<f64>() {
                 return Ok(Value::Float(f));
             }
+
             Err(TBError::InvalidOperation(
                 format!("Cannot convert '{}' to float", s).into()
             ))
@@ -8968,7 +8405,8 @@ fn builtin_float<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
     }
 }
 
-fn builtin_pretty<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// pretty - Pretty print with indentation
+fn builtin_pretty(args: &[Value]) -> TBResult<Value> {
     fn pretty_print(value: &Value, indent: usize) -> String {
         let spaces = "  ".repeat(indent);
         match value {
@@ -9013,164 +8451,71 @@ fn builtin_pretty<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
     Ok(Value::Unit)
 }
 
-fn builtin_len<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// len - Get length of collection
+fn builtin_len(args: &[Value]) -> TBResult<Value> {
     match &args[0] {
         Value::String(s) => Ok(Value::Int(s.len() as i64)),
         Value::List(l) => Ok(Value::Int(l.len() as i64)),
         Value::Dict(d) => Ok(Value::Int(d.len() as i64)),
         Value::Tuple(t) => Ok(Value::Int(t.len() as i64)),
-        _ => Err(TBError::InvalidOperation(STRING_INTERNER.intern("Value has no length"))),
+        _ => Err(TBError::InvalidOperation(Arc::from("Value has no length".to_string()))),
     }
 }
 
-fn builtin_push<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// push - Push item to list (modifies in place)
+fn builtin_push(args: &[Value]) -> TBResult<Value> {
     if let Value::List(mut list) = args[0].clone() {
         list.push(args[1].clone());
         Ok(Value::List(list))
     } else {
-        Err(TBError::InvalidOperation(STRING_INTERNER.intern("First argument must be a list")))
+        Err(TBError::InvalidOperation(Arc::from("First argument must be a list".to_string())))
     }
 }
 
-fn builtin_pop<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// pop - Pop item from list
+fn builtin_pop(args: &[Value]) -> TBResult<Value> {
     if let Value::List(mut list) = args[0].clone() {
         list.pop()
             .map(|v| Value::Tuple(vec![Value::List(list), v]))
-            .ok_or_else(|| TBError::InvalidOperation(STRING_INTERNER.intern("Cannot pop from empty list")))
+            .ok_or_else(|| TBError::InvalidOperation(Arc::from("Cannot pop from empty list".to_string())))
     } else {
-        Err(TBError::InvalidOperation(STRING_INTERNER.intern("Argument must be a list")))
+        Err(TBError::InvalidOperation(Arc::from("Argument must be a list".to_string())))
     }
 }
 
-fn builtin_debug<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// debug - Debug print with type info
+fn builtin_debug(args: &[Value]) -> TBResult<Value> {
     for arg in args {
         eprintln!("[DEBUG] {:?} : {:?}", arg, arg.get_type());
     }
     Ok(Value::Unit)
 }
 
-fn builtin_type_of<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// type_of - Get type of value
+fn builtin_type_of(args: &[Value]) -> TBResult<Value> {
     let type_str = match &args[0] {
         Value::Unit => "unit",
         Value::Bool(_) => "bool",
         Value::Int(_) => "int",
         Value::Float(_) => "float",
         Value::String(_) => "string",
-
-        Value::List(items) => {
-            // Detaillierte List-Typ-Info
-            if items.is_empty() {
-                return Ok(Value::String(Arc::new("list<empty>".to_string())));
-            }
-
-            // Check if homogeneous
-            let first_type = match &items[0] {
-                Value::Int(_) => "int",
-                Value::Float(_) => "float",
-                Value::String(_) => "string",
-                Value::Bool(_) => "bool",
-                Value::List(_) => "list",
-                _ => "mixed",
-            };
-
-            let is_homogeneous = items.iter().all(|item| {
-                std::mem::discriminant(item) == std::mem::discriminant(&items[0])
-            });
-
-            if is_homogeneous {
-                return Ok(Value::String(Arc::new(format!("list<{}>", first_type))));
-            } else {
-                return Ok(Value::String(Arc::new("list<mixed>".to_string())));
-            }
-        }
-
-        Value::Dict(map) => {
-            // Dict mit Key-Value-Typ-Info
-            if map.is_empty() {
-                return Ok(Value::String(Arc::new("dict<empty>".to_string())));
-            }
-
-            // Sample first value type
-            let first_val_type = map.values().next().map(|v| match v {
-                Value::Int(_) => "int",
-                Value::Float(_) => "float",
-                Value::String(_) => "string",
-                Value::Bool(_) => "bool",
-                _ => "mixed",
-            }).unwrap_or("unknown");
-
-            return Ok(Value::String(Arc::new(format!("dict<string, {}>", first_val_type))));
-        }
-
-        Value::Tuple(items) => {
-            // Tuple mit Typ-Signatur
-            let types: Vec<&str> = items.iter().map(|v| match v {
-                Value::Int(_) => "int",
-                Value::Float(_) => "float",
-                Value::String(_) => "string",
-                Value::Bool(_) => "bool",
-                _ => "unknown",
-            }).collect();
-
-            return Ok(Value::String(Arc::new(format!("tuple<{}>", types.join(", ")))));
-        }
-
-        Value::Option(opt) => {
-            match opt {
-                Some(val) => {
-                    let inner_type = match val.as_ref() {
-                        Value::Int(_) => "int",
-                        Value::Float(_) => "float",
-                        Value::String(_) => "string",
-                        Value::Bool(_) => "bool",
-                        _ => "unknown",
-                    };
-                    return Ok(Value::String(Arc::new(format!("option<{}>", inner_type))));
-                }
-                None => return Ok(Value::String(Arc::new("option<none>".to_string()))),
-            }
-        }
-
-        Value::Result(res) => {
-            match res {
-                Ok(val) => {
-                    let ok_type = match val.as_ref() {
-                        Value::Int(_) => "int",
-                        Value::Float(_) => "float",
-                        Value::String(_) => "string",
-                        _ => "unknown",
-                    };
-                    return Ok(Value::String(Arc::new(format!("result<ok: {}>", ok_type))));
-                }
-                Err(val) => {
-                    let err_type = match val.as_ref() {
-                        Value::String(_) => "string",
-                        _ => "unknown",
-                    };
-                    return Ok(Value::String(Arc::new(format!("result<err: {}>", err_type))));
-                }
-            }
-        }
-
-        Value::Function { params, .. } => {
-            return Ok(Value::String(Arc::new(format!(
-                "function<{} params>",
-                params.len()
-            ))));
-        }
-
-        Value::Native { type_name, .. } => {
-            return Ok(Value::String(Arc::new(format!("native<{}>", type_name))));
-        }
+        Value::List(_) => "list",
+        Value::Dict(_) => "dict",
+        Value::Tuple(_) => "tuple",
+        Value::Option(_) => "option",
+        Value::Result(_) => "result",
+        Value::Function { .. } => "function",
+        Value::Native { .. } => "native",
     };
-
     Ok(Value::String(Arc::new(type_str.to_string())))
 }
-
-fn builtin_python_info<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
+/// python_info - Show information about the active Python environment
+fn builtin_python_info(_args: &[Value]) -> TBResult<Value> {
     use std::process::Command;
 
     let python_exe = detect_python_executable();
+
+    // Get Python version
     let version_output = Command::new(&python_exe)
         .arg("--version")
         .output()
@@ -9182,6 +8527,7 @@ fn builtin_python_info<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
         "Unknown".to_string()
     };
 
+    // Get Python path
     let path_output = Command::new(&python_exe)
         .arg("-c")
         .arg("import sys; print(sys.executable)")
@@ -9194,6 +8540,7 @@ fn builtin_python_info<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
         python_exe.clone()
     };
 
+    // Detect environment type
     let env_type = if std::env::var("VIRTUAL_ENV").is_ok() {
         "venv"
     } else if std::env::var("CONDA_PREFIX").is_ok() {
@@ -9220,60 +8567,44 @@ fn builtin_python_info<'a>(_args: &'a [Value<'a>]) -> TBResult<Value<'a>>  {
     Ok(Value::Unit)
 }
 
-fn builtin_python<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// python - Execute Python code
+fn builtin_python(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
-        let args_static: Vec<Value<'static>> = args[1..].iter()
-            .map(|v| v.clone_static())
-            .collect::<TBResult<Vec<_>>>()?;
-
-        let result = execute_python_code(code, &args_static)?;
-        Ok(unsafe { std::mem::transmute(result) })
+        execute_python_code(code, &args[1..])
     } else {
         Err(TBError::InvalidOperation(Arc::from("python() requires string argument".to_string())))
     }
 }
 
-fn builtin_javascript<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// javascript - Execute JavaScript code
+fn builtin_javascript(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
-        let args_static: Vec<Value<'static>> = args[1..].iter()
-            .map(|v| v.clone_static())
-            .collect::<TBResult<Vec<_>>>()?;
-
-        let result = execute_js_code(code, &args_static)?;
-        Ok(unsafe { std::mem::transmute(result) })
+        execute_js_code(code, &args[1..])
     } else {
         Err(TBError::InvalidOperation(Arc::from("javascript() requires string argument".to_string())))
     }
 }
 
-fn builtin_bash<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// bash - Execute Bash code
+fn builtin_bash(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
-        let args_static: Vec<Value<'static>> = args[1..].iter()
-            .map(|v| v.clone_static())
-            .collect::<TBResult<Vec<_>>>()?;
-
-        let result = execute_bash_command(code, &args_static)?;
-        Ok(unsafe { std::mem::transmute(result) })
+        execute_bash_command(code, &args[1..])
     } else {
         Err(TBError::InvalidOperation(Arc::from("bash() requires string argument".to_string())))
     }
 }
 
-fn builtin_go<'a>(args: &'a [Value<'a>]) -> TBResult<Value<'a>> {
+/// go - Execute Go code
+fn builtin_go(args: &[Value]) -> TBResult<Value> {
     if let Value::String(code) = &args[0] {
-        let args_static: Vec<Value<'static>> = args[1..].iter()
-            .map(|v| v.clone_static())
-            .collect::<TBResult<Vec<_>>>()?;
-
-        let result = execute_go_code(code, &args_static)?;
-        Ok(unsafe { std::mem::transmute(result) })
+        execute_go_code(code, &args[1..])
     } else {
         Err(TBError::InvalidOperation(Arc::from("go() requires string argument".to_string())))
     }
 }
 
 /// Helper to format value for output (without quotes for strings)
-fn format_value_for_output<'arena>(value: &Value<'arena>) -> String {
+fn format_value_for_output(value: &Value) -> String {
     match value {
         Value::String(s) => s.to_string(), // No quotes
         Value::Unit => String::new(),
@@ -9467,12 +8798,12 @@ pub mod builders {
 
 /// Context für Language-Execution mit Variablen-Zugriff
 #[derive(Debug, Clone)]
-pub struct LanguageExecutionContext<'arena> {
-    pub variables: HashMap<Arc<String>, Value<'arena>>,
+pub struct LanguageExecutionContext {
+    pub variables: HashMap<Arc<String>, Value>,
     pub return_type: Option<Type>,
 }
 
-impl<'arena> LanguageExecutionContext<'arena> {
+impl LanguageExecutionContext {
     pub fn new() -> Self {
         Self {
             variables: HashMap::new(),
@@ -9480,7 +8811,7 @@ impl<'arena> LanguageExecutionContext<'arena> {
         }
     }
 
-    pub fn with_variables(variables: HashMap<Arc<String>, Value<'arena>>) -> Self {
+    pub fn with_variables(variables: HashMap<Arc<String>, Value>) -> Self {
 
         Self {
             variables,
@@ -9510,14 +8841,19 @@ impl<'arena> LanguageExecutionContext<'arena> {
                 Value::Int(n) => format!("{}", n),
                 Value::Float(f) => format!("{}", f),
                 Value::String(s) => {
-                    // FIXED: Proper Python string escaping with newlines
-                    let escaped = s
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r")
-                        .replace('\t', "\\t");
-                    format!("\"{}\"", escaped)
+                    // ✅ FIX: Proper Python string escaping with triple quotes for multiline
+                    if s.contains('\n') {
+                        let escaped = s.replace("\\", "\\\\").replace("\"\"\"", "\\\"\\\"\\\"");
+                        format!("\"\"\"{}\"\"\"", escaped)
+                    } else {
+                        let escaped = s
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t");
+                        format!("\"{}\"", escaped)
+                    }
                 }
                 Value::List(items) => {
                     let elements: Vec<String> = items.iter()
@@ -9558,13 +8894,15 @@ impl<'arena> LanguageExecutionContext<'arena> {
                 Value::Int(n) => format!("{}", n),
                 Value::Float(f) => format!("{}", f),
                 Value::String(s) => {
-                    // FIXED: Proper JavaScript string escaping for multiline strings
+                    // ✅ FIX: Proper JavaScript string escaping
                     let escaped = s
                         .replace('\\', "\\\\")
                         .replace('"', "\\\"")
                         .replace('\n', "\\n")
                         .replace('\r', "\\r")
-                        .replace('\t', "\\t");
+                        .replace('\t', "\\t")
+                        .replace('\x08', "\\b")  // backspace
+                        .replace('\x0C', "\\f"); // form feed
                     format!("\"{}\"", escaped)
                 }
                 Value::List(items) => {
@@ -9597,34 +8935,35 @@ impl<'arena> LanguageExecutionContext<'arena> {
 
     /// Convert TB variables to Go code
     fn to_go_vars(&self) -> String {
-        let mut code = String::from("// TB Variables\n");
+        let mut code = String::from("// TB Variables (auto-injected)\n");
 
         for (name, value) in &self.variables {
             match value {
                 Value::Unit => {
                     code.push_str(&format!("var {} interface{{}} = nil\n", name));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::Bool(b) => {
-                    code.push_str(&format!("var {} bool = {}\n", name, if *b { "true" } else { "false" }));
+                    code.push_str(&format!("{} := {}\n", name, if *b { "true" } else { "false" }));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::Int(n) => {
-                    code.push_str(&format!("var {} int64 = {}\n", name, n));
+                    code.push_str(&format!("{} := int64({})\n", name, n));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::Float(f) => {
-                    code.push_str(&format!("var {} float64 = {}\n", name, f));
+                    code.push_str(&format!("{} := float64({})\n", name, f));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::String(s) => {
-                    let escaped = s
-                        .replace('\\', "\\\\")
-                        .replace('"', "\\\"")
-                        .replace('\n', "\\n")
-                        .replace('\r', "\\r")
-                        .replace('\t', "\\t");
-                    code.push_str(&format!("var {} string = \"{}\"\n", name, escaped));
+                    // ✅ FIX: Use raw string literal (backticks) for Go
+                    let escaped = s.replace('`', "` + \"`\" + `");
+                    code.push_str(&format!("{} := `{}`\n", name, escaped));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::List(items) => {
@@ -9632,15 +8971,14 @@ impl<'arena> LanguageExecutionContext<'arena> {
                         .map(|v| self.value_to_go(v))
                         .collect();
 
-                    code.push_str(&format!("var {} = []interface{{}}{{{}}}\n",
+                    code.push_str(&format!("{} := []interface{{}}{{{}}}\n",
                                            name, elements.join(", ")));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
-                Value::Dict(map) => {
-                    code.push_str(&format!("var {} = make(map[string]interface{{}})\n", name));
-                    for (k, v) in map {
-                        code.push_str(&format!("{}[\"{}\"] = {}\n", name, k, self.value_to_go(&v)));
-                    }
+                Value::Dict(_) => {
+                    code.push_str(&format!("{} := make(map[string]interface{{}})\n", name));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 Value::Tuple(items) => {
@@ -9648,21 +8986,15 @@ impl<'arena> LanguageExecutionContext<'arena> {
                         .map(|v| self.value_to_go(v))
                         .collect();
 
-                    code.push_str(&format!("var {} = []interface{{}}{{{}}}\n",
+                    code.push_str(&format!("{} := []interface{{}}{{{}}}\n",
                                            name, elements.join(", ")));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
 
                 _ => {
                     code.push_str(&format!("var {} interface{{}} = nil\n", name));
+                    code.push_str(&format!("_ = {}\n", name));
                 }
-            }
-        }
-
-        //  Suppress unused variable warnings
-        if !self.variables.is_empty() {
-            code.push_str("\n// Suppress unused warnings\n");
-            for (name, _) in &self.variables {
-                code.push_str(&format!("_ = {}\n", name));
             }
         }
 
@@ -9676,13 +9008,29 @@ impl<'arena> LanguageExecutionContext<'arena> {
 
         for (name, value) in &self.variables {
             let bash_value = match value {
-                Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
+                Value::String(s) => {
+                    // ✅ FIX: Proper Bash string quoting
+                    // Replace single quotes with '\''
+                    let escaped = s.replace('\'', "'\\''");
+                    format!("'{}'", escaped)
+                }
                 Value::Int(n) => format!("{}", n),
                 Value::Float(f) => format!("{}", f),
                 Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
                 Value::List(items) => {
+                    // ✅ FIX: Bash array syntax
                     let elements: Vec<String> = items.iter()
-                        .map(|v| format_value_for_output(v))
+                        .map(|v| {
+                            match v {
+                                Value::String(s) => {
+                                    let escaped = s.replace('\'', "'\\''");
+                                    format!("'{}'", escaped)
+                                }
+                                Value::Int(n) => format!("{}", n),
+                                Value::Float(f) => format!("{}", f),
+                                _ => format!("'{}'", format_value_for_output(v))
+                            }
+                        })
                         .collect();
                     format!("({})", elements.join(" "))
                 }
@@ -9746,20 +9094,27 @@ impl<'arena> LanguageExecutionContext<'arena> {
             Value::Int(n) => format!("{}", n),
             Value::Float(f) => format!("{}", f),
             Value::String(s) => {
-                // FIXED: Proper Go string escaping (same as Rust/C-style)
-                let escaped = s
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\n', "\\n")
-                    .replace('\r', "\\r")
-                    .replace('\t', "\\t");
-                format!("\"{}\"", escaped)
+                // ✅ FIX: For Go, use raw strings but escape backticks
+                if s.contains('\n') || s.contains('\t') {
+                    // Multi-line: use regular string with escapes
+                    let escaped = s
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n")
+                        .replace('\r', "\\r")
+                        .replace('\t', "\\t");
+                    format!("\"{}\"", escaped)
+                } else {
+                    // Single line: use raw string
+                    let escaped = s.replace('`', "` + \"`\" + `");
+                    format!("`{}`", escaped)
+                }
             }
             Value::List(items) => {
                 let elements: Vec<String> = items.iter()
                     .map(|v| self.value_to_go(v))
                     .collect();
-                format!("[]{{{}}}", elements.join(", "))
+                format!("[]interface{{{}}}", elements.join(", "))
             }
             _ => "nil".to_string(),
         }
@@ -9774,46 +9129,28 @@ impl<'arena> LanguageExecutionContext<'arena> {
 pub struct ReturnValueParser;
 
 impl ReturnValueParser {
-    pub fn from_python(output: &str) -> Value<'static> {
+    /// Parse Python output as TB value
+    pub fn from_python(output: &str) -> Value {
         let trimmed = output.trim();
 
-        // ═══════════════════════════════════════════════════════════════
-        // PRIORITY 1: Try JSON parsing (most reliable)
-        // ═══════════════════════════════════════════════════════════════
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return Self::json_to_value(&json_val);
+        // Try to parse as JSON-like structure
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            // List
+            return Self::parse_list(trimmed);
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // PRIORITY 2: Python literals
-        // ═══════════════════════════════════════════════════════════════
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            // Dict
+            return Self::parse_dict(trimmed);
+        }
 
-        // Boolean
+        // Try boolean
         if trimmed == "True" {
             return Value::Bool(true);
         }
         if trimmed == "False" {
             return Value::Bool(false);
         }
-
-        // None
-        if trimmed == "None" {
-            return Value::Unit;
-        }
-
-        // List (Python syntax: [1, 2, 3])
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            return Self::parse_python_list(trimmed);
-        }
-
-        // Dict (Python syntax: {'key': 'value'})
-        if trimmed.starts_with('{') && trimmed.ends_with('}') {
-            return Self::parse_python_dict(trimmed);
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // PRIORITY 3: Numeric parsing
-        // ═══════════════════════════════════════════════════════════════
 
         // Try integer
         if let Ok(n) = trimmed.parse::<i64>() {
@@ -9825,95 +9162,70 @@ impl ReturnValueParser {
             return Value::Float(f);
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // FALLBACK: String
-        // ═══════════════════════════════════════════════════════════════
+        // Default to string
         Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse JavaScript output as TB value
-    pub fn from_javascript(output: &str) -> Value<'static> {
+    pub fn from_javascript(output: &str) -> Value {
         let trimmed = output.trim();
 
-        // Try JSON first
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return Self::json_to_value(&json_val);
-        }
-
-        // JavaScript literals
+        // Similar to Python but with different boolean syntax
         if trimmed == "true" {
             return Value::Bool(true);
         }
         if trimmed == "false" {
             return Value::Bool(false);
         }
+
         if trimmed == "null" || trimmed == "undefined" {
             return Value::Unit;
         }
 
-        // Arrays
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            return Self::parse_js_array(trimmed);
-        }
-
-        // Objects
-        if trimmed.starts_with('{') && trimmed.ends_with('}') {
-            return Self::parse_js_object(trimmed);
-        }
-
-        // Numbers
+        // Try integer
         if let Ok(n) = trimmed.parse::<i64>() {
             return Value::Int(n);
         }
+
+        // Try float
         if let Ok(f) = trimmed.parse::<f64>() {
             return Value::Float(f);
         }
 
-        // String (remove quotes if present)
-        if (trimmed.starts_with('"') && trimmed.ends_with('"')) ||
-            (trimmed.starts_with('\'') && trimmed.ends_with('\'')) {
-            return Value::String(Arc::from(trimmed[1..trimmed.len()-1].to_string()));
-        }
-
+        // Default to string
         Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse Go output as TB value
-    pub fn from_go(output: &str) -> Value<'static> {
+    pub fn from_go(output: &str) -> Value {
         let trimmed = output.trim();
 
-        // Try JSON first
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            return Self::json_to_value(&json_val);
-        }
-
-        // Go literals
         if trimmed == "true" {
             return Value::Bool(true);
         }
         if trimmed == "false" {
             return Value::Bool(false);
         }
-        if trimmed == "<nil>" || trimmed == "nil" {
-            return Value::Unit;
-        }
 
-        // Numbers
+        // Try integer
         if let Ok(n) = trimmed.parse::<i64>() {
             return Value::Int(n);
         }
+
+        // Try float
         if let Ok(f) = trimmed.parse::<f64>() {
             return Value::Float(f);
         }
 
+        // Default to string
         Value::String(Arc::from(trimmed.to_string()))
     }
 
     /// Parse Bash output as TB value
-    pub fn from_bash(output: &str) -> Value<'static> {
+    pub fn from_bash(output: &str) -> Value {
         let trimmed = output.trim();
 
-        // Boolean
+        // Bash returns everything as strings, try to infer type
         if trimmed == "true" {
             return Value::Bool(true);
         }
@@ -9921,444 +9233,42 @@ impl ReturnValueParser {
             return Value::Bool(false);
         }
 
-        // Numbers
+        // Try integer
         if let Ok(n) = trimmed.parse::<i64>() {
             return Value::Int(n);
         }
+
+        // Try float
         if let Ok(f) = trimmed.parse::<f64>() {
             return Value::Float(f);
         }
 
+        // Default to string
         Value::String(Arc::from(trimmed.to_string()))
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Helper: JSON → TB Value
-    // ═══════════════════════════════════════════════════════════════
-    fn json_to_value(json: &serde_json::Value) -> Value<'static> {
-        match json {
-            serde_json::Value::Null => Value::Unit,
-            serde_json::Value::Bool(b) => Value::Bool(*b),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Value::Int(i)
-                } else if let Some(f) = n.as_f64() {
+    // Helper methods
+    fn parse_list(s: &str) -> Value {
+        // Simple list parser - just split by comma for now
+        let inner = &s[1..s.len()-1];
+        let items: Vec<Value> = inner.split(',')
+            .map(|item| {
+                let trimmed = item.trim();
+                if let Ok(n) = trimmed.parse::<i64>() {
+                    Value::Int(n)
+                } else if let Ok(f) = trimmed.parse::<f64>() {
                     Value::Float(f)
                 } else {
-                    Value::Int(0)
+                    Value::String(Arc::from(trimmed.trim_matches('"').to_string()))
                 }
-            }
-            serde_json::Value::String(s) => Value::String(Arc::from(s.clone())),
-            serde_json::Value::Array(arr) => {
-                let items: Vec<Value> = arr.iter()
-                    .map(|v| Self::json_to_value(v))
-                    .collect();
-                Value::List(items)
-            }
-            serde_json::Value::Object(obj) => {
-                let mut map = HashMap::new();
-                for (k, v) in obj {
-                    map.insert(Arc::new(k.clone()), Self::json_to_value(v));
-                }
-                Value::Dict(map)
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Helper: Parse Python list
-    // ═══════════════════════════════════════════════════════════════
-    fn parse_python_list(s: &str) -> Value<'static> {
-        let inner = &s[1..s.len()-1];
-        let items: Vec<Value> = inner.split(',')
-            .map(|item| {
-                let trimmed = item.trim();
-
-                // Try boolean
-                if trimmed == "True" {
-                    return Value::Bool(true);
-                }
-                if trimmed == "False" {
-                    return Value::Bool(false);
-                }
-
-                // Try int
-                if let Ok(n) = trimmed.parse::<i64>() {
-                    return Value::Int(n);
-                }
-
-                // Try float
-                if let Ok(f) = trimmed.parse::<f64>() {
-                    return Value::Float(f);
-                }
-
-                // String (remove quotes)
-                let unquoted = trimmed.trim_matches('\'').trim_matches('"');
-                Value::String(Arc::from(unquoted.to_string()))
             })
             .collect();
-
         Value::List(items)
     }
 
-    // Helper: Parse Python dict (simple version)
-    fn parse_python_dict(_s: &str) -> Value<'static> {
-        // TODO: Implement proper dict parsing
+    fn parse_dict(_s: &str) -> Value {
+        // TODO: Implement dict parsing
         Value::Dict(HashMap::new())
-    }
-
-    // Helper: Parse JS array
-    fn parse_js_array(s: &str) -> Value<'static> {
-        let inner = &s[1..s.len()-1];
-        let items: Vec<Value> = inner.split(',')
-            .map(|item| {
-                let trimmed = item.trim();
-
-                if trimmed == "true" {
-                    return Value::Bool(true);
-                }
-                if trimmed == "false" {
-                    return Value::Bool(false);
-                }
-
-                if let Ok(n) = trimmed.parse::<i64>() {
-                    return Value::Int(n);
-                }
-                if let Ok(f) = trimmed.parse::<f64>() {
-                    return Value::Float(f);
-                }
-
-                let unquoted = trimmed.trim_matches('\'').trim_matches('"');
-                Value::String(Arc::from(unquoted.to_string()))
-            })
-            .collect();
-
-        Value::List(items)
-    }
-
-    // Helper: Parse JS object (simple version)
-    fn parse_js_object(_s: &str) -> Value<'static> {
-        // TODO: Implement proper object parsing
-        Value::Dict(HashMap::new())
-    }
-
-
-}
-// Helper methods
-impl ReturnValueParser {
-    /// Enhanced list parser with nested structure support
-    fn parse_list(s: &str) -> Value<'static> {
-        let trimmed = s.trim();
-
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return Value::List(Vec::new());
-        }
-
-        if trimmed == "[]" {
-            return Value::List(Vec::new());
-        }
-
-        let inner = &trimmed[1..trimmed.len()-1];
-        let mut items = Vec::new();
-        let mut chars = inner.chars().peekable();
-
-        loop {
-            Self::skip_whitespace(&mut chars);
-
-            if chars.peek().is_none() {
-                break;
-            }
-
-            // Parse value
-            if let Ok(value) = Self::parse_dict_value(&mut chars) {
-                items.push(value);
-            }
-
-            // Check for comma
-            Self::skip_whitespace(&mut chars);
-            if let Some(&ch) = chars.peek() {
-                if ch == ',' {
-                    chars.next();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Value::List(items)
-    }
-    fn parse_dict(s: &str) -> Value<'static> {
-        let trimmed = s.trim();
-
-        // Must start with { and end with }
-        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
-            return Value::Dict(HashMap::new());
-        }
-
-        // Empty dict
-        if trimmed == "{}" {
-            return Value::Dict(HashMap::new());
-        }
-
-        let mut result = HashMap::new();
-        let inner = &trimmed[1..trimmed.len()-1];
-
-        // Parse key-value pairs with proper nesting support
-        if let Ok(pairs) = Self::parse_dict_pairs(inner) {
-            for (key, value) in pairs {
-                result.insert(Arc::new(key), value);
-            }
-        }
-
-        Value::Dict(result)
-    }
-
-    /// Parse dict key-value pairs with nesting support
-    fn parse_dict_pairs(s: &str) -> Result<Vec<(String, Value<'static>)>, ()> {
-        let mut pairs = Vec::new();
-        let mut chars = s.chars().peekable();
-
-        loop {
-            // Skip whitespace
-            Self::skip_whitespace(&mut chars);
-
-            if chars.peek().is_none() {
-                break;
-            }
-
-            // Parse key
-            let key = Self::parse_dict_key(&mut chars)?;
-
-            // Skip whitespace and colon
-            Self::skip_whitespace(&mut chars);
-            if chars.next() != Some(':') {
-                return Err(());
-            }
-            Self::skip_whitespace(&mut chars);
-
-            // Parse value
-            let value = Self::parse_dict_value(&mut chars)?;
-
-            pairs.push((key, value));
-
-            // Check for comma or end
-            Self::skip_whitespace(&mut chars);
-            if let Some(&ch) = chars.peek() {
-                if ch == ',' {
-                    chars.next();
-                } else if ch == '}' {
-                    break; // Nested dict end
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(pairs)
-    }
-
-    /// Parse dict key (string with quotes)
-    fn parse_dict_key(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<String, ()> {
-        let quote = chars.next();
-
-        let quote_char = match quote {
-            Some('\'') => '\'',
-            Some('"') => '"',
-            _ => return Err(()),
-        };
-
-        let mut key = String::new();
-        let mut escaped = false;
-
-        while let Some(ch) = chars.next() {
-            if escaped {
-                // Handle escape sequences
-                match ch {
-                    'n' => key.push('\n'),
-                    't' => key.push('\t'),
-                    'r' => key.push('\r'),
-                    '\\' => key.push('\\'),
-                    '\'' => key.push('\''),
-                    '"' => key.push('"'),
-                    _ => {
-                        key.push('\\');
-                        key.push(ch);
-                    }
-                }
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == quote_char {
-                return Ok(key);
-            } else {
-                key.push(ch);
-            }
-        }
-
-        Err(())
-    }
-
-    /// Parse dict value (supports all types)
-    fn parse_dict_value(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<Value<'static>, ()> {
-        Self::skip_whitespace(chars);
-
-        let ch = chars.peek().ok_or(())?;
-
-        match ch {
-            // String
-            '\'' | '"' => {
-                let quote = *ch;
-                chars.next();
-                let mut value = String::new();
-                let mut escaped = false;
-
-                while let Some(ch) = chars.next() {
-                    if escaped {
-                        match ch {
-                            'n' => value.push('\n'),
-                            't' => value.push('\t'),
-                            'r' => value.push('\r'),
-                            '\\' => value.push('\\'),
-                            '\'' => value.push('\''),
-                            '"' => value.push('"'),
-                            _ => {
-                                value.push('\\');
-                                value.push(ch);
-                            }
-                        }
-                        escaped = false;
-                    } else if ch == '\\' {
-                        escaped = true;
-                    } else if ch == quote {
-                        return Ok(Value::String(Arc::new(value)));
-                    } else {
-                        value.push(ch);
-                    }
-                }
-                Err(())
-            }
-
-            // Nested dict
-            '{' => {
-                chars.next();
-                let mut depth = 1;
-                let mut nested = String::from("{");
-
-                while let Some(ch) = chars.next() {
-                    nested.push(ch);
-                    if ch == '{' {
-                        depth += 1;
-                    } else if ch == '}' {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Ok(Self::parse_dict(&nested));
-                        }
-                    }
-                }
-                Err(())
-            }
-
-            // List
-            '[' => {
-                chars.next();
-                let mut depth = 1;
-                let mut list_str = String::from("[");
-
-                while let Some(ch) = chars.next() {
-                    list_str.push(ch);
-                    if ch == '[' {
-                        depth += 1;
-                    } else if ch == ']' {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Ok(Self::parse_list(&list_str));
-                        }
-                    }
-                }
-                Err(())
-            }
-
-            // Boolean or None/null
-            'T' | 'F' | 't' | 'f' | 'N' | 'n' => {
-                let word = Self::parse_word(chars);
-                match word.as_str() {
-                    "True" | "true" => Ok(Value::Bool(true)),
-                    "False" | "false" => Ok(Value::Bool(false)),
-                    "None" | "null" => Ok(Value::Unit),
-                    _ => Err(()),
-                }
-            }
-
-            // Number
-            '-' | '0'..='9' => {
-                let num_str = Self::parse_number(chars);
-
-                // Try integer first
-                if let Ok(n) = num_str.parse::<i64>() {
-                    Ok(Value::Int(n))
-                }
-                // Try float
-                else if let Ok(f) = num_str.parse::<f64>() {
-                    Ok(Value::Float(f))
-                } else {
-                    Err(())
-                }
-            }
-
-            _ => Err(()),
-        }
-    }
-
-    /// Skip whitespace characters
-    fn skip_whitespace(chars: &mut std::iter::Peekable<std::str::Chars>) {
-        while let Some(&ch) = chars.peek() {
-            if ch.is_whitespace() {
-                chars.next();
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Parse a word (identifier)
-    fn parse_word(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
-        let mut word = String::new();
-
-        while let Some(&ch) = chars.peek() {
-            if ch.is_alphanumeric() || ch == '_' {
-                word.push(ch);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-
-        word
-    }
-
-    /// Parse a number (int or float)
-    fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
-        let mut num = String::new();
-
-        // Handle negative sign
-        if let Some(&'-') = chars.peek() {
-            num.push('-');
-            chars.next();
-        }
-
-        // Parse digits and decimal point
-        while let Some(&ch) = chars.peek() {
-            if ch.is_numeric() || ch == '.' || ch == 'e' || ch == 'E' || ch == '+' || ch == '-' {
-                num.push(ch);
-                chars.next();
-            } else {
-                break;
-            }
-        }
-
-        num
     }
 }
 
@@ -10369,11 +9279,11 @@ impl ReturnValueParser {
 /// Execute bash command
 
 /// Execute bash command with TB variable context
-fn execute_bash_command_with_context<'arena>(
+fn execute_bash_command_with_context(
     code: &str,
-    args: &[Value<'arena>],
+    args: &[Value],
     context: Option<&LanguageExecutionContext>,
-) -> TBResult<Value<'static>> {
+) -> TBResult<Value> {
     use std::process::Command;
 
     let arg_strings: Vec<String> = args.iter()
@@ -10458,33 +9368,63 @@ fn execute_bash_command_with_context<'arena>(
         .arg(&full_command)
         .output()
         .map_err(|e| TBError::RuntimeError {
-            message: format!("Failed to execute bash: {}", e).into(),
-            trace: vec![],
+            message: format!(
+                "Failed to execute bash command: {}\n\n\
+                Shell: {}\n\
+                Code:\n{}\n",
+                e, shell, code
+            ).into(),
+            trace: vec![
+                Arc::from("execute_bash_command_with_context()".to_string()),
+                format!("bash(...) call").into(),
+            ],
         })?;
 
-    //  Clone stdout to owned String
-    let stdout_owned = String::from_utf8_lossy(&output.stdout).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     if !output.status.success() {
-        let stderr_owned = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+        let code_preview = code.lines()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n");
+
         return Err(TBError::RuntimeError {
-            message: format!("Bash failed: {}", stderr_owned).into(),
-            trace: vec![],
+            message: format!(
+                "Bash command failed (exit code {}):\n\n\
+            Error output:\n{}\n\n\
+            Code executed:\n{}\n\n\
+            Shell: {}\n",
+                exit_code,
+                stderr.trim(),
+                code_preview,
+                shell
+            ).into(),
+            trace: vec![
+                Arc::from("execute_bash_command_with_context()".to_string()),
+                format!("bash() call").into(),
+                format!("Exit code: {}", exit_code).into(),
+            ],
         });
     }
 
-    if !output.stderr.is_empty() {
-        eprint!("{:?}", output.stderr);
-    }
+    // ✅ FIX: Split output
+    let stdout_str = stdout.trim();
+    let lines: Vec<&str> = stdout_str.lines().collect();
 
-    if !output.stdout.is_empty() {
-        print!("{:?}", output.stdout);
+    if lines.len() > 1 {
+        for line in &lines[..lines.len() - 1] {
+            println!("{}", line);
+        }
+        let return_value = lines.last().unwrap_or(&"");
+        Ok(ReturnValueParser::from_bash(return_value))
+    } else {
+        Ok(ReturnValueParser::from_bash(stdout_str))
     }
-    // Return owned Value
-    Ok(ReturnValueParser::from_bash(&stdout_owned))
 }
 
-fn execute_bash_command<'arena>(code: &str, args: &[Value<'arena>]) -> TBResult<Value<'static>> {
+fn execute_bash_command(code: &str, args: &[Value]) -> TBResult<Value> {
     execute_bash_command_with_context(code, args, None)
 }
 
@@ -10667,11 +9607,11 @@ fn detect_python_executable() -> String {
 /// Execute Python code with automatic environment detection
 
 /// Execute Python code with TB variable context
-fn execute_python_code_with_context<'arena>(
+fn execute_python_code_with_context(
     code: &str,
-    args: &[Value<'arena>],
+    args: &[Value],
     context: Option<&LanguageExecutionContext>,
-) -> TBResult<Value<'static>> {
+) -> TBResult<Value> {
     use std::process::Command;
 
     let python_exe = detect_python_executable();
@@ -10680,7 +9620,7 @@ fn execute_python_code_with_context<'arena>(
         .map(|v| format_value_for_output(v))
         .collect();
 
-    // AUTO-WRAP: Last expression wird automatisch ausgegeben
+    //  AUTO-WRAP: Last expression wird automatisch ausgegeben
     let wrapped_code = wrap_python_auto_return(code);
 
     let mut script = String::from("import sys\nimport json\n");
@@ -10691,7 +9631,7 @@ fn execute_python_code_with_context<'arena>(
     }
 
     script.push_str("# User Code\n");
-    script.push_str(&wrapped_code);  // Wrapped code verwenden
+    script.push_str(&wrapped_code);  //  Wrapped code verwenden
     script.push('\n');
 
     debug_log!("Executing Python with: {}", python_exe);
@@ -10711,8 +9651,9 @@ fn execute_python_code_with_context<'arena>(
             trace: vec![],
         })?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
 
     if !output.status.success() {
         let exit_code = output.status.code().unwrap_or(-1);
@@ -10728,23 +9669,35 @@ fn execute_python_code_with_context<'arena>(
     if !stderr.is_empty() {
         eprint!("{}", stderr);
     }
-    if !stdout.is_empty() {
-        print!("{}", stdout);
-    }
 
-    let owned_stdout = stdout.trim().to_string();
-    Ok(ReturnValueParser::from_python(&owned_stdout))
+    // ✅ FIX: Split stdout into display and return value
+    let stdout_str = stdout.trim();
+    let lines: Vec<&str> = stdout_str.lines().collect();
+
+    // If multiple lines: Print all except last, return last
+    if lines.len() > 1 {
+        // Print visible output (all except last line)
+        for line in &lines[..lines.len() - 1] {
+            println!("{}", line);
+        }
+
+        // Return ONLY last line as value
+        let return_value = lines.last().unwrap_or(&"");
+        Ok(ReturnValueParser::from_python(return_value))
+    } else {
+        // Single line: return as-is
+        Ok(ReturnValueParser::from_python(stdout_str))
+    }
 }
 
 // Wrapper for backward compatibility
-fn execute_python_code<'arena>(code: &str, args: &[Value<'arena>]) -> TBResult<Value<'static>> {
+fn execute_python_code(code: &str, args: &[Value]) -> TBResult<Value> {
     execute_python_code_with_context(code, args, None)
 }
 
+/// Wrap Python code to auto-return last expression
 fn wrap_python_auto_return(code: &str) -> String {
     let trimmed = code.trim();
-
-    // Check if last line is an expression (not assignment/statement)
     let lines: Vec<&str> = trimmed.lines().collect();
 
     if lines.is_empty() {
@@ -10754,33 +9707,22 @@ fn wrap_python_auto_return(code: &str) -> String {
     let last_line = lines.last().unwrap().trim();
 
     // Skip wrapping if:
-    // - Empty line
-    // - Comment
-    // - Starts with keyword (if, for, while, def, class, import, return, print)
-    // - Contains assignment (=, but not ==, !=, <=, >=)
-    // - Already has print()
     if last_line.is_empty()
         || last_line.starts_with('#')
-        || last_line == "}"
-        || last_line == ")"
-        || last_line == "]"
-        || last_line.starts_with("if ")
-        || last_line.starts_with("for ")
-        || last_line.starts_with("while ")
-        || last_line.starts_with("def ")
-        || last_line.starts_with("class ")
-        || last_line.starts_with("import ")
-        || last_line.starts_with("from ")
-        || last_line.starts_with("return ")
         || last_line.starts_with("print(")
-        || last_line.starts_with("print ")
         || (last_line.contains(" = ") && !last_line.contains("=="))
         || last_line.ends_with(':')
     {
         return code.to_string();
     }
 
-    // Build wrapped code
+    // ✅ NEW: Extract all defined variables from code
+    let defined_vars = extract_python_variables(&lines);
+
+    // ✅ NEW: Check if last line is a variable reference or bare string
+    let is_variable = defined_vars.contains(&last_line.to_string());
+    let is_bare_string = !is_variable && is_bare_string_literal(last_line);
+
     let mut wrapped = String::new();
 
     // Add all lines except last
@@ -10792,27 +9734,164 @@ fn wrap_python_auto_return(code: &str) -> String {
     }
 
     // Wrap last line
-    wrapped.push_str("__tb_result = (");
-    wrapped.push_str(last_line);
-    wrapped.push_str(")\n");
+    if is_bare_string {
+        // ✅ Bare string literal → Add quotes
+        wrapped.push_str(&format!("__tb_result = (\"{}\")\n", last_line));
+    } else {
+        // ✅ Variable reference OR expression → No quotes
+        wrapped.push_str(&format!("__tb_result = ({})\n", last_line));
+    }
+
     wrapped.push_str("print(__tb_result, end='')");
 
     wrapped
 }
 
+/// Extract all variable names defined in Python code
+fn extract_python_variables(lines: &[&str]) -> Vec<String> {
+    let mut vars = Vec::new();
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Match: var_name = ...
+        if let Some(eq_pos) = trimmed.find('=') {
+            // Check it's not ==, !=, <=, >=
+            let before = &trimmed[..eq_pos];
+            if before.ends_with('!') || before.ends_with('<')
+                || before.ends_with('>') || before.ends_with('=') {
+                continue;
+            }
+
+            // Extract variable name(s)
+            let var_part = before.trim();
+
+            // Handle multiple assignment: a, b = ...
+            if var_part.contains(',') {
+                for var in var_part.split(',') {
+                    let clean_var = var.trim().to_string();
+                    if !clean_var.is_empty() && is_valid_python_identifier(&clean_var) {
+                        vars.push(clean_var);
+                    }
+                }
+            } else {
+                // Single variable
+                let clean_var = var_part.to_string();
+                if is_valid_python_identifier(&clean_var) {
+                    vars.push(clean_var);
+                }
+            }
+        }
+
+        // Match: for var in ...
+        if trimmed.starts_with("for ") {
+            if let Some(in_pos) = trimmed.find(" in ") {
+                let var_part = trimmed[4..in_pos].trim();
+
+                // Handle: for x, y in ...
+                if var_part.contains(',') {
+                    for var in var_part.split(',') {
+                        let clean_var = var.trim().to_string();
+                        if is_valid_python_identifier(&clean_var) {
+                            vars.push(clean_var);
+                        }
+                    }
+                } else {
+                    if is_valid_python_identifier(var_part) {
+                        vars.push(var_part.to_string());
+                    }
+                }
+            }
+        }
+
+        // Match: def function_name(...):
+        if trimmed.starts_with("def ") {
+            if let Some(paren_pos) = trimmed.find('(') {
+                let func_name = trimmed[4..paren_pos].trim();
+                if is_valid_python_identifier(func_name) {
+                    vars.push(func_name.to_string());
+                }
+            }
+        }
+    }
+
+    vars
+}
+
+/// Check if string is a valid Python identifier
+fn is_valid_python_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
+    // Must start with letter or underscore
+    let first = s.chars().next().unwrap();
+    if !first.is_alphabetic() && first != '_' {
+        return false;
+    }
+
+    // Rest must be alphanumeric or underscore
+    s.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Check if a string is a bare string literal (not a variable or expression)
+fn is_bare_string_literal(s: &str) -> bool {
+    let trimmed = s.trim();
+
+    // Already quoted? → Not bare
+    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        return false;
+    }
+
+    // Contains operators/brackets/numbers? → Expression, not bare string
+    if trimmed.contains('+')
+        || trimmed.contains('-')
+        || trimmed.contains('*')
+        || trimmed.contains('/')
+        || trimmed.contains('(')
+        || trimmed.contains('[')
+        || trimmed.contains('.')
+        || trimmed.chars().any(|c| c.is_numeric())
+    {
+        return false;
+    }
+
+    // Is it a Python keyword?
+    if matches!(
+        trimmed,
+        "True" | "False" | "None" | "and" | "or" | "not" | "if" | "else"
+            | "elif" | "while" | "for" | "def" | "class" | "return" | "break"
+            | "continue" | "pass" | "import" | "from" | "as" | "with"
+    ) {
+        return false;
+    }
+
+    // ✅ Single word with only letters/underscores → Bare string!
+    trimmed.chars().all(|c| c.is_alphabetic() || c == '_')
+}
+
+
+
 /// Execute JavaScript code with TB variable context
-fn execute_js_code_with_context<'arena>(
+fn execute_js_code_with_context(
     code: &str,
-    args: &[Value<'arena>],
+    args: &[Value],
     context: Option<&LanguageExecutionContext>,
-) -> TBResult<Value<'static>> {
+) -> TBResult<Value> {
     use std::process::Command;
 
     let arg_strings: Vec<String> = args.iter()
         .map(|v| format_value_for_output(v))
         .collect();
 
-    // AUTO-WRAP
+    //  AUTO-WRAP
     let wrapped_code = wrap_js_auto_return(code);
 
     let mut script = String::from("const args = process.argv.slice(2);\n\n");
@@ -10822,7 +9901,7 @@ fn execute_js_code_with_context<'arena>(
     }
 
     script.push_str("// User Code\n");
-    script.push_str(&wrapped_code);  // ✅
+    script.push_str(&wrapped_code);  // 
     script.push('\n');
 
     debug_log!("Executing JavaScript script:\n{}", script);
@@ -10862,18 +9941,23 @@ fn execute_js_code_with_context<'arena>(
             trace: vec![],
         });
     }
-    if !stderr.is_empty() {
-        eprint!("{}", stderr);
-    }
 
-    if !stdout.is_empty() {
-        print!("{}", stdout);
-    }
+    // ✅ FIX: Same as Python - split output
+    let stdout_str = stdout.trim();
+    let lines: Vec<&str> = stdout_str.lines().collect();
 
-    Ok(ReturnValueParser::from_javascript(stdout.trim()))
+    if lines.len() > 1 {
+        for line in &lines[..lines.len() - 1] {
+            println!("{}", line);
+        }
+        let return_value = lines.last().unwrap_or(&"");
+        Ok(ReturnValueParser::from_javascript(return_value))
+    } else {
+        Ok(ReturnValueParser::from_javascript(stdout_str))
+    }
 }
 
-fn execute_js_code<'arena>(code: &str, args: &[Value<'arena>]) -> TBResult<Value<'static>> {
+fn execute_js_code(code: &str, args: &[Value]) -> TBResult<Value> {
     execute_js_code_with_context(code, args, None)
 }
 /// Wrap JavaScript code to auto-return last expression
@@ -10886,9 +9970,11 @@ fn wrap_js_auto_return(code: &str) -> String {
     }
 
     let last_line = lines.last().unwrap().trim();
+    let last_line = last_line.trim_end_matches(';').trim();
 
     // Skip wrapping if:
-    if last_line.is_empty()
+    if last_line.ends_with(';')
+        || last_line.is_empty()
         || last_line.starts_with("//")
         || last_line == "}"
         || last_line == ")"
@@ -10926,11 +10012,11 @@ fn wrap_js_auto_return(code: &str) -> String {
 
 /// Execute Go code with TB variable context
 /// Execute Go code with TB variable context
-fn execute_go_code_with_context<'arena> (
+fn execute_go_code_with_context(
     code: &str,
-    args: &[Value<'arena> ],
+    args: &[Value],
     context: Option<&LanguageExecutionContext>,
-) -> TBResult<Value<'static> > {
+) -> TBResult<Value> {
     use std::process::Command;
     use std::fs;
     use std::env;
@@ -10952,7 +10038,7 @@ fn execute_go_code_with_context<'arena> (
         .map_err(|e| TBError::IoError(format!("Failed to create temp dir: {}", e).into()))?;
 
     // ═══════════════════════════════════════════════════════════════════════
-    // PREPROCESS USER CODE TO ESCAPE LITERAL NEWLINES IN STRINGS
+    //  PREPROCESS USER CODE TO ESCAPE LITERAL NEWLINES IN STRINGS
     // ═══════════════════════════════════════════════════════════════════════
     let existing_vars: Vec<Arc<String>> = if let Some(ctx) = context {
         ctx.variables.keys().cloned().collect()
@@ -10967,7 +10053,7 @@ fn execute_go_code_with_context<'arena> (
     // ═══════════════════════════════════════════════════════════════════════
     // PARSE USER CODE FOR IMPORTS
     // ═══════════════════════════════════════════════════════════════════════
-    let (user_imports, clean_code) = extract_go_imports(&preprocessed_code);  // Use preprocessed!
+    let (user_imports, clean_code) = extract_go_imports(&preprocessed_code);  //  Use preprocessed!
 
     // ═══════════════════════════════════════════════════════════════════════
     // BUILD COMPLETE GO FILE
@@ -10998,6 +10084,17 @@ fn execute_go_code_with_context<'arena> (
     }
 
     full_code.push_str(")\n\n");
+
+    // Add helper functions
+    full_code.push_str("// Helper functions for TB\n");
+    full_code.push_str("func parseInt(s string) int64 {\n");
+    full_code.push_str("    i, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)\n");
+    full_code.push_str("    return i\n");
+    full_code.push_str("}\n\n");
+    full_code.push_str("func parseFloat(s string) float64 {\n");
+    full_code.push_str("    f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)\n");
+    full_code.push_str("    return f\n");
+    full_code.push_str("}\n\n");
 
     // Add main function
     full_code.push_str("func main() {\n");
@@ -11082,10 +10179,6 @@ fn execute_go_code_with_context<'arena> (
         eprint!("{}", stderr);
     }
 
-    if !stdout.is_empty() {
-        print!("{}", stdout);
-    }
-
     Ok(ReturnValueParser::from_go(stdout.trim()))
 }
 /// Extract import statements from Go code and return (imports, clean_code)
@@ -11093,6 +10186,7 @@ fn execute_go_code_with_context<'arena> (
 /// Example:
 ///   Input: "import \"math\"\nfmt.Println(math.Sqrt(64))"
 ///   Output: (vec!["math"], "fmt.Println(math.Sqrt(64))")
+/// Extract import statements from Go code and return (imports, clean_code)
 fn extract_go_imports(code: &str) -> (Vec<String>, String) {
     let mut imports = Vec::new();
     let mut clean_lines = Vec::new();
@@ -11104,21 +10198,18 @@ fn extract_go_imports(code: &str) -> (Vec<String>, String) {
     for line in wrapped_go.lines() {
         let trimmed = line.trim();
 
-        // Skip empty lines and comments at start
         if trimmed.is_empty() || trimmed.starts_with("//") {
             if !in_import_block && imports.is_empty() {
-                continue; // Skip leading whitespace/comments
+                continue;
             }
         }
 
-        // Detect import block start: import (
         if trimmed.starts_with("import (") {
             in_import_block = true;
             paren_depth = 1;
             continue;
         }
 
-        // Detect single import: import "..."
         if trimmed.starts_with("import ") && !trimmed.contains('(') {
             let import_path = trimmed
                 .trim_start_matches("import")
@@ -11128,9 +10219,7 @@ fn extract_go_imports(code: &str) -> (Vec<String>, String) {
             continue;
         }
 
-        // Inside import block
         if in_import_block {
-            // Check for closing paren
             if trimmed.contains(')') {
                 paren_depth -= 1;
                 if paren_depth == 0 {
@@ -11139,7 +10228,6 @@ fn extract_go_imports(code: &str) -> (Vec<String>, String) {
                 continue;
             }
 
-            // Parse import line: "fmt" or "math/rand"
             if trimmed.starts_with('"') {
                 let import_path = trimmed.trim_matches('"');
                 imports.push(import_path.to_string());
@@ -11147,8 +10235,15 @@ fn extract_go_imports(code: &str) -> (Vec<String>, String) {
             continue;
         }
 
-        // Regular code line
         clean_lines.push(line);
+    }
+
+    // ✅ ADD: Always include strconv and strings for TB variable conversions
+    if !imports.contains(&"strconv".to_string()) {
+        imports.push("strconv".to_string());
+    }
+    if !imports.contains(&"strings".to_string()) {
+        imports.push("strings".to_string());
     }
 
     let clean_code = clean_lines.join("\n");
@@ -11184,9 +10279,9 @@ fn wrap_go_auto_return(code: &str) -> String {
         || last_line.starts_with("return ")
         || last_line.starts_with("fmt.Print")   // fmt.Println, fmt.Printf, etc.
         || last_line.starts_with("println(")     // builtin println
-        || last_line == "}"                       // closing brace
-        || last_line == ")"                       // closing paren
-        || last_line == "]"                       // closing bracket
+        || last_line == "}"                       //  closing brace
+        || last_line == ")"                       //  closing paren
+        || last_line == "]"                       //  closing bracket
         || last_line.ends_with('{')               // opening brace
         || last_line.ends_with('(')               // opening paren
         || last_line.ends_with(';')               // explicit statement terminator
@@ -11212,7 +10307,7 @@ fn wrap_go_auto_return(code: &str) -> String {
 
     wrapped
 }
-fn execute_go_code<'arena> (code: &str, args: &[Value<'arena>]) -> TBResult<Value<'static> > {
+fn execute_go_code(code: &str, args: &[Value]) -> TBResult<Value> {
     execute_go_code_with_context(code, args, None)
 }
 
@@ -11364,40 +10459,23 @@ fn preprocess_go_code_for_existing_vars(code: &str, existing_vars: &Vec<Arc<Stri
 
 pub mod target;
 pub use target::{TargetPlatform, CompilationConfig};
-use crate::dependency_compiler::{CompiledDependency, CompiledDependencyRegistry};
+use crate::dependency_compiler::CompiledDependency;
 
-pub struct Compiler<'arena> {
-    config: Config<'arena>,
+pub struct Compiler {
+    config: Config,
     target: TargetPlatform,
     optimization_level: u8,
     compiled_deps: Vec<CompiledDependency>,
-    dep_compiler: Option<DependencyCompiler>,
-    builtins: BuiltinRegistry,
 }
 
-impl<'arena> Compiler<'arena> {
-    pub fn new(config: Config<'arena>) -> Self {
-        let builtins = BuiltinRegistry::new();
+impl Compiler {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
             target: TargetPlatform::current(),
             optimization_level: 3,
             compiled_deps: Vec::new(),
-            dep_compiler: None,
-            builtins
         }
-    }
-
-
-    pub fn set_dependency_compiler(&mut self, dep_compiler: DependencyCompiler) {
-        self.dep_compiler = Some(dep_compiler);
-    }
-
-    /// Get compiled dependencies registry (if available)
-    pub fn get_compiled_dependencies(&self) -> Option<CompiledDependencyRegistry> {
-        self.dep_compiler
-            .as_ref()
-            .map(|dc| dc.export_registry())
     }
 
     pub fn with_target(mut self, target: TargetPlatform) -> Self {
@@ -11415,7 +10493,7 @@ impl<'arena> Compiler<'arena> {
     }
 
     /// Compile statements to native binary with full import support
-    fn _compile(&self, statements: &[Statement]) -> TBResult<Vec<u8>> {
+    pub fn compile(&self, statements: &[Statement]) -> TBResult<Vec<u8>> {
         debug_log!("Compiler::compile() for target {}", self.target);
 
         // Statements already include imports (loaded by TBCore)
@@ -11454,7 +10532,7 @@ impl<'arena> Compiler<'arena> {
     }
 
     /// Recursively load all imports and their transitive dependencies
-    fn load_all_imports_recursive(&self, statements: &[Statement<'arena>]) -> TBResult<Vec<Statement<'arena>>> {
+    fn load_all_imports_recursive(&self, statements: &[Statement]) -> TBResult<Vec<Statement>> {
         let mut all_statements = Vec::new();
         let mut visited_imports = std::collections::HashSet::new();
         let mut function_names = std::collections::HashSet::new();
@@ -11499,13 +10577,13 @@ impl<'arena> Compiler<'arena> {
     fn collect_imports_recursive(
         &self,
         imports: &[PathBuf],
-        collected: &mut Vec<Statement<'arena>>,
+        collected: &mut Vec<Statement>,
         visited: &mut std::collections::HashSet<PathBuf>,
         function_names: &mut std::collections::HashSet<String>,
         depth: usize,
     ) -> TBResult<()> {
         let indent = "  ".repeat(depth);
-        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+
         for import_path in imports {
             // Resolve to canonical path with better error handling
             let resolved = if import_path.is_absolute() {
@@ -11557,12 +10635,11 @@ impl<'arena> Compiler<'arena> {
                 )?;
             }
 
-
             // Parse this import's statements
             let clean_source = TBCore::strip_directives(&source);
             let mut lexer = Lexer::new(&clean_source);
             let tokens = lexer.tokenize()?;
-            let mut parser = Parser::new(tokens, arena); // &arena
+            let mut parser = Parser::new(tokens);
             let statements = parser.parse()?;
 
             debug_log!("{}  ✓ Parsed {} statements", indent, statements.len());
@@ -11643,7 +10720,7 @@ impl<'arena> Compiler<'arena> {
     fn collect_assigned_in_expr(&self, expr: &Expr, mutable_vars: &mut std::collections::HashSet<Arc<String>>) {
         match expr {
             Expr::Block { statements, result } => {
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.collect_assigned_variables(stmt, mutable_vars);
                 }
                 if let Some(res) = result {
@@ -11694,37 +10771,26 @@ impl<'arena> Compiler<'arena> {
     }
 
     fn generate_rust_code_with_runtime(&self, statements: &[Statement]) -> TBResult<String> {
+        // Schritt 1: Analysiere, welche Variablen tatsächlich veränderbar sein müssen.
+        // Diese Logik bleibt erhalten, da sie korrekt und nützlich ist.
         let mutable_vars = self.analyze_mutability(statements);
+        debug_log!("Variables requiring mut: {:?}", mutable_vars);
+
+        // Schritt 2: Erstelle eine einzige CodeGenerator-Instanz.
         let mut codegen = CodeGenerator::new(Language::Rust);
 
-        codegen.set_builtin_registry(self.builtins.clone());
+        // Schritt 3: Konfiguriere den Generator mit allen notwendigen Kontext-Informationen.
         codegen.set_compiled_dependencies(&self.compiled_deps);
         codegen.set_mutable_vars(&mutable_vars);
 
-        // Check if we have compiled dependencies
-        let has_compiled_deps = !self.compiled_deps.is_empty();
-
-        if has_compiled_deps {
-            debug_log!("Using ZERO-OVERHEAD compiled language bridges");
-            codegen.generate_compiled_language_bridges();
-        } else {
-            debug_log!("No compiled dependencies, using JIT bridges");
-        }
-
-        let mut final_code = String::new();
-
-        final_code.push_str(&codegen.buffer);  // Language bridges
-        codegen.buffer.clear();
-
-        codegen.generate_builtin_functions();
-        final_code.push_str(&codegen.buffer);
-        codegen.buffer.clear();
-
-        // Generate main code
-        let main_code = codegen.generate(statements)?;
-        final_code.push_str(&main_code);
-
-        Ok(final_code)
+        // Schritt 4: Generiere den gesamten Code in einem einzigen, sauberen Aufruf.
+        // Die `generate`-Methode kümmert sich um alles:
+        // - Korrekte Helferfunktionen für ALLE Sprachen
+        // - Typ-Parser-Helfer
+        // - Alle Funktionsdefinitionen
+        // - Die `main`-Funktion mit dem restlichen Code
+        // Dies stellt sicher, dass JIT- und Compile-Modus exakt denselben Code-Generator verwenden.
+        codegen.generate(statements)
     }
 
     fn expr_needs_vec_return(&self, expr: &Expr) -> bool {
@@ -11763,7 +10829,7 @@ impl<'arena> Compiler<'arena> {
     fn expr_uses_bridges(&self, expr: &Expr) -> bool {
         match expr {
             Expr::Call { function, args } => {
-                if let Expr::Variable(name) = function {
+                if let Expr::Variable(name) = function.as_ref() {
                     if matches!(name.as_str(), "python" | "javascript" | "go" | "bash") {
                         return true;
                     }
@@ -11800,24 +10866,13 @@ impl<'arena> Compiler<'arena> {
 
     /// Create Cargo.toml with runtime dependencies for async/parallel
     fn create_cargo_toml_with_runtime(&self, project_dir: &Path) -> TBResult<()> {
-        let has_compiled_deps = !self.compiled_deps.is_empty();
-
-        let dependencies = if has_compiled_deps {
-            r#"rayon = "1.11.0"
-libloading = "0.8.5"
-libc = "0.2""#
-        } else {
-            r#"rayon = "1.11.0""#
-        };
-
         let cargo_toml = format!(r#"[package]
 name = "tb_compiled"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde_json = "1.0.145"
-{}
+rayon = "1.11.0"
 
 [profile.release]
 opt-level = {}
@@ -11825,7 +10880,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-"#, dependencies, self.optimization_level);
+"#, self.optimization_level);
 
         fs::write(project_dir.join("Cargo.toml"), cargo_toml)?;
         Ok(())
@@ -11917,7 +10972,7 @@ strip = true
 
 
     /// Compile to file with proper naming
-    pub fn compile_to_file(&self, statements: &[Statement<'arena>], output: &Path) -> TBResult<()> {
+    pub fn compile_to_file(&self, statements: &[Statement], output: &Path) -> TBResult<()> {
         let binary = self.compile(statements)?;
 
         // Create output directory if needed
@@ -11942,8 +10997,8 @@ strip = true
 
 }
 
-impl<'arena> Compiler<'arena> {
-    pub fn compile_to_library(&self, statements: &'arena [Statement<'arena>], output: &Path) -> TBResult<()> {
+impl Compiler {
+    pub fn compile_to_library(&self, statements: &[Statement], output: &Path) -> TBResult<()> {
         debug_log!("Compiling to library: {}", output.display());
 
         // Generate Rust code
@@ -11970,7 +11025,7 @@ impl<'arena> Compiler<'arena> {
     }
 
     /// Generate Rust code as library
-    fn generate_rust_library_code(&self, statements: &'arena [Statement<'arena>]) -> TBResult<String> {
+    fn generate_rust_library_code(&self, statements: &[Statement]) -> TBResult<String> {
         let codegen = CodeGenerator::new(Language::Rust);
 
         // Generate base function code WITHOUT wrapping in main()
@@ -12037,7 +11092,7 @@ impl<'arena> Compiler<'arena> {
                 let mut code = String::from("{\n");
 
                 // Generate statements
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     match stmt {
                         Statement::Expr(e) => {
                             code.push_str("        ");
@@ -12203,491 +11258,7 @@ strip = true
         }
     }
 }
-impl<'arena> Compiler<'arena> {
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // DEPENDENCY EXTRACTION FOR COMPILATION
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Extract all external code dependencies from statements for compilation
-    fn extract_dependencies_from_statements(&self, statements: &[Statement<'arena>]) -> TBResult<Vec<Dependency>> {
-        use std::sync::Arc;
-
-        let mut dependencies = Vec::new();
-        let mut dep_counter = 0;
-
-        for stmt in statements {
-            self.extract_deps_from_statement(stmt, &mut dependencies, &mut dep_counter)?;
-        }
-
-        if !dependencies.is_empty() {
-            debug_log!("📦 Extracted {} dependencies for compilation", dependencies.len());
-        }
-
-        Ok(dependencies)
-    }
-
-    /// Extract dependencies from a single statement
-    fn extract_deps_from_statement(
-        &self,
-        stmt: &Statement<'arena>,
-        dependencies: &mut Vec<Dependency>,
-        counter: &mut usize,
-    ) -> TBResult<()> {
-        match stmt {
-            Statement::Expr(expr) => {
-                self.extract_deps_from_expr(expr, dependencies, counter)?;
-            }
-            Statement::Let { value, .. } => {
-                self.extract_deps_from_expr(value, dependencies, counter)?;
-            }
-            Statement::Function { body, .. } => {
-                self.extract_deps_from_expr(body, dependencies, counter)?;
-            }
-            Statement::Assign { value, .. } => {
-                self.extract_deps_from_expr(value, dependencies, counter)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Recursively extract dependencies from expressions
-    fn extract_deps_from_expr(
-        &self,
-        expr: &Expr<'arena>,
-        dependencies: &mut Vec<Dependency>,
-        counter: &mut usize,
-    ) -> TBResult<()> {
-        match expr {
-            // Native code block: Expr::Native { language, code }
-            Expr::Native { language, code } => {
-                *counter += 1;
-
-                debug_log!("  → Found {:?} dependency #{}", language, counter);
-
-                dependencies.push(Dependency {
-                    id: Arc::new(format!("dep_{}", counter)),
-                    language: *language,
-                    code: code.clone(),
-                    imports: Self::extract_imports_from_code(code, *language),
-                    is_in_loop: false, // TODO: detect from context
-                    estimated_calls: 1,
-                });
-            }
-
-            // Function call: python(...), js(...), go(...), bash(...)
-            Expr::Call { function, args } => {
-                if let Expr::Variable(func_name) = &**function {
-                    let language_opt = match func_name.as_str() {
-                        "python" | "py" => Some(Language::Python),
-                        "js" | "javascript" => Some(Language::JavaScript),
-                        "ts" | "typescript" => Some(Language::TypeScript),
-                        "go" => Some(Language::Go),
-                        "bash" | "sh" => Some(Language::Bash),
-                        _ => None,
-                    };
-
-                    if let Some(language) = language_opt {
-                        // Extract code from first argument (string literal)
-                        if let Some(Expr::Literal(Literal::String(code))) = args.first() {
-                            *counter += 1;
-
-                            debug_log!("  → Found {:?} dependency #{} from {}() call",
-                                       language, counter, func_name);
-
-                            dependencies.push(Dependency {
-                                id: Arc::new(format!("dep_{}", counter)),
-                                language,
-                                code: code.clone(),
-                                imports: Self::extract_imports_from_code(code, language),
-                                is_in_loop: false,
-                                estimated_calls: 1,
-                            });
-                        }
-                    }
-                }
-
-                // Recursively check arguments
-                for arg in args.iter() {
-                    self.extract_deps_from_expr(arg, dependencies, counter)?;
-                }
-            }
-
-            // Block expression
-            Expr::Block { statements, result } => {
-                for stmt in statements.iter() {
-                    self.extract_deps_from_statement(stmt, dependencies, counter)?;
-                }
-                if let Some(res) = result {
-                    self.extract_deps_from_expr(res, dependencies, counter)?;
-                }
-            }
-
-            // If expression
-            Expr::If { condition, then_branch, else_branch } => {
-                self.extract_deps_from_expr(condition, dependencies, counter)?;
-                self.extract_deps_from_expr(then_branch, dependencies, counter)?;
-                if let Some(else_b) = else_branch {
-                    self.extract_deps_from_expr(else_b, dependencies, counter)?;
-                }
-            }
-
-            // Loop expressions
-            Expr::Loop { body } => {
-                self.extract_deps_from_expr(body, dependencies, counter)?;
-            }
-
-            Expr::While { condition, body } => {
-                self.extract_deps_from_expr(condition, dependencies, counter)?;
-                self.extract_deps_from_expr(body, dependencies, counter)?;
-            }
-
-            Expr::For { iterable, body, .. } => {
-                self.extract_deps_from_expr(iterable, dependencies, counter)?;
-                self.extract_deps_from_expr(body, dependencies, counter)?;
-            }
-
-            // Binary operations
-            Expr::BinOp { left, right, .. } => {
-                self.extract_deps_from_expr(left, dependencies, counter)?;
-                self.extract_deps_from_expr(right, dependencies, counter)?;
-            }
-
-            // Unary operations
-            Expr::UnaryOp { expr, .. } => {
-                self.extract_deps_from_expr(expr, dependencies, counter)?;
-            }
-
-            // Method calls
-            Expr::Method { object, args, .. } => {
-                self.extract_deps_from_expr(object, dependencies, counter)?;
-                for arg in args.iter() {
-                    self.extract_deps_from_expr(arg, dependencies, counter)?;
-                }
-            }
-
-            // Parallel execution
-            Expr::Parallel(exprs) => {
-                for expr in exprs.iter() {
-                    self.extract_deps_from_expr(expr, dependencies, counter)?;
-                }
-            }
-
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    /// Extract imports from source code based on language
-    fn extract_imports_from_code(code: &str, language: Language) -> Vec<Arc<String>> {
-        let mut imports = Vec::new();
-
-        match language {
-            Language::Python => {
-                for line in code.lines() {
-                    let trimmed = line.trim();
-
-                    // import module
-                    if trimmed.starts_with("import ") {
-                        if let Some(module) = trimmed
-                            .strip_prefix("import ")
-                            .and_then(|s| s.split_whitespace().next())
-                        {
-                            imports.push(Arc::new(module.to_string()));
-                        }
-                    }
-                    // from module import ...
-                    else if trimmed.starts_with("from ") {
-                        if let Some(module) = trimmed
-                            .strip_prefix("from ")
-                            .and_then(|s| s.split_whitespace().next())
-                        {
-                            imports.push(Arc::new(module.to_string()));
-                        }
-                    }
-                }
-            }
-
-            Language::JavaScript | Language::TypeScript => {
-                for line in code.lines() {
-                    let trimmed = line.trim();
-
-                    // import ... from "module" or require("module")
-                    if trimmed.contains("import ") || trimmed.contains("require(") {
-                        // Simple extraction - find string in quotes
-                        if let Some(start) = trimmed.find('"').or_else(|| trimmed.find('\'')) {
-                            if let Some(end) = trimmed[start + 1..].find('"').or_else(|| trimmed[start + 1..].find('\'')) {
-                                let module = &trimmed[start + 1..start + 1 + end];
-                                if !module.starts_with('.') && !module.starts_with('/') {
-                                    imports.push(Arc::new(module.to_string()));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Language::Go => {
-                for line in code.lines() {
-                    let trimmed = line.trim();
-
-                    // import "package" or import ("package")
-                    if trimmed.starts_with("import ") {
-                        if let Some(start) = trimmed.find('"') {
-                            if let Some(end) = trimmed[start + 1..].find('"') {
-                                let package = &trimmed[start + 1..start + 1 + end];
-                                imports.push(Arc::new(package.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-
-            _ => {}
-        }
-
-        imports
-    }
-
-    /// Compile statements to native binary with full import support
-    pub fn compile(&self, statements: &[Statement<'arena>]) -> TBResult<Vec<u8>> {
-        debug_log!("╔════════════════════════════════════════════════════════════════╗");
-        debug_log!("║              TB COMPILATION PIPELINE                           ║");
-        debug_log!("╚════════════════════════════════════════════════════════════════╝");
-        debug_log!("Compiler::compile() for target {}", self.target);
-
-        let total_start = std::time::Instant::now();
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 1: Statement Analysis
-        // ═══════════════════════════════════════════════════════════════════════════
-        let function_count = statements.iter()
-            .filter(|s| matches!(s, Statement::Function{..}))
-            .count();
-        debug_log!("✓ Total functions: {}", function_count);
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 2: Dependency Compilation (if external code exists)
-        // ═══════════════════════════════════════════════════════════════════════════
-        let compiled_deps = if self.statements_use_language_bridges(statements) {
-            debug_log!("");
-            debug_log!("⚡ Phase 2: Compiling External Language Dependencies");
-            debug_log!("────────────────────────────────────────────────────────");
-
-            let dep_start = std::time::Instant::now();
-            let temp_compile_dir = std::env::temp_dir().join(format!("tb_dep_compile_{}",
-                                                                     uuid::Uuid::new_v4()));
-            let dep_compiler = DependencyCompiler::new(&temp_compile_dir);
-
-            // Extract dependencies from statements
-            let deps = self.extract_dependencies_from_statements(statements)?;
-
-            if !deps.is_empty() {
-                debug_log!("  Found {} external code blocks to compile", deps.len());
-                debug_log!("");
-
-                // Compile each dependency
-                for (idx, dep) in deps.iter().enumerate() {
-                    debug_log!("  [{}/{}] Compiling {:?} dependency: {}",
-                               idx + 1, deps.len(), dep.language, dep.id);
-
-                    match dep_compiler.compile(&dep) {
-                        Ok(compiled) => {
-                            debug_log!("       ✓ Strategy: {:?}", compiled.strategy);
-                            debug_log!("       ✓ Size: {:.2} KB", compiled.size_bytes as f64 / 1024.0);
-                            debug_log!("       ✓ Time: {}ms", compiled.compile_time_ms);
-                        }
-                        Err(e) => {
-                            debug_log!("       ⚠️  Compilation failed: {}", e);
-                            debug_log!("       → Falling back to runtime interpretation");
-                        }
-                    }
-                    debug_log!("");
-                }
-
-                // Get compilation statistics
-                let stats = dep_compiler.get_stats();
-                let dep_elapsed = dep_start.elapsed();
-
-                debug_log!("────────────────────────────────────────────────────────");
-                debug_log!("  ✅ Dependency Compilation Complete");
-                debug_log!("     • Total dependencies: {}", stats.total_count);
-                debug_log!("     • Total size: {:.2} KB", stats.total_size_bytes as f64 / 1024.0);
-                debug_log!("     • Compilation time: {:.2}s", dep_elapsed.as_secs_f64());
-                debug_log!("");
-                debug_log!("  📊 Breakdown:");
-                if stats.modern_native > 0 {
-                    debug_log!("     • Modern native (UV/BUN): {}", stats.modern_native);
-                }
-                if stats.native_compilation > 0 {
-                    debug_log!("     • Native compilation: {}", stats.native_compilation);
-                }
-                if stats.bundled > 0 {
-                    debug_log!("     • Bundled: {}", stats.bundled);
-                }
-                if stats.plugin > 0 {
-                    debug_log!("     • Plugins: {}", stats.plugin);
-                }
-                if stats.system_installed > 0 {
-                    debug_log!("     • System installed: {}", stats.system_installed);
-                }
-                if stats.embedded > 0 {
-                    debug_log!("     • Embedded: {}", stats.embedded);
-                }
-                debug_log!("────────────────────────────────────────────────────────");
-                debug_log!("");
-
-                // Export compiled dependencies
-                let registry = dep_compiler.export_registry();
-                registry.dependencies.values().cloned().collect()
-            } else {
-                debug_log!("  ℹ️  No external dependencies found");
-                Vec::new()
-            }
-        } else {
-            // Use pre-set compiled_deps if available
-            if !self.compiled_deps.is_empty() {
-                debug_log!("  ℹ️  Using pre-compiled dependencies: {}", self.compiled_deps.len());
-                self.compiled_deps.clone()
-            } else {
-                debug_log!("  ℹ️  No language bridges detected");
-                Vec::new()
-            }
-        };
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 3: Rust Code Generation
-        // ═══════════════════════════════════════════════════════════════════════════
-        debug_log!("⚙️  Phase 3: Generating Rust Code");
-        debug_log!("────────────────────────────────────────────────────────");
-
-        let codegen_start = std::time::Instant::now();
-        let rust_code = self.generate_rust_code_with_runtime_and_deps(statements, &compiled_deps)?;
-        let codegen_elapsed = codegen_start.elapsed();
-
-        debug_log!("  ✓ Generated code: {} bytes ({:.2} KB)",
-                   rust_code.len(),
-                   rust_code.len() as f64 / 1024.0);
-        debug_log!("  ✓ Generation time: {:.2}ms", codegen_elapsed.as_secs_f64() * 1000.0);
-        debug_log!("");
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 4: Project Setup
-        // ═══════════════════════════════════════════════════════════════════════════
-        debug_log!("📁 Phase 4: Creating Cargo Project");
-        debug_log!("────────────────────────────────────────────────────────");
-
-        let temp_dir = self.create_temp_project()?;
-        debug_log!("  ✓ Temp directory: {}", temp_dir.display());
-
-        let main_rs = temp_dir.join("src").join("main.rs");
-        fs::write(&main_rs, &rust_code)?;
-        debug_log!("  ✓ Wrote main.rs");
-
-        self.create_cargo_toml_with_runtime(&temp_dir)?;
-        debug_log!("  ✓ Created Cargo.toml");
-        debug_log!("");
-
-        debug_log!("╔═══════════════════════════════════════════════════════════════════════════════════════════╗");
-        debug_log!("Full Code:");
-        for (i, line) in rust_code.lines().enumerate() {
-            debug_log!("{:>4} | {}", i + 1, line);
-        }
-        debug_log!("╚═══════════════════════════════════════════════════════════════════════════════════════════╝");
-
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 5: Cargo Compilation
-        // ═══════════════════════════════════════════════════════════════════════════
-        debug_log!("🔨 Phase 5: Compiling with Cargo");
-        debug_log!("────────────────────────────────────────────────────────");
-
-        let cargo_start = std::time::Instant::now();
-        let binary = self.cargo_build(&temp_dir)?;
-        let cargo_elapsed = cargo_start.elapsed();
-
-        debug_log!("  ✓ Cargo build complete: {:.2}s", cargo_elapsed.as_secs_f64());
-        debug_log!("");
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 6: Binary Packaging
-        // ═══════════════════════════════════════════════════════════════════════════
-        let binary_data = fs::read(&binary)?;
-        let binary_size_mb = binary_data.len() as f64 / (1024.0 * 1024.0);
-
-        debug_log!("📦 Phase 6: Packaging Binary");
-        debug_log!("────────────────────────────────────────────────────────");
-        debug_log!("  ✓ Binary size: {:.2} MB", binary_size_mb);
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // PHASE 7: Cleanup
-        // ═══════════════════════════════════════════════════════════════════════════
-        fs::remove_dir_all(&temp_dir).ok();
-        debug_log!("  ✓ Cleaned up temporary files");
-        debug_log!("");
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        // COMPILATION SUMMARY
-        // ═══════════════════════════════════════════════════════════════════════════
-        let total_elapsed = total_start.elapsed();
-
-        debug_log!("╔════════════════════════════════════════════════════════════════╗");
-        debug_log!("║                      COMPILATION SUCCESSFUL                    ║");
-        debug_log!("╚════════════════════════════════════════════════════════════════╝");
-        debug_log!("");
-        debug_log!("📊 Summary:");
-        debug_log!("   • Total time: {:.2}s", total_elapsed.as_secs_f64());
-        debug_log!("   • Functions compiled: {}", function_count);
-        debug_log!("   • External dependencies: {}", compiled_deps.len());
-        debug_log!("   • Binary size: {:.2} MB", binary_size_mb);
-        debug_log!("   • Target: {}", self.target);
-        debug_log!("");
-
-        Ok(binary_data)
-    }
-
-    /// Generate Rust code with runtime support and compiled dependencies
-    fn generate_rust_code_with_runtime_and_deps(
-        &self,
-        statements: &[Statement],
-        compiled_deps: &[CompiledDependency]
-    ) -> TBResult<String> {
-        let mutable_vars = self.analyze_mutability(statements);
-        let mut codegen = CodeGenerator::new(Language::Rust);
-
-        // Set compiled dependencies
-        codegen.set_builtin_registry(self.builtins.clone());
-        codegen.set_compiled_dependencies(compiled_deps);
-        codegen.set_mutable_vars(&mutable_vars);
-
-        let has_compiled_deps = !compiled_deps.is_empty();
-
-        // Generate code based on whether we have compiled deps
-        let mut final_code = String::new();
-
-        if has_compiled_deps {
-            debug_log!("  → Using ZERO-OVERHEAD compiled language bridges");
-            codegen.generate_compiled_language_bridges();
-            final_code.push_str(&codegen.buffer);
-            codegen.buffer.clear();
-        } else {
-            debug_log!("  → No compiled dependencies, using JIT bridges");
-        }
-
-        // Generate builtin functions
-        codegen.generate_builtin_functions();
-        final_code.push_str(&codegen.buffer);
-        codegen.buffer.clear();
-
-        // Generate main code
-        let main_code = codegen.generate(statements)?;
-        final_code.push_str(&main_code);
-
-        Ok(final_code)
-    }
-}
 mod uuid {
     pub struct Uuid;
     impl Uuid {
@@ -12707,13 +11278,13 @@ mod uuid {
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub struct TBCore {
-    config: Config<'static>,
+    config: Config,
     optimizer: Optimizer,
 }
 
 impl TBCore {
     /// Create new TB Core engine
-    pub fn new(config: Config<'static>) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             optimizer: Optimizer::new(OptimizerConfig::default()),
             config,
@@ -12721,247 +11292,237 @@ impl TBCore {
     }
 
     /// Execute TB source code
-
-    pub fn execute(
-        &mut self,
-        source: &str
-    ) -> TBResult<Value<'static>>  {
+    pub fn execute(&mut self, source: &str) -> TBResult<Value> {
         debug_log!("TBCore::execute() started!!");
         debug_log!("Source length: {} bytes", source.len());
-        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-        let result= {
-            let config = Config::parse(source)?;
-            let imports_to_load = config.imports.clone();
-            self.config = config;
-            debug_log!("Configuration parsed: mode={:?}", self.config.mode);
 
-            let clean_source = Self::strip_directives(source);
-            debug_log!("Clean source length: {} bytes", clean_source.len());
+        // Parse configuration
+        self.config = Config::parse(source)?;
+        debug_log!("Configuration parsed: mode={:?}", self.config.mode);
 
-            let mut lexer = Lexer::new(&clean_source);
-            let tokens = lexer.tokenize()?;
-            let mut parser = Parser::new(tokens, &arena);
-            let mut statements = parser.parse()?;
-            debug_log!("Parsing complete: {} statements", statements.len());
+        // Strip directives
+        let clean_source = Self::strip_directives(source);
+        debug_log!("Clean source length: {} bytes", clean_source.len());
 
-            if !imports_to_load.is_empty() {
-                debug_log!("📦 Loading {} imports", imports_to_load.len());
-                let imported_statements = self.load_imports(&imports_to_load, &arena)?;
-                debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
-                statements = Self::merge_statements_deduplicated(imported_statements, statements)?;
-                debug_log!("✓ Total statements after deduplication: {}", statements.len());
-            }
+        // Tokenize and parse main source
+        let mut lexer = Lexer::new(&clean_source);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(tokens);
+        let mut statements = parser.parse()?;
+        debug_log!("Parsing complete: {} statements", statements.len());
 
-            // Analyze dependencies
-            let dependencies = self.analyze_dependencies(&statements)?;
+        // Load imports BEFORE executing (for ALL modes)
+        let imports = self.config.imports.clone();
+        if !imports.is_empty() {
+            debug_log!("📦 Loading {} imports", imports.len());
+            let imported_statements = self.load_imports(&imports)?;
+            debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
 
-            // Compile dependencies if any
-            if !dependencies.is_empty() {
-                debug_log!("╔════════════════════════════════════════════════════════════════╗");
-                debug_log!("║              Compiling Dependencies                            ║");
-                debug_log!("╚════════════════════════════════════════════════════════════════╝\n");
+            // Deduplicate function definitions
+            statements = Self::merge_statements_deduplicated(imported_statements, statements)?;
+            debug_log!("✓ Total statements after deduplication: {}", statements.len());
+        }
 
-                let compiler = DependencyCompiler::new(Path::new("."));
+        // Analyze dependencies
+        let dependencies = self.analyze_dependencies(&statements)?;
 
-                for dep in &dependencies {
-                    match compiler.compile(dep) {
-                        Ok(compiled) => {
-                            debug_log!("✓ {} ({} bytes, {}ms)",
-                                 compiled.id,
-                                 compiled.size_bytes,
-                                 compiled.compile_time_ms);
-                        }
-                        Err(e) => {
-                            eprintln!("✗ Failed to compile {}: {}", dep.id, e);
-                        }
+        // Compile dependencies if any
+        if !dependencies.is_empty() {
+            debug_log!("╔════════════════════════════════════════════════════════════════╗");
+            debug_log!("║              Compiling Dependencies                            ║");
+            debug_log!("╚════════════════════════════════════════════════════════════════╝\n");
+
+            let compiler = DependencyCompiler::new(Path::new("."));
+
+            for dep in &dependencies {
+                match compiler.compile(dep) {
+                    Ok(compiled) => {
+                        debug_log!("✓ {} ({} bytes, {}ms)",
+                             compiled.id,
+                             compiled.size_bytes,
+                             compiled.compile_time_ms);
+                    }
+                    Err(e) => {
+                        eprintln!("✗ Failed to compile {}: {}", dep.id, e);
                     }
                 }
             }
+        }
 
-            // Type check (if static mode)
-            if self.config.type_mode == TypeMode::Static {
-                debug_log!("Type checking...");
-                let mut type_checker = TypeChecker::new(TypeMode::Static);
-                type_checker.check_statements(&statements)?;
-                debug_log!("Type checking complete");
-            }
+        // Type check (if static mode)
+        if self.config.type_mode == TypeMode::Static {
+            debug_log!("Type checking...");
+            let mut type_checker = TypeChecker::new(TypeMode::Static);
+            type_checker.check_statements(&statements)?;
+            debug_log!("Type checking complete");
+        }
 
-            // Execute based on mode
-            let mode = self.config.mode.clone();
-            let runtime_mode = self.config.runtime_mode;
+        // Execute based on mode
+        let mode = self.config.mode.clone();
+        let runtime_mode = self.config.runtime_mode;
 
-            debug_log!("Executing in mode: {:?}", mode);
-            let arena_result = match mode {
-                ExecutionMode::Compiled { optimize } => {
-                    debug_log!("Compiled mode execution");
+        debug_log!("Executing in mode: {:?}", mode);
+        let result = match &mode {
+            ExecutionMode::Compiled { optimize } => {
+                debug_log!("Compiled mode execution");
 
-                    let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
+                // Load imports BEFORE compilation
+                let imports = self.config.imports.clone();
+                let all_statements = if !imports.is_empty() {
+                    debug_log!("📦 Loading {} imports for compilation", imports.len());
+                    let imported_statements = self.load_imports(&imports)?;
+                    debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
 
-                    // Load imports BEFORE compilation
-                    let imports = self.config.imports.clone();
-                    let all_statements = if !imports.is_empty() {
-                        debug_log!("📦 Loading {} imports for compilation", imports.len());
-                        let imported_statements = self.load_imports(&imports, &arena)?;
-                        debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
+                    let merged = Self::merge_statements_deduplicated(imported_statements, statements)?;
+                    debug_log!("✓ Total statements after merge: {}", merged.len());
+                    merged
+                } else {
+                    debug_log!("No imports to load");
+                    statements
+                };
 
-                        let merged = Self::merge_statements_deduplicated(imported_statements, statements)?;
-                        debug_log!("✓ Total statements after merge: {}", merged.len());
-                        merged
-                    } else {
-                        debug_log!("No imports to load");
-                        statements
-                    };
+                let func_count = all_statements.iter()
+                    .filter(|s| matches!(s, Statement::Function { .. }))
+                    .count();
+                debug_log!("✓ Functions available for compilation: {}", func_count);
 
-                    let func_count = all_statements.iter()
-                        .filter(|s| matches!(s, Statement::Function { .. }))
-                        .count();
-                    debug_log!("✓ Functions available for compilation: {}", func_count);
+                //Analyze and compile dependencies (Python/JS/Go/Bash blocks)
+                let dependencies = self.analyze_dependencies(&all_statements)?;
 
-                    //Analyze and compile dependencies (Python/JS/Go/Bash blocks)
-                    let dependencies = self.analyze_dependencies(&all_statements)?;
+                let compiled_deps = if !dependencies.is_empty() {
+                    println!("\n╔════════════════════════════════════════════════════════════════╗");
+                    println!("║              Compiling Language Dependencies                   ║");
+                    println!("╚════════════════════════════════════════════════════════════════╝\n");
 
-                    let compiled_deps = if !dependencies.is_empty() {
-                        println!("\n╔════════════════════════════════════════════════════════════════╗");
-                        println!("║              Compiling Language Dependencies                   ║");
-                        println!("╚════════════════════════════════════════════════════════════════╝\n");
+                    let dep_compiler = DependencyCompiler::new(Path::new("."));
+                    let mut compiled = Vec::new();
 
-                        let dep_compiler = DependencyCompiler::new(Path::new("."));
-                        let mut compiled = Vec::new();
-
-                        for dep in &dependencies {
-                            match dep_compiler.compile(dep) {
-                                Ok(compiled_dep) => {
-                                    println!("✓ {} → {} ({:.2} KB, {}ms)",
-                                             dep.id,
-                                             compiled_dep.output_path.display(),
-                                             compiled_dep.size_bytes as f64 / 1024.0,
-                                             compiled_dep.compile_time_ms
-                                    );
-                                    compiled.push(compiled_dep);
-                                }
-                                Err(e) => {
-                                    eprintln!("✗ Failed to compile {}: {}", dep.id, e);
-                                    // Continue with other deps
-                                }
+                    for dep in &dependencies {
+                        match dep_compiler.compile(dep) {
+                            Ok(compiled_dep) => {
+                                println!("✓ {} → {} ({:.2} KB, {}ms)",
+                                         dep.id,
+                                         compiled_dep.output_path.display(),
+                                         compiled_dep.size_bytes as f64 / 1024.0,
+                                         compiled_dep.compile_time_ms
+                                );
+                                compiled.push(compiled_dep);
+                            }
+                            Err(e) => {
+                                eprintln!("✗ Failed to compile {}: {}", dep.id, e);
+                                // Continue with other deps
                             }
                         }
-
-                        println!("\n✓ Compiled {} dependencies\n", compiled.len());
-                        compiled
-                    } else {
-                        Vec::new()
-                    };
-
-                    // Create compiler with dependency info
-                    let mut compiler = Compiler::new(self.config.clone())
-                        .with_optimization(if optimize { 3 } else { 0 });
-
-                    // Pass compiled dependencies to compiler
-                    compiler.set_compiled_dependencies(compiled_deps);
-
-                    // Compile to temporary file
-                    let temp_exe = std::env::temp_dir().join(format!(
-                        "tb_exec{}",
-                        TargetPlatform::current().exe_extension()
-                    ));
-
-                    debug_log!("Compiling to: {}", temp_exe.display());
-
-                    compiler.compile_to_file(&all_statements, &temp_exe)?;
-
-                    debug_log!("✓ Compiled binary: {}", temp_exe.display());
-
-                    // Execute compiled binary
-                    let output = Command::new(&temp_exe).output()?;
-
-                    // Clean up
-                    fs::remove_file(&temp_exe).ok();
-
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        if !stdout.is_empty() {
-                            print!("{}", stdout);
-                        }
-                        Ok(Value::Unit)
-                    } else {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        Err(TBError::RuntimeError {
-                            message: format!("Execution failed:\n{}", stderr).into(),
-                            trace: vec![],
-                        })
                     }
-                }
 
-                ExecutionMode::Jit { .. } => {
-                    debug_log!("JIT mode execution");
+                    println!("\n✓ Compiled {} dependencies\n", compiled.len());
+                    compiled
+                } else {
+                    Vec::new()
+                };
 
-                    // Choose executor based on runtime mode
-                    match runtime_mode {
-                        RuntimeMode::Parallel { .. } => {
-                            let mut executor = ParallelExecutor::new(self.config.clone());
-                            let static_stmts: &'static [Statement<'static>] = unsafe {
-                                std::mem::transmute(statements.as_slice())
-                            };
-                            executor.execute(static_stmts)
-                        }
-                        RuntimeMode::Sequential => {
-                            // FIX: Pass arena to JitExecutor
-                            let mut executor = JitExecutor::new(self.config.clone(), arena);
-                            let static_stmts: &'static [Statement<'static>] = unsafe {
-                                std::mem::transmute(statements.as_slice())
-                            };
-                            executor.execute(static_stmts)
-                        }
+                // Create compiler with dependency info
+                let mut compiler = Compiler::new(self.config.clone())
+                    .with_optimization(if *optimize { 3 } else { 0 });
+
+                // Pass compiled dependencies to compiler
+                compiler.set_compiled_dependencies(compiled_deps);
+
+                // Compile to temporary file
+                let temp_exe = std::env::temp_dir().join(format!(
+                    "tb_exec{}",
+                    TargetPlatform::current().exe_extension()
+                ));
+
+                debug_log!("Compiling to: {}", temp_exe.display());
+
+                compiler.compile_to_file(&all_statements, &temp_exe)?;
+
+                debug_log!("✓ Compiled binary: {}", temp_exe.display());
+
+                // Execute compiled binary
+                let output = Command::new(&temp_exe).output()?;
+
+                // Clean up
+                fs::remove_file(&temp_exe).ok();
+
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if !stdout.is_empty() {
+                        print!("{}", stdout);
                     }
+                    Ok(Value::Unit)
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(TBError::RuntimeError {
+                        message: format!("Execution failed:\n{}", stderr).into(),
+                        trace: vec![],
+                    })
                 }
+            }
 
-                ExecutionMode::Streaming { .. } => {
-                    let mut executor = JitExecutor::new(self.config.clone(), arena);
-                    let static_stmts: &'static [Statement<'static>] = unsafe {
-                        std::mem::transmute(statements.as_slice())
-                    };
-                    executor.execute(static_stmts)
-                }
-            };
-            #[cfg(debug_assertions)]
-            {
-                let stats = STRING_INTERNER.stats();
-                if stats.total_requests > 0 {
-                    debug_log!("╔════════════════════════════════════════════════════════════════╗");
-                    debug_log!("║              STRING_INTERNER Statistics                        ║");
-                    debug_log!("╠════════════════════════════════════════════════════════════════╣");
-                    debug_log!("║ Total Requests:  {:>45} ║", stats.total_requests);
-                    debug_log!("║ Cache Hits:      {:>45} ║", stats.cache_hits);
-                    debug_log!("║ Hit Rate:        {:>44.1}% ║", STRING_INTERNER.hit_rate() * 100.0);
-                    debug_log!("║ Unique Strings:  {:>45} ║", stats.unique_strings);
-                    debug_log!("║ Memory Used:     {:>42} KB ║", stats.memory_used_bytes / 1024);
-                    debug_log!("║ Memory Saved:    {:>42} KB ║", stats.memory_saved_bytes / 1024);
-                    debug_log!("║ Capacity:        {:>44.1}% ║", STRING_INTERNER.capacity_usage() * 100.0);
-                    debug_log!("║ Evictions:       {:>45} ║", stats.evictions_triggered);
-                    debug_log!("╚════════════════════════════════════════════════════════════════╝");
+            ExecutionMode::Jit { .. } => {
+                debug_log!("JIT mode execution");
 
-                    // Warning if approaching limits
-                    if STRING_INTERNER.capacity_usage() > 0.7 || STRING_INTERNER.memory_usage() > 0.7 {
-                        debug_log!("⚠️  WARNING: STRING_INTERNER approaching capacity limits!");
+                // Choose executor based on runtime mode
+                match runtime_mode {
+
+                    RuntimeMode::Parallel { .. } => {
+                        debug_log!("Using ParallelExecutor");
+                        let mut executor = ParallelExecutor::new(self.config.clone());
+                        executor.execute(&statements)
+                    }
+
+                    RuntimeMode::Sequential => {
+                        debug_log!("Using standard JitExecutor");
+                        let mut executor = JitExecutor::new(self.config.clone());
+                        executor.execute(&statements)
                     }
                 }
             }
 
-            arena_result?
+            ExecutionMode::Streaming { .. } => {
+                debug_log!("Streaming mode execution (using JIT)");
+                let mut executor = JitExecutor::new(self.config.clone());
+                executor.execute(&statements)
+            }
         };
-        let static_result = result.clone_static()?;
-        debug_log!("TBCore::execute() completed: {:?}", static_result);
-        Ok(static_result)
+        #[cfg(debug_assertions)]
+        {
+            let stats = STRING_INTERNER.stats();
+            if stats.total_requests > 0 {
+                debug_log!("╔════════════════════════════════════════════════════════════════╗");
+                debug_log!("║              STRING_INTERNER Statistics                        ║");
+                debug_log!("╠════════════════════════════════════════════════════════════════╣");
+                debug_log!("║ Total Requests:  {:>45} ║", stats.total_requests);
+                debug_log!("║ Cache Hits:      {:>45} ║", stats.cache_hits);
+                debug_log!("║ Hit Rate:        {:>44.1}% ║", STRING_INTERNER.hit_rate() * 100.0);
+                debug_log!("║ Unique Strings:  {:>45} ║", stats.unique_strings);
+                debug_log!("║ Memory Used:     {:>42} KB ║", stats.memory_used_bytes / 1024);
+                debug_log!("║ Memory Saved:    {:>42} KB ║", stats.memory_saved_bytes / 1024);
+                debug_log!("║ Capacity:        {:>44.1}% ║", STRING_INTERNER.capacity_usage() * 100.0);
+                debug_log!("║ Evictions:       {:>45} ║", stats.evictions_triggered);
+                debug_log!("╚════════════════════════════════════════════════════════════════╝");
+
+                // Warning if approaching limits
+                if STRING_INTERNER.capacity_usage() > 0.7 || STRING_INTERNER.memory_usage() > 0.7 {
+                    debug_log!("⚠️  WARNING: STRING_INTERNER approaching capacity limits!");
+                }
+            }
+        }
+
+        debug_log!("TBCore::execute() completed: {:?}", result);
+        result
     }
 
 
 
 
     /// Merge imported and main statements, removing duplicate function definitions
-    pub fn merge_statements_deduplicated<'arena>(
-        imported: Vec<Statement<'arena>>,
-        main: Vec<Statement<'arena>>,
-    ) -> TBResult<Vec<Statement<'arena>>> {
+    pub fn merge_statements_deduplicated(
+        imported: Vec<Statement>,
+        main: Vec<Statement>,
+    ) -> TBResult<Vec<Statement>> {
         let mut result = Vec::new();
         let mut function_names = std::collections::HashSet::new();
 
@@ -12994,12 +11555,11 @@ impl TBCore {
         Ok(result)
     }
 
+
     /// Load imports with compilation caching
-    pub fn load_imports<'arena>(
-        &mut self,
-        imports: &[PathBuf],
-        arena: &'arena Bump
-    ) -> TBResult<Vec<Statement<'arena>>> {
+    /// Takes owned Vec to avoid borrowing issues
+    /// Load imports with compilation caching
+    pub fn load_imports(&mut self, imports: &[PathBuf]) -> TBResult<Vec<Statement>> {
         let mut all_statements = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
@@ -13007,19 +11567,18 @@ impl TBCore {
         debug_log!("║                    Loading Imports (JIT)                       ║");
         debug_log!("╚════════════════════════════════════════════════════════════════╝\n");
 
-        self.load_imports_recursive(imports, &mut all_statements, &mut visited, 0, arena)?;
+        self.load_imports_recursive(imports, &mut all_statements, &mut visited, 0)?;
 
         Ok(all_statements)
     }
 
     /// Recursive helper for loading imports
-    fn load_imports_recursive<'arena>(
+    fn load_imports_recursive(
         &mut self,
         imports: &[PathBuf],
-        collected: &mut Vec<Statement<'arena>>,
+        collected: &mut Vec<Statement>,
         visited: &mut std::collections::HashSet<PathBuf>,
         depth: usize,
-        arena: &'arena Bump
     ) -> TBResult<()> {
         let indent = "  ".repeat(depth);
 
@@ -13058,8 +11617,7 @@ impl TBCore {
                     &import_config.imports,
                     collected,
                     visited,
-                    depth + 1,
-                    arena
+                    depth + 1
                 )?;
             }
 
@@ -13067,7 +11625,7 @@ impl TBCore {
             let clean_source = Self::strip_directives(&source);
             let mut lexer = Lexer::new(&clean_source);
             let tokens = lexer.tokenize()?;
-            let mut parser = Parser::new(tokens, arena);
+            let mut parser = Parser::new(tokens);
             let statements = parser.parse()?;
 
             debug_log!("{}  ✓ Loaded {} statements\n", indent, statements.len());
@@ -13094,17 +11652,28 @@ impl TBCore {
                 continue;
             }
 
-            // Detect start of directive block (@config, @shared, @imports, @plugins)
+            // ✅ FIX: Detect start of directive block
             if trimmed.starts_with("@config") || trimmed.starts_with("@shared")
                 || trimmed.starts_with("@imports") || trimmed.starts_with("@plugins") {
                 skip_until_brace = true;
                 brace_depth = 0;
                 debug_log!("Entering directive block: {}", trimmed);
 
-                // Check if opening brace is on same line
-                if trimmed.contains('{') {
-                    brace_depth = 1;
+                // ✅ NEW: Count ALL braces on this line
+                for ch in trimmed.chars() {
+                    if ch == '{' {
+                        brace_depth += 1;
+                    } else if ch == '}' {
+                        brace_depth -= 1;
+                    }
                 }
+
+                // ✅ NEW: If block complete on same line, exit directive mode
+                if brace_depth == 0 {
+                    skip_until_brace = false;
+                    debug_log!("Exiting directive block (complete on same line)");
+                }
+
                 continue;
             }
 
@@ -13140,6 +11709,8 @@ impl TBCore {
         trimmed_result
     }
 
+    /// Compile source to binary
+    /// Compile source to file with import support
     /// Compile source to file with import support
     pub fn compile_to_file(&mut self, source: &str, output_path: &Path) -> TBResult<()> {
         debug_log!("TBCore::compile_to_file() started");
@@ -13152,19 +11723,18 @@ impl TBCore {
         let clean_source = Self::strip_directives(source);
         debug_log!("Clean source length: {} bytes", clean_source.len());
 
-        let arena: &'static Bump = Box::leak(Box::new(Bump::new()));
-
+        // Tokenize and parse main source
         let mut lexer = Lexer::new(&clean_source);
         let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(tokens, &arena);
+        let mut parser = Parser::new(tokens);
         let mut statements = parser.parse()?;
         debug_log!("Parsing complete: {} statements", statements.len());
 
-        // Load imports with SAME arena
+        //  Load imports before compilation
         let imports = self.config.imports.clone();
         if !imports.is_empty() {
             debug_log!("📦 Loading {} imports for compilation", imports.len());
-            let imported_statements = self.load_imports(&imports, &arena)?;
+            let imported_statements = self.load_imports(&imports)?;
             debug_log!("✓ Loaded {} statements from imports", imported_statements.len());
 
             statements = Self::merge_statements_deduplicated(imported_statements, statements)?;
@@ -13176,7 +11746,7 @@ impl TBCore {
             .count();
         debug_log!("✓ Functions available for compilation: {}", func_count);
 
-        // NEW: Analyze and compile dependencies
+        //  NEW: Analyze and compile dependencies
         let dependencies = self.analyze_dependencies(&statements)?;
 
         let compiled_deps = if !dependencies.is_empty() {
@@ -13294,8 +11864,8 @@ impl TBCore {
             }
 
             Expr::Call { function, args } => {
-                if let Expr::Variable(func_name) = function {
-                    if let Some(language) = self.language_from_builtin_name(&func_name) {
+                if let Expr::Variable(func_name) = function.as_ref() {
+                    if let Some(language) = self.language_from_builtin_name(func_name) {
                         // Extract code from first argument
                         if let Some(Expr::Literal(Literal::String(code))) = args.first() {
                             let imports = self.extract_imports(language, code);
@@ -13322,7 +11892,7 @@ impl TBCore {
             }
 
             Expr::Block { statements, result } => {
-                for stmt in statements {
+                for stmt in statements.as_ref() {
                     self.collect_dependencies_from_statement(stmt, dependencies, dep_id, loop_depth)?;
                 }
                 if let Some(res) = result {
@@ -13486,19 +12056,19 @@ impl TB {
     }
 
     /// Create with custom configuration
-    pub fn with_config(config: Config<'static>) -> Self {
+    pub fn with_config(config: Config) -> Self {
         Self {
             core: TBCore::new(config),
         }
     }
 
     /// Execute TB source code
-    pub fn execute(&mut self, source: &str) -> TBResult<Value<'static>> {
+    pub fn execute(&mut self, source: &str) -> TBResult<Value> {
         self.core.execute(source)
     }
 
     /// Execute TB file
-    pub fn execute_file(&mut self, path: &Path) -> TBResult<Value<'static>> {
+    pub fn execute_file(&mut self, path: &Path) -> TBResult<Value> {
         let source = fs::read_to_string(path)?;
         self.execute(&source)
     }
@@ -13523,7 +12093,7 @@ impl TB {
     }
 }
 
-impl Default for TB{
+impl Default for TB {
     fn default() -> Self {
         Self::new()
     }
@@ -13578,62 +12148,6 @@ mod tests {
         "#).unwrap();
         assert!(matches!(result, Value::Int(11)));
     }
-
-    #[test]
-    fn test_dict_parser_simple() {
-        let dict_str = r#"{'name': 'Alice', 'age': 30}"#;
-        let result = ReturnValueParser::parse_dict(dict_str);
-
-        if let Value::Dict(map) = result {
-            assert_eq!(map.len(), 2);
-            assert!(matches!(
-                map.get(&Arc::new("name".to_string())),
-                Some(Value::String(s)) if s.as_str() == "Alice"
-            ));
-            assert!(matches!(
-                map.get(&Arc::new("age".to_string())),
-                Some(Value::Int(30))
-            ));
-        } else {
-            panic!("Expected Dict");
-        }
-    }
-
-    #[test]
-    fn test_dict_parser_nested() {
-        let dict_str = r#"{'user': {'name': 'Bob', 'id': 42}, 'active': true}"#;
-        let result = ReturnValueParser::parse_dict(dict_str);
-
-        if let Value::Dict(map) = result {
-            assert!(matches!(
-                map.get(&Arc::new("user".to_string())),
-                Some(Value::Dict(_))
-            ));
-            assert!(matches!(
-                map.get(&Arc::new("active".to_string())),
-                Some(Value::Bool(true))
-            ));
-        } else {
-            panic!("Expected Dict");
-        }
-    }
-
-    #[test]
-    fn test_dict_parser_with_lists() {
-        let dict_str = r#"{'numbers': [1, 2, 3], 'name': 'test'}"#;
-        let result = ReturnValueParser::parse_dict(dict_str);
-
-        if let Value::Dict(map) = result {
-            if let Some(Value::List(nums)) = map.get(&Arc::new("numbers".to_string())) {
-                assert_eq!(nums.len(), 3);
-                assert!(matches!(nums[0], Value::Int(1)));
-            } else {
-                panic!("Expected list in dict");
-            }
-        } else {
-            panic!("Expected Dict");
-        }
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -13654,7 +12168,7 @@ fn print_type_sizes() {
 #[allow(dead_code)]
 fn main() {
     println!("╔════════════════════════════════════════════════════════════════╗");
-    println!("║                    TB Language Core v1.0                      ║");
+    println!("║                    TB Language Core v1.0                       ║");
     println!("║              Production-Ready Multi-Language Engine            ║");
     println!("╚════════════════════════════════════════════════════════════════╝");
     println!();
