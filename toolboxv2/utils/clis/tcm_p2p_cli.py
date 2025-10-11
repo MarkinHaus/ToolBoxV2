@@ -1526,10 +1526,12 @@ class InteractiveP2PCLI:
         if msg.get('message_type') == 'file':
             sender_style = Style.GREEN if msg['is_own'] else Style.BLUE
             file_info = f"📁 {msg.get('file_name', 'Unknown')} ({msg.get('file_size', 0)} bytes)"
-            print(f"{timestamp} {sender_style(f'{msg["sender"]}:')} {Style.YELLOW(file_info)}")
+            sender = sender_style(f'{msg["sender"]}:')
+            print(f"{timestamp} {sender} {Style.YELLOW(file_info)}")
         else:
             sender_style = Style.GREEN if msg['is_own'] else Style.BLUE
-            print(f"{timestamp} {sender_style(f'{msg["sender"]}:')} {Style.WHITE(msg['content'])}")
+            sender = sender_style(f'{msg["sender"]}:')
+            print(f"{timestamp} {sender} {Style.WHITE(msg['content'])}")
 
     def _send_file(self):
         """Send file in current room."""
