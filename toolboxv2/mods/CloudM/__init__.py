@@ -8,6 +8,7 @@ from .UI.widget import get_widget
 from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
+from .LogInSystem import open_cli_web_login_web
 
 tools = Tools
 Name = 'CloudM'

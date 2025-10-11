@@ -45,6 +45,8 @@ load_dotenv()
 class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+        if "test" not in prefix:
+            prefix = "main"
         super().__init__(prefix, args)
         self._web_context = None
         t0 = time.perf_counter()

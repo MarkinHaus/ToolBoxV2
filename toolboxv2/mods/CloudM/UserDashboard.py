@@ -1425,7 +1425,7 @@ def configure_jwt_settings(app: App = None, ttl_hours: int = 24, allowed_mods: l
     }
 
     app.config_fh.add_to_save_file_handler("jwt_config", jwt_config)
-    return Result.ok("JWT configuration updated", data=jwt_config)
+    return Result.ok(data_info="JWT configuration updated", data=jwt_config)
 
 
 def _generate_jwt_secret(app: App) -> str:
@@ -1467,7 +1467,7 @@ def generate_cli_jwt(app: App = None, username: str = None, custom_ttl: int = No
         algorithm=jwt_config['algorithm']
     )
 
-    return Result.ok("JWT generated", data={'token': token, 'expires_in': ttl_hours * 3600})
+    return Result.ok(data_info="JWT generated", data={'token': token, 'expires_in': ttl_hours * 3600})
 
 
 @export(mod_name=Name, version=version, api=True)
@@ -1494,7 +1494,7 @@ def validate_cli_jwt(app: App = None, token: str = None):
         if payload.get('type') != 'cli_access':
             return Result.default_user_error("Invalid token type")
 
-        return Result.ok("Token valid", data=payload)
+        return Result.ok(data_info="Token valid", data=payload)
 
     except jwt.ExpiredSignatureError:
         return Result.default_user_error("Token expired")
@@ -1517,7 +1517,7 @@ def get_jwt_dashboard(app: App = None):
         'default_ttl': jwt_config.get('ttl_hours', 24) if jwt_config else 24
     }
 
-    return Result.ok("Dashboard data", data=dashboard_data)
+    return Result.ok(data_info="Dashboard data", data=dashboard_data)
 
 
 def _get_active_sessions(app: App) -> list:
@@ -1558,7 +1558,7 @@ async def get_my_active_instances_with_cli(app: App, request: RequestData):
         }
         active_instances_output.append(instance_summary)
 
-    return Result.ok("Active instances with CLI sessions retrieved", data=active_instances_output)
+    return Result.ok(data_info="Active instances with CLI sessions retrieved", data=active_instances_output)
 
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
@@ -1577,4 +1577,4 @@ async def close_cli_session(app: App, request: RequestData, cli_session_id: str)
             return Result.default_user_error(info="Unauthorized to close this session.")
 
     result = close_cli_session_internal(cli_session_id)
-    return Result.ok("CLI session closed", data={"message": result})
+    return Result.ok(data_info="CLI session closed", data={"message": result})

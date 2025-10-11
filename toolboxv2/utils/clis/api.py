@@ -47,7 +47,7 @@ def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
     """Print a styled box header"""
     title_text = f" {icon} {title} "
     padding = (width - len(title_text)) // 2
-    icon_adjust = 1 if len(icon) == 1 else 0
+    icon_adjust = 1 if len(icon) == 2 else 1
 
     print("\n┌" + "─" * width + "┐")
     print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - icon_adjust) + "│")
@@ -60,7 +60,7 @@ def print_box_content(text: str, style: str = "", width: int = 76):
         icon = "✓"
         text = f"{icon} {text}"
     elif style == "error":
-        icon = "✗"
+        icon = "✗_"
         text = f"{icon} {text}"
     elif style == "warning":
         icon = "⚠"
@@ -81,7 +81,7 @@ def print_status(message: str, status: str = "info"):
     """Print a status message with icon"""
     icons = {
         'success': '✓',
-        'error': '✗',
+        'error': '✗_',
         'warning': '⚠',
         'info': 'ℹ ',
         'progress': '⟳',
@@ -376,7 +376,7 @@ def start_new_server(executable_path, version_str, use_posix_zdt):
         print_box_content(f"Port: {SERVER_PORT}", "success")
         print_box_footer()
     else:
-        print_box_header("Server Failed to Start", "✗")
+        print_box_header("Server Failed to Start", "✗_")
         print_box_content("Check logs for details", "error")
         print_box_footer()
         write_server_state(None, None, None)
@@ -586,7 +586,7 @@ def handle_build():
 
     except subprocess.CalledProcessError as e:
         print()
-        print_box_header("Build Failed", "✗")
+        print_box_header("Build Failed", "✗_")
         print_box_content("Compilation errors occurred", "error")
         print_box_footer()
         print("\nError output:")
@@ -594,7 +594,7 @@ def handle_build():
 
     except FileNotFoundError:
         print()
-        print_box_header("Build Failed", "✗")
+        print_box_header("Build Failed", "✗_")
         print_box_content("'cargo' command not found", "error")
         print_box_content("Is Rust installed and in your PATH?", "info")
         print_box_footer()
@@ -746,11 +746,11 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
             executable_path = get_executable_path()
 
         if not executable_path:
-            print_box_header("Executable Not Found", "✗")
+            print_box_header("Executable Not Found", "✗_")
             print_box_content("No compiled executable found", "error")
             print_box_content("Build first with: tb api build", "info")
             print_box_footer()
-            return
+            return False
 
         start_new_server(executable_path, version_str, use_posix_zdt)
 
@@ -768,21 +768,23 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
 
     elif action == "update":
         if not executable_path:
-            print_box_header("Update Failed", "✗")
+            print_box_header("Update Failed", "✗_")
             print_box_content("New executable path required (--exe)", "error")
             print_box_footer()
-            return
+            return False
 
         if not version_str or version_str == "unknown":
-            print_box_header("Update Failed", "✗")
+            print_box_header("Update Failed", "✗_")
             print_box_content("Version string required (--version)", "error")
             print_box_footer()
-            return
+            return False
 
         update_server(executable_path, version_str, use_posix_zdt)
 
     elif action == "status":
         show_server_status(use_posix_zdt)
+
+    return True
 
 
 # =================== CLI Entry Point ===================

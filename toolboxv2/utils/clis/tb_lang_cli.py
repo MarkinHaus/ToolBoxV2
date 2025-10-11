@@ -14,7 +14,7 @@ from typing import Optional, List, Dict, Any
 
 from toolboxv2.utils.tbx.install_support import function_runner as system_tbx_support
 from toolboxv2.utils.tbx.setup import function_runner as language_ide_extension
-from toolboxv2.utils.tbx.test_tb_lang import function_runner as test_tbx_examples
+from toolboxv2.utils.tbx.test.test_tb_lang import function_runner as test_tbx_examples
 # --- Enhanced UI Imports ---
 try:
     from toolboxv2.utils.extras.Style import Spinner, Style

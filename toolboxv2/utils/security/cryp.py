@@ -78,6 +78,19 @@ class Code:
     def DK():
         return DEVICE_KEY
 
+    @staticmethod
+    def generate_random_string(length: int) -> str:
+        """
+        Generiert eine zufällige Zeichenkette der angegebenen Länge.
+
+        Args:
+            length (int): Die Länge der zu generierenden Zeichenkette.
+
+        Returns:
+            str: Die generierte Zeichenkette.
+        """
+        return secrets.token_urlsafe(length)
+
     def decode_code(self, encrypted_data, key=None):
 
         if not isinstance(encrypted_data, str):

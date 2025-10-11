@@ -265,7 +265,7 @@ async def setup_service_windows():
     elif mode == "0":
         pass
     elif mode == "2":
-        os.remove(path + '/tb_start.link')
+        os.remove(path + '/tb_start.bat')
         print(f"Removed Service from {path}")
     else:
         await setup_service_windows()
@@ -1907,10 +1907,12 @@ def runner_setup():
         print("║                  🔐 ToolBoxV2 Authentication                               ║")
         print("╚════════════════════════════════════════════════════════════════════════════╝\n")
 
-        app = get_app("CloudM.cli_web_login")
-        res = app.run_any("CloudM", "cli_web_login", force_remote=args.remote, force_local=args.local)
+        async def helper():
 
-        return res
+            app = get_app("CloudM.cli_web_login")
+            res = await app.a_run_any("CloudM", "cli_web_login", force_remote=args.remote, force_local=args.local)
+            return res
+        return asyncio.run(helper())
 
     def logout():
         app = get_app("CloudM.cli_web_login")

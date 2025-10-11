@@ -4497,8 +4497,15 @@ impl CodeGenerator {
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
-        self.emit_line("// Return ONLY last line (for variable assignment)");
-        self.emit_line("lines.last().unwrap_or(&\"\").trim().to_string()");
+        self.emit_line("// Return ONLY last NON-EMPTY line as value");
+        self.emit_line("lines.iter()");
+        self.indent += 1;
+        self.emit_line(".filter(|l| !l.trim().is_empty())");
+        self.emit_line(".last()");
+        self.emit_line(".unwrap_or(&\"\")");
+        self.emit_line(".trim()");
+        self.emit_line(".to_string()");
+        self.indent -= 1;
         self.indent -= 1;
         self.emit_line("}");
 
@@ -4752,8 +4759,15 @@ impl CodeGenerator {
         self.indent -= 1;
         self.emit_line("}");
         self.emit_line("");
-        self.emit_line("// Return ONLY last line as value");
-        self.emit_line("lines.last().unwrap_or(&\"\").trim().to_string()");
+        self.emit_line("// Return ONLY last NON-EMPTY line as value");
+        self.emit_line("lines.iter()");
+        self.indent += 1;
+        self.emit_line(".filter(|l| !l.trim().is_empty())");
+        self.emit_line(".last()");
+        self.emit_line(".unwrap_or(&\"\")");
+        self.emit_line(".trim()");
+        self.emit_line(".to_string()");
+        self.indent -= 1;
 
         self.indent -= 1;
         self.emit_line("}");
@@ -7053,7 +7067,7 @@ impl JitExecutor {
             builtins,
             functions: FunctionRegistry::new(),
             recursion_depth: 0,
-            max_recursion_depth: 10000,
+            max_recursion_depth: 1000000,
         }
     }
 
@@ -7246,7 +7260,7 @@ impl JitExecutor {
 
             Expr::Loop { body } => {
                 let mut iterations = 0;
-                let max_iterations = 100000;
+                let max_iterations = 10000000;
 
                 loop {
                     iterations += 1;
@@ -7271,7 +7285,7 @@ impl JitExecutor {
 
             Expr::While { condition, body } => {
                 let mut iterations = 0;
-                let max_iterations = 10000;
+                let max_iterations = 1000000;
                 let mut last_value = Value::Unit;
 
                 while self.eval_expr(condition)?.is_truthy() {
@@ -9901,7 +9915,7 @@ fn execute_js_code_with_context(
     }
 
     script.push_str("// User Code\n");
-    script.push_str(&wrapped_code);  // 
+    script.push_str(&wrapped_code);  //
     script.push('\n');
 
     debug_log!("Executing JavaScript script:\n{}", script);

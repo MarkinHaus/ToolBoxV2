@@ -202,7 +202,7 @@ class ToolBoxBackground {
     async checkConnection() {
         try {
             // Verwende jetzt das konfigurierte Backend
-            const response = await fetch(`${this.apiBase}/api/CloudM/Version`);
+            const response = await fetch(`${this.apiBase}/api/CloudM/openVersion`);
             this.isConnected = response.ok;
 
             chrome.action.setBadgeText({

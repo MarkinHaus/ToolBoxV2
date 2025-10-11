@@ -1,6 +1,12 @@
 NAME = 'bg'
 
 
-async def run(_, __):
-    _.print("Running...")
-    await _.daemon_app.connect(_)
+async def run(app, api=True):
+    app.print("Running...")
+    from toolboxv2.utils.clis.api import  manage_server, handle_debug
+    if api:
+        if app.debug:
+            handle_debug()
+        else:
+            manage_server("start")
+    await app.daemon_app.connect(app)
