@@ -1721,6 +1721,8 @@ class AppType:
         ]
 
         if detailed:
+            helper_ = '\n\t- '.join(metrics.open_files_path)
+            helper__ = '\n\t- '.join(metrics.connections_uri)
             output.extend([
                 f"\n⚙️  CPU USAGE",
                 f"  Current:  {metrics.cpu_percent_current:.2f}%",
@@ -1739,10 +1741,10 @@ class AppType:
                 f"  Threads:     {metrics.threads}",
                 f"\n📂 OPEN FILES",
                 f"  Open Files:  {metrics.open_files}",
-                f"  Open Files Path: \n\t- {'\n\t- '.join(metrics.open_files_path)}",
+                f"  Open Files Path: \n\t- {helper_}",
                 f"\n🔗 NETWORK CONNECTIONS",
                 f"  Connections: {metrics.connections}",
-                f"  Connections URI: \n\t- {'\n\t- '.join(metrics.connections_uri)}",
+                f"  Connections URI: \n\t- {helper__}",
             ])
 
         output.append("=" * 70)
