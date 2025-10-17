@@ -324,11 +324,11 @@ def show_version(self):
 
 
 @export(mod_name=Name, version=version, state=False, request_as_kwarg=True)
-async def get_eco(app: App | None = None,request=None):
+async def get_eco(app = None,request=None):
     return str(request)
 
 @export(mod_name=Name, version=version, state=False)
-async def login(m_link: str, app: App | None = None):
+async def login(m_link: str, app = None):
     if app is None:
         app = get_app("CloudM.login")
     if app.session.username is None or len(app.session.username) == 0:
@@ -354,10 +354,22 @@ def initialize_admin_panel(app: App):
     app.run_any(("CloudM","add_ui"),
                 name="UserDashboard",
                 title=Name,
-                path=f"/api/CloudM.UI.widget/get_widget",
+                path="/api/CloudM.UI.widget/get_widget",
                 description="main",auth=True
                 )
     return Result.ok(info="Admin Panel Online").set_origin("CloudM.initialize_admin_panel")
+
+@export(mod_name=Name, version=version, state=False)
+async def cli_web_login(app: App = None, force_remote: bool = False, force_local: bool = False):
+    """Enhanced CLI web login - imports from LogInSystem"""
+    from .LogInSystem import cli_web_login as _cli_web_login
+    return await _cli_web_login(app, force_remote, force_local)
+
+@export(mod_name=Name, version=version, state=False)
+async def cli_logout(app: App = None):
+    """CLI logout - imports from LogInSystem"""
+    from .LogInSystem import cli_logout as _cli_logout
+    return await _cli_logout(app)
 
 #@test_only
 #async def tb_test_register_initial_root_user(app: App):

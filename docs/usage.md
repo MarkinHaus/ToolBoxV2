@@ -344,6 +344,241 @@ def monitored_function(name):
     return Result.ok(data=f"Hello, {name}!")
 ```
 
+## Dokumentation: WebSocket-Kommunikation
+
+Diese Dokumentation beschreibt, wie Sie die WebSocket-Funktionalität für bidirektionale Echtzeitkommunikation zwischen dem `tbjs`-Frontend und dem `toolboxv2`-Backend nutzen können.
+
+### Architekturübersicht
+
+Die WebSocket-Kommunikation wird durch einen zentralen **Rust Actor** auf dem `actix_web`-Server verwaltet. Dieser Actor agiert als intelligente Brücke, die Verbindungen von Clients entgegennimmt, Nachrichten an die entsprechenden Python-Handler weiterleitet und Push-Nachrichten vom Python-Backend an die Clients sendet.
+
+```mermaid
+sequenceDiagram
+    participant JS (TB.ws) as Frontend
+    participant Rust (actix-web) as WebSocket Actor
+    participant Python (toolboxv2) as Anwendungslogik
+
+    JS (TB.ws)->>+Rust (actix-web): WebSocket-Verbindung aufbauen (/ws/...)
+    Rust (actix-web)->>+Python (toolboxv2): Ruft Python `on_connect` Handler auf
+
+    loop Nachrichtenfluss
+        JS (TB.ws)->>Rust (actix-web): Sendet Nachricht
+        Rust (actix-web)->>Python (toolboxv2): Ruft Python `on_message` Handler auf
+
+        Python (toolboxv2)-)!-Rust (actix-web): Ruft `app.ws_broadcast()` oder `app.ws_send()` auf
+        Rust (actix-web)-->>JS (TB.ws): Leitet Nachricht an Clients weiter
+    end
+
+    JS (TB.ws)-xRust (actix-web): Verbindung wird getrennt
+    Rust (actix-web)-xPython (toolboxv2): Ruft Python `on_disconnect` Handler auf
+```
+
+---
+
+### Teil 1: Verwendung in JavaScript (`tbjs`)
+
+Das `TB.ws`-Modul stellt eine einfache Schnittstelle zur Verwaltung von WebSocket-Verbindungen bereit.
+
+#### `TB.ws.connect(url, options)`
+
+Baut eine WebSocket-Verbindung zu einem bestimmten Endpunkt auf.
+
+*   **`url` (String)**: Der Pfad zum WebSocket-Endpunkt auf dem Server. Das Format ist `/ws/{Modulname}/{HandlerName}`, z. B. `/ws/ChatModule/public_room`.
+*   **`options` (Object, optional)**: Ein Objekt mit Callback-Funktionen:
+    *   `onOpen(event)`: Wird aufgerufen, wenn die Verbindung erfolgreich hergestellt wurde.
+    *   `onMessage(data, event)`: Wird bei jeder eingehenden Nachricht aufgerufen. `data` enthält die bereits als JSON geparsten Daten.
+    *   `onClose(event)`: Wird aufgerufen, wenn die Verbindung geschlossen wird.
+    *   `onError(event)`: Wird aufgerufen, wenn ein Fehler auftritt.
+
+#### `TB.ws.send(payload)`
+
+Sendet Daten an den Server.
+
+*   **`payload` (Object)**: Ein JavaScript-Objekt, das als JSON-String an den Server gesendet wird.
+    *   **Best Practice**: Verwenden Sie ein konsistentes Format wie `{ "event": "event_name", "data": { ... } }`, um die Verarbeitung auf der Serverseite zu vereinfachen.
+
+#### `TB.ws.disconnect()`
+
+Schließt die aktive WebSocket-Verbindung manuell.
+
+#### Event-basiertes Lauschen
+
+Zusätzlich zu den `onMessage`-Callbacks können Sie den globalen `TB.events`-Bus verwenden, um auf Nachrichten zu lauschen. Dies ist ideal für die Entkopplung Ihrer UI-Komponenten.
+
+*   `TB.events.on('ws:message', ({ data, originEvent }) => { ... })`: Lauscht auf alle eingehenden WebSocket-Nachrichten.
+*   `TB.events.on('ws:event:{event_name}', ({ data, originEvent }) => { ... })`: Wenn die eingehende Nachricht ein `{ "event": "event_name", ... }`-Format hat, wird dieses spezifische Event ausgelöst. **Dies ist die empfohlene Methode.**
+
+#### Beispiel: Ein einfacher Chat-Client
+
+```html
+<!-- UI für den Chat -->
+<div id="chat-log" style="height: 200px; border: 1px solid #ccc; overflow-y: scroll; padding: 5px;"></div>
+<input type="text" id="chat-input" placeholder="Nachricht eingeben..." />
+<button id="send-button">Senden</button>
+```
+
+```javascript
+// JavaScript-Logik
+function initializeChat() {
+    const chatLog = document.getElementById('chat-log');
+    const chatInput = document.getElementById('chat-input');
+    const sendButton = document.getElementById('send-button');
+
+    // 1. Verbindung aufbauen
+    TB.ws.connect('/ws/ChatModule/public_room', {
+        onOpen: () => {
+            chatLog.innerHTML += '<div><em>Verbindung zum Chat hergestellt.</em></div>';
+        },
+        onClose: () => {
+            chatLog.innerHTML += '<div><em>Verbindung zum Chat verloren.</em></div>';
+        }
+    });
+
+    // 2. Auf neue Nachrichten vom Server lauschen (Best Practice)
+    TB.events.on('ws:event:new_message', ({ data }) => {
+        const message = data.data; // Die Struktur ist { event: '...', data: { user: '..', text: '..' } }
+        const messageDiv = document.createElement('div');
+        messageDiv.innerHTML = `<strong>${message.user}:</strong> ${message.text}`;
+        chatLog.appendChild(messageDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    });
+
+    // Lauschen auf andere Events
+    TB.events.on('ws:event:user_joined', ({ data }) => {
+        chatLog.innerHTML += `<div><em>${data.data}</em></div>`;
+    });
+     TB.events.on('ws:event:user_left', ({ data }) => {
+        chatLog.innerHTML += `<div><em>${data.data}</em></div>`;
+    });
+
+
+    // 3. Nachricht senden, wenn der Button geklickt wird
+    sendButton.addEventListener('click', () => {
+        const messageText = chatInput.value;
+        if (messageText.trim() === '') return;
+
+        TB.ws.send({
+            event: "chat_message", // Entspricht dem Python-Handler
+            data: {
+                message: messageText
+            }
+        });
+
+        chatInput.value = '';
+    });
+}
+
+// Initialisiere den Chat, sobald tbjs bereit ist
+TB.events.on('tbjs:initialized', initializeChat, { once: true });
+```
+
+---
+
+### Teil 2: Implementierung in Python (`toolboxv2`)
+
+Die serverseitige Logik wird durch einen speziellen `@export`-Decorator und `async`-Handler-Funktionen definiert.
+
+#### `@export(websocket_handler="handler_name")`
+
+Dieser Decorator registriert eine Initialisierungsfunktion für einen WebSocket-Endpunkt.
+
+*   **`websocket_handler` (String)**: Definiert den Namen des Handlers. Der vollständige Endpunkt-Pfad für den Client lautet dann `/ws/{mod_name}/{handler_name}`.
+*   Die dekorierte Funktion **muss** ein Dictionary zurückgeben, das die `async`-Funktionen für die WebSocket-Events (`on_connect`, `on_message`, `on_disconnect`) zuordnet.
+
+#### Event-Handler
+
+Jeder Handler ist eine `async`-Funktion und erhält die folgenden Argumente:
+
+*   **`app: App`**: Die globale `App`-Instanz.
+*   **`conn_id: str`**: Eine eindeutige ID für die WebSocket-Verbindung des Clients.
+*   **`session: dict`**: Die Sitzungsdaten des verbundenen Benutzers.
+*   **`payload: dict` (nur für `on_message`)**: Die vom Client gesendeten und als Dictionary geparsten JSON-Daten.
+
+#### Server-Push-Funktionen
+
+Die `App`-Instanz bietet zwei `async`-Methoden, um Nachrichten proaktiv an Clients zu senden:
+
+*   **`await app.ws_send(conn_id: str, payload: dict)`**:
+    *   Sendet eine Nachricht an eine **einzelne, spezifische Verbindung** (1-zu-1).
+    *   Ideal für private Nachrichten oder Bestätigungen.
+
+*   **`await app.ws_broadcast(channel_id: str, payload: dict, source_conn_id: str = "")`**:
+    *   Sendet eine Nachricht an **alle Clients**, die mit einem bestimmten Kanal verbunden sind (1-zu-N).
+    *   `channel_id`: Muss dem `{mod_name}/{handler_name}` entsprechen.
+    *   `source_conn_id` (optional): Wenn angegeben, wird die Nachricht nicht an diesen Client zurückgesendet (verhindert Echos).
+
+#### Beispiel: Das Chat-Modul-Backend
+
+```python
+# toolboxv2/mods/chat_module.py
+
+from toolboxv2 import get_app, App
+from toolboxv2.utils.system.types import Result
+
+app = get_app("ChatModule")
+export = app.tb
+Name = "ChatModule"
+
+# --- 1. Definiere die asynchronen Event-Handler ---
+
+async def on_user_connect(app: App, conn_id: str, session: dict):
+    """Wird aufgerufen, wenn ein neuer Client eine Verbindung herstellt."""
+    username = session.get("user_name", "Anonymous")
+    app.print(f"WS CONNECT: User '{username}' connected with conn_id: {conn_id}")
+
+    # Sende eine Willkommensnachricht nur an den neuen Benutzer
+    await app.ws_send(conn_id, {"event": "welcome", "data": f"Welcome, {username}!"})
+
+    # Informiere alle anderen im Raum über den neuen Benutzer
+    await app.ws_broadcast(
+        channel_id="ChatModule/public_room",
+        payload={"event": "user_joined", "data": f"{username} has joined the chat."},
+        source_conn_id=conn_id  # Verhindert, dass der neue User seine eigene "joined"-Nachricht erhält
+    )
+
+async def on_chat_message(app: App, conn_id: str, session: dict, payload: dict):
+    """Wird aufgerufen, wenn eine Nachricht vom Client empfangen wird."""
+    username = session.get("user_name", "Anonymous")
+    # Der Payload vom Client hat die Struktur: { "event": "chat_message", "data": { "message": "..." } }
+    message_text = payload.get("data", {}).get("message", "").strip()
+
+    if not message_text:
+        return # Leere Nachrichten ignorieren
+
+    app.print(f"WS MESSAGE from {username} ({conn_id}): {message_text}")
+
+    # Sende die formatierte Nachricht an alle im Raum (inklusive Absender)
+    await app.ws_broadcast(
+        channel_id="ChatModule/public_room",
+        payload={"event": "new_message", "data": {"user": username, "text": message_text}}
+    )
+
+async def on_user_disconnect(app: App, conn_id: str, session: dict):
+    """Wird aufgerufen, wenn ein Client die Verbindung trennt."""
+    username = session.get("user_name", "Anonymous")
+    app.print(f"WS DISCONNECT: User '{username}' disconnected (conn_id: {conn_id})")
+
+    # Informiere alle verbleibenden Benutzer
+    await app.ws_broadcast(
+        channel_id="ChatModule/public_room",
+        payload={"event": "user_left", "data": f"{username} has left the chat."}
+    )
+
+# --- 2. Registriere die Handler mit dem Decorator ---
+
+@export(mod_name=Name, websocket_handler="public_room")
+def register_chat_handlers(app: App):
+    """
+    Diese Funktion wird beim Laden des Moduls aufgerufen.
+    Sie gibt ein Dictionary zurück, das die Handler für die WebSocket-Events definiert.
+    """
+    return {
+        "on_connect": on_user_connect,
+        "on_message": on_chat_message,
+        "on_disconnect": on_user_disconnect,
+    }
+```
+
 ## URL Patterns for API Endpoints
 
 API endpoints are accessible using the following URL patterns:

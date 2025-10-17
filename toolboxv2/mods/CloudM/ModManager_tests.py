@@ -4,15 +4,17 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+
 import yaml
+
+from toolboxv2 import App, get_app
 
 from .ModManager import (
     create_and_pack_module,
     increment_version,
+    install_from_zip,
     unpack_and_move_module,
-    install_from_zip
 )
-from toolboxv2 import get_app, App
 
 # The user wants the test function to be exported.
 Name = 'CloudM'
@@ -118,7 +120,7 @@ class TestModManager(unittest.TestCase):
         # Verify that the tbConfig.yaml was created and has correct info
         config_path = unpacked_dir / "tbConfig.yaml"
         self.assertTrue(config_path.exists())
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config = yaml.safe_load(f)
         self.assertEqual(config.get("module_name"), module_name)
         self.assertEqual(config.get("version"), module_version)

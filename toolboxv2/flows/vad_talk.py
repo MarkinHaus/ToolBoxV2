@@ -2,7 +2,7 @@ import logging
 import os
 
 import numpy as np
-import pyaudio
+# import pyaudio
 
 from toolboxv2 import get_app, get_logger
 
@@ -23,7 +23,6 @@ import traceback
 import wave
 from concurrent.futures import ThreadPoolExecutor
 
-import webrtcvad
 import websockets
 from groq import Groq
 
@@ -31,12 +30,13 @@ from groq import Groq
 from langdetect import detect
 from pydantic import BaseModel, Field
 
+pyaudio = lambda :None
 
 # Configuration
 class Config:
     SAMPLE_RATE = 16000
     CHUNK_SIZE = 2048
-    FORMAT = pyaudio.paInt16
+    FORMAT = 0#pyaudio.paInt16
     CHANNELS = 1
     VAD_AGGRESSIVENESS = 3
     SILENCE_THRESHOLD = 2.2  # seconds
@@ -252,7 +252,7 @@ class AudioInputModule:
 class VADModule:
     def __init__(self, config):
         self.config = config
-        self.vad = webrtcvad.Vad(config.VAD_AGGRESSIVENESS)
+        self.vad = __import__("webrtcvad").Vad(config.VAD_AGGRESSIVENESS)
         self.speech_active = False
         self.last_active_time = 0
         self.last_speech_frame_time = 0
@@ -946,11 +946,11 @@ def get_game_email(credentials_path=r"C:\Users\Markin\Workspace\ToolBoxV2\client
 
 class TTSModule:
     def __init__(self, config, on_tts_start, on_tts_end, vad_name="ISAA0"):
-        from RealtimeTTS import (
-            KokoroEngine,
-            SystemEngine,
-            TextToAudioStream,
-        )
+        #from RealtimeTTS import (
+        #    KokoroEngine,
+        #    SystemEngine,
+        #    TextToAudioStream,
+        #)
         self.config = config
         self.on_tts_start = on_tts_start
         self.on_tts_end = on_tts_end
@@ -1019,7 +1019,6 @@ class TTSModule:
             def browse_website_wit_question(url: str, question: str):
                 return browse_website(url, question, i.mas_text_summaries)
 
-            import pyperclip
 
             def get_clipboard():
                 """
@@ -1029,7 +1028,7 @@ class TTSModule:
                 str: Text content currently stored in the clipboard
                 """
                 try:
-                    clipboard_content = pyperclip.paste()
+                    clipboard_content = __import__("pyperclip").paste()
                     return clipboard_content
                 except Exception as e:
                     print(f"Error retrieving clipboard data: {e}")
@@ -1079,7 +1078,6 @@ class TTSModule:
                 verbose=True, timeout_timer=1, variables=variables, max_iter=4)
             self.agent0.stream = False
 
-        from pynput import keyboard
         def on_press(key):
             """
             Callback that is called whenever any key is pressed.
@@ -1090,6 +1088,7 @@ class TTSModule:
             # Optionally, you could log or handle 'key' here.
 
         # Start a keyboard listener that works on all platforms.
+        keyboard = __import__("pynput.keyboard")
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
         self.logger.info("TTS module (RealtimeTTS) initialized")

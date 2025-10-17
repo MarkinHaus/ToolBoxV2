@@ -1,4 +1,4 @@
-use actix_web::{web, App, HttpRequest, HttpServer, HttpResponse, middleware, FromRequest};
+use actix_web::{web, App, HttpRequest, HttpServer, Error, HttpResponse, middleware, FromRequest};
 use actix_web::cookie::{Key};
 use actix_web::http::Method;
 use actix_web::dev::Service;
@@ -48,6 +48,11 @@ use futures_util::{StreamExt, TryStreamExt};
 use listenfd::ListenFd;
 use std::path::Path;
 use std::net::TcpListener;
+
+use actix_web_actors::ws;
+use dashmap::DashMap;
+use actix::prelude::*;
+use tokio::sync::broadcast;
 
 #[cfg(unix)]
 use std::os::unix::io::{FromRawFd, RawFd};
@@ -158,8 +163,342 @@ impl Drop for InstanceGuard {
 }
 
 
+
+/// Globale Senke für den Broadcast-Kanal.
+/// Jede Nachricht, die hier gesendet wird, erreicht jeden aktiven WebSocket-Actor.
+/// Dies ermöglicht die Kommunikation zwischen Python-Instanzen und 1-zu-N-Szenarien.
 lazy_static! {
-    static ref TOOLBOX_CLIENT: Mutex<Option<ToolboxClient>> = Mutex::new(None);
+    static ref GLOBAL_WS_BROADCASTER: broadcast::Sender<WsMessage> = broadcast::channel(1024).0;
+}
+
+/// Speichert die Adressen der aktiven WebSocket-Actors, um gezielte 1-zu-1-Nachrichten zu ermöglichen.
+/// Schlüssel: conn_id (String), Wert: Addr<WebSocketActor>
+lazy_static! {
+    static ref ACTIVE_CONNECTIONS: Arc<DashMap<String, Addr<WebSocketActor>>> = Arc::new(DashMap::new());
+}
+
+/// Nachrichtentyp für den internen Broadcast-Bus.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+struct WsMessage {
+    /// Eindeutige ID der ursprünglichen Verbindung, die die Nachricht gesendet hat (kann leer sein).
+    pub source_conn_id: String,
+    /// JSON-serialisierter String der Nachricht.
+    pub content: String,
+    /// Optional: Gibt an, an welche spezifische Verbindung diese Nachricht gerichtet ist.
+    pub target_conn_id: Option<String>,
+    /// Optional: Gibt an, an welchen Kanal/welche Gruppe diese Nachricht gerichtet ist.
+    pub target_channel_id: Option<String>,
+}
+
+
+// --- NEU: Der WebSocket Actor ---
+
+struct WebSocketActor {
+    conn_id: String,
+    client:  Arc<ToolboxClient>,
+    session: SessionData, // Annahme: SessionData wird aus der Session extrahiert
+    channel_id: Option<String>, // Der "Raum" oder die Gruppe, der diese Verbindung angehört
+    hb: Instant,
+}
+
+impl WebSocketActor {
+    fn new(client: Arc<ToolboxClient>, session: Session, module: &str, function: &str) -> Self {
+        let conn_id = Uuid::new_v4().to_string();
+        let session_data = session.get("live_data").unwrap_or(None).unwrap_or_default(); // Vereinfachte Extraktion
+        Self {
+            conn_id,
+            client,
+            session: session_data,
+            // Kanal-ID wird aus der URL abgeleitet, z.B. /ws/Chat/room123 -> "Chat/room123"
+            channel_id: Some(format!("{}/{}", module, function)),
+            hb: Instant::now(),
+        }
+    }
+
+    fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(Duration::from_secs(45), |act, ctx| {
+            if Instant::now().duration_since(act.hb) > Duration::from_secs(120) {
+                warn!("WebSocket Client heartbeat failed, disconnecting!");
+                ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Away, "Heartbeat timeout"))));
+                return;
+            }
+            ctx.ping(b"heartbeat");
+        });
+    }
+}
+
+impl Actor for WebSocketActor {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        info!("WebSocket Actor started: conn_id={}", self.conn_id);
+        self.heartbeat(ctx);
+
+        // Registriere den Actor global
+        ACTIVE_CONNECTIONS.insert(self.conn_id.clone(), ctx.address());
+
+        // Abonniere den globalen Broadcast-Kanal
+        let mut rx = GLOBAL_WS_BROADCASTER.subscribe();
+        let addr = ctx.address();
+
+        // Erstelle einen Future, der auf Nachrichten vom Broadcast-Kanal lauscht
+        let broadcast_listener = async move {
+            while let Ok(msg) = rx.recv().await {
+                addr.do_send(msg);
+            }
+        };
+        // Führe den Future im Kontext des Actors aus
+        ctx.spawn(broadcast_listener.into_actor(self));
+
+        // Rufe den Python on_connect Handler auf
+        let client = self.client.clone();
+        let conn_id = self.conn_id.clone();
+        let channel_id = self.channel_id.clone().unwrap_or_default();
+        let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+
+        tokio::spawn(async move {
+            let mut kwargs = HashMap::new();
+            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+            kwargs.insert("session".to_string(), session_data_json);
+
+            if let Err(e) = client.run_function(
+                &channel_id, // Der Kanalname dient zur Identifizierung des Handlers
+                "on_connect",
+                "ws_internal",
+                vec![],
+                kwargs,
+            ).await {
+                error!("Python on_connect handler failed: {:?}", e);
+            }
+        });
+    }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> Running {
+        info!("WebSocket Actor stopping: conn_id={}", self.conn_id);
+        ACTIVE_CONNECTIONS.remove(&self.conn_id);
+
+        // Rufe den Python on_disconnect Handler auf
+        let client = self.client.clone();
+        let conn_id = self.conn_id.clone();
+        let channel_id = self.channel_id.clone().unwrap_or_default();
+
+        tokio::spawn(async move {
+            let mut kwargs = HashMap::new();
+            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+            if let Err(e) = client.run_function(
+                &channel_id,
+                "on_disconnect",
+                "ws_internal",
+                vec![],
+                kwargs,
+            ).await {
+                error!("Python on_disconnect handler failed: {:?}", e);
+            }
+        });
+
+        Running::Stop
+    }
+}
+
+/// Handler für Nachrichten vom Broadcast-Kanal
+impl Handler<WsMessage> for WebSocketActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: WsMessage, ctx: &mut Self::Context) {
+        // Filtere Nachrichten:
+        // 1. 1-to-1: Wenn target_conn_id gesetzt ist, sende nur, wenn es meine ID ist.
+        if let Some(target_id) = &msg.target_conn_id {
+            if *target_id == self.conn_id {
+                ctx.text(msg.content);
+            }
+            return;
+        }
+
+        // 2. 1-to-n (Channel): Wenn target_channel_id gesetzt ist, sende nur, wenn ich in diesem Kanal bin.
+        if let Some(target_channel) = &msg.target_channel_id {
+            if self.channel_id.as_deref() == Some(target_channel) {
+                // Sende nicht an den ursprünglichen Absender zurück
+                if msg.source_conn_id != self.conn_id {
+                    ctx.text(msg.content);
+                }
+            }
+            return;
+        }
+
+        // 3. Global Broadcast: Wenn weder target_conn_id noch target_channel_id gesetzt ist.
+        // Sende nicht an den ursprünglichen Absender zurück
+        if msg.source_conn_id != self.conn_id {
+            ctx.text(msg.content);
+        }
+    }
+}
+
+
+/// Handler für eingehende WebSocket-Nachrichten vom Client
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        self.hb = Instant::now();
+
+        match msg {
+            Ok(ws::Message::Ping(msg)) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                self.hb = Instant::now();
+            }
+            Ok(ws::Message::Text(text)) => {
+                // Leite die Nachricht an den Python on_message Handler weiter
+                let client = self.client.clone();
+                let conn_id = self.conn_id.clone();
+                let channel_id = self.channel_id.clone().unwrap_or_default();
+                let text_content = text.to_string();
+                let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+
+                tokio::spawn(async move {
+                    let mut kwargs = HashMap::new();
+                    kwargs.insert("conn_id".to_string(), Value::String(conn_id));
+                    kwargs.insert("session".to_string(), session_data_json);
+
+                    // Versuche, die Nachricht als JSON zu parsen
+                    let payload = match serde_json::from_str::<Value>(&text_content) {
+                        Ok(json_val) => json_val,
+                        Err(_) => Value::String(text_content), // Sende als String, wenn kein JSON
+                    };
+                    kwargs.insert("payload".to_string(), payload);
+
+                    if let Err(e) = client.run_function(
+                        &channel_id,
+                        "on_message",
+                        "ws_internal",
+                        vec![],
+                        kwargs,
+                    ).await {
+                        error!("Python on_message handler failed: {:?}", e);
+                    }
+                });
+            }
+            Ok(ws::Message::Binary(_bin)) => warn!("Binary WebSocket messages are not supported."),
+            Err(e) => {
+                error!("WebSocket error: {:?}", e);
+                match e {
+                    ws::ProtocolError::Io(_) => {
+                        // Network errors - close gracefully
+                        ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Abnormal, "IO error"))));
+                    }
+                    _ => {
+                        // Other protocol errors - maybe recoverable, just log
+                        warn!("Non-fatal protocol error, continuing...");
+                    }
+                }
+            }
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            _ => error!("Unexpected WebSocket condition, but keeping connection alive"), //ctx.stop(),
+        }
+    }
+}
+
+
+// --- NEU: WebSocket-Endpoint-Handler ---
+async fn websocket_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    path: web::Path<(String, String)>,
+    session: Session,
+    // Annahme: Open Modules und ToolboxClient sind als App-Daten verfügbar
+    open_modules: web::Data<Arc<Vec<String>>>,
+) -> Result<HttpResponse, Error> {
+    let (module_name, function_name) = path.into_inner();
+
+    // Berechtigungsprüfung
+    let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
+    if is_protected {
+        let valid = session.get::<bool>("valid").unwrap_or(None).unwrap_or(false);
+        if !valid {
+            return Ok(HttpResponse::Unauthorized().finish());
+        }
+    }
+
+    let client = get_toolbox_client().map_err(|e| {
+        error!("Could not get ToolboxClient for WebSocket: {:?}", e);
+        actix_web::error::ErrorInternalServerError("Backend service unavailable")
+    })?;
+
+    ws::WsResponseBuilder::new(
+        WebSocketActor::new(client, session, &module_name, &function_name),
+        &req,
+        stream,
+    )
+    .frame_size(16 * 1024 * 1024)
+    .start()
+}
+
+// --- NEU: Die Rust-zu-Python Bridge-Klasse ---
+
+/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
+/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
+#[pyclass]
+struct RustWsBridge;
+
+#[pymethods]
+impl RustWsBridge {
+    /// KORREKTUR: Füge einen `#[new]` Konstruktor hinzu.
+    /// Dieser wird aufgerufen, wenn Python `RustWsBridge()` ausführt.
+    #[new]
+    fn new() -> Self {
+        RustWsBridge
+    }
+
+    /// Sendet eine Nachricht an eine einzelne WebSocket-Verbindung.
+    #[pyo3(name = "send_message")]
+    fn send_message_py<'p>(&self, py: Python<'p>, conn_id: String, payload: String) -> PyResult<&'p PyAny> {
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
+                conn.value().do_send(WsMessage {
+                    source_conn_id: "python_direct".to_string(),
+                    content: payload,
+                    target_conn_id: Some(conn_id),
+                    target_channel_id: None,
+                });
+            } else {
+                warn!("RustWsBridge: Connection ID '{}' not found for sending.", conn_id);
+            }
+            Ok(())
+        })
+    }
+
+    /// Sendet eine Nachricht an alle Clients in einem Kanal.
+    #[pyo3(name = "broadcast_message")]
+    fn broadcast_message_py<'p>(&self, py: Python<'p>, channel_id: String, payload: String, source_conn_id: String) -> PyResult<&'p PyAny> {
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            let msg = WsMessage {
+                source_conn_id,
+                content: payload,
+                target_conn_id: None,
+                target_channel_id: Some(channel_id),
+            };
+            if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+                error!("RustWsBridge: Failed to send broadcast message: {}", e);
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Ein internes Python-Modul, das in Rust erstellt wird.
+#[pymodule]
+fn rust_bridge_internal(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<RustWsBridge>()?;
+    Ok(())
+}
+
+lazy_static! {
+    // Der Option-Typ enthält nun einen Arc<ToolboxClient>, nicht den Client selbst.
+    static ref TOOLBOX_CLIENT: Mutex<Option<Arc<ToolboxClient>>> = Mutex::new(None);
 }
 
 /// A Python toolbox instance that runs within the process
@@ -267,32 +606,37 @@ pub fn initialize_python_environment() -> Result<(), ToolboxError> {
 
 
 /// Initialize the toolbox client and immediately create an instance
-pub async fn initialize_toolbox_client(
+
+pub async fn initialize_and_get_toolbox_client(
     max_instances: usize,
     timeout_seconds: u64,
     client_prifix: String,
-) -> Result<(), ToolboxError> {
-    // Set up Python environment before creating the client
+) -> Result<Arc<ToolboxClient>, ToolboxError> {
     initialize_python_environment()?;
-
-    // Create the client
     let client = ToolboxClient::new(max_instances, timeout_seconds, client_prifix);
 
-    // Immediately create a Python instance (don't wait for first request)
-    client.create_python_instance().await?;
+    if let Err(e) = client.create_python_instance().await {
+        error!("Critical error during initial Python instance creation: {:?}", e);
+        return Err(e);
+    }
 
-    // Store the client
+    let client_arc = Arc::new(client);
+
     let mut client_mutex = TOOLBOX_CLIENT.lock().unwrap();
-    *client_mutex = Some(client);
+    // KORREKTUR: Speichere den Arc direkt. .clone() erhöht nur den Zähler.
+    *client_mutex = Some(client_arc.clone());
 
-    info!("ToolboxClient initialized with initial instance created");
-    Ok(())
+    info!("ToolboxClient initialized and first Python instance created successfully.");
+    Ok(client_arc)
 }
 
 /// Get the global toolbox client
-pub fn get_toolbox_client() -> Result<ToolboxClient, ToolboxError> {
-    let client = TOOLBOX_CLIENT.lock().unwrap();
-    client.clone().ok_or_else(|| ToolboxError::Unknown("ToolboxClient not initialized".to_string()))
+pub fn get_toolbox_client() -> Result<Arc<ToolboxClient>, ToolboxError> {
+    let client_guard = TOOLBOX_CLIENT.lock().unwrap();
+    // .clone() auf einer Option<Arc<T>> klont den Arc, was genau das ist, was wir wollen.
+    client_guard.clone().ok_or_else(|| {
+        ToolboxError::Unknown("ToolboxClient not initialized".to_string())
+    })
 }
 
 
@@ -402,6 +746,18 @@ impl ToolboxClient {
                     }
                 };
 
+                // Bridge-Injektion
+                let bridge_module = PyModule::new(py, "rust_bridge_internal")?;
+                rust_bridge_internal(py, bridge_module)?;
+                let bridge_class = bridge_module.getattr("RustWsBridge")?;
+                let bridge_instance = bridge_class.call0()?; // Dies funktioniert jetzt
+
+                if app.hasattr("_set_rust_ws_bridge")? {
+                    app.call_method1("_set_rust_ws_bridge", (bridge_instance,))?;
+                    info!("Successfully injected Rust WebSocket bridge into Python instance {}.", instance_id);
+                } else {
+                    warn!("Python App object is missing '_set_rust_ws_bridge' method.");
+                }
 
                 Ok((instance_id, app.into_py(py)))
             })
@@ -1106,6 +1462,40 @@ def process_async_gen(gen):
         }
 
         result
+    }
+
+    pub async fn send_ws_message(&self, conn_id: String, payload: Value) -> Result<(), ToolboxError> {
+        let payload_str = serde_json::to_string(&payload)?;
+        task::spawn_blocking(move || {
+            Python::with_gil(|py| {
+                // Hier würden wir eine in Rust definierte PyFunction aufrufen
+                // Für dieses Beispiel simulieren wir den direkten Aufruf.
+                if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
+                    conn.value().do_send(WsMessage {
+                        source_conn_id: "python_direct".to_string(),
+                        content: payload_str,
+                        target_conn_id: Some(conn_id),
+                        target_channel_id: None,
+                    });
+                }
+            });
+        }).await.map_err(|e| ToolboxError::Unknown(e.to_string()))
+    }
+
+    /// Ruft eine Rust-Funktion auf, um eine Nachricht an einen WebSocket-Kanal zu senden.
+    pub async fn broadcast_ws_message(&self, channel_id: String, payload: Value, source_conn_id: String) -> Result<(), ToolboxError> {
+        let payload_str = serde_json::to_string(&payload)?;
+        let msg = WsMessage {
+            source_conn_id,
+            content: payload_str,
+            target_conn_id: None,
+            target_channel_id: Some(channel_id),
+        };
+        if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+            error!("broadcast_ws_message: Failed to send broadcast message: {}", e);
+            return Err(ToolboxError::Unknown(format!("Broadcast failed: {}", e)));
+        }
+        Ok(())
     }
 }
 
@@ -2266,28 +2656,33 @@ async fn main() -> std::io::Result<()> {
     info!("Configuration loaded: {:?}", config);
 
 
-    let _ = initialize_toolbox_client(config.toolbox.max_instances as usize,  // Port range to use
-                              config.toolbox.timeout_seconds,            // Timeout in seconds
-                              config.toolbox.client_prifix,            // Timeout in seconds
-
-    ).await;
-
-
-    let client = match get_toolbox_client() {
-        Ok(client) => Arc::new(client),
+    let client = match initialize_and_get_toolbox_client(
+        config.toolbox.max_instances as usize,
+        config.toolbox.timeout_seconds,
+        config.toolbox.client_prifix,
+    ).await {
+        Ok(client_instance) => client_instance,
         Err(e) => {
-            panic!("{:?}", e)
+            error!("FATAL: ToolboxClient initialization failed: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to initialize Python backend: {:?}", e),
+            ));
         }
     };
 
-    info!("init_modules loaded: {:?} - {:?}", config.server.init_modules, client.initialize(config.server.init_modules.clone(), Option::from("init_mod")).await.map_err(|e| ToolboxError::from(e)));
-
-    info!("watch_modules loaded: {:?} - {:?}", config.server.watch_modules, client.initialize(config.server.watch_modules.clone(), Option::from("watch_mod")).await.map_err(|e| ToolboxError::from(e)));
+    // Initialisiere die Module NACHDEM der Client erfolgreich erstellt wurde.
+    if let Err(e) = client.initialize(config.server.init_modules.clone(), Some("init_mod")).await {
+        warn!("Errors occurred during initial module loading: {:?}", e);
+    }
+    if let Err(e) = client.initialize(config.server.watch_modules.clone(), Some("watch_mod")).await {
+        warn!("Errors occurred during watched module loading: {:?}", e);
+    }
 
     // Create session manager
     let session_manager = web::Data::new(SessionManager::new(
         config.session.clone(),
-        Arc::from(client.clone()),
+        Arc::clone(&client),
     ));
 
     // Generate session key
@@ -2387,6 +2782,11 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/sse")
                     .route("/{module_name}/{function_name}", web::get().to(sse_handler))
+            )
+            .service(
+                web::scope("/ws")
+                    .app_data(web::Data::new(open_modules.clone()))
+                    .route("/{module_name}/{function_name}", web::get().to(websocket_handler))
             )
             .service(web::resource("/validateSession")
                 .route(web::post().to(validate_session_handler))

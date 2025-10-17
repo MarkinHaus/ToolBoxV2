@@ -1,0 +1,1932 @@
+/* ToolBox Pro - Glass Morphism Design with Marine Blue Accents */
+
+:root {
+  /* Color Palette */
+  --primary-bg: rgba(15, 15, 15, 0.95);
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-hover: rgba(255, 255, 255, 0.15);
+  --marine-blue: #2E86AB;
+  --marine-blue-light: #A23B72;
+  --marine-blue-dark: #1B4D72;
+  --accent-blue: rgba(46, 134, 171, 0.3);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.7);
+  --text-muted: rgba(255, 255, 255, 0.5);
+  --success: #4CAF50;
+  --warning: #FF9800;
+  --error: #F44336;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 20px rgba(46, 134, 171, 0.3);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: transparent;
+  color: var(--text-primary);
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+.app-container {
+  position: relative;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--primary-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Remove the slide-in animation for embedded mode */
+.app-container {
+  animation: none;
+}
+
+
+/* Header Styles */
+.app-header {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 2px;
+  max-height: min-content;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.logo {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.voice-section {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  background: var(--glass-bg);
+  border-bottom: 1px solid var(--glass-border);
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+    opacity: 0;
+  transform: translateX(50px);
+  pointer-events: none; /* Use pointer-events for better performance */
+  transition: transform 0.3s ease, position 0.3s ease, background-color 0.3s ease;
+}
+
+
+/* Beim Hover über den Header-Bereich sichtbar */
+.voice-section:hover .settings-toggle {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto; /* Make the element interactive on hover */
+  display: flex;
+}
+
+.settings-button {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    position: relative;
+    width: min-content;
+    height: min-content;
+    border-radius: 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.settings-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.settings-button:hover {
+  background-color: var(--glass-hover);
+  color: var(--marine-blue);
+  transform: scale(1.1);
+}
+
+.settings-button:active {
+  transform: scale(0.95);
+}
+
+.settings-button:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.agent-mode-toggle {
+    display: flex;
+    align-items: center;
+}
+.toggle-checkbox {
+    display: none; /* Die eigentliche Checkbox verstecken */
+}
+
+.toggle-label {
+    cursor: pointer;
+    background-color: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    position: relative;
+    width: 60px; /* Breite des Schalters */
+    height: 24px;
+    transition: background-color 0.3s ease;
+}
+
+.toggle-label:hover {
+    background-color: var(--glass-hover);
+}
+
+.toggle-label::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    width: 18px; /* Größe des Kreises */
+    height: 18px;
+    background-color: var(--text-muted);
+    border-radius: 50%;
+    transition: transform 0.3s ease, background-color 0.3s ease;
+}
+
+.toggle-text {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    position: absolute;
+    right: 8px;
+    transition: color 0.3s ease;
+}
+
+/* Zustand, wenn der Schalter aktiviert ist */
+.toggle-checkbox:checked + .toggle-label {
+    background-color: var(--accent-blue);
+}
+
+.toggle-checkbox:checked + .toggle-label::before {
+    transform: translateX(34px); /* Bewegt den Kreis nach rechts */
+    background-color: var(--marine-blue);
+}
+
+.toggle-checkbox:checked + .toggle-label .toggle-text {
+    color: var(--marine-blue);
+    left: 8px; /* Bewegt den Text nach links */
+    right: auto;
+}
+.language-select {
+  /* Wichtig: Standard-Browser-Aussehen entfernen */
+  -webkit-appearance: none;
+  appearance: none;
+
+  /* Eigene Stile für das Dropdown-Feld */
+  background-color: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 32px 6px 12px; /* Rechts mehr Platz für den Pfeil */
+  transition: all 0.3s ease;
+  outline: none;
+
+  /* Eigener Dropdown-Pfeil (als SVG) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238A9199' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+}
+
+/* Hover-Effekt: Rahmen und Pfeil hervorheben */
+.language-select:hover {
+  border-color: var(--marine-blue);
+  color: var(--text-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%232E86AB' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+/* Fokus-Effekt für Barrierefreiheit */
+.language-select:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+/* Stile für die <option>-Elemente im Dropdown-Menü */
+/* Wichtig: Wir setzen hier bewusst KEINE Hintergrundfarbe,
+   damit das Betriebssystem die beste Lesbarkeit gewährleisten kann. */
+.language-select option {
+  background: #1e1e1e; /* Dunkler Hintergrund für Browser, die es unterstützen */
+  color: #ffffff;      /* Helle Schriftfarbe als Kontrast */
+  padding: 8px;
+}
+
+.voice-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.voice-btn:hover {
+  background: var(--glass-hover);
+  color: var(--marine-blue);
+  box-shadow: var(--shadow-glow);
+  transform: scale(1.05);
+}
+
+.voice-btn.active {
+  background: var(--accent-blue);
+  color: var(--marine-blue);
+  box-shadow: var(--shadow-glow);
+  animation: pulse 2s infinite;
+}
+
+.mic-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.voice-status-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  border: 1px solid rgba(255,255,255,0.3);
+}
+
+.voice-status-dot.ready {
+  background: #4CAF50;
+  box-shadow: 0 0 4px rgba(76, 175, 80, 0.5);
+}
+
+.voice-status-dot.listening {
+  background: #FF5722;
+  box-shadow: 0 0 8px rgba(255, 87, 34, 0.8);
+  animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+/* Voice transcript positioning for embedded popup */
+.voice-transcript-display {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md) var(--spacing-lg);
+  z-index: 1000;
+  max-width: 350px;
+  min-width: 200px;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.voice-transcript-display.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.voice-transcript-display.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
+.transcript-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  text-align: center;
+}
+
+.transcript-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.transcript-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 400;
+  min-height: 20px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.transcript-text:empty::after {
+  content: '...';
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+/* Voice Preview in Input Fields */
+input.voice-preview,
+textarea.voice-preview {
+  border-color: var(--marine-blue) !important;
+  box-shadow: 0 0 8px rgba(46, 134, 171, 0.3) !important;
+  animation: voice-glow 2s infinite;
+}
+
+input.voice-preview::placeholder,
+textarea.voice-preview::placeholder {
+  color: var(--marine-blue) !important;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+@keyframes voice-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(46, 134, 171, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(46, 134, 171, 0.5);
+  }
+}
+
+/* Error Fallback Styles */
+.error-fallback {
+  padding: var(--spacing-xl);
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: var(--spacing-md);
+}
+
+.error-fallback h2 {
+  color: var(--marine-blue);
+  margin: 0;
+  font-size: 24px;
+}
+
+.error-fallback p {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.reload-btn {
+  background: var(--marine-blue);
+  color: white;
+  border: none;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.reload-btn:hover {
+  background: var(--marine-blue-light);
+  transform: translateY(-1px);
+}
+
+
+
+.search-input-container {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.search-field {
+  flex: 1;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.search-field:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.search-field::placeholder {
+  color: var(--text-muted);
+}
+
+.search-submit {
+  width: 36px;
+  height: 36px;
+  background: var(--marine-blue);
+  border: none;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: white;
+}
+
+.search-submit:hover {
+  background: var(--marine-blue-light);
+  transform: scale(1.05);
+}
+
+.search-submit svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Tab Navigation */
+/* Tab Navigation Container */
+.tab-navigation {
+  display: flex;
+  background: transparent; /* Cleaner look without the semi-transparent background */
+  border-bottom: 1px solid var(--glass-border);
+  padding: 0 var(--spacing-sm); /* Add horizontal padding to the container */
+  flex-shrink: 0; /* Prevent container from shrinking */
+}
+
+/* Individual Tab Buttons */
+.tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent; /* Placeholder for the active indicator */
+  margin-bottom: -1px; /* Allows the active border to perfectly overlap the container border */
+
+  /* CORE CHANGES FOR SLIM & USABLE DESIGN */
+  flex-direction: row;        /* Place icon and text side-by-side */
+  justify-content: center;    /* Center content horizontally */
+  align-items: center;        /* Align content vertically */
+  padding: 12px 0;            /* Reduced vertical padding for a slimmer look */
+  gap: var(--spacing-sm);     /* 8px space between icon and text */
+
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  position: relative;
+}
+
+/* Hover State for better feedback */
+.tab-btn:hover {
+  background: var(--glass-hover);
+  color: var(--text-secondary);
+}
+
+/* Active State - more subtle and modern */
+.tab-btn.active {
+  color: var(--marine-blue);
+  background: transparent; /* Remove the heavy blue background fill */
+  border-bottom-color: var(--marine-blue); /* Use the border as the primary indicator */
+}
+
+/* Remove the old pseudo-element, as we now use the border */
+.tab-btn.active::after {
+  content: none;
+}
+
+/* Icon Styling */
+.tab-btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0; /* Prevent icon from shrinking on smaller screens */
+  scale: 1.5;
+    padding-right: 2px;
+
+}
+
+/* Main Content */
+.main-content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.panel-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: all 0.3s ease;
+  pointer-events: none;
+  overflow-y: auto;
+}
+
+.panel-content.active {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: all;
+}
+
+/* Chat Styles */
+/* Chat Styles - Modern AI Chat */
+.chat-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-messages {
+    flex: 1;
+    padding: var(--spacing-lg);
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.02));
+}
+
+.chat-message,
+.welcome-message {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-xl);
+    animation: fadeInUp 0.3s ease;
+}
+
+/* Avatar Styles */
+.isaa-avatar,
+.user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+}
+
+.user-avatar {
+    background: linear-gradient(135deg, var(--marine-blue), var(--marine-blue-light));
+}
+
+/* Message Content */
+.message-content {
+    flex: 1;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
+    backdrop-filter: blur(10px);
+    position: relative;
+    line-height: 1.6;
+    max-width: 85%;
+}
+
+.user-content {
+    border-color: var(--marine-blue);
+    margin-left: auto;
+}
+
+/* Typography - Easy Reading */
+.message-content p {
+    margin: 0 0 var(--spacing-sm) 0;
+    color: var(--text-primary);
+    font-size: 18px;
+    word-wrap: break-word;
+}
+
+.message-content p:last-child {
+    margin-bottom: 0;
+}
+
+/* Lists - Markdown Style */
+.message-content ul,
+.message-content ol {
+    margin: var(--spacing-sm) 0;
+    padding-left: var(--spacing-lg);
+    color: var(--text-primary);
+}
+
+.message-content li {
+    margin: var(--spacing-xs) 0;
+    line-height: 1.6;
+}
+
+.message-content li::marker {
+    color: var(--marine-blue);
+}
+
+/* Code Blocks */
+.message-content code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: var(--marine-blue);
+}
+
+.message-content pre {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-md);
+    overflow-x: auto;
+    margin: var(--spacing-sm) 0;
+}
+
+.message-content pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+}
+
+/* Blockquotes */
+.message-content blockquote {
+    border-left: 3px solid var(--marine-blue);
+    padding-left: var(--spacing-md);
+    margin: var(--spacing-sm) 0;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Links */
+.message-content a {
+    color: var(--marine-blue);
+    text-decoration: underline;
+    transition: color 0.2s ease;
+}
+
+.message-content a:hover {
+    color: var(--accent-blue);
+}
+
+/* Strong/Bold */
+.message-content strong,
+.message-content b {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Emphasis/Italic */
+.message-content em,
+.message-content i {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Speak Button - Bleibt unverändert */
+.speak-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+}
+
+.speak-btn:hover {
+    opacity: 1;
+    background: var(--marine-blue);
+    border-color: var(--marine-blue);
+    transform: scale(1.05);
+}
+
+.speak-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+    color: var(--text-primary);
+}
+
+/* Animation */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* User Message Alignment */
+.user-message {
+    flex-direction: row-reverse;
+}
+
+/* Welcome Message Special Styling */
+.welcome-message .message-content {
+    background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(0, 188, 212, 0.15));
+    border-color: var(--marine-blue);
+}
+
+/* Scrollbar Styling */
+.chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+    background: var(--glass-border);
+    border-radius: 4px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+    background: var(--marine-blue);
+}
+
+.speak-btn.loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.speak-btn.playing {
+  color: var(--marine-blue-light);
+  box-shadow: 0 0 10px var(--marine-blue-light);
+}
+
+/* Bereich, der die Eingabeleiste enthält */
+.search-header {
+
+}
+
+.chat-input {
+  flex: 1;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.chat-input:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.chat-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-options {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+
+.chat-input-area {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: transparent;
+    border-top: 1px solid var(--glass-border);
+}
+
+/* Container für Eingabefeld und Senden-Button */
+.chat-input-container {
+    border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
+    gap: var(--spacing-sm);
+}
+
+
+/* Senden-Button */
+.chat-send-btn {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  white-space: nowrap;
+}
+
+.chat-send-btn:hover {
+  background: var(--glass-hover);
+  border-color: var(--marine-blue);
+}
+
+.chat-send-btn svg {
+    width: 16px;
+    height: 16px;
+    scale: 1.05;
+}
+
+
+/* Voice-Bereich, jetzt im Footer */
+/* Alle Elemente außer Voice-Button standardmäßig verstecken */
+.voice-section .agent-mode-toggle,
+.voice-section .language-select {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(10px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+/* Bei Hover über voice-section alle Elemente anzeigen */
+.voice-section:hover .agent-mode-toggle,
+.voice-section:hover .language-select {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+/* Language Select Styles */
+.language-select {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.language-select:hover {
+    border-color: var(--marine-blue);
+}
+
+/* Voice Button - immer sichtbar */
+.voice-btn {
+    width: 32px;
+    height: 32px;
+    opacity: 1;
+    visibility: visible;
+    transition: all 0.3s ease;
+}
+
+/* Voice Preview in Input Fields */
+input.voice-preview::placeholder {
+    color: var(--marine-blue) !important;
+    font-style: italic;
+    opacity: 0.9;
+}
+
+/* Optional: Sanftere Animation mit gestaffeltem Erscheinen */
+.voice-section:hover .agent-mode-toggle {
+    transition-delay: 0s;
+}
+
+.voice-section:hover .language-select {
+    transition-delay: 0.05s;
+}
+.voice-section {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    max-width: min-content;
+    justify-content: flex-end;
+    transition: background-color 0.3s ease;
+    background: transparent;
+    border: none;
+    scale:1.05;
+}
+
+.voice-section:hover {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+        transition: borde 0.3s ease;
+}
+
+.language-select {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.language-select:hover {
+    border-color: var(--marine-blue);
+}
+
+.voice-btn {
+    width: 32px;
+    height: 32px;
+    /* Styles bleiben größtenteils gleich, ggf. Größe anpassen */
+}
+
+/* Voice Preview in Input Fields (jetzt relevanter) */
+input.voice-preview::placeholder {
+    color: var(--marine-blue) !important;
+    font-style: italic;
+    opacity: 0.9;
+}
+/* --- ENDE: ÜBERARBEITETER EINGABE- & FOOTER-BEREICH --- */
+
+
+/* Chat Message Styles */
+
+
+.typing-indicator .message-content {
+  padding: var(--spacing-md);
+}
+
+.typing-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.typing-dots span {
+  width: 6px;
+  height: 6px;
+  background: var(--marine-blue);
+  border-radius: 50%;
+  animation: typingDot 1.4s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+.typing-dots span:nth-child(3) { animation-delay: 0s; }
+
+/* Utility Classes */
+.hidden {
+  display: none !important;
+}
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+@keyframes wave {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.7; }
+}
+
+/* Search Panel Styles */
+.search-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-header {
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md);
+  gap: var(--spacing-sm);
+}
+
+.live-search-input {
+  flex: 1;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+  margin: 0;
+}
+
+.live-search-input:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.live-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-options {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+.option-btn {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  white-space: nowrap;
+}
+
+.option-btn:hover {
+  background: var(--glass-hover);
+  border-color: var(--marine-blue);
+}
+
+
+.option-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.search-results {
+  flex: 1;
+  padding: var(--spacing-md);
+  overflow-y: auto;
+}
+
+.no-results {
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--spacing-xl);
+}
+
+.search-result-item {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.search-result-item:hover {
+  background: var(--glass-hover);
+  border-color: var(--marine-blue);
+}
+
+.result-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.result-snippet {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.result-actions {
+  margin-top: var(--spacing-sm);
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.result-action {
+  background: var(--marine-blue);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: white;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.result-action:hover {
+  background: var(--marine-blue-light);
+}
+
+
+/* Password Manager Styles */
+/* Password Manager Styles */
+.password-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.password-header {
+  align-items: center;
+}
+
+.password-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+  padding: var(--spacing-sm);
+}
+
+.password-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.password-form input {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.password-form input:focus {
+  border-color: var(--marine-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+.password-form button {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.form-feedback {
+  font-size: 13px;
+  text-align: center;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  display: none;
+  margin-top: calc(var(--spacing-sm) * -1);
+  margin-bottom: var(--spacing-sm);
+  transition: all 0.3s ease;
+}
+
+.form-feedback.error {
+  display: block;
+  background-color: rgba(244, 67, 54, 0.2);
+  color: #f44336;
+  border: 1px solid rgba(244, 67, 54, 0.3);
+}
+
+.form-feedback.success {
+  display: block;
+  background-color: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+.action-btn {
+    flex: 1;
+    background: transparent;
+    margin-bottom: -1px;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    font-weight: 500;
+    position: relative;
+
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    color: var(--text-secondary);
+    font-size: 12px;
+    display: flex;
+    gap: var(--spacing-xs);
+    white-space: nowrap;
+}
+
+.action-btn:hover {
+  background: var(--glass-hover);
+  color: var(--marine-blue);
+}
+
+.action-btn.primary {
+  background: var(--marine-blue);
+  color: white;
+  border-color: var(--marine-blue);
+}
+
+.action-btn.primary:hover {
+  background: var(--marine-blue-light);
+}
+
+.action-btn svg {
+  width: 16px;
+  height: 16px;
+    scale: 1.8;
+    padding-right: 2px;
+}
+
+.password-list {
+  flex: 1;
+  padding: var(--spacing-md);
+  overflow-y: auto;
+}
+
+.loading-passwords {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--glass-border);
+  border-top: 2px solid var(--marine-blue);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: var(--spacing-md);
+}
+
+.password-item {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+
+.password-details {
+    flex-grow: 1;
+}
+
+.password-actions-container {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+    margin-left: 16px;
+}
+
+.password-action-btn {
+    all: unset;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--glass-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.password-action-btn:hover {
+    background: var(--glass-hover);
+    transform: scale(1.1);
+}
+
+.password-action-btn.delete-btn:hover {
+    color: var(--error);
+}
+
+.password-action-btn.add-totp-btn:hover {
+    color: var(--success);
+}
+
+.password-item:hover {
+  background: var(--glass-hover);
+  border-color: var(--marine-blue);
+}
+
+.password-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.password-url {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-sm);
+}
+
+.password-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.totp-badge {
+  background: var(--success);
+  color: white;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+}
+
+/* Styling für das neue Bestätigungs-Modal */
+#confirmationMessage {
+    margin-bottom: var(--spacing-lg);
+    line-height: 1.5;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.confirmation-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+}
+
+/* Styling für den "Gefahr"-Button (z.B. Löschen) */
+.action-btn.btn-danger {
+    background: var(--error);
+    border-color: var(--error);
+    color: white;
+}
+
+.action-btn.btn-danger:hover {
+    background: #d32f2f; /* Dunkleres Rot */
+    color: white;
+}
+
+/* Status Bar */
+.status-bar {
+    background: transparent;
+    border-top: 1px solid var(--glass-border);
+    padding: var(--spacing-xs) var(--spacing-md);
+    display: flex;
+    justify-content: space-between; /* Wichtig: Elemente an beiden Enden */
+    align-items: center;
+    font-size: 12px;
+    width: 100%; /* Volle Breite nutzen */
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0; /* Verhindert Schrumpfen */
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    /* Kein padding - bleibt exakt wo es ist */
+}
+
+.page-info {
+    margin-left: auto; /* Schiebt es nach rechts */
+    padding-right: 2px; /* Exakt 2px Abstand zum rechten Rand */
+    color: var(--text-muted);
+}
+
+#pageTitle {
+    white-space: nowrap; /* Verhindert Umbruch */
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+  animation: pulse 2s infinite;
+}
+
+.status-indicator.connected .status-dot {
+  background: var(--success);
+  animation: none;
+}
+
+.status-indicator.error .status-dot {
+  background: var(--error);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--glass-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--marine-blue);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--marine-blue-light);
+}
+
+/* Modal and Overlay Styles */
+
+/* Modal positioning for embedded popup */
+.modal {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 360px;
+  max-height: 100vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+  padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-md);
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+  background: var(--glass-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: var(--spacing-lg);
+  flex: 1;
+}
+
+.modal-body p {
+  margin: 0 0 var(--spacing-lg) 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+
+.import-guide {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.import-guide h4 {
+  margin: 0 0 var(--spacing-md) 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.import-guide ol {
+  margin: 0;
+  padding-left: var(--spacing-lg);
+  color: var(--text-secondary);
+}
+
+.import-guide li {
+  margin-bottom: var(--spacing-md);
+  line-height: 1.6;
+}
+
+.import-guide li:last-child {
+  margin-bottom: 0;
+}
+
+.import-guide strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.import-guide code {
+  background: rgba(0, 150, 255, 0.1);
+  color: var(--marine-blue);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+}
+
+#openImportDialogBtn {
+  width: 100%;
+  margin-top: var(--spacing-md);
+}
+
+/* TOTP Modal Styles */
+.totp-display {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
+}
+
+.totp-code {
+  font-size: 32px;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  color: var(--marine-blue);
+  letter-spacing: 4px;
+  text-align: center;
+  background: var(--glass-bg);
+  border: 2px solid var(--marine-blue);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  flex: 1;
+}
+
+.totp-timer {
+  position: relative;
+  width: 60px;
+  height: 60px;
+}
+
+.timer-circle {
+  width: 60px;
+  height: 60px;
+  border: 3px solid var(--glass-border);
+  border-radius: 50%;
+  position: relative;
+  overflow: hidden;
+}
+
+.timer-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(var(--marine-blue) 0deg, transparent 0deg);
+  border-radius: 50%;
+  transition: all 0.1s linear;
+}
+
+.totp-timer span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.totp-account {
+  text-align: center;
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-lg);
+}
+
+.copy-btn {
+  width: 100%;
+  background: var(--marine-blue);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.copy-btn:hover {
+  background: var(--marine-blue-light);
+  transform: translateY(-1px);
+}
+
+.copy-btn:active {
+  transform: translateY(0);
+}
+
+/* Additional Animations */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes voicePulse {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+@keyframes typingDot {
+  0%, 80%, 100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 480px) {
+  .app-container {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    border-left: none;
+  }
+
+  .totp-display {
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .totp-code {
+    font-size: 24px;
+  }
+}
+
+/* Side Panel Animation */
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.app-container {
+  animation: slideInFromRight 0.3s ease-out;
+}
+
+/* Settings Modal Styles */
+.settings-section {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+}
+
+.settings-section h4 {
+    margin: 0 0 var(--spacing-md) 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.settings-select,
+.settings-input {
+    width: 100%;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: all 0.3s ease;
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Spezifische Anpassungen NUR für das Select-Dropdown */
+.settings-select {
+  /* Standard-Browser-Aussehen entfernen, um eigenes Styling zu ermöglichen */
+  -webkit-appearance: none;
+  appearance: none;
+
+  /* Rechts mehr Platz für den benutzerdefinierten Pfeil schaffen */
+  padding-right: 40px;
+
+  /* Eigener Dropdown-Pfeil (SVG als Hintergrundbild) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w.w3.org/2000/svg' width='16' height='16' fill='%238A9199' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  cursor: pointer;
+}
+
+/* Hover-Effekt für das Select-Dropdown (Pfeil wird farbig) */
+.settings-select:hover {
+  border-color: var(--marine-blue);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%232E86AB' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z'%3E%3C/path%3E%3C/svg%3E");
+}
+
+/* Fokus-Effekt für beide Element-Typen */
+.settings-select:focus,
+.settings-input:focus {
+    border-color: var(--marine-blue);
+    box-shadow: 0 0 0 2px var(--accent-blue);
+}
+
+/*
+ * WICHTIG: Stile für die <option>-Elemente selbst.
+ * Dieser Block gilt global für ALLE Dropdowns.
+ * Falls Sie den Code aus der vorherigen Antwort schon haben, brauchen Sie diesen nicht erneut einfügen.
+*/
+option {
+  background: #1e1e1e; /* Dunkler Standard-Hintergrund */
+  color: #ffffff;      /* Helle Schriftfarbe für Lesbarkeit */
+}
+
+.auth-status {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: var(--glass-bg);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.auth-status .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--error);
+}
+
+.auth-status.authenticated .status-dot {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+}
+
+.divider {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: var(--spacing-md) 0;
+    position: relative;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 40%;
+    height: 1px;
+    background: var(--glass-border);
+}
+
+.divider::before {
+    left: 0;
+}
+
+.divider::after {
+    right: 0;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}

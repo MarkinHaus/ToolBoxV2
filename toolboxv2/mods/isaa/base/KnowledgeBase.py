@@ -1,6 +1,5 @@
-from pathlib import Path
-
 import asyncio
+import contextlib
 import hashlib
 import json
 import math
@@ -8,22 +7,20 @@ import os
 import pickle
 import re
 import time
-import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, NamedTuple
-import dill
+
 import networkx as nx
 import numpy as np
 from pydantic import BaseModel
-from sklearn.cluster import HDBSCAN
+
 
 from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
 from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
 
-from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-from toolboxv2.mods.isaa.extras.filter import after_format
 
 i__ = [0, 0, 0]
 
@@ -324,6 +321,7 @@ class ConceptExtractor:
         async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: dict[str, Any]):
             """Process a single request with rate limiting"""
             try:
+                from toolboxv2.mods.isaa.extras.adapter import litellm_complete
                 # Wait for rate limit
                 await rate_limiter.acquire()
                 i__[1] += 1
@@ -407,6 +405,7 @@ class ConceptExtractor:
                 print(f"Unexpected response type: {type(response)}")
                 return []
 
+            from toolboxv2.mods.isaa.extras.filter import after_format
             # Parse JSON and create concepts
             concept_data = after_format(content)
             concepts = []
@@ -473,6 +472,7 @@ class ConceptExtractor:
         """
 
         try:
+            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
             response = await litellm_complete(
                 model_name=self.kb.model_name,
                 prompt=prompt,
@@ -605,10 +605,10 @@ class TextSplitter:
         return chunks
 
 class KnowledgeBase:
-    def __init__(self, embedding_dim: int = 768, similarity_threshold: float = 0.61, batch_size: int = 64,
-                 n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("DEFAULTMODELSUMMERY"),
+    def __init__(self, embedding_dim: int = 256, similarity_threshold: float = 0.61, batch_size: int = 12,
+                 n_clusters: int = 4, deduplication_threshold: float = 0.85, model_name=os.getenv("SUMMARYMODEL"),
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
-                 vis_class:str | None = "FastVectorStoreO",
+                 vis_class:str | None = "FaissVectorStore",
                  vis_kwargs:dict[str, Any] | None=None,
                  requests_per_second=85.,
                  chunk_size: int = 3600,
@@ -689,7 +689,7 @@ class KnowledgeBase:
             async def process_batch(batch: list[str]) -> np.ndarray:
                 from toolboxv2.mods.isaa.extras.adapter import litellm_embed
                 # print("Processing", batch)
-                embeddings = await litellm_embed(texts=batch, model=self.embedding_model)
+                embeddings = await litellm_embed(texts=batch, model=self.embedding_model, dimensions=self.embedding_dim)
                 return normalize_vectors(embeddings)
 
             tasks = []
@@ -850,14 +850,13 @@ class KnowledgeBase:
         if len(texts) != len(metadata):
             raise ValueError("Length of texts and metadata must match")
 
-        if not direct:
-            if len(texts) == 1 and len(texts[0]) < 10_000:
-                if len(self.sto) < self.batch_size and len(texts) == 1:
-                    self.sto.append((texts[0], metadata[0]))
-                    return -1, -1
-                if len(self.sto) >= self.batch_size:
-                    _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
-                    self.sto = []
+        if not direct and len(texts) == 1 and len(texts[0]) < 10_000:
+            if len(self.sto) < self.batch_size and len(texts) == 1:
+                self.sto.append((texts[0], metadata[0]))
+                return -1, -1
+            if len(self.sto) >= self.batch_size:
+                _ = [texts.append(t) or metadata.append([m]) for (t, m) in self.sto]
+                self.sto = []
 
         # Split large texts
         split_texts = []
@@ -1020,6 +1019,11 @@ class KnowledgeBase:
         best_score = float('-inf')
 
         epsilon_range = [0.2, 0.3, 0.4]
+        try:
+            HDBSCAN = __import__('sklearn.cluster').HDBSCAN
+        except:
+            print("install scikit-learn pip install scikit-learn for better results")
+            return self._fallback_clustering(chunks, query_embedding)
 
         for epsilon in epsilon_range:
             clusterer = HDBSCAN(
@@ -1104,18 +1108,18 @@ class KnowledgeBase:
             return float('-inf')
 
         # Calculate silhouette score for cluster cohesion
-        from sklearn.metrics import silhouette_score
         try:
-            sil_score = silhouette_score(embeddings, labels, metric='cosine')
+            sil_score = __import__('sklearn.metrics').silhouette_score(embeddings, labels, metric='cosine')
         except:
-            sil_score = -1
+            print("install scikit-learn pip install scikit-learn for better results")
+            sil_score = 0
 
         # Calculate Davies-Bouldin score for cluster separation
-        from sklearn.metrics import davies_bouldin_score
         try:
-            db_score = -davies_bouldin_score(embeddings, labels)  # Negated as lower is better
+            db_score = -__import__('sklearn.metrics').davies_bouldin_score(embeddings, labels)  # Negated as lower is better
         except:
-            db_score = -1
+            print("install scikit-learn pip install scikit-learn for better results")
+            db_score = 0
 
         # Calculate query relevance if provided
         query_score = 0
@@ -1584,7 +1588,8 @@ class KnowledgeBase:
         """
 
         try:
-            await asyncio.sleep(0.25)
+            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
+            # await asyncio.sleep(0.25)
             llm_response = await litellm_complete(
                 model_name=self.model_name,
                 prompt=prompt,
@@ -1698,10 +1703,8 @@ class KnowledgeBase:
             finally:
                 # Aufräumen falls tmp noch existiert (bei Fehlern)
                 if tmp.exists():
-                    try:
+                    with contextlib.suppress(Exception):
                         tmp.unlink()
-                    except Exception:
-                        pass
             return None
             # print(f"Knowledge base successfully saved to {path} with {len(self.concept_extractor.concept_graph.concepts.items())} concepts")
 
@@ -1722,7 +1725,7 @@ class KnowledgeBase:
             KnowledgeBase: A fully restored knowledge base instance
         """
         try:
-            if isinstance(path, (bytes, bytearray, memoryview)):
+            if isinstance(path, bytes | bytearray | memoryview):
                 data_bytes = bytes(path)
                 try:
                     data = pickle.loads(data_bytes)
@@ -1747,9 +1750,7 @@ class KnowledgeBase:
                                 f"EOFError beim Laden {p} (Größe {size} bytes). Erste 128 bytes: {snippet!r}") from e
 
                 except Exception as e:
-                    raise
-                raise ValueError("Invalid path type")
-
+                    raise ValueError(f"Invalid path type {e}") from e
             # Create new knowledge base instance with saved configuration
             kb = cls(
                 embedding_dim=data['embedding_dim'],
@@ -1793,14 +1794,24 @@ class KnowledgeBase:
             # print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
-        except Exception as e:
+        except Exception:
             print(f"Error loading knowledge base: {str(e)}")
+            import traceback
+            traceback.print_exception(e)
             raise
 
-    def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+    async def vis(self,output_file: str = "concept_graph.html", get_output_html=False, get_output_net=False):
+
         if not self.concept_extractor.concept_graph.concepts:
-            print("NO Concepts defined")
-            return None
+
+            if len(self.sto) > 2:
+                await self.add_data([t for (t, m) in self.sto], [m for (t, m) in self.sto], direct=True)
+                # self.sto = []
+            if not self.concept_extractor.concept_graph.concepts:
+                print("NO Concepts defined and no data in sto")
+                return None
+
+
         net = self.concept_extractor.concept_graph.convert_to_networkx()
         if get_output_net:
             return net

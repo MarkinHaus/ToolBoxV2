@@ -34,12 +34,12 @@ __version__ = "1.0.0"
 __author__ = "Markin Hausmanns"
 __status__ = "Demo"
 
+import logging
 import os
 
 # Ensure AsyncIterator is imported correctly depending on Python version
 from collections.abc import AsyncIterator
 
-import logging
 if not hasattr(logging, 'NONE'):
     logging.NONE = 100
 
@@ -191,6 +191,7 @@ async def litellm_complete(
 async def litellm_embed(
     texts: list[str],
     model: str = "gemini/text-embedding-004",
+    dimensions: int = 256,
     base_url: str = None,
     api_key: str = None,
 ) -> np.ndarray:
@@ -199,6 +200,7 @@ async def litellm_embed(
     """
     response = await litellm.aembedding(
         model=model, input=texts,
+        dimensions=dimensions,
         # encoding_format="float"
     )
     return np.array([dp.embedding for dp in response.data])

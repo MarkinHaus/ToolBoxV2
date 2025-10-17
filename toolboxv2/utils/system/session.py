@@ -2,15 +2,11 @@ import asyncio
 import atexit
 import os
 import socket
-
-try:
-    from fastapi import Response
-except ImportError:
-    class Response:
-        pass
+from typing import Any, Coroutine
 
 import requests
 from aiohttp import ClientResponse, ClientSession, MultipartWriter
+from requests import Response
 
 from ... import Code
 from ...tests.a_util import async_test
@@ -20,7 +16,7 @@ from .getting_and_closing_app import get_app, get_logger
 from .types import Result
 
 
-class RequestSession(Response):
+class RequestSession:
 
     def __init__(self, session, body, json, row):
         super().__init__()
@@ -46,7 +42,8 @@ class Session(metaclass=Singleton):
 
     def __init__(self, username, base=None):
         self.username = username
-        self.session: ClientSession | None = None
+        self._session: ClientSession | None = None
+        self._event_loop = None  # Track which event loop the session belongs to
         self.valid = False
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
@@ -57,7 +54,7 @@ class Session(metaclass=Singleton):
 
         async def helper():
             try:
-                await self.session.close() if self.session is not None else None
+                await self.session.close() if self._session is not None else None
             except ClientConnectorError as e:
                 print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
                 return False
@@ -67,10 +64,41 @@ class Session(metaclass=Singleton):
             except ClientError as e:
                 print(f"Allgemeiner Client-Fehler: {e}")
                 return False
-            except Exception:
-                print("No session to close for", self.username)
+            except Exception as e:
+                pass
 
         atexit.register(async_test(helper))
+
+    @property
+    def session(self):
+        self._ensure_session()
+        return self._session
+
+    def _ensure_session(self):
+        """Ensure session is valid for current event loop"""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop
+            if self._session is not None:
+                # Close old session if it exists
+                self._session = None
+                self._event_loop = None
+            return
+
+        # Check if session exists and is for the current loop
+        if self._session is None or self._event_loop != current_loop:
+            # Close old session if it exists and is from a different loop
+            if self._session is not None:
+                try:
+                    # Try to close old session, but don't fail if loop is closed
+                    if not self._session.closed:
+                        asyncio.create_task(self._session.close())
+                except:
+                    pass
+            # Create new session for current loop
+            self._session = ClientSession()
+            self._event_loop = current_loop
 
     async def init_log_in_mk_link(self, mak_link):
         from urllib.parse import parse_qs, urlparse
@@ -105,6 +133,8 @@ class Session(metaclass=Singleton):
 
     async def auth_with_prv_key(self):
         prv_key = self.get_prv_key()
+        if not prv_key:
+            return False
         challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
                                                                 args_='username=' + self.username + '&personal_key=False')
         challenge = Result.result_from_dict(**await challenge)
@@ -136,12 +166,10 @@ class Session(metaclass=Singleton):
         return res
 
     def init(self):
-        if self.session is None:
-            self.session = ClientSession()
+        self._ensure_session()
 
     async def login(self):
-        if self.session is None:
-            self.session = ClientSession()
+        self._ensure_session()
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
             if claim == b'Error decoding':
@@ -149,12 +177,12 @@ class Session(metaclass=Singleton):
                 claim = b''
         if not claim:
             res = await self.auth_with_prv_key()
-            print(str(res))
             return res is True
         try:
-            async with self.session.request("GET", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
+            self._ensure_session()  # Ensure session is valid before using
+            async with self.session.request("POST", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
                                                                                              'Username': self.username}) as response:
-                print(response.status, "status")
+                # print(response.status, "status")
                 if response.status == 200:
                     print("Successfully Connected 2 TBxN")
                     get_logger().info("LogIn successful")
@@ -162,7 +190,7 @@ class Session(metaclass=Singleton):
                     return True
                 if response.status == 401 and self.if_key():
                     return await self.auth_with_prv_key()
-                print(response)
+                # print(response)
                 get_logger().warning("LogIn failed")
                 return False
         except ClientConnectorError as e:
@@ -179,6 +207,7 @@ class Session(metaclass=Singleton):
             return False
 
     async def download_file(self, url, dest_folder="mods_sto"):
+        self._ensure_session()
         if not self.session:
             raise Exception("Session not initialized. Please login first.")
         # Sicherstellen, dass das Zielverzeichnis existiert
@@ -222,34 +251,51 @@ class Session(metaclass=Singleton):
         return False
 
     async def logout(self) -> bool:
-        if self.session:
+        self._ensure_session()
+        if self.session and not self.session.closed:  # Sicherstellen, dass die Session offen ist
             try:
-                async with self.session.post(f'{self.base}/web/logoutS') as response:
+                # Der `post`-Aufruf gibt eine Coroutine zurück, die wir awaiten müssen,
+                # um das Response-Objekt zu erhalten.
+                response = await self.session.post(f'{self.base}/web/logoutS')
+
+                # Wir verwenden `async with` für die Response, um sicherzustellen, dass sie richtig behandelt wird.
+                async with response:
+                    is_successful = response.status == 200
+
+                # Die Session erst NACH der Anfrage schließen.
+                await self.session.close()
+                self.session = None
+                self._event_loop = None
+
+                return is_successful
+            except (ClientConnectorError, socket.gaierror, ClientError) as e:
+                # Zusammengefasste Fehlerbehandlung für Verbindungsfehler
+                print(f"Fehler bei der Verbindung während des Logouts: {e}")
+                if self.session:
                     await self.session.close()
-                    self.session = None
-                    return response.status == 200
-            except ClientConnectorError as e:
-                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-                return False
-            except socket.gaierror as e:
-                print(f"DNS-Auflösung fehlgeschlagen: {e}")
-                return False
-            except ClientError as e:
-                print(f"Allgemeiner Client-Fehler: {e}")
+                self.session = None
+                self._event_loop = None
                 return False
             except Exception as e:
-                print("Error session logout:", e, self.username)
-        return False
+                print(f"Allgemeiner Fehler während des Logouts: {e}, user: {self.username}")
+                if self.session:
+                    await self.session.close()
+                self.session = None
+                self._event_loop = None
+        return False  # Gibt False zurück, wenn keine Session vorhanden war
 
-    async def fetch(self, url: str, method: str = 'GET', data=None) -> ClientResponse or Response:
+    async def fetch(self, url: str, method: str = 'GET', data=None, **kwargs) -> bool | ClientResponse | Response:
+        # Ensure we have a valid session for the current event loop
+        self._ensure_session()
+
         if isinstance(url, str):
             url = self.base + url
         if self.session:
             try:
                 if method.upper() == 'POST':
-                    return await self.session.post(url, json=data)
+                    return await self.session.post(url, json=data, **kwargs)
                 else:
-                    return await self.session.get(url)
+                    return await self.session.get(url, **kwargs)
             except ClientConnectorError as e:
                 print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
                 return False
@@ -261,6 +307,8 @@ class Session(metaclass=Singleton):
                 return False
             except Exception as e:
                 print("Error session fetch:", e, self.username)
+                import traceback
+                print(traceback.format_exc())
                 return requests.request(method, url, data=data)
         else:
             print(f"Could not find session using request on {url}")
@@ -275,8 +323,7 @@ class Session(metaclass=Singleton):
             raise FileNotFoundError(f"Datei {file_path} nicht gefunden.")
 
         # Initialisiere die Session, falls sie nicht bereits gestartet ist
-        if self.session is None:
-            self.session = ClientSession()
+        self._ensure_session()
         upload_url = self.base + upload_url
         # headers = {'accept': '*/*',
         #            'Content-Type': 'multipart/form-data'}

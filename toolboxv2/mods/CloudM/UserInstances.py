@@ -1,4 +1,5 @@
 import json
+import time
 
 from toolboxv2 import Style, get_app
 from toolboxv2.utils import Singleton
@@ -17,6 +18,7 @@ in_mem_chash_150 = export(mod_name=Name, memory_cache=True, memory_cache_max_siz
 class UserInstances(metaclass=Singleton):
     live_user_instances = {}
     user_instances = {}
+    cli_sessions = {}  # New: Track CLI sessions
 
     @staticmethod
     @in_mem_chash_150
@@ -33,7 +35,10 @@ class UserInstances(metaclass=Singleton):
     def get_web_socket_id(uid: str) -> Result or str:
         return Code.one_way_hash(uid, app.id, 'CloudM-Signed')
 
-    # UserInstanceManager.py
+    @staticmethod
+    @in_mem_chash_150
+    def get_cli_session_id(uid: str) -> Result or str:
+        return Code.one_way_hash(uid, app.id, 'CLI-Session')
 
 
 @e
@@ -222,3 +227,157 @@ def save_close_user_instance(ws_id: str):
 
         return Result.ok()
     return Result.default_user_error(info="invalid ws id")
+
+
+@e
+def register_cli_session(uid: str, jwt_token: str, session_info: dict = None):
+    """Register a new CLI session"""
+    if uid is None:
+        return Result.default_user_error("UID required")
+
+    cli_session_id = UserInstances.get_cli_session_id(uid).get()
+
+    session_data = {
+        'uid': uid,
+        'cli_session_id': cli_session_id,
+        'jwt_token': jwt_token,
+        'created_at': time.time(),
+        'last_activity': time.time(),
+        'status': 'active',
+        'session_info': session_info or {}
+    }
+
+    UserInstances().cli_sessions[cli_session_id] = session_data
+
+    # Save to persistent storage
+    app.run_any('DB', 'set',
+                query=f"CLI::Session::{uid}::{cli_session_id}",
+                data=json.dumps(session_data))
+
+    logger.info(f"CLI session registered for user {uid}")
+    return Result.ok("CLI session registered", data=session_data)
+
+
+@e
+def update_cli_session_activity(cli_session_id: str):
+    """Update last activity timestamp for CLI session"""
+    if cli_session_id in UserInstances().cli_sessions:
+        UserInstances().cli_sessions[cli_session_id]['last_activity'] = time.time()
+        session_data = UserInstances().cli_sessions[cli_session_id]
+
+        # Update persistent storage
+        app.run_any('DB', 'set',
+                    query=f"CLI::Session::{session_data['uid']}::{cli_session_id}",
+                    data=json.dumps(session_data))
+        return True
+    return False
+
+
+@e
+def close_cli_session(cli_session_id: str):
+    """Close a CLI session"""
+    if cli_session_id not in UserInstances().cli_sessions:
+        return "CLI session not found"
+
+    session_data = UserInstances().cli_sessions[cli_session_id]
+    session_data['status'] = 'closed'
+    session_data['closed_at'] = time.time()
+
+    # Remove from active sessions
+    del UserInstances().cli_sessions[cli_session_id]
+
+    # Update persistent storage to mark as closed
+    app.run_any('DB', 'set',
+                query=f"CLI::Session::{session_data['uid']}::{cli_session_id}",
+                data=json.dumps(session_data))
+
+    logger.info(f"CLI session {cli_session_id} closed")
+    return "CLI session closed successfully"
+
+
+@e
+def get_user_cli_sessions(uid: str):
+    """Get all CLI sessions for a user"""
+    if uid is None:
+        return []
+
+    # Get active sessions from memory
+    active_sessions = []
+    for session_id, session_data in UserInstances().cli_sessions.items():
+        if session_data['uid'] == uid:
+            active_sessions.append(session_data)
+
+    # Also check persistent storage for recent sessions
+    try:
+        # This would need a query pattern to get all CLI sessions for a user
+        # For now, return active sessions
+        pass
+    except Exception as e:
+        logger.warning(f"Error fetching persistent CLI sessions: {e}")
+
+    return active_sessions
+
+
+@e
+def get_all_active_cli_sessions():
+    """Get all active CLI sessions"""
+    return list(UserInstances().cli_sessions.values())
+
+
+@e
+def cleanup_expired_cli_sessions(max_age_hours: int = 24):
+    """Clean up expired CLI sessions"""
+    current_time = time.time()
+    max_age_seconds = max_age_hours * 3600
+
+    expired_sessions = []
+    for session_id, session_data in list(UserInstances().cli_sessions.items()):
+        if current_time - session_data['last_activity'] > max_age_seconds:
+            expired_sessions.append(session_id)
+
+    for session_id in expired_sessions:
+        close_cli_session(session_id)
+
+    logger.info(f"Cleaned up {len(expired_sessions)} expired CLI sessions")
+    return f"Cleaned up {len(expired_sessions)} expired CLI sessions"
+
+
+@e
+def get_user_instance_with_cli_sessions(uid: str, hydrate: bool = True):
+    """Enhanced get_user_instance that includes CLI sessions"""
+    # Get regular user instance
+    instance = get_user_instance(uid, hydrate)
+
+    if instance:
+        # Add CLI sessions information
+        cli_sessions = get_user_cli_sessions(uid)
+        instance['cli_sessions'] = cli_sessions
+        instance['active_cli_sessions'] = len([s for s in cli_sessions if s['status'] == 'active'])
+
+    return instance
+
+
+@e
+def get_instance_overview(si_id: str = None):
+    """Get comprehensive overview of user instances and CLI sessions"""
+    overview = {
+        'web_instances': {},
+        'cli_sessions': {},
+        'total_active_web': 0,
+        'total_active_cli': 0
+    }
+
+    # Web instances
+    if si_id:
+        if si_id in UserInstances().live_user_instances:
+            overview['web_instances'][si_id] = UserInstances().live_user_instances[si_id]
+            overview['total_active_web'] = 1
+    else:
+        overview['web_instances'] = UserInstances().live_user_instances.copy()
+        overview['total_active_web'] = len(UserInstances().live_user_instances)
+
+    # CLI sessions
+    overview['cli_sessions'] = UserInstances().cli_sessions.copy()
+    overview['total_active_cli'] = len(UserInstances().cli_sessions)
+
+    return overview

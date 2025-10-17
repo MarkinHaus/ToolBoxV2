@@ -1,4 +1,4 @@
-from toolboxv2 import App, get_app, Result, TBEF
+from toolboxv2 import TBEF, App, Result, get_app
 
 # Define the module name and export function
 Name = 'helper'
@@ -41,7 +41,7 @@ async def init_system(app: App):
             print("   You can now use other CLI commands or log into the web UI.")
             return Result.ok("System initialized successfully.")
         else:
-            print(f"\n❌ Error creating administrator account:")
+            print("\n❌ Error creating administrator account:")
             result.print()
             return result
 
@@ -57,7 +57,7 @@ async def init_system(app: App):
 def create_user(app: App, username: str, email: str):
     """Creates a new user with a generated key pair."""
     print(f"Creating user '{username}' with email '{email}'...")
-
+    app.load_mod("CloudM")
     # Generate an invitation on the fly
     invitation_res = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_INVITATION,
                                  get_results=True,
@@ -77,7 +77,7 @@ def create_user(app: App, username: str, email: str):
     if result.is_ok():
         print(f"✅ User '{username}' created successfully.")
     else:
-        print(f"❌ Error creating user:")
+        print("❌ Error creating user:")
         result.print()
     return result
 
@@ -86,11 +86,8 @@ def create_user(app: App, username: str, email: str):
 def delete_user_cli(app: App, username: str):
     """Deletes a user and all their associated data."""
     print(f"Attempting to delete user '{username}'...")
-    auth_manager = app.get_mod('CloudM.AuthManager')
-    if not auth_manager:
-        return Result.default_internal_error("Could not load AuthManager module.")
-
-    result = auth_manager.delete_user(username=username)
+    app.load_mod("CloudM")
+    result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.DELETE_USER, get_results=True, username=username)
 
     if result.is_ok():
         print(f"✅ User '{username}' has been deleted.")
@@ -103,11 +100,8 @@ def delete_user_cli(app: App, username: str):
 def list_users_cli(app: App):
     """Lists all registered users."""
     print("Fetching user list...")
-    auth_manager = app.get_mod('CloudM.AuthManager')
-    if not auth_manager:
-        return Result.default_internal_error("Could not load AuthManager module.")
-
-    result = auth_manager.list_users()
+    app.load_mod("CloudM")
+    result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.LIST_USERS, get_results=True)
 
     if result.is_ok():
         users = result.get()
@@ -123,7 +117,8 @@ def list_users_cli(app: App):
             print(f"{user['username']:<25} {user['email']:<30} {user['level']}")
         print("------------------------")
     else:
-        print(f"❌ Error listing users: {result.info.get('help_text')}")
+        print("❌ Error listing users:")
+        result.print()
 
     return result
 
@@ -131,6 +126,7 @@ def list_users_cli(app: App):
 def create_invitation(app: App, username: str):
     """Creates a one-time invitation code for a user to link a new device."""
     print(f"Creating invitation for user '{username}'...")
+    app.load_mod("CloudM")
     result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_INVITATION,
                          get_results=True,
                          username=username)
@@ -138,7 +134,7 @@ def create_invitation(app: App, username: str):
     if result.is_ok():
         print(f"✅ Invitation code for '{username}': {result.get()}")
     else:
-        print(f"❌ Error creating invitation:")
+        print("❌ Error creating invitation:")
         result.print()
     return result
 
@@ -147,6 +143,7 @@ def create_invitation(app: App, username: str):
 def send_magic_link(app: App, username: str):
     """Sends a magic login link to the user's registered email address."""
     print(f"Sending magic link to user '{username}'...")
+    app.load_mod("CloudM")
     result = app.run_any(TBEF.CLOUDM_AUTHMANAGER.GET_MAGIC_LINK_EMAIL,
                          get_results=True,
                          username=username)
@@ -154,6 +151,6 @@ def send_magic_link(app: App, username: str):
     if result.is_ok():
         print(f"✅ Magic link sent successfully to the email address associated with '{username}'.")
     else:
-        print(f"❌ Error sending magic link:")
+        print("❌ Error sending magic link:")
         result.print()
     return result

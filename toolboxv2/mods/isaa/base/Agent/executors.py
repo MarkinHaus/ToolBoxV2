@@ -1,6 +1,8 @@
 # core/executors.py
 import io
 import logging
+import os
+import sys
 import time
 from typing import Any
 
@@ -14,6 +16,7 @@ try:
     from restrictedpython import compile_restricted, safe_globals
     RESTRICTEDPYTHON_AVAILABLE = True
 except ImportError:
+    os.system(f"{sys.executable} -m pip install restrictedpython")
     RESTRICTEDPYTHON_AVAILABLE = False
     def restrictedpython():
         return None

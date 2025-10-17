@@ -4,40 +4,57 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolboxv2"
-version = "0.1.22"
+version = "0.1.24"
 description = "Add your description here"
 readme = "README.md"
 
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.11.13",
+    "aiohttp>=3.12.15",
     "cachetools>=5.5.2",
-    "cryptography>=44.0.1",
-    "fastapi>=0.115.9",
-    "ipython>=8.32.0",
+    "cryptography>=45.0.7",
+    "ipython>=8.5.0",
     "networkx>=3.4.2",
-    "numpy>=2.2.3",
+    "numpy>=2.2.6",
     "packaging>=24.2",
     "pyjwt>=2.10.1",
     "python-dotenv>=1.0.1",
     "pyyaml>=6.0.2",
-    "qrcode>=8.0",
-    "radon>=6.0.1",
-    "redis>=5.2.1",
-    "reedsolo>=1.7.0",
-    "requests>=2.32.3",
+    #"qrcode>=8.0",
+    #"radon>=6.0.1",
+    "redis>=6.4.0",
+    #"requests>=2.32.3",
     "toml>=0.10.2",
     "tqdm>=4.67.1",
     "watchfiles>=1.0.4",
     "webauthn>=2.5.1",
     "schedule>=1.2.2",
     "websockets>=15.0.1",
-    "mailjet-rest>=1.3.4",
-    "jinja2>=3.1.6",
+    #"customtkinter>=5.2.2",
+    #"streamlit>=1.49.1",
+    #"webrtcvad>=2.0.10",
+    "langdetect>=1.0.9",
+    "google-auth-oauthlib>=1.2.2",
+    "google-api-python-client>=2.179.0",
+    #"pyperclip>=1.9.0",
+    #"pynput>=1.8.1",
+    "readchar>=4.2.1",
+    #"stripe>=12.5.0",
+    "dateparser>=1.2.2",
+    "bottle>=0.13.4",
+    #"pipreqs>=0.4.13",
+    "xmltodict>=0.14.2",
+    "traitlets>=5.14.3",
+    "prompt-toolkit>=3.0.52",
+    "gitpython>=3.1.45",
+    "rich>=14.1.0",
+    "pytz>=2025.2",
+    "python-dateutil>=2.9.0.post0",
+    "starlette>=0.47.3",
+    "urllib3>=2.5.0",
+    "psutil>=7.0.0",
+    "dill>=0.3.8",
     "icalendar>=6.3.1",
-    "playwright>=1.51.0",
-    "markdown2>=2.5.3",
-    "pocketflow>=0.0.3",
 ]
 
 [project.scripts]
@@ -46,7 +63,6 @@ tb = "toolboxv2.__main__:main_runner"
 [tool.uv]
 package = true
 dev-dependencies = [
-    "psutil>=7.0.0",
     "pytest>=8.3.5",
     "webauthn",
     "mailjet_rest",
@@ -67,6 +83,7 @@ dev-dependencies = [
     "ruff>=0.11.9",
     "bandit>=1.8.3",
     "safety>=3.2.4",
+    "deptry>=0.23.1",
 ]
 
 [tool.uv.workspace]
@@ -76,53 +93,49 @@ members = ["toolboxv2/mods/isaa"]
 # Definiert für die Extra-Gruppe "isaa" die Quelldatei
 isaa = [
     "beautifulsoup4>=4.12.0",
-    "browser-use>=0.1.40",
-    "chromadb>=0.4.0",
-    "gtts>=2.3.0",
-    "langchain>=0.1.0",
-    "langchain-community>=0.0.20",
     "langchain-core>=0.1.20",
-    "litellm>=1.30.0",
+    "litellm~=1.74.14",
     "networkx>=3.1",
-    "numpy>=1.26.0",
-    "openai>=1.3.0",
-    "pebble>=5.0.0",
+    #"numpy>=2.2.6",
     "pydantic>=2.5.0",
-    "pydub>=0.25.0",
+    "groq>=0.31.0",
     "requests>=2.31.0",
     "tiktoken>=0.5.0",
-    "torch>=2.1.0",
     "tqdm>=4.66.0",
-    "transformers>=4.35.0",
-    "websockets>=12.0",
-    "scikit-learn>=1.3.0",
-    "sentence-transformers>=2.2.0",
-    "rapidfuzz>=3.0.0",
-    "astor>=0.8.0",
+    "pypdf2>=3.0.1",
+    #"transformers>=4.35.0",
+    #"scikit-learn>=1.3.0",
+    #"sentence-transformers>=2.2.0",
     "nest-asyncio>=1.5.0",
     "schedule>=1.2.0",
-    "python-levenshtein>=0.20.0",
-    "langchain-google-genai>=0.0.5",
-    "qdrant-client[fastembed]>=1.7.0",
     "pyvis>=0.3.0",
-    "matplotlib>=3.8.0",
     "redis>=5.0.0",
-    "seaborn>=0.13.0",
-    "google-adk[all]>=0.5.0",
     "python-a2a[all]>=0.5.1",
     "mcp>=1.6.0",
     "google-cloud-aiplatform>=1.38.0",
     "pyyaml>=6.0",
-    "restrictedpython>=7.0",
     "docker>=7.0.0",
-    "uvicorn>=0.25.0",
-    "httpx>=0.25.0",
-    "fastapi>=0.108.0",
+    "hnswlib>=0.8.0",
+    "inquirer>=3.4.1",
+    "tenacity>=9.1.2",
+    "opentelemetry-api>=1.36.0",
+    "opentelemetry-sdk>=1.36.0",
+    "jinja2>=3.1.6",
+    "playwright>=1.55.0",
+    "markdown2>=2.5.3",
+    "beautifulsoup4>=4.13.3",
+    "html2text>=2025.4.15",
+    "chardet>=5.2.0",
+    "faiss-cpu>=1.12.0",
+    "langchain-community>=0.3.29",
 ]
 
 [tool.uv.sources]
 isaa = { workspace = true }
 
+[tool.deptry]
+exclude = ["toolboxv2/.data/*", "venv", "python_en", ".data/*", ".data"]
+known_first_party = ["toolboxv2", "whatsapp", "hmr", "restrictedpython"]
 
 [tool.ruff]
 line-length = 90
@@ -169,19 +182,42 @@ exclude = [
 # B = flake8-bugbear (mögliche Bugs oder Designprobleme)
 # Weitere nützliche Sets: A (flake8-builtins), C4 (flake8-comprehensions), SIM (flake8-simplify)
 select = [
-    # "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
+    # "W",  # pycodestyle warnings - You had this enabled, uncomment if needed
     "F",  # Pyflakes
     "I",  # isort
-    "S",  # flake8-bandit (Sicherheit)
+    "S",  # flake8-bandit (Security)
     "UP", # pyupgrade
     "B",  # flake8-bugbear
-    # "A",  # flake8-builtins (Achtung, kann sehr detailreich sein)
-    # "C4", # flake8-comprehensions
     "SIM",# flake8-simplify
 ]
-ignore = ["E501", "S101", "S603","S607", "S104", "E701", "E702"]
 
+ignore = [
+    "E501",  # Line too long (often handled by a formatter like Black)
+    "S101",  # Use of `assert`
+    "S603",  # `subprocess` call with `shell=True`
+    "S607",  # Starting a process with a partial path
+    "S104",  # Possible binding to all network interfaces
+    "E701",  # Multiple statements on one line (colon)
+    "E702",  # Multiple statements on one line (semicolon)
+    "UP006", # Use `list` instead of `List` for type annotation
+    "S110",  # `try-except-pass` is sometimes acceptable for cleanup
+    "S605",  # Safe shell commands like 'cls' and 'clear' are okay
+    "S311",  # random is not used for cryptographic purposes
+    "S301",  # pickle is used with trusted data
+    "S102",  # Use of exec is intentional for module loading
+    "S324",  # md5 is not used for security
+    "S103",  # chmod 0o755 is intentional for executables
+    "SIM115",
+
+    "F401", # Unuised imports nad vars rea dd alter
+    "F841",
+
+    "B008",  # Function calls in default arguments (can be ignored if carefully managed)
+    "S108",  # Insecure temp file usage (acceptable for some scripts)
+    "S112",  # `try-except-continue` is similar to S110
+    "S307",  # Use of `eval` can be ignored if input is trusted
+
+]
 # Optional: Regeln, die automatisch korrigiert werden können (wenn --fix verwendet wird)
 # Ruff hat gute Standardwerte, aber Sie können es hier anpassen.
 # fixable = ["ALL"] # Vorsicht bei "ALL", besonders bei 'S' Regeln
@@ -190,3 +226,6 @@ ignore = ["E501", "S101", "S603","S607", "S104", "E701", "E702"]
 # Optional: Spezifische Konfigurationen für flake8-bandit
 # [tool.ruff.lint.flake8-bandit]
 # requests-timeout = 10 # Für S113 (requests without timeout), Standard ist 5
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

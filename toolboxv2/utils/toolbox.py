@@ -1,6 +1,7 @@
 """Main module."""
 import asyncio
 import inspect
+import json
 import logging
 import os
 import pkgutil
@@ -16,11 +17,11 @@ from importlib import import_module, reload
 from inspect import signature
 from platform import node, system
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
-
+from .extras.mkdocs import add_to_app
 from ..utils.system.main_tool import get_version_from_pyproject
 from .extras.Style import Spinner, Style, stram_print
 from .singelton_class import Singleton
@@ -44,6 +45,8 @@ load_dotenv()
 class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
+        if "test" not in prefix:
+            prefix = "main"
         super().__init__(prefix, args)
         self._web_context = None
         t0 = time.perf_counter()
@@ -128,12 +131,12 @@ class App(AppType, metaclass=Singleton):
         if not os.path.exists(self.info_dir):
             os.makedirs(self.info_dir, exist_ok=True)
 
-        print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+        self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug)
 
-        print("Logger " + logger_info_str)
-        print("================================")
+        self.print("Logger " + logger_info_str)
+        self.print("================================")
         self.logger.info("Logger initialized")
         get_logger().info(Style.GREEN("Starting Application instance"))
         if args.init and args.init is not None and self.start_dir not in sys.path:
@@ -193,9 +196,9 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
-        if len(sys.argv) > 2 and "db" == sys.argv[1]:
+        if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
-        from .system.db_cli_manager import ClusterManager, get_executable_path
+        from toolboxv2.utils.clis.db_cli_manager import ClusterManager, get_executable_path
         self.cluster_manager = ClusterManager()
         online_list, server_list = self.cluster_manager.status_all(silent=True)
         if not server_list:
@@ -203,6 +206,15 @@ class App(AppType, metaclass=Singleton):
             _, server_list = self.cluster_manager.status_all()
         from .extras.blobs import BlobStorage
         self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
+        self.mkdocs = add_to_app(self)
+        # self._start_event_loop()
+
+    def _start_event_loop(self):
+        """Starts the asyncio event loop in a separate thread."""
+        if self.loop is None:
+            self.loop = asyncio.new_event_loop()
+            self.loop_thread = threading.Thread(target=self.loop.run_forever, daemon=True)
+            self.loop_thread.start()
 
     def get_username(self, get_input=False, default="loot") -> str:
         user_name = self.config_fh.get_file_handler("ac_user:::")
@@ -395,7 +407,7 @@ class App(AppType, metaclass=Singleton):
                 self.debug_rains(e)
                 return None
         else:
-            self.print(f"module {loc + mod_name} is not valid")
+            self.sprint(f"module {loc + mod_name} is not valid")
             return None
         if hasattr(modular_file_object, "Tools"):
             tools_class = modular_file_object.Tools
@@ -439,8 +451,11 @@ class App(AppType, metaclass=Singleton):
                 self.functions[modular_id][f"{spec}_instance"] = instance
                 self.functions[modular_id][f"{spec}_instance_type"] = instance_type
             else:
-                self.print("ERROR OVERRIDE")
-                raise ImportError(f"Module already known {modular_id}")
+                self.print("Firest instance stays use new spec to get new instance")
+                if modular_id in self.functions and self.functions[modular_id].get(f"{spec}_instance", None) is not None:
+                    return self.functions[modular_id][f"{spec}_instance"]
+                else:
+                    raise ImportError(f"Module already known {modular_id} and not avalabel reload using other spec then {spec}")
 
         elif tools_class is not None:
             if modular_id not in self.functions:
@@ -608,11 +623,26 @@ class App(AppType, metaclass=Singleton):
         self.config_fh.add_to_save_file_handler(self.keys["debug"], str(self.debug))
 
     def init_mod(self, mod_name, spec='app'):
+        """
+        Initializes a module in a thread-safe manner by submitting the
+        asynchronous initialization to the running event loop.
+        """
         if '.' in mod_name:
             mod_name = mod_name.split('.')[0]
-        return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
+        self.run_bg_task(self.a_init_mod, mod_name, spec)
+        # loop = self.loop_gard()
+        # if loop:
+        #     # Create a future to get the result from the coroutine
+        #     future: Future = asyncio.run_coroutine_threadsafe(
+        #         self.a_init_mod(mod_name, spec), loop
+        #     )
+        #     # Block until the result is available
+        #     return future.result()
+        # else:
+        #     raise ValueError("Event loop is not running")
+        #     # return self.loop_gard().run_until_complete(self.a_init_mod(mod_name, spec))
 
-    def run_bg_task(self, task: Callable, *args, **kwargs) -> Optional[asyncio.Task]:
+    def run_bg_task(self, task: Callable, *args, **kwargs) -> asyncio.Task | None:
         """
         Runs a coroutine in the background without blocking the caller.
 
@@ -773,6 +803,24 @@ class App(AppType, metaclass=Singleton):
                                                                                                            []):
                     kwargs["request"].form_data = kwargs["request"].body = kwargs['form_data']
                     del kwargs['form_data']
+            else:
+                params = self.functions.get(mn, {}).get(fn, {}).get('params', [])
+                # auto pars data and form_data to kwargs by key
+                do = False
+                data = {}
+                if 'data' in kwargs and 'data' not in params:
+                    do = True
+                    data = kwargs['data']
+                    del kwargs['data']
+                if 'form_data' in kwargs and 'form_data' not in params:
+                    do = True
+                    data = kwargs['form_data']
+                    del kwargs['form_data']
+                if do:
+                    for k in params:
+                        if k in data:
+                            kwargs[k] = data[k]
+                            del data[k]
 
         # Create the coroutine
         coro = running_function_coro or self.a_run_any(*args, **kwargs)
@@ -844,6 +892,7 @@ class App(AppType, metaclass=Singleton):
 
     def loop_gard(self):
         if self.loop is None:
+            self._start_event_loop()
             self.loop = asyncio.get_event_loop()
         if self.loop.is_closed():
             self.loop = asyncio.get_event_loop()
@@ -889,6 +938,11 @@ class App(AppType, metaclass=Singleton):
 
         return Result.default_internal_error(info="info's in logs.")
 
+    async def load_external_mods(self):
+        for mod_path in os.getenv("EXTERNAL_PATH_RUNNABLE", '').split(','):
+            if mod_path:
+                await self.load_all_mods_in_file(mod_path)
+
     async def load_all_mods_in_file(self, working_dir="mods"):
         print(f"LOADING ALL MODS FROM FOLDER : {working_dir}")
         t0 = time.perf_counter()
@@ -908,7 +962,7 @@ class App(AppType, metaclass=Singleton):
             try:
                 result = await t
                 if hasattr(result, 'Name'):
-                    print('Opened :', result.Name)
+                    self.print('Opened :', result.Name)
                 elif hasattr(result, 'name'):
                     if hasattr(result, 'async_initialized'):
                         if not result.async_initialized:
@@ -917,20 +971,21 @@ class App(AppType, metaclass=Singleton):
                                     if asyncio.iscoroutine(result):
                                         await result
                                     if hasattr(result, 'Name'):
-                                        print('Opened :', result.Name)
+                                        self.print('Opened :', result.Name)
                                     elif hasattr(result, 'name'):
-                                        print('Opened :', result.name)
+                                        self.print('Opened :', result.name)
                                 except Exception as e:
                                     self.debug_rains(e)
                                     if hasattr(result, 'Name'):
-                                        print('Error opening :', result.Name)
+                                        self.print('Error opening :', result.Name)
                                     elif hasattr(result, 'name'):
-                                        print('Error opening :', result.name)
+                                        self.print('Error opening :', result.name)
                             asyncio.create_task(_())
                         else:
-                            print('Opened :', result.name)
+                            self.print('Opened :', result.name)
                 else:
-                    print('Opened :', result)
+                    if result:
+                        self.print('Opened :', result)
             except Exception as e:
                 self.logger.error(Style.RED(f"An Error occurred while opening all modules error: {str(e)}"))
                 self.debug_rains(e)
@@ -1198,6 +1253,27 @@ class App(AppType, metaclass=Singleton):
         else:
             raise TypeError("Unknown function type")
 
+        if tb_run_with_specification == 'ws_internal':
+            modular_name = modular_name.split('/')[0]
+            if not self.mod_online(modular_name, installed=True):
+                self.get_mod(modular_name)
+            handler_id, event_name = mod_function_name
+            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
+                handler_func = self.websocket_handlers[handler_id][event_name]
+                try:
+                    # Führe den asynchronen Handler aus
+                    if inspect.iscoroutinefunction(handler_func):
+                        await handler_func(self, **kwargs)
+                    else:
+                        handler_func(self, **kwargs)  # Für synchrone Handler
+                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                except Exception as e:
+                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
+                    return Result.default_internal_error(info=str(e))
+            else:
+                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
+                return Result.ok(info=f"No WS handler for '{event_name}'.")
+
         if not self.mod_online(modular_name, installed=True):
             self.get_mod(modular_name)
 
@@ -1249,6 +1325,7 @@ class App(AppType, metaclass=Singleton):
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
 
+
     def run_function(self, mod_function_name: Enum or tuple,
                      tb_run_function_with_state=True,
                      tb_run_with_specification='app',
@@ -1272,6 +1349,24 @@ class App(AppType, metaclass=Singleton):
 
         if not self.mod_online(modular_name, installed=True):
             self.get_mod(modular_name)
+
+        if tb_run_with_specification == 'ws_internal':
+            handler_id, event_name = mod_function_name
+            if handler_id in self.websocket_handlers and event_name in self.websocket_handlers[handler_id]:
+                handler_func = self.websocket_handlers[handler_id][event_name]
+                try:
+                    # Führe den asynchronen Handler aus
+                    if inspect.iscoroutinefunction(handler_func):
+                        return self.loop.run_until_complete(handler_func(self, **kwargs))
+                    else:
+                        handler_func(self, **kwargs)  # Für synchrone Handler
+                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                except Exception as e:
+                    self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
+                    return Result.default_internal_error(info=str(e))
+            else:
+                # Kein Handler registriert, aber das ist kein Fehler (z.B. on_connect ist optional)
+                return Result.ok(info=f"No WS handler for '{event_name}'.")
 
         function_data, error_code = self.get_function(mod_function_name, state=tb_run_function_with_state,
                                                       metadata=True, specification=tb_run_with_specification)
@@ -1315,6 +1410,13 @@ class App(AppType, metaclass=Singleton):
         self.logger.info("Profiling function")
         t0 = time.perf_counter()
         if asyncio.iscoroutinefunction(function):
+            try:
+                return asyncio.run(self.a_fuction_runner(function, function_data, args, kwargs, t0))
+            except RuntimeError:
+                try:
+                    return self.loop.run_until_complete(self.a_fuction_runner(function, function_data, args, kwargs, t0))
+                except RuntimeError:
+                    pass
             raise ValueError(f"Fuction {function_name} is Async use a_run_any")
         else:
             return self.fuction_runner(function, function_data, args, kwargs, t0)
@@ -1526,6 +1628,11 @@ class App(AppType, metaclass=Singleton):
             else:
                 text = r.text
 
+            if isinstance(text, Callable):
+                if asyncio.iscoroutinefunction(text):
+                    text = await text()
+                else:
+                    text = text()
 
             # Attempt YAML
             if 'yaml' in content_type or text.strip().startswith('---'):
@@ -1680,14 +1787,15 @@ class App(AppType, metaclass=Singleton):
             print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         print(text, *args, **kwargs, flush=flush)
 
-    def sprint(self, text="", *args, **kwargs):
+    def sprint(self, text="", show_system=True, *args, **kwargs):
         if text is None:
             return True
         if 'live' in self.id:
             return
         flush = kwargs.pop('flush', True)
         # self.logger.info(f"Output : {text}")
-        print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+        if show_system:
+            print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
         if isinstance(text, str) and kwargs == {} and text:
             stram_print(text + ' '.join(args))
             print()
@@ -1816,7 +1924,9 @@ class App(AppType, metaclass=Singleton):
                           request_as_kwarg: bool=False,
                           row: bool=False,
                           memory_cache_max_size:int=100,
-                          memory_cache_ttl:int=300):
+                          memory_cache_ttl:int=300,
+                          websocket_handler: str | None = None,
+                          ):
 
         if isinstance(type_, Enum):
             type_ = type_.value
@@ -1980,7 +2090,33 @@ class App(AppType, metaclass=Singleton):
                 "request_as_kwarg": request_as_kwarg,
 
             }
-            self._register_function(module_name, func_name, data)
+
+            if websocket_handler:
+                # Die dekorierte Funktion sollte ein Dict mit den Handlern zurückgeben
+                try:
+                    handler_config = func(self)  # Rufe die Funktion auf, um die Konfiguration zu erhalten
+                    if not isinstance(handler_config, dict):
+                        raise TypeError(
+                            f"WebSocket handler function '{func.__name__}' must return a dictionary of handlers.")
+
+                    # Handler-Identifikator, z.B. "ChatModule/room_chat"
+                    handler_id = f"{module_name}/{websocket_handler}"
+                    self.websocket_handlers[handler_id] = {}
+
+                    for event_name, handler_func in handler_config.items():
+                        if event_name in ["on_connect", "on_message", "on_disconnect"] and callable(handler_func):
+                            self.websocket_handlers[handler_id][event_name] = handler_func
+                        else:
+                            self.logger.warning(f"Invalid WebSocket handler event '{event_name}' in '{handler_id}'.")
+
+                    self.logger.info(f"Registered WebSocket handlers for '{handler_id}'.")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to register WebSocket handlers for '{func.__name__}': {e}",
+                                      exc_info=True)
+            else:
+                self._register_function(module_name, func_name, data)
+
             if exit_f:
                 if "on_exit" not in self.functions[module_name]:
                     self.functions[module_name]["on_exit"] = []
@@ -1995,6 +2131,9 @@ class App(AppType, metaclass=Singleton):
         decorator.tb_init = True
 
         return decorator
+
+    def export(self, *args, **kwargs):
+        return self.tb(*args, **kwargs)
 
     def tb(self, name=None,
            mod_name: str = "",
@@ -2019,6 +2158,7 @@ class App(AppType, metaclass=Singleton):
            pre_compute=None,
            post_compute=None,
            api_methods=None,
+           websocket_handler: str | None = None,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -2049,6 +2189,7 @@ class App(AppType, metaclass=Singleton):
         pre_compute (callable, optional): A function to be called before the main function.
         post_compute (callable, optional): A function to be called after the main function.
         api_methods (list[str], optional): default ["AUTO"] (GET if not params, POST if params) , GET, POST, PUT or DELETE.
+        websocket_handler (str, optional): The name of the websocket handler to use.
 
     Returns:
         function: The decorated function with additional processing and registration capabilities.
@@ -2078,7 +2219,9 @@ class App(AppType, metaclass=Singleton):
                                       row=row,
                                       api_methods=api_methods,
                                       memory_cache_max_size=memory_cache_max_size,
-                                      memory_cache_ttl=memory_cache_ttl)
+                                      memory_cache_ttl=memory_cache_ttl,
+                                      websocket_handler=websocket_handler,
+                                      )
 
     def save_autocompletion_dict(self):
         autocompletion_dict = {}
@@ -2133,4 +2276,53 @@ class App(AppType, metaclass=Singleton):
             file.write(data)
 
         print(Style.Bold(Style.BLUE(f"Enums gespeichert in {filepath}")))
+
+
+    # WS logic
+
+    def _set_rust_ws_bridge(self, bridge_object: Any):
+        """
+        Diese Methode wird von Rust aufgerufen, um die Kommunikationsbrücke zu setzen.
+        Sie darf NICHT manuell von Python aus aufgerufen werden.
+        """
+        self.print(f"Rust WebSocket bridge has been set for instance {self.id}.")
+        self._rust_ws_bridge = bridge_object
+
+    async def ws_send(self, conn_id: str, payload: dict):
+        """
+        Sendet eine Nachricht asynchron an eine einzelne WebSocket-Verbindung.
+
+        Args:
+            conn_id: Die eindeutige ID der Zielverbindung.
+            payload: Ein Dictionary, das als JSON gesendet wird.
+        """
+        if self._rust_ws_bridge is None:
+            self.logger.error("Cannot send WebSocket message: Rust bridge is not initialized.")
+            return
+
+        try:
+            # Ruft die asynchrone Rust-Methode auf und wartet auf deren Abschluss
+            await self._rust_ws_bridge.send_message(conn_id, json.dumps(payload))
+        except Exception as e:
+            self.logger.error(f"Failed to send WebSocket message to {conn_id}: {e}", exc_info=True)
+
+    async def ws_broadcast(self, channel_id: str, payload: dict, source_conn_id: str = "python_broadcast"):
+        """
+        Sendet eine Nachricht asynchron an alle Clients in einem Kanal/Raum.
+
+        Args:
+            channel_id: Der Kanal, an den gesendet werden soll.
+            payload: Ein Dictionary, das als JSON gesendet wird.
+            source_conn_id (optional): Die ID der ursprünglichen Verbindung, um Echos zu vermeiden.
+        """
+        if self._rust_ws_bridge is None:
+            self.logger.error("Cannot broadcast WebSocket message: Rust bridge is not initialized.")
+            return
+
+        try:
+            # Ruft die asynchrone Rust-Broadcast-Methode auf
+            await self._rust_ws_bridge.broadcast_message(channel_id, json.dumps(payload), source_conn_id)
+        except Exception as e:
+            self.logger.error(f"Failed to broadcast WebSocket message to channel {channel_id}: {e}", exc_info=True)
+
 

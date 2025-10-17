@@ -4,6 +4,8 @@ import * as crypto from './crypto.js';
 
 
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+const USER_STATE_KEY = 'tbjs_user_session';
+const USER_DATA_TIMESTAMP_KEY = 'tbjs_user_data_timestamp';
 
 const defaultUserState = {
     isAuthenticated: false,
@@ -77,7 +79,7 @@ const user = {
                     if (responseData.toPrivat && token) {
                         token = await crypto.decryptAsymmetric(token, privateKeyBase64, true);
                     }
-                    
+
                     this._updateUserState({ token: token }); // Only update the token
                     TB.logger.info('[User] Session silently refreshed.');
                     resolve(token);

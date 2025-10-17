@@ -23,7 +23,7 @@ def stram_print(text):
 
 
 def print_prompt(msg_data):
-    messages = msg_data.get('massages', []) if isinstance(msg_data, dict) else msg_data
+    messages = msg_data.get('massages', msg_data.get('messages', [])) if isinstance(msg_data, dict) else msg_data
     if len(messages) == 0:
         print(Style.YELLOW("NO PROMPT to print"))
         return
@@ -49,7 +49,7 @@ def cls():
 
 def text_save(function):
     def deco(text):
-        text = str(text).encode('utf-8', 'replace').decode('utf-8').replace("\x00", "")
+        text = str(text).encode(sys.stdout.encoding or 'utf-8', 'replace').decode(sys.stdout.encoding or 'utf-8')
         return function(text)
     return deco
 

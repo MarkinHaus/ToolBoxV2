@@ -1,0 +1,27 @@
+#!tb
+@config {
+    mode: "jit"
+    type_mode: "static"
+    languages: [rust, python]
+    optimize: true
+}
+
+@shared {
+    app_name: "TB Example"
+    version: "1.0.0"
+    debug: true
+}
+
+fn main() {
+    echo "Application: $app_name"
+    echo "Version: $version"
+    echo "Debug mode: $debug"
+
+    if $debug {
+        echo "Running in debug mode"
+    } else {
+        echo "Running in production mode"
+    }
+}
+
+main()

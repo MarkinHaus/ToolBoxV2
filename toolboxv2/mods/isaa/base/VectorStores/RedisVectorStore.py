@@ -1,6 +1,7 @@
 import contextlib
 import json
 import pickle
+
 import redis
 
 try:
@@ -20,6 +21,7 @@ except ImportError:
 import numpy as np
 
 from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chunk
+
 
 class RedisVectorStore(AbstractVectorStore):
     def __init__(self, redis_url: str = "redis://localhost:6379",

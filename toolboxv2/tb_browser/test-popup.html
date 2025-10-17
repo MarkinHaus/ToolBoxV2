@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToolBox Pro - Test</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 20px; 
+            width: 420px; 
+            height: 600px; 
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%); 
+            color: white; 
+            font-family: Arial, sans-serif;
+            box-sizing: border-box;
+        }
+        .test-container { 
+            width: 100%; 
+            height: 100%; 
+            display: flex; 
+            flex-direction: column; 
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .logo {
+            width: 32px;
+            height: 32px;
+            background: #2E86AB;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .tab:hover, .tab.active {
+            background: #2E86AB;
+        }
+        .content {
+            flex: 1;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .connected {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4CAF50;
+        }
+        .disconnected {
+            background: rgba(244, 67, 54, 0.2);
+            color: #F44336;
+        }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .feature-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+        .test-button {
+            background: #2E86AB;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        .test-button:hover {
+            background: #1B4D72;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <div class="header">
+            <div class="logo-section">
+                <div class="logo">TB</div>
+                <span style="font-weight: bold;">ToolBox Pro</span>
+            </div>
+            <div class="status connected">Connected</div>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active">ISAA Chat</button>
+            <button class="tab">Live Search</button>
+            <button class="tab">Passwords</button>
+        </div>
+        
+        <div class="content">
+            <h3 style="margin: 0 0 15px 0; color: #2E86AB;">🤖 ISAA AI Assistant</h3>
+            
+            <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px;">
+                <p style="margin: 0; opacity: 0.8;">Ask me anything about this page or let me help you with web tasks!</p>
+            </div>
+            
+            <h4 style="margin: 15px 0 10px 0;">Available Features:</h4>
+            <ul class="feature-list">
+                <li>🎯 Gesture Detection (Swipe navigation)</li>
+                <li>🎤 Voice Input & Commands</li>
+                <li>🔍 Live Page Search & Indexing</li>
+                <li>🔐 Password Manager with 2FA</li>
+                <li>🤖 ISAA AI Integration</li>
+                <li>🎨 Glass Morphism UI Design</li>
+            </ul>
+            
+            <button class="test-button" onclick="testFunction()">Test Extension Features</button>
+        </div>
+    </div>
+    
+    <script>
+        function testFunction() {
+            alert('ToolBox Pro Extension Test - All systems working!');
+        }
+        
+        // Test tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+        
+        console.log('🧪 ToolBox Pro Test Page Loaded');
+    </script>
+</body>
+</html>

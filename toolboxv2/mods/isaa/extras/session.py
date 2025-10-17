@@ -20,7 +20,7 @@ class ChatSession:
             os.makedirs(f'{get_app().appdata}', exist_ok=True)
             os.makedirs(f'{get_app().appdata}/ChatSession', exist_ok=True)
 
-    async def add_message(self, message):
+    async def add_message(self, message, direct=True):
         self.history.append(message)
         role = ""
         if message['role'].startswith('s'):
@@ -33,7 +33,7 @@ class ChatSession:
             raise ValueError(f"Invalid role value {message['role']}")
         await self.mem.add_data(self.space_name, message['content'],
                           [{'role': role,
-                            'timestamp': datetime.now().isoformat()}], direct=True)
+                            'timestamp': datetime.now().isoformat()}], direct=direct)
         if self.max_length and len(self.history) > self.max_length:
             self.history.pop(0)
 

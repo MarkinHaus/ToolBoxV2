@@ -1,19 +1,17 @@
 import json
+import locale
 import os
 import pickle
 import platform
 import re
-import socket
 import subprocess
+import sys
 import threading
-from datetime import datetime
-from json import JSONDecodeError
 
 import requests
 import tiktoken
-from pebble import concurrent
 
-from toolboxv2 import Singleton, Style, get_logger
+from toolboxv2 import Singleton, get_logger, remove_styles
 from toolboxv2.mods.isaa.base.KnowledgeBase import KnowledgeBase
 
 
@@ -78,7 +76,6 @@ def get_ip():
     return response["ip"]
 
 
-@concurrent.process(timeout=12)
 def get_location():
     ip_address = get_ip()
     response = requests.get(f'https://ipapi.co/{ip_address}/json/').json()
@@ -87,108 +84,47 @@ def get_location():
     return location_data, ip_address
 
 
-def initialize_system_infos(info_sys):
-    global SystemInfos
-    if not os.path.exists(".config/system.infos"):
+import shutil
+import tempfile
+from pathlib import Path
 
-        if not os.path.exists(".config/"):
-            os.mkdir(".config/")
 
-        del info_sys['time']
+def detect_shell() -> tuple[str, str]:
+    """
+    Detects the best available shell and the argument to execute a command.
+    Returns:
+        A tuple of (shell_executable, command_argument).
+        e.g., ('/bin/bash', '-c') or ('powershell.exe', '-Command')
+    """
+    if platform.system() == "Windows":
+        if shell_path := shutil.which("pwsh"):
+            return shell_path, "-Command"
+        if shell_path := shutil.which("powershell"):
+            return shell_path, "-Command"
+        return "cmd.exe", "/c"
 
-        with open(".config/system.infos", "a", encoding="utf8") as f:
-            f.write(json.dumps(info_sys))
+    shell_env = os.environ.get("SHELL")
+    if shell_env and shutil.which(shell_env):
+        return shell_env, "-c"
 
-        SystemInfos = info_sys
+    for shell in ["bash", "zsh", "sh"]:
+        if shell_path := shutil.which(shell):
+            return shell_path, "-c"
 
-    else:
+    return "/bin/sh", "-c"
 
+
+def safe_decode(data: bytes) -> str:
+    encodings = [sys.stdout.encoding, locale.getpreferredencoding(), 'utf-8', 'latin-1', 'iso-8859-1']
+    for enc in encodings:
         try:
-            with open(".config/system.infos", encoding="utf8") as f:
-                SystemInfos = json.loads(f.read())
-        except JSONDecodeError:
-            pass
-
-        del info_sys['time']
-
-        if info_sys != SystemInfos:
-            SystemInfos = info_sys
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode('utf-8', errors='replace')
 
 
-def getSystemInfo(last_context='its Day 0 start to explore'):
-    global SystemInfos
-
-    if SystemInfos:
-        SystemInfos['time'] = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
-        return SystemInfos
-
-    try:
-        socket.gethostbyname(socket.gethostname())
-    except Exception as e:
-        get_logger().error(Style.RED(str(e)))
-        pass
-
-    info = {'time': datetime.today().strftime('%Y-%m-%d %H:%M:%S'), 'platform': platform.system(),
-            # 'platform-release': platform.release(), 'platform-version': platform.version(),
-            # 'architecture': platform.machine(), 'hostname': socket.gethostname(),
-            # 'mac-address': ':'.join(re.findall('..', '%012x' % uuid.getnode())), 'processor': platform.processor(),
-            # 'ram': str(round(psutil.virtual_memory().total / (1024.0 ** 3))) + " GB",
-            "last_context": last_context}
-
-    try:
-        process = get_location()
-        info['location'], info['ip'] = process.result()
-    except TimeoutError and Exception:
-        info['location'] = "Berlin Schöneberg"
-    initialize_system_infos(info)
-    return info
-
-
-class Scripts:
-    def __init__(self, filename):
-        self.scripts = {}
-        self.filename = filename
-
-    def create_script(self, name, description, content, script_type="py"):
-        self.scripts[name] = {"description": description, "content": content, "type": script_type}
-
-    def remove_script(self, name):
-        del self.scripts[name]
-
-    def run_script(self, name):
-        if name not in self.scripts:
-            return "Script not found!"
-        script = self.scripts[name]
-        with open(f"{name}.{script['type']}", "w") as f:
-            f.write(script["content"])
-        if script["type"] == "py":
-            result = subprocess.run(["python", f"{name}.py"], capture_output=True, text=True, encoding='cp850')
-        elif script["type"] == "sh":
-            result = subprocess.run(["bash", f"{name}.sh"], capture_output=True, text=True, encoding='cp850')
-        else:
-            os.remove(f"{name}.{script['type']}")
-            return "Not valid type valid ar python and bash"
-        os.remove(f"{name}.{script['type']}")
-        return result.stdout
-
-    def get_scripts_list(self):
-        return {name: script["description"] for name, script in self.scripts.items()}
-
-    def save_scripts(self):
-        if not os.path.exists(f"{self.filename}.pkl"):
-            os.makedirs(self.filename, exist_ok=True)
-        with open(f"{self.filename}.pkl", "wb") as f:
-            pickle.dump(self.scripts, f)
-
-    def load_scripts(self):
-        if os.path.exists(self.filename + '.pkl'):
-            with open(self.filename + '.pkl', "rb") as f:
-                data = f.read()
-            if data:
-                self.scripts = pickle.loads(data)
-        else:
-            os.makedirs(self.filename, exist_ok=True)
-            open(self.filename + '.pkl', "a").close()
+import asyncio
 
 
 class IsaaQuestionNode:
@@ -289,325 +225,94 @@ class IsaaQuestionBinaryTree:
         return IsaaQuestionBinaryTree(_cut_tree(self.root, cut_key))
 
 
-class Task:
-    def __init__(self, use, name, args, return_val,
-                 infos=None,
-                 short_mem=None,
-                 to_edit_text=None,
-                 text_splitter=None,
-                 chunk_run=None):
-        self.use = use
-        self.name = name
-        self.args = args
-        self.return_val = return_val
-        self.infos = infos
-        self.short_mem = short_mem
-        self.to_edit_text = to_edit_text
-        self.text_splitter = text_splitter
-        self.chunk_run = chunk_run
+import io
+import xml.etree.ElementTree as ET
+import zipfile
 
-    def infos(self, attributes=None):
-        if attributes is None:
-            return """
-Task format:
-Keys that must be included [use,mode,name,args,return]
-values for use ['agent', 'tools']
-
-{
-"use"
-"mode"
-"name"
-"args"
-"return"
-}
-"""
-        pass
-
-    def __getitem__(self, key):
-        return getattr(self, key)
+# Import der PyPDF2-Bibliothek
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
 
 
-class AgentChain:
-    def __init__(self, hydrate=None, f_hydrate=None, directory=".data/chains"):
-        self.chains = {}
-        self.chains_h = {}
-        self.chains_dis = {}
-        self.live_chains = {}
-        if not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
-        self.directory = directory
-        if hydrate is not None:
-            self.hydrate = hydrate
-        else:
-            self.hydrate = lambda x: x
-        if f_hydrate is not None:
-            self.f_hydrate = f_hydrate
-        else:
-            self.f_hydrate = lambda x: x
+def extract_text_natively(data: bytes, filename: str = "") -> str:
+    """
+    Extrahiert Text aus verschiedenen Dateitypen mit nativen Python-Methoden
+    oder reinen Python-Bibliotheken (speziell PyPDF2 für PDFs).
 
-    def add_hydrate(self, hydrate=None, f_hydrate=None):
-        if hydrate is not None:
-            self.hydrate = hydrate
-        else:
-            self.hydrate = lambda x: x
-        if f_hydrate is not None:
-            self.f_hydrate = f_hydrate
-        else:
-            self.f_hydrate = lambda x: x
-        self.chains_h = {}
+    Args:
+        data (bytes): Der Inhalt der Datei als Bytes.
+        filename (str, optional): Der Originaldateiname, um den Typ zu bestimmen.
 
-        for name, chain in self.chains.items():
-            self.add(name, chain)
+    Returns:
+        str: Der extrahierte Text.
 
-    @staticmethod
-    def format_name(name: str) -> str:
-        if name is None:
-            return ''
-        name = name.strip()
-        if '/' in name or '\\' in name or ' ' in name:
-            name = name.replace('/', '-').replace('\\', '-').replace(' ', '_')
-        return name
+    Raises:
+        ValueError: Wenn der Dateityp nicht unterstützt wird oder die Verarbeitung fehlschlägt.
+        ImportError: Wenn PyPDF2 für die Verarbeitung von PDF-Dateien benötigt, aber nicht installiert ist.
+    """
+    file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
 
-    def add(self, name, tasks):
-        name = self.format_name(name)
-        self.chains[name] = tasks
-        for task in tasks:
-            keys = task.keys()
-            if 'infos' in keys:
-                infos = task['infos']
+    # 1. DOCX-Verarbeitung (nativ mit zipfile und xml)
+    if data.startswith(b'PK\x03\x04'):
+        try:
+            docx_file = io.BytesIO(data)
+            text_parts = []
+            with zipfile.ZipFile(docx_file) as zf:
+                namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+                body_path = "word/document.xml"
+                if body_path in zf.namelist():
+                    xml_content = zf.read(body_path)
+                    tree = ET.fromstring(xml_content)
+                    for para in tree.iter(f"{namespace}p"):
+                        texts_in_para = [node.text for node in para.iter(f"{namespace}t") if node.text]
+                        if texts_in_para:
+                            text_parts.append("".join(texts_in_para))
+                return "\n".join(text_parts)
+        except (zipfile.BadZipFile, ET.ParseError):
+            pass  # Fährt fort, falls es eine ZIP-Datei, aber kein gültiges DOCX ist
 
-                if infos == "$Date":
-                    infos = infos.replace('$Date', datetime.today().strftime('%Y-%m-%d %H:%M:%S'))
+    # 2. PDF-Verarbeitung (mit PyPDF2)
+    if data.startswith(b'%PDF-'):
+        if PyPDF2 is None:
+            raise ImportError(
+                "Die Bibliothek 'PyPDF2' wird benötigt, um PDF-Dateien zu verarbeiten. Bitte installieren Sie sie mit 'pip install PyPDF2'.")
 
-                task['infos'] = self.hydrate(infos)
-            if 'function' in keys:
-                infos = task['name']
-                task['function'] = self.hydrate(infos)
-        self.chains_h[name] = tasks
+        try:
+            # Erstelle ein In-Memory-Dateiobjekt für PyPDF2
+            pdf_file = io.BytesIO(data)
+            # Verwende PdfFileReader aus PyPDF2
+            pdf_reader = PyPDF2.PdfFileReader(pdf_file)
 
-    def remove(self, name):
-        name = self.format_name(name)
-        if name in self.chains:
-            del self.chains[name]
-        if name in self.chains_h:
-            del self.chains_h[name]
-        if name in self.live_chains:
-            del self.live_chains[name]
-        else:
-            print(f"Chain '{name}' not found.")
+            text_parts = []
+            # Iteriere durch die Seiten
+            for page_num in range(pdf_reader.numPages):
+                page = pdf_reader.getPage(page_num)
+                # Extrahiere Text mit extractText()
+                page_text = page.extractText()
+                if page_text:
+                    text_parts.append(page_text)
 
-    def get(self, name: str):
-        name = self.format_name(name)
-        if name in list(self.chains_h.keys()):
-            return self.chains_h[name]
-        return []
+            return "\n".join(text_parts)
+        except Exception as e:
+            raise ValueError(f"PDF-Verarbeitung mit PyPDF2 fehlgeschlagen: {e}")
 
-    def add_discr(self, name, dis):
-        name = self.format_name(name)
-        if name in self.chains:
-            self.chains_dis[name + '-dis'] = dis
+    # 3. Fallback auf reinen Text (TXT)
 
-    def get_discr(self, name):
-        name = self.format_name(name)
-        if name + '-dis' in self.chains_dis:
-            return self.chains_dis[name + '-dis']
-        return None
-
-    def init_chain(self, name):
-        name = self.format_name(name)
-        self.save_to_file(name)
-        self.live_chains[name] = self.get(name)
-
-    def add_task(self, name, task):
-        name = self.format_name(name)
-        if name in self.chains:
-            self.chains[name].append(task)
-            return f"Task added to chain '{name}'."
-        else:
-            return f"Chain '{name}' not found."
-
-    def remove_task(self, name, task_index):
-        name = self.format_name(name)
-        if name in self.chains:
-            if 0 <= task_index < len(self.chains[name]):
-                return self.chains[name].pop(task_index)
-            else:
-                print(f"Task index '{task_index}' is out of range.")
-        else:
-            print(f"Chain '{name}' not found.")
-        return None
-
-    def test_chain(self, tasks=None):
-        if tasks is None:
-            tasks = []
-        e = 0
-        if tasks:
-            for task_idx, task in enumerate(tasks):
-                if "use" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} hat keinen 'use'-Schlüssel.")
-                if "name" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} 'name'-Schlüssel.")
-                if "args" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} hat keinen 'args'-Schlüssel.")
-            return e
-
-        for chain_name, tasks in self.chains.items():
-            for task_idx, task in enumerate(tasks):
-                if "use" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'use'-Schlüssel.")
-                if "name" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'name'-Schlüssel.")
-                if "args" not in task:
-                    e += 1
-                    print(f"Die Aufgabe {task_idx} in der Chain '{chain_name}' hat keinen 'args'-Schlüssel.")
-        return e
-
-    def load_from_file(self, chain_name=None):
-
-        self.chains = self.live_chains
-
-        if not os.path.exists(self.directory):
-            print(f"Der Ordner '{self.directory}' existiert nicht.")
-            return
-
-        if chain_name is None:
-            files = os.listdir(self.directory)
-        else:
-            files = [f"{chain_name}.json"]
-        print("--------------------------------")
-        for file in files:
-            file_path = os.path.join(self.directory, file)
-
-            if not file.endswith(".json"):
-                continue
-            try:
-                with open(file_path, encoding='utf-8') as f:
-                    dat = f.read()
-                    chain_data = json.loads(dat)
-                chain_name = os.path.splitext(file)[0]
-                print(f"Loading : {chain_name}")
-                self.add(chain_name, chain_data["tasks"])
-                if 'dis' in chain_data:
-                    self.add_discr(chain_name, chain_data['dis'])
-            except Exception as e:
-                print(Style.RED(f"Beim Laden der Datei '{file_path}' ist ein Fehler aufgetreten: {e}"))
-        if "toolRunner" not in self.chains:
-            print("loading default chain toolRunner")
-            self.add("toolRunner", [
-                {
-                    "use": "agent",
-                    "name": "tools",
-                    "args": "$user-input",
-                    "return": "$return",
-
-                    "running_mode": "invoke"
-                }
-            ])
-        if "toolRunnerMission" not in self.chains:
-            print("loading default chain toolRunnerMission")
-            self.add("toolRunnerMission", [
-                {
-                    "use": "agent",
-                    "name": "tools",
-                    "args": "As a highly skilled and autonomous agent, your task is to achieve a complex mission. "
-                            "However, you will not directly execute the tasks yourself. Your role is to act as a "
-                            "supervisor and create chains of agents to successfully accomplish the mission. Your "
-                            "main responsibility is to ensure that the mission's objectives are achieved. your "
-                            "mission : $user-input",
-                    "return": "$return",
-                    "running_mode": "lineIs"
-                }
-            ])
-        if "SelfRunner" not in self.chains:
-            print("loading default chain SelfRunner")
-            self.add("SelfRunner", [
-                {
-                    "use": "agent",
-                    "name": "self",
-                    "mode": "conversation",
-                    "args": "$user-input",
-                    "return": "$return"
-                }
-            ])
-        print(
-            f"\n================================\nChainsLoaded : {len(self.chains.keys())}\n================================\n")
-
-        return self
-
-    def load_from_dict(self, dict_data: list):
-
-        self.chains = self.live_chains
-
-        if not dict_data or not isinstance(dict_data, list):
-            print(f"Keine Daten übergeben '{dict_data}'")
-            return
-
-        for chain in dict_data:
-            chain_name, chain_data = chain['name'], chain['tasks']
-            if self.test_chain(chain_data) != 0:
-                print(f"Error Loading : {chain_name}")
-            self.add(chain_name, chain_data)
-            if 'dis' in chain:
-                self.add_discr(chain_name, chain['dis'])
-
-        return self
-
-    def save_to_dict(self, chain_name=None):
-
-        if chain_name is None:
-            chains_to_save = self.chains
-        else:
-            if chain_name not in self.chains:
-                print(f"Die Chain '{chain_name}' wurde nicht gefunden.")
-                return
-            chains_to_save = {chain_name: self.chains[chain_name]}
-        chain_data = {}
-        for name, tasks in chains_to_save.items():
-            chain_data = {"name": name, "tasks": tasks, "dis": self.get_discr(name)}
-        return chain_data
-
-    def save_to_file(self, chain_name=None):
-
-        if not os.path.exists(self.directory):
-            os.makedirs(self.directory)
-
-        if chain_name is None:
-            chains_to_save = self.chains
-        else:
-            if chain_name not in self.chains:
-                print(f"Die Chain '{chain_name}' wurde nicht gefunden.")
-                return
-            chains_to_save = {chain_name: self.chains[chain_name]}
-        if chains_to_save:
-            print("--------------------------------", end='\r')
-        for name, tasks in chains_to_save.items():
-            file_path = os.path.join(self.directory, f"{name}.json")
-            chain_data = {"name": name, "tasks": tasks, "dis": self.get_discr(name)}
-
-            try:
-                with open(file_path, "w", encoding='utf-8') as f:
-                    print(f"Saving : {name}")
-                    json.dump(chain_data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"Beim Speichern der Datei '{file_path}' ist ein Fehler aufgetreten: {e}")
-        if len(self.chains.keys()):
-            print(
-                f"================================\nChainsSaved : {len(self.chains.keys())}\n================================\n")
-
-    def __str__(self):
-        return str(self.chains.keys())
-
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            return data.decode('latin-1')
+        except Exception as e:
+            raise ValueError(f"Text-Dekodierung fehlgeschlagen: {e}")
 
 
 class AISemanticMemory(metaclass=Singleton):
     def __init__(self,
                  base_path: str = "/semantic_memory",
-                 default_model: str = os.getenv("DEFAULTMODELSUMMERY"),
+                 default_model: str = os.getenv("BLITZMODEL"),
                  default_embedding_model: str = os.getenv("DEFAULTMODELEMBEDDING"),
                  default_similarity_threshold: float = 0.61,
                  default_batch_size: int = 64,
@@ -731,8 +436,7 @@ class AISemanticMemory(metaclass=Singleton):
         texts = []
         if isinstance(data, bytes):
             try:
-                import textract
-                text = textract.process(data).decode('utf-8')
+                text = extract_text_natively(data, filename="" if metadata is None else metadata.get("filename", ""))
                 texts = [text.replace('\\t', '').replace('\t', '')]
             except Exception as e:
                 raise ValueError(f"File processing failed: {str(e)}")
@@ -797,13 +501,15 @@ class AISemanticMemory(metaclass=Singleton):
                     max_cross_refs=query_params.get("max_cross_refs", 6) if query_params else 6,
                     max_sentences=query_params.get("max_sentences", 12) if query_params else 12
                 )
-                results.append({
-                    "memory": name,
-                    "result": result
-                })
+                if result.overview:
+                    results.append({
+                        "memory": name,
+                        "result": result
+                    })
             #except Exception as e:
             #    print(f"Query failed on {name}: {str(e)}")
         if to_str:
+            str_res = ""
             if not unified_retrieve:
                 str_res = [
                     f"{x['memory']} - {json.dumps(x['result'].overview)}\n - {[c.text for c in x['result'].details]}\n - {[(k, [c.text for c in v]) for k, v in x['result'].cross_references.items()]}"
@@ -867,6 +573,10 @@ class AISemanticMemory(metaclass=Singleton):
             if file.endswith(".pkl"):
                 try:
                     self.memories[file[:-4]] = KnowledgeBase.load(os.path.join(path, file))
+                except EOFError:
+                    return False
+                except FileNotFoundError:
+                    return False
                 except Exception as e:
                     print(f"Error loading memory: {str(e)}")
                     return False
@@ -1225,9 +935,8 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
 
         if not is_default:
             try:
-
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                transformers = __import__("transformers")
+                tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
 
                 def hugging_tokenize(x):
                     return tokenizer.tokenize(x)
@@ -1235,6 +944,9 @@ def get_token_mini(text: str, model_name=None, isaa=None, only_len=True):
                 encode = hugging_tokenize
 
             except ValueError:
+                pass
+            except ImportError:
+                encode = lambda x: round(len(x)*0.4)
                 pass
 
     else:
@@ -1741,12 +1453,7 @@ def _extract_from_string_de(agent_text, all_actions):
 
 
 import os
-import re
-import threading
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
-
-
+from dataclasses import asdict, dataclass, field
 
 
 @dataclass

@@ -213,7 +213,7 @@ for details run
 This setup includes the Python backend, Rust server, and Tauri/Web frontend.
 
 **Prerequisites:**
-*   Python 3.11 or higher
+*   Python 3.10 or higher
 *   [Rust and Cargo](https://www.rust-lang.org/tools/install)
 *   [Node.js](https://nodejs.org/) (which includes npm)
 *   Tauri CLI: `cargo install tauri-cli`
@@ -255,7 +255,6 @@ ToolBoxV2 can be used to build a wide range of applications, including:
 ## 📄 License
 
 This project is distributed under a custom license. Please refer to the [LICENSE](./LICENSE) file in the repository for detailed terms and conditions.
-
 ---
 
 © 2022–2025 Markin Hausmanns – All rights reserved.

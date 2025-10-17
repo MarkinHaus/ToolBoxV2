@@ -1,6 +1,6 @@
 import asyncio
 
-from toolboxv2 import TBEF, App, Result, get_app
+from toolboxv2 import TBEF, App, Result, get_app, RequestData
 
 from ..CloudM import User
 
@@ -13,10 +13,10 @@ spec = ''
 all_widgets = []
 
 
-def get_s_id(request):
+def get_s_id(request: RequestData):
     if request is None:
         return Result.default_internal_error("No request specified")
-    sID = request.session.get('ID', '')
+    sID = request.session.SiID
     return Result.ok(sID)
 
 
@@ -37,12 +37,12 @@ def get_all_widget_mods(app: App):
 
 
 @export(mod_name=Name, version=version)
-async def get_user_from_request(app, request):
+async def get_user_from_request(app, request: RequestData):
     if request is None:
         return User()
-    name = request.session.get('live_data', {}).get('user_name', "Cud be ur name")
-    if name != "Cud be ur name":
-        user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=app.config_fh.decode_code(name))
+    name = request.session.user_name
+    if name != "anonymous":
+        user = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=name)
     else:
         user = User()
     return user

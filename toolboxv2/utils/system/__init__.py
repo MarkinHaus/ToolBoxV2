@@ -33,6 +33,7 @@ __all__ = [
     "FileHandler",
     "FileCache",
     "get_app",
+    "tb_logger",
     "override_main_app",
     "MemoryCache",
     "get_state_from_app",

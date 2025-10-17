@@ -1,7 +1,7 @@
 from toolboxv2.mods.isaa.base.VectorStores.types import AbstractVectorStore, Chunk
 
 try:
-    import numba
+    numba = __import__("numba")
 except ImportError:
     def numba():
         return None
@@ -9,24 +9,22 @@ except ImportError:
     numba.njit =lambda **_:lambda x:x
     print("numba not found, using fallback")
 import contextlib
-import json
 import os
 import pickle
 import threading
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
-import torch
+
 
 try:
-    import taichi as ti
+    ti = __import__("taichi")
 
     use_gpu = False
     ti.init(arch=ti.gpu if use_gpu else ti.cpu)
 except ImportError:
-    ti = None
+    ti = lambda: None
+    print("taichi not found, using fallback")
 
 try:
 
@@ -51,7 +49,7 @@ try:
             # Normalize
             for j in range(dim):
                 output[i, j] = vectors[i, j] * inv_norm
-except ImportError:
+except AttributeError:
 
     import math
     def batch_normalize(
@@ -261,7 +259,7 @@ try:
                     continue
                 for k in range(j, ti.min(j + 16, dim)):
                     output[i, k] = vectors[i, k] * inv_norm
-except ImportError:
+except AttributeError:
     import math
 
     def batch_normalize(
@@ -467,6 +465,7 @@ def _partition_vectors_helper(vectors, centroids):
 
 class FastVectorStore(AbstractVectorStore):
     def __init__(self):
+        torch = __import__('torch')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.chunks = []
         self.embeddings = None
@@ -663,7 +662,8 @@ class FastVectorStore(AbstractVectorStore):
         self._build_index_if_needed()
 
 class FastVectorStoreO(AbstractVectorStore):
-    def __init__(self, embedding_size=768, initial_buffer_size=1000000):
+    def __init__(self, embedding_size=768, initial_buffer_size=1000):
+        torch = __import__('torch')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedding_size = embedding_size
         self.initial_buffer_size = initial_buffer_size

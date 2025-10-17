@@ -4,6 +4,7 @@
 import "../ui/components/CookieBanner/CookieBanner.css";
 import "../ui/components/Modal/Modal.css";
 import "../ui/components/Toast/Toast.css";
+import "../ui/components/Chat/Chat.css";
 
 import theme from './theme.js';
 import htmxIntegration from './htmx-integration.js';
@@ -19,6 +20,7 @@ import CookieBanner from './components/CookieBanner/CookieBanner.js';
 import MarkdownRenderer from './components/MarkdownRenderer/MarkdownRenderer.js';
 import AutocompleteWidget from './components/Autocomplete/Autocomplete.js'; // Renamed to avoid conflict with core util
 import NavMenu from './components/NavMenu/NavMenu.js';
+import ChatWidget from './components/Chat/Chat.js';
 import {logger} from "../core/index.js";
 
 /**
@@ -105,4 +107,5 @@ export {
     MarkdownRenderer,
     AutocompleteWidget,
     NavMenu,
+    ChatWidget
 };

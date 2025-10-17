@@ -141,6 +141,7 @@ class DaemonUtil:
 
             if not receiver_queue.empty():
                 data = receiver_queue.get()
+                print(data)
                 if not data:
                     continue
                 if 'identifier' not in data:
@@ -186,6 +187,8 @@ class DaemonUtil:
                         name = data.get('name')
                         args = data.get('args')
                         kwargs = data.get('kwargs')
+                        if not name:
+                            continue
 
                         get_logger().info(f"Request data: {name=}{args=}{kwargs=}{identifier=}")
 
@@ -236,6 +239,8 @@ class DaemonUtil:
 
                                 await sender(res, identifier)
                             except Exception as e:
+                                import traceback
+                                print(traceback.format_exc())
                                 await sender({"data": str(e)}, identifier)
 
                         await _helper_runner()

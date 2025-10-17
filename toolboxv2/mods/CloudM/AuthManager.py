@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 from dataclasses import asdict
-from typing import Optional, Any, Dict
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import jwt
@@ -17,17 +17,22 @@ from webauthn.helpers.exceptions import (
     InvalidRegistrationResponse,
 )
 from webauthn.helpers.structs import (
-    AuthenticationCredential as WebAuthnAuthenticationCredential, # Rename to avoid clash if needed
-    AuthenticatorAssertionResponse as WebAuthnAuthenticatorAssertionResponse,
-    RegistrationCredential,
-    AuthenticatorAttestationResponse
+    AuthenticationCredential as WebAuthnAuthenticationCredential,  # Rename to avoid clash if needed
 )
-from toolboxv2 import TBEF, App, Result, ToolBox_over, get_app, get_logger
+from webauthn.helpers.structs import (
+    AuthenticatorAssertionResponse as WebAuthnAuthenticatorAssertionResponse,
+)
+from webauthn.helpers.structs import (
+    AuthenticatorAttestationResponse,
+    RegistrationCredential,
+)
+
+from toolboxv2 import TBEF, App, Result, get_app, get_logger
 from toolboxv2.mods.DB.types import DatabaseModes
 from toolboxv2.utils.security.cryp import Code
 from toolboxv2.utils.system.types import ApiResult, ToolBoxInterfaces
-from .email_services import send_magic_link_email
 
+from .email_services import send_magic_link_email
 from .types import User, UserCreator
 
 version = "0.0.2"
@@ -42,7 +47,7 @@ def b64decode(s: str) -> bytes: # Used for URL-safe base64
     padding = '=' * (-len(s) % 4)
     return base64.urlsafe_b64decode(s.encode() + padding.encode())
 # Helper for standard base64 to bytes, as used by client for response fields
-def base64_std_to_bytes(val: Optional[str]) -> Optional[bytes]:
+def base64_std_to_bytes(val: str | None) -> bytes | None:
     if val is None:
         return None
     if not isinstance(val, str):
@@ -151,7 +156,7 @@ def delete_user(app: App, username: str):
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.native)
 def list_users(app: App):
     """Lists all registered users."""
-    keys_result = app.run_any(TBEF.DB.GET, query="USER::*::*", get_results=True)
+    keys_result = app.run_any(TBEF.DB.GET, query="all-k", get_results=True)
     if keys_result.is_error():
         return keys_result
 
@@ -163,6 +168,8 @@ def list_users(app: App):
     for key in user_keys:
         if isinstance(key, bytes):
             key = key.decode()
+        if not key.startswith("USER::"):
+            continue
         # Extract username from the key USER::username::uid
         parts = key.split('::')
         if len(parts) > 1 and parts[1] not in [u['username'] for u in users]:
@@ -626,7 +633,7 @@ async def local_login(app: App, username: str) -> Result:
         s = await remote_session.fetch(f"/api/CloudM.AuthManager/get_to_sing_data?username={username}", method="POST")
         challenge = s.get('challenge')
         signature = Code.create_signature(challenge, user_pri, row=True)
-        res = await remote_session.fetch(f"/api/CloudM.AuthManager/jwt_get_claim", method="POST", data={'username': username, 'signature': signature})
+        res = await remote_session.fetch("/api/CloudM.AuthManager/jwt_get_claim", method="POST", data={'username': username, 'signature': signature})
 
     if res.info.exec_code != 0:
         return Result.custom_error(data=res, info="user login failed!", exec_code=res.info.exec_code)
@@ -706,8 +713,8 @@ class ClientAuthNCredentialPayload(BaseModel):
     id: str  # Base64URL string (credential.id from browser)
     raw_id: str  # Base64URL string (also credential.id from browser, will be decoded to bytes)
     type: str
-    authenticator_attachment: Optional[str] = None
-    response: Dict[str, Any]  # Keep as dict for now, will be processed
+    authenticator_attachment: str | None = None
+    response: dict[str, Any]  # Keep as dict for now, will be processed
     # client_extension_results: Optional[Dict[str, Any]] = None # If you use extensions
 
 

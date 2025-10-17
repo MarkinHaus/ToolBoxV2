@@ -1,6 +1,6 @@
+import os
 import subprocess
 import sys
-import os
 
 
 def run_executable_in_background(executable_path, args=None):

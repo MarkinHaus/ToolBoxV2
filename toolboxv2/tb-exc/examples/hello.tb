@@ -1,0 +1,11 @@
+#!tbx
+@config {
+    mode: "compiled"
+}
+
+fn main() {
+    echo "Hello, TB Language!"
+    echo "This is a simple example"
+}
+
+main()

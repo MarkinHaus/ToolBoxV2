@@ -13,7 +13,7 @@ with open('README.md', encoding="utf8") as readme_file:
 #
 # with open(getenv('CONFIG_FILE', '/toolboxv2/toolbox.yaml'), 'r') as config_file:
 #    _version = config_file.read().split('version')[-1].split('\n')[0].split(':')[-1].strip()
-version = "v0.1.22"  # _version  # _version.get('main', {}).get('version', '-.-.-')
+version = "v0.1.24"  # _version  # _version.get('main', {}).get('version', '-.-.-')
 
 here = path.abspath(path.dirname(__file__))
 
@@ -43,14 +43,14 @@ test_requirements = []
 setup(
     author="Markin Hausmanns",
     author_email='Markinhausmanns@gmail.com',
-    python_requires='>=3.11',
+    python_requires='>=3.10',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
         # 'Programming Language :: Python :: 3.9',
-        # 'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
     ],

@@ -26,6 +26,10 @@ def override_main_app(app):
 def get_app(from_=None, name=None, args=AppArgs().default(), app_con=None, sync=False) -> AppType:
     global registered_apps
     # name = None
+    # inspect caller
+    # from inspect import getouterframes, currentframe
+    # print(f"get app requested from: {getouterframes(currentframe(), 2)[1].filename}::{getouterframes(currentframe(), 2)[1].lineno}")
+
     # print(f"get app requested from: {from_} withe name: {name}")
     logger = get_logger()
     logger.info(Style.GREYBG(f"get app requested from: {from_}"))
@@ -84,7 +88,7 @@ async def a_save_closing_app():
 
     if not app.called_exit[0] and time.time() - app.called_exit[1] < 8:
         await app.a_exit()
-        app.print(Style.Bold(Style.ITALIC("- Error? -")))
+        app.print(Style.Bold(Style.ITALIC("- Fast exit -")))
         return
 
     if not app.called_exit[0]:

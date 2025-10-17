@@ -1,0 +1,26 @@
+#!tb
+@config {
+    mode: "jit"
+}
+
+fn double(x: int) -> int {
+    x * 2
+}
+
+fn triple(x: int) -> int {
+    x * 3
+}
+
+fn main() {
+    let numbers = [1, 2, 3, 4, 5]
+
+    echo "Original: $numbers"
+
+    for n in numbers {
+        let d = double(n)
+        let t = triple(n)
+        echo "n=$n, double=$d, triple=$t"
+    }
+}
+
+main()

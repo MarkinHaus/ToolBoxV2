@@ -8,6 +8,8 @@ from email.mime.text import MIMEText
 
 from dateutil import parser
 
+from toolboxv2.mods.isaa.base.AgentUtils import LLMMode
+
 try:
     from whatsapp import Message, WhatsApp
 except ImportError:
@@ -21,7 +23,11 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+try:
+    from datetime import UTC, datetime, timedelta
+except ImportError:
+    from datetime import datetime, timedelta, timezone
+    UTC = timezone.utc
 from enum import Enum
 from typing import Any, Optional
 
@@ -29,7 +35,6 @@ from google.oauth2.credentials import Credentials
 
 from toolboxv2 import TBEF, get_app
 from toolboxv2.mods.isaa import Tools
-from toolboxv2.mods.isaa.base.Agents import LLMMode
 from toolboxv2.mods.WhatsAppTb.server import AppManager
 from toolboxv2.mods.WhatsAppTb.utils import (
     ProgressMessenger,

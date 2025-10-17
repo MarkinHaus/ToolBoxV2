@@ -1,10 +1,12 @@
 # toolboxv2/mods/CloudM/UI/user_account_manager.py
 
-import uuid
 from dataclasses import asdict
 
-from toolboxv2 import TBEF, App, Result, get_app, RequestData
-from toolboxv2.mods.CloudM.AuthManager import db_helper_save_user  # Assuming AuthManager functions are accessible
+from toolboxv2 import TBEF, App, RequestData, Result, get_app
+from toolboxv2.mods.CloudM.AuthManager import (
+    db_helper_save_user,  # Assuming AuthManager functions are accessible
+)
+
 from .types import User  # From toolboxv2/mods/CloudM/types.py
 
 Name = 'CloudM.UserAccountManager'
@@ -94,7 +96,7 @@ async def update_email(app: App, request: RequestData, new_email: str):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True, level=1)
 async def update_setting(app: App, request: RequestData, setting_key: str, setting_value: str):
     if request is None:
-        return f"<div class='text-red-500'>Error: No request data provided.</div>"
+        return "<div class='text-red-500'>Error: No request data provided.</div>"
     user = await get_current_user_from_request(app, request)
     # hx_trigger might not be reliable or always present if not an HTMX direct call.
     # Use a fixed or uniquely generated ID from the tbjs side if needed, or ensure HTMX context.
@@ -105,7 +107,7 @@ async def update_setting(app: App, request: RequestData, setting_key: str, setti
         target_id_suffix = "default"  # Fallback
 
     if not user:
-        return f"<div class='text-red-500'>Error: User not authenticated or found.</div>"  # Basic error for HTMX
+        return "<div class='text-red-500'>Error: User not authenticated or found.</div>"  # Basic error for HTMX
 
     if setting_key == "experimental_features":
         actual_value = setting_value.lower() == 'true'

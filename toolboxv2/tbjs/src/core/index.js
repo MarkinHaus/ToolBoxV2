@@ -7,11 +7,11 @@ import router from './router.js';
 import api from './api.js';
 import env from './env.js';
 import events from './events.js';
-import notification from './notification.js';
 import logger from './logger.js';
 import * as crypto from './crypto.js';
 import * as graphics from './graphics.js';
 import sse from './sse.js';
+import ws from './ws.js';
 import * as utils from './utils.js';
 import sw from './sw.js';
 import user from './user.js';
@@ -33,9 +33,9 @@ export {
     sse,
     utils,
     graphics,
+    ws,
     sw,
     user,
-    notification,
     ToolBoxError,
     ToolBoxInterfaces,
     ToolBoxResult,

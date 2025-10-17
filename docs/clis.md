@@ -131,7 +131,7 @@ This CLI is a powerful tool for managing a distributed cluster of `r_blob_db` in
 
 ---
 
-## 🚀 API Server Manager (`api_manager.py`) - User Guide
+## 🚀 API Server Manager (`api.py`) - User Guide
 
 This manager is designed for high-availability web services. Its standout feature is the ability to perform **zero-downtime updates on POSIX systems (Linux/macOS)** by passing the active network socket from the old process to the new one, ensuring no client requests are dropped during the update.
 

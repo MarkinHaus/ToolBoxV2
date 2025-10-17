@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from queue import Queue
 from typing import Dict, Union, List, Any
 
-from fastapi import Request
 import os
 import random
 from threading import Thread, Event

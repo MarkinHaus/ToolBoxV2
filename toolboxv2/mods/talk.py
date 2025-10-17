@@ -2,13 +2,15 @@
 import asyncio
 import base64
 import uuid
-from typing import Dict, Optional, Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from toolboxv2 import App, Result, RequestData, TBEF, get_app, MainTool
+from toolboxv2 import TBEF, App, MainTool, RequestData, Result, get_app
 from toolboxv2.mods.isaa.extras.session import ChatSession
 from toolboxv2.utils.extras.base_widget import get_current_user_from_request
+
 # The ChatSession is central to maintaining conversation context with the agent.
 
 
@@ -26,7 +28,7 @@ class TalkSession(BaseModel):
     chat_session: ChatSession
     event_queue: asyncio.Queue = Field(default_factory=asyncio.Queue, exclude=True)
     # Task to track the running agent process, preventing concurrent requests
-    agent_task: Optional[asyncio.Task] = Field(default=None, exclude=True)
+    agent_task: asyncio.Task | None = Field(default=None, exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
@@ -44,7 +46,7 @@ class Tools(MainTool):
         self.version = VERSION
         self.name = MOD_NAME
         self.color = "CYAN"
-        self.sessions: Dict[str, TalkSession] = {}
+        self.sessions: dict[str, TalkSession] = {}
         self.stt_func = None
         self.tts_func = None
         self.isaa_mod = None
@@ -55,7 +57,7 @@ class Tools(MainTool):
         self.app.logger.info(f"Starting {self.name} v{self.version}...")
 
         # Get the ISAA module instance, which is a critical dependency
-        self.isaa_mod = self.app.get_mod("isaa")
+        self.isaa_mod = None#self.app.get_mod("isaa")
         if not self.isaa_mod:
             self.app.logger.error(
                 f"{self.name}: ISAA module not found or failed to load. Voice assistant will not be functional.")
@@ -98,14 +100,14 @@ class Tools(MainTool):
 
 
 # --- Helper Function ---
-async def _get_user_uid(app: App, request: RequestData) -> Optional[str]:
+async def _get_user_uid(app: App, request: RequestData) -> str | None:
     """Securely retrieves the user ID from the request context."""
     user = await get_current_user_from_request(app, request)
     return user.uid if user and hasattr(user, 'uid') and user.uid else None
 
 
 # --- Core Agent Logic (Background Task) ---
-async def _run_agent_and_respond(self: Tools, session: TalkSession, text: str, voice_params: Dict):
+async def _run_agent_and_respond(self: Tools, session: TalkSession, text: str, voice_params: dict):
     """
     The core logic for running the agent, handling callbacks, and generating responses.
     This function is designed to run as a background asyncio.Task.
@@ -191,7 +193,7 @@ async def api_open_stream(self: Tools, request: RequestData, session_id: str) ->
     session = self.sessions[session_id]
     queue = session.event_queue
 
-    async def event_generator() -> AsyncGenerator[Dict[str, Any], None]:
+    async def event_generator() -> AsyncGenerator[dict[str, Any], None]:
         self.app.logger.info(f"SSE stream opened for session {session_id}")
         await queue.put({"event": "connection_ready", "data": "Stream connected successfully."})
         try:
@@ -212,7 +214,7 @@ async def api_open_stream(self: Tools, request: RequestData, session_id: str) ->
 
 
 @export(mod_name=MOD_NAME, api=True, name="process_audio", api_methods=['POST'], request_as_kwarg=True)
-async def api_process_audio(self: Tools, request: RequestData, form_data: Dict) -> Result:
+async def api_process_audio(self: Tools, request: RequestData, form_data: dict) -> Result:
     """Receives audio, transcribes it, and starts the agent processing task."""
     if not self.stt_func:
         return Result.default_internal_error(info="Speech-to-text service is not available.")

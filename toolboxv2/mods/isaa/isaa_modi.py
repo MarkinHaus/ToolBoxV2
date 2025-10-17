@@ -1,4 +1,5 @@
 import os
+
 from toolboxv2.mods import BROWSER
 
 PIPLINE = None
@@ -23,6 +24,7 @@ except ImportError:
     INQUIRER = False
 
 from toolboxv2.utils.extras.Style import Style, print_to_console
+
 
 def sys_print(x, **kwargs):
     print_to_console("SYSTEM:", Style.style_dic['BLUE'], x, max_typing_speed=0.04, min_typing_speed=0.08)

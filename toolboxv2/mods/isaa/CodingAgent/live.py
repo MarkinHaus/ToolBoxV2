@@ -1,6 +1,4 @@
 import ast
-import types
-
 import asyncio
 import importlib
 import io
@@ -13,640 +11,23 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import traceback
-from collections import defaultdict
-from contextlib import redirect_stderr, redirect_stdout, contextmanager
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from dataclasses import dataclass
 
 ### ---- Styles ------- ###
-from enum import Enum, auto
 from inspect import (
-    Signature,
     currentframe,
-    getdoc,
-    isclass,
-    isfunction,
-    ismethod,
     signature,
 )
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any
 
-import nest_asyncio
-from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 import toolboxv2
-from toolboxv2 import Spinner, Style, get_app
-from toolboxv2.mods.isaa.extras.session import ChatSession
-
-
-@dataclass
-class JSExecutionRecord:
-    """Records JavaScript execution details"""
-    code: str
-    result: Any
-    error: str | None = None
-    page_state: dict | None = None
-    extracted_data: dict | None = None
-
-
-class DynamicVerboseFormatter:
-    """Unified, dynamic formatter that adapts to screen size"""
-
-    def __init__(self, print_func=None, min_width: int = 40, max_width: int = 240):
-        self.style = Style()
-        self.print = print_func or print
-        self.min_width = min_width
-        self.max_width = max_width
-        self._terminal_width = self._get_terminal_width()
-
-
-    def get_git_info(self):
-        """Checks for a git repo and returns its name and branch, or None."""
-        try:
-            # Check if we are in a git repository
-            subprocess.check_output(['git', 'rev-parse', '--is-inside-work-tree'], stderr=subprocess.DEVNULL)
-
-            # Get the repo name (root folder name)
-            repo_root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
-                                                stderr=subprocess.DEVNULL).strip().decode('utf-8')
-            repo_name = os.path.basename(repo_root)
-
-            # Get the current branch name
-            branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                                             stderr=subprocess.DEVNULL).strip().decode('utf-8')
-
-            return repo_name, branch
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # This handles cases where 'git' is not installed or it's not a git repo
-            return None
-
-    def _get_terminal_width(self) -> int:
-        """Get current terminal width with fallback"""
-        try:
-            width = shutil.get_terminal_size().columns
-            return max(self.min_width, min(width - 2, self.max_width))
-        except (OSError, AttributeError):
-            return 80
-
-    def _wrap_text(self, text: str, width: int = None) -> list[str]:
-        """Wrap text to fit terminal width"""
-        if width is None:
-            width = self._terminal_width - 4  # Account for borders
-
-        words = text.split()
-        lines = []
-        current_line = []
-        current_length = 0
-
-        for word in words:
-            if current_length + len(word) + len(current_line) <= width:
-                current_line.append(word)
-                current_length += len(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-                current_length = len(word)
-
-        if current_line:
-            lines.append(' '.join(current_line))
-
-        return lines
-
-    def _create_border(self, char: str = "─", width: int = None) -> str:
-        """Create a border line that fits the terminal"""
-        if width is None:
-            width = self._terminal_width
-        return char * width
-
-    def _center_text(self, text: str, width: int = None) -> str:
-        """Center text within the given width"""
-        if width is None:
-            width = self._terminal_width
-
-        # Remove ANSI codes for length calculation
-        clean_text = self._strip_ansi(text)
-        padding = max(0, (width - len(clean_text)) // 2)
-        return " " * padding + text
-
-    def _strip_ansi(self, text: str) -> str:
-        """Remove ANSI escape codes for length calculation"""
-        import re
-        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        return ansi_escape.sub('', text)
-
-    def print_header(self, text: str):
-        """Print a dynamic header that adapts to screen size"""
-        self._terminal_width = self._get_terminal_width()
-
-        if self._terminal_width < 60:  # Tiny screen
-            self.print()
-            self.print(self.style.CYAN("=" * self._terminal_width))
-            self.print(self.style.CYAN(self.style.Bold(text)))
-            self.print(self.style.CYAN("=" * self._terminal_width))
-        else:  # Regular/large screen
-            border_width = min(len(text) + 2, self._terminal_width - 2)
-            border = "─" * border_width
-
-            self.print()
-            self.print(self.style.CYAN(f"┌{border}┐"))
-            self.print(self.style.CYAN(f"│ {self.style.Bold(text).center(border_width - 2)} │"))
-            self.print(self.style.CYAN(f"└{border}┘"))
-        self.print()
-
-    def print_section(self, title: str, content: str):
-        """Print a clean section with adaptive formatting"""
-        self._terminal_width = self._get_terminal_width()
-
-        # Title
-        if self._terminal_width < 60:
-            self.print(f"\n{self.style.BLUE('●')} {self.style.Bold(title)}")
-        else:
-            self.print(f"\n{self.style.BLUE('●')} {self.style.Bold(self.style.BLUE(title))}")
-
-        # Content with proper wrapping
-        for line in content.split('\n'):
-            if line.strip():
-                wrapped_lines = self._wrap_text(line.strip())
-                for wrapped_line in wrapped_lines:
-                    if self._terminal_width < 60:
-                        self.print(f"  {wrapped_line}")
-                    else:
-                        self.print(f"  {self.style.GREY('│')} {wrapped_line}")
-        self.print()
-
-    def print_progress_bar(self, current: int, maximum: int, title: str = "Progress"):
-        """Dynamic progress bar that adapts to screen size"""
-        self._terminal_width = self._get_terminal_width()
-
-        # Calculate bar width based on screen size
-        if self._terminal_width < 60:
-            bar_width = 10
-            template = f"\r{title}: [{{}}] {current}/{maximum}"
-        else:
-            bar_width = min(30, self._terminal_width - 30)
-            template = f"\r{self.style.CYAN(title)}: [{{}}] {current}/{maximum} ({current / maximum * 100:.1f}%)"
-
-        progress = int((current / maximum) * bar_width)
-        bar = "█" * progress + "░" * (bar_width - progress)
-
-        self.print(template.format(bar), end='', flush=True)
-
-    def print_state(self, state: str, details: Dict[str, Any] = None) -> str:
-        """Print current state with adaptive formatting"""
-        self._terminal_width = self._get_terminal_width()
-
-        state_colors = {
-            'ACTION': self.style.GREEN2,
-            'PROCESSING': self.style.YELLOW2,
-            'BRAKE': self.style.RED2,
-            'DONE': self.style.BLUE2,
-            'ERROR': self.style.RED,
-            'SUCCESS': self.style.GREEN,
-            'INFO': self.style.CYAN
-        }
-
-        color_func = state_colors.get(state.upper(), self.style.WHITE2)
-
-        if self._terminal_width < 60:
-            # Compact format for small screens
-            self.print(f"\n[{color_func(state)}]")
-            result = f"\n[{state}]"
-        else:
-            # Full format for larger screens
-            self.print(f"\n{self.style.Bold('State:')} {color_func(state)}")
-            result = f"\nState: {state}"
-
-        if details:
-            for key, value in details.items():
-                # Truncate long values on small screens
-                if self._terminal_width < 60 and len(str(value)) > 30:
-                    display_value = str(value)[:27] + "..."
-                else:
-                    display_value = str(value)
-
-                if self._terminal_width < 60:
-                    self.print(f"  {key}: {display_value}")
-                    result += f"\n  {key}: {display_value}"
-                else:
-                    self.print(f"  {self.style.GREY('├─')} {self.style.CYAN(key)}: {display_value}")
-                    result += f"\n  ├─ {key}: {display_value}"
-
-        return result
-
-    def print_code_block(self, code: str, language: str = "python"):
-        """Print code with syntax awareness and proper formatting"""
-        self._terminal_width = self._get_terminal_width()
-
-        if self._terminal_width < 60:
-            # Simple format for small screens
-            self.print(f"\n{self.style.GREY('Code:')}")
-            for line in code.split('\n'):
-                self.print(f"  {line}")
-        else:
-            # Detailed format for larger screens
-            self.print(f"\n{self.style.BLUE('┌─')} {self.style.YELLOW2(f'{language.upper()} Code')}")
-
-            lines = code.split('\n')
-            for i, line in enumerate(lines):
-                if i == len(lines) - 1 and not line.strip():
-                    continue
-
-                # Wrap long lines
-                if len(line) > self._terminal_width - 6:
-                    wrapped = self._wrap_text(line, self._terminal_width - 6)
-                    for j, wrapped_line in enumerate(wrapped):
-                        prefix = "│" if j == 0 else "│"
-                        self.print(f"{self.style.BLUE(prefix)} {wrapped_line}")
-                else:
-                    self.print(f"{self.style.BLUE('│')} {line}")
-
-            self.print(f"{self.style.BLUE('└─')} {self.style.GREY('End of code block')}")
-
-    def print_table(self, headers: list[str], rows: list[list[str]]):
-        """Print a dynamic table that adapts to screen size"""
-        self._terminal_width = self._get_terminal_width()
-
-        if not rows:
-            return
-
-        # Calculate column widths
-        all_data = [headers] + rows
-        col_widths = []
-
-        for col in range(len(headers)):
-            max_width = max(len(str(row[col])) for row in all_data if col < len(row))
-            col_widths.append(min(max_width, self._terminal_width // len(headers) - 2))
-
-        # Adjust if total width exceeds terminal
-        total_width = sum(col_widths) + len(headers) * 3 + 1
-        if total_width > self._terminal_width:
-            # Proportionally reduce column widths
-            scale_factor = (self._terminal_width - len(headers) * 3 - 1) / sum(col_widths)
-            col_widths = [max(8, int(w * scale_factor)) for w in col_widths]
-
-        # Print table
-        self._print_table_row(headers, col_widths, is_header=True)
-        self._print_table_separator(col_widths)
-
-        for row in rows:
-            self._print_table_row(row, col_widths)
-
-    def _print_table_row(self, row: list[str], widths: list[int], is_header: bool = False):
-        """Helper method to print a table row"""
-        formatted_cells = []
-        for i, (cell, width) in enumerate(zip(row, widths)):
-            cell_str = str(cell)
-            if len(cell_str) > width:
-                cell_str = cell_str[:width - 3] + "..."
-
-            if is_header:
-                formatted_cells.append(self.style.Bold(self.style.CYAN(cell_str.ljust(width))))
-            else:
-                formatted_cells.append(cell_str.ljust(width))
-
-        self.print(f"│ {' │ '.join(formatted_cells)} │")
-
-    def _print_table_separator(self, widths: list[int]):
-        """Helper method to print table separator"""
-        parts = ['─' * w for w in widths]
-        self.print(f"├─{'─┼─'.join(parts)}─┤")
-
-    async def process_with_spinner(self, message: str, coroutine):
-        """Execute coroutine with adaptive spinner"""
-        self._terminal_width = self._get_terminal_width()
-
-        if self._terminal_width < 60:
-            # Simple spinner for small screens
-            spinner_symbols = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-        else:
-            # Detailed spinner for larger screens
-            spinner_symbols = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
-        # Truncate message if too long
-        if len(message) > self._terminal_width - 10:
-            display_message = message[:self._terminal_width - 13] + "..."
-        else:
-            display_message = message
-
-        with Spinner(f"{self.style.CYAN('●')} {display_message}", symbols=spinner_symbols):
-            return await coroutine
-
-    def print_git_info(self) -> Optional[str]:
-        """Get current git branch with error handling"""
-        try:
-            result = subprocess.run(
-                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                capture_output=True, text=True, timeout=2
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                branch = result.stdout.strip()
-
-                # Check for uncommitted changes
-                status_result = subprocess.run(
-                    ['git', 'status', '--porcelain'],
-                    capture_output=True, text=True, timeout=1
-                )
-                dirty = "*" if status_result.stdout.strip() else ""
-
-                git_info = f"{branch}{dirty}"
-                self.print_info(f"Git: {git_info}")
-                return git_info
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-            pass
-        return None
-
-    # Convenience methods with consistent styling
-    def print_error(self, message: str):
-        """Print error message with consistent formatting"""
-        self.print(f"{self.style.RED('✗')} {self.style.RED(message)}")
-
-    def print_success(self, message: str):
-        """Print success message with consistent formatting"""
-        self.print(f"{self.style.GREEN('✓')} {self.style.GREEN(message)}")
-
-    def print_warning(self, message: str):
-        """Print warning message with consistent formatting"""
-        self.print(f"{self.style.YELLOW('⚠')} {self.style.YELLOW(message)}")
-
-    def print_info(self, message: str):
-        """Print info message with consistent formatting"""
-        self.print(f"{self.style.CYAN('ℹ')} {self.style.CYAN(message)}")
-
-    def print_debug(self, message: str):
-        """Print debug message with consistent formatting"""
-        self.print(f"{self.style.GREY('🐛')} {self.style.GREY(message)}")
-
-
-class EnhancedVerboseOutput:
-    """Main interface for verbose output with full functionality"""
-
-    def __init__(self, verbose: bool = True, print_func=None, **formatter_kwargs):
-        self.verbose = verbose
-        self.print = print_func or print
-        self.formatter = DynamicVerboseFormatter(self.print, **formatter_kwargs)
-        self._start_time = time.time()
-
-    def __getattr__(self, name):
-        """Delegate to formatter for convenience"""
-        return getattr(self.formatter, name)
-
-    async def print_agent_response(self, response: str):
-        await self.log_message("assistant", response)
-
-    async def print_thought(self, thought: str):
-        await self.log_message("assistant", f"Thought: {thought}")
-
-    async def log_message(self, role: str, content: str):
-        """Log chat messages with role-based formatting"""
-        if not self.verbose:
-            return
-
-        role_formats = {
-            'user': (self.formatter.style.GREEN, "👤"),
-            'assistant': (self.formatter.style.BLUE, "🤖"),
-            'system': (self.formatter.style.YELLOW, "⚙️"),
-            'error': (self.formatter.style.RED, "❌"),
-            'debug': (self.formatter.style.GREY, "🐛")
-        }
-
-        color_func, icon = role_formats.get(role.lower(), (self.formatter.style.WHITE, "•"))
-
-        if content.startswith("```"):
-            self.formatter.print_code_block(content)
-            return
-
-        if content.startswith("{") or content.startswith("[") and content.endswith("}") or content.endswith("]"):
-            content = json.dumps(json.loads(content), indent=2)
-
-        # Adapt formatting based on screen size
-        if self.formatter._terminal_width < 60:
-            self.print(f"\n{icon} [{role.upper()}]")
-            # Wrap content for small screens
-            wrapped_content = self.formatter._wrap_text(content, self.formatter._terminal_width - 2)
-            for line in wrapped_content:
-                self.print(f"  {line}")
-        else:
-            self.print(f"\n{icon} {color_func(f'[{role.upper()}]')}")
-            self.print(f"{self.formatter.style.GREY('└─')} {content}")
-        self.print()
-
-    async def log_process_result(self, result: Dict[str, Any]):
-        """Log processing results with structured formatting"""
-        if not self.verbose:
-            return
-
-        content_parts = []
-
-        if 'action' in result:
-            content_parts.append(f"Action: {result['action']}")
-        if 'is_completed' in result:
-            content_parts.append(f"Completed: {result['is_completed']}")
-        if 'effectiveness' in result:
-            content_parts.append(f"Effectiveness: {result['effectiveness']}")
-        if 'recommendations' in result:
-            content_parts.append(f"Recommendations:\n{result['recommendations']}")
-        if 'workflow' in result:
-            content_parts.append(f"Workflow:\n{result['workflow']}")
-        if 'errors' in result and result['errors']:
-            content_parts.append(f"Errors: {result['errors']}")
-        if 'content' in result:
-            content_parts.append(f"Content:\n{result['content']}")
-
-        self.formatter.print_section("Process Result", '\n'.join(content_parts))
-
-    def log_header(self, text: str):
-        """Log header with timing information"""
-        if not self.verbose:
-            return
-
-        elapsed = time.time() - self._start_time
-        if elapsed > 60:
-            timing = f" ({elapsed / 60:.1f}m)"
-        else:
-            timing = f" ({elapsed:.1f}s)"
-
-        self.formatter.print_header(f"{text}{timing}")
-
-    def log_state(self, state: str, user_ns: Dict = None, override: bool = False):
-        """Log state with optional override"""
-        if not self.verbose and not override:
-            return
-
-        return self.formatter.print_state(state, user_ns)
-
-    async def process(self, message: str, coroutine):
-        """Process with optional spinner"""
-        if not self.verbose:
-            return await coroutine
-
-        if message.lower() in ["code", "silent"]:
-            return await coroutine
-
-        return await self.formatter.process_with_spinner(message, coroutine)
-
-    def print_tool_call(self, tool_name: str, tool_args: Dict, result: Optional[str] = None):
-        """
-        Gibt Informationen zum Tool-Aufruf aus.
-        Versucht, das Ergebnis als JSON zu formatieren, wenn möglich.
-        """
-        if not self.verbose:
-            return
-
-        # Argumente wie zuvor formatieren
-        args_str = json.dumps(tool_args, indent=2, ensure_ascii=False) if tool_args else "None"
-        content = f"Tool: {tool_name}\nArguments:\n{args_str}"
-
-        if result:
-            result_output = ""
-            try:
-                # 1. Versuch, den String als JSON zu parsen
-                data = json.loads(result)
-
-                # 2. Prüfen, ob das Ergebnis ein Dictionary ist (der häufigste Fall)
-                if isinstance(data, dict):
-                    # Eine Kopie für die Anzeige erstellen, um den 'output'-Wert zu ersetzen
-                    display_data = data.copy()
-                    output_preview = ""
-
-                    # Spezielle Handhabung für einen langen 'output'-String, falls vorhanden
-                    if 'output' in display_data and isinstance(display_data['output'], str):
-                        full_output = display_data['output']
-                        # Den langen String im JSON durch einen Platzhalter ersetzen
-                        display_data['output'] = "<-- [Inhalt wird separat formatiert]"
-
-                        # Vorschau mit den ersten 3 Zeilen erstellen
-                        lines = full_output.strip().split('\n')[:3]
-                        preview_text = '\n'.join(lines)
-                        output_preview = f"\n\n--- Vorschau für 'output' ---\n\x1b[90m{preview_text}\n...\x1b[0m"  # Hellgrauer Text
-                        # display_data['output'] = output_preview
-                    # Das formatierte JSON (mit Platzhalter) zum Inhalt hinzufügen
-                    formatted_json = json.dumps(display_data, indent=2, ensure_ascii=False)
-                    result_output = f"Geparstes Dictionary:\n{formatted_json}{output_preview}"
-
-                else:
-                    # Falls es valides JSON, aber kein Dictionary ist (z.B. eine Liste)
-                    result_output = f"Gepastes JSON (kein Dictionary):\n{json.dumps(data, indent=2, ensure_ascii=False)}"
-
-            except json.JSONDecodeError:
-                # 3. Wenn Parsen fehlschlägt, den String als Rohtext behandeln
-                result_output = f"{result}"
-
-            content += f"\nResult:\n{result_output}"
-
-        else:
-            # Fall, wenn der Task noch läuft
-            content += "\nResult: In progress..."
-
-        # Den gesamten Inhalt an den Formatter übergeben
-        self.formatter.print_section("Tool Call", content)
-
-    def print_event(self, event: Dict):
-        """Print event information"""
-        if not self.verbose:
-            return
-
-        if event.get("content") and event["content"].get("parts"):
-            for part in event["content"]["parts"]:
-                if part.get("text"):
-                    self.formatter.print_info(f"Thought: {part['text']}")
-                if part.get("function_call"):
-                    self.print_tool_call(
-                        part["function_call"]["name"],
-                        part["function_call"]["args"]
-                    )
-                if part.get("function_response"):
-                    result = part["function_response"]["response"].get("result", "")
-                    self.print_tool_call(
-                        part["function_response"]["name"],
-                        {},
-                        str(result)
-                    )
-
-        if event.get("usage_metadata"):
-            self.formatter.print_info(f"Token usage: {event['usage_metadata']}")
-
-    @contextmanager
-    def section_context(self, title: str):
-        """Context manager for sections"""
-        if self.verbose:
-            self.formatter.print_section(title, "Starting...")
-        try:
-            yield
-        finally:
-            if self.verbose:
-                self.formatter.print_success(f"Completed: {title}")
-
-    def clear_line(self):
-        """Clear current line"""
-        self.print('\r' + ' ' * self.formatter._terminal_width + '\r', end='')
-
-    def print_separator(self, char: str = "─"):
-        """Print a separator line"""
-        self.print(self.formatter.style.GREY(char * self.formatter._terminal_width))
-
-    def print_warning(self, message: str):
-        """Print a warning message with yellow style"""
-        if self.verbose:
-            self.print(self.formatter.style.YELLOW(f"⚠️  WARNING: {message}"))
-
-    def print_error(self, message: str):
-        """Print an error message with red style"""
-        if self.verbose:
-            self.print(self.formatter.style.RED(f"❌ ERROR: {message}"))
-
-    def print_success(self, message: str):
-        """Print a success message with green style"""
-        if self.verbose:
-            self.print(self.formatter.style.GREEN(f"✅ SUCCESS: {message}"))
-
-
-
-### -- TYPESs --- ###
-
-class ThinkState(Enum):
-    ACTION = auto()
-    PROCESSING = auto()
-    BRAKE = auto()
-    DONE = auto()
-
-
-class MethodUpdate(BaseModel):
-    class_name: str = Field(..., description="Name of the class to update")
-    method_name: str = Field(..., description="Name of the method to update")
-    code: str = Field(..., description="Python code for the method implementation")
-    description: str | None = Field(None, description="Description of what the method does")
-
-
-class ThinkResult(BaseModel):
-    action: str = Field(..., description="Next action to take: 'code', 'brake', 'done'")
-    content: str = Field(..., description="Content related to the action")
-    context: dict[str, str | int | float | bool | dict[str, str | int | float | bool]] | None = Field(default_factory=dict, description="Additional context for the action")
-
-class ThinkResults(BaseModel):
-    actions:list[ThinkResult]
-
-@dataclass
-class ExecutionRecord:
-    code: str
-    result: Any
-    error: str | None = None
-
-    def __str__(self):
-        return  '' if self.result is None and self.error is None else f"Output -> {self.result if self.result else ''}{'(error: '+self.error+')' if self.error else ''}"
-
-
-@dataclass
-class PipelineResult:
-    variables: dict[str, Any]
-    result: Any
-    execution_history: list[ExecutionRecord]
-    message: list[dict[str, str]]
-
+from toolboxv2 import Spinner, get_app
 
 
 class CargoRustInterface:
@@ -890,13 +271,33 @@ class VirtualFileSystem:
         self.virtual_files: dict[str, str] = {}
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def ifile_exists(self, filepath: str | Path) -> bool:
+        """Check if a file exists"""
+        abs_path = self._resolve_path(filepath)
+        return abs_path.exists()
+
+    def overwrite_lines(self, filepath: str | Path, new_content: str, lines: str = "") -> str:
+        """Overwrite lines in a file"""
+        try:
+            content = self.read_file(filepath)
+            content_lines = content.split('\n')
+            start, end = map(int, lines.split('-'))
+            # overwrite specif lines with new content keep the rest
+            content_before = content_lines[:start-1]
+            content_after = content_lines[end:]
+            content_lines = content_before + new_content.split('\n') + content_after
+            content = '\n'.join(content_lines)
+            return self.write_file(filepath, content)
+        except Exception as e:
+            return f"Overwrite lines failed: {str(e)}"
+
     def write_file(self, filepath: str | Path, content: str) -> Path:
         """Write content to a virtual file and persist to disk using UTF-8"""
         try:
             abs_path = self._resolve_path(filepath)
         except ValueError:
             print("invalid :", filepath)
-            filepath = "src/temp_js/_temp_fix.py"
+            filepath = "src/temp/_temp_fix.py"
             abs_path = self._resolve_path(filepath)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -907,6 +308,10 @@ class VirtualFileSystem:
         # Write to actual filesystem with UTF-8 encoding
         with open(abs_path, 'w', encoding='utf-8', errors='replace') as f:
             f.write(content)
+
+        parent_dir_str = str(abs_path.parent.absolute())
+        if parent_dir_str not in sys.path and abs_path.suffix == '.py':
+            sys.path.insert(0, parent_dir_str)
 
         return abs_path
 
@@ -945,6 +350,12 @@ class VirtualFileSystem:
         abs_path.mkdir(parents=True, exist_ok=True)
         return abs_path
 
+    def list_files(self, dirpath: str | Path = '.') -> list:
+        """List files in a directory"""
+        abs_path = self._resolve_path(dirpath)
+        if not abs_path.exists():
+            raise FileNotFoundError(f"Directory not found: {dirpath}")
+        return [p.name for p in abs_path.iterdir() if p.is_file()]
 
     def list_directory(self, dirpath: str | Path = '.') -> list:
         """List contents of a directory"""
@@ -1172,11 +583,41 @@ class MockIPython:
         self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
         self._venv_path = self._session_dir / 'venv'
         self.user_ns: dict[str, Any] = {}
-        nest_asyncio.apply()
+        # import nest_asyncio
+        # nest_asyncio.apply()
         # Set up virtual environment if it doesn't exist
         with Spinner("Starting virtual environment"):
             self._setup_venv()
         self.reset()
+
+    def _virtual_open(self, filepath, mode='r', *args, **kwargs):
+        """Custom open function that uses virtual filesystem and makes files available for import"""
+        try:
+            abs_path = self.vfs._resolve_path(filepath)
+        except ValueError:
+            # If path resolution fails, try to resolve relative to current working directory
+            abs_path = self.vfs.base_dir / filepath
+
+        if 'w' in mode or 'a' in mode:
+            # Ensure parent directory exists
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use actual filesystem but track in virtual fs
+        real_file = open(abs_path, mode, *args, **kwargs)
+
+        if 'r' in mode:
+            # Track file content in virtual filesystem when reading
+            rel_path = str(abs_path.relative_to(self.vfs.base_dir))
+            if rel_path not in self.vfs.virtual_files:
+                try:
+                    content = real_file.read()
+                    self.vfs.virtual_files[rel_path] = content
+                    real_file.seek(0)
+                except UnicodeDecodeError:
+                    # Handle binary files
+                    pass
+
+        return real_file
 
     def _setup_venv(self):
         """Create virtual environment if it doesn't exist"""
@@ -1219,7 +660,9 @@ class MockIPython:
             '__file__': None,
             '__path__': [str(self.vfs.current_dir)],
             'auto_install': auto_install,
+            'app': get_app(),
             'modify_code': self.modify_code,
+            'open': self._virtual_open,
         }
         self.output_history.clear()
         self._execution_count = 0
@@ -1693,6 +1136,42 @@ class MockIPython:
                 output.append(f"Out[{count}]: {data['result']}")
         return "\n".join(output)
 
+    def set_base_directory(self, path: str) -> str:
+        """
+        Set the base directory for the virtual file system and add it to sys.path for imports.
+
+        Args:
+            path: New base directory path
+
+        Returns:
+            Success message
+        """
+        try:
+            new_path = Path(path) if isinstance(path, str) else path
+            new_path.mkdir(parents=True, exist_ok=True)
+
+            # Remove old base directory from sys.path if it exists
+            old_base_str = str(self.vfs.base_dir)
+            if old_base_str in sys.path:
+                sys.path.remove(old_base_str)
+
+            # Update VFS base directory
+            self.vfs.base_dir = new_path
+            self.vfs.current_dir = new_path
+
+            # Add new base directory to sys.path for imports
+            new_base_str = str(new_path)
+            if new_base_str not in sys.path:
+                sys.path.insert(0, new_base_str)
+
+            # Update user namespace paths
+            self.user_ns['__path__'] = [new_base_str]
+
+            return f"Base directory set to: {new_path} (added to sys.path)"
+
+        except Exception as e:
+            return f"Set base directory error: {str(e)}"
+
 
 def super_strip(s: str) -> str:
     # Remove ANSI escape sequences (e.g. "\x1b[K", "\x1b[...m", etc.)
@@ -1860,1860 +1339,493 @@ Execution:
                 return "No Rust files found in the project."
 
 
+from pathlib import Path
 from typing import Any
 
-from browser_use import Agent as BrowserAgent
-from browser_use import Browser, BrowserConfig
-from browser_use.browser.context import BrowserContextConfig
-from browser_use.llm import (
-    ChatOpenAI,
-    ChatAnthropic,
-    ChatGoogle,
-    ChatAzureOpenAI,
-    ChatAWSBedrock,
-    ChatGroq,
-    ChatOllama,
-    ChatOpenRouter,
-)
 
-
-_MODEL_MAP = {
-    "openai": ChatOpenAI,
-    "anthropic": ChatAnthropic,
-    "google": ChatGoogle,  # für Gemini‑Modelle
-    "azure": ChatAzureOpenAI,
-    "bedrock": ChatAWSBedrock,
-    "groq": ChatGroq,
-    "ollama": ChatOllama,
-    'openrouter': ChatOpenRouter,
-}
-
-
-class WebContentParser:
+class ToolsInterface:
     """
-    Parser for extracting content from web pages in various formats.
-
-    Provides methods to extract content as markdown, plain text,
-    structured data, and take screenshots with scrolling support.
-    """
-
-    def __init__(self, browser_wrapper):
-        """Initialize the parser with a browser wrapper instance"""
-        self.browser = browser_wrapper
-
-    async def to_markdown(self, page=None, selector="main, article, #content, .content, body",
-                          include_images=True):
-        """
-        Convert webpage content to markdown format
-
-        Args:
-            page: The page to parse (uses current page if None)
-            selector: CSS selector for the content to extract
-            include_images: Whether to include image references
-
-        Returns:
-            str: Markdown content
-        """
-        return await self.browser.extract_markdown(page, selector, include_images)
-
-    async def to_text(self, page=None, selector="body"):
-        """Extract plain text from webpage"""
-        return await self.browser.extract_text(page, selector)
-
-    async def to_structured(self, page=None, config=None):
-        """Extract structured data from webpage using selector configuration"""
-        return await self.browser.extract_structured_content(page, config)
-
-    async def to_screenshot(self, page=None, full_page=True, path=None,
-                            initial_delay=1000, scroll_delay=500, format='png'):
-        """
-        Take a screenshot with scrolling functionality
-
-        Args:
-            page: The page to screenshot
-            full_page: Whether to capture the full page
-            path: Path to save the screenshot
-            initial_delay: Delay in ms before starting screenshot
-            scroll_delay: Delay in ms between scrolls
-            format: Image format ('png' or 'jpeg')
-        """
-        return await self.browser.take_scrolling_screenshot(
-            page, full_page, path, initial_delay, scroll_delay, format
-        )
-
-    async def extract_all(self, page=None, selector="body", include_images=True,
-                          screenshot=True, screenshot_path=None):
-        """Extract all content types (markdown, text, structured data, screenshot)"""
-        result = {
-            'markdown': await self.to_markdown(page, selector, include_images),
-            'text': await self.to_text(page, selector),
-            'structured': await self.to_structured(page)
-        }
-
-        if screenshot:
-            result['screenshot'] = await self.to_screenshot(
-                page, path=screenshot_path, initial_delay=1000
-            )
-
-        return result
-
-class BrowserWrapper:
-    """
-    A wrapper for browser agent functionality that allows seamless interaction with web browsers.
-
-    This class provides a system-agnostic interface to control browsers through the browser_use
-    library, supporting both local and remote browser connections.
-
-    Attributes:
-        browser: The Browser instance for web automation
-        agent: The BrowserAgent instance for intelligent browsing
-        is_initialized (bool): Whether the browser has been initialized
-        config (Dict): Configuration for the browser
-        remote_url (Optional[str]): URL for remote browser connection if applicable
+    Minimalistic tools interface for LLMs providing code execution,
+    virtual file system, and browser interaction capabilities.
     """
 
     def __init__(self,
-                 llm: Any = None,
-                 headless: bool = False,
-                 chrome_path: str | None = None,
-                 remote_url: str | None = None,
-                 api_key: str | None=None,
-                 config: dict[str, Any] | None = None):
+                 session_dir: str | None = None,
+                 auto_remove: bool = True,
+                 variables: dict[str, Any] | None = None,
+                 variable_manager: Any | None = None):
         """
-        Initialize the browser wrapper.
+        Initialize the tools interface.
 
         Args:
-            llm: Language model to use for the browser agent
-            headless: Whether to run the browser in headless mode
-            chrome_path: Path to local Chrome executable
-            remote_url: URL for remote browser connection (wss or cdp)
-            config: Additional browser configuration
+            session_dir: Directory for session storage
+            auto_remove: Whether to auto-remove temporary files
+            variables: Initial variables dictionary
+            variable_manager: External variable manager instance
+            web_llm: LLM model for web interactions
         """
-        self.is_initialized = False
-        self.agent = None
-        self.browser = None
-        self.context = None
-
-        self.llm = llm
-        model, provider = None, None
-        if isinstance(llm, str):
-            if llm.count('/') == 2 and llm.startswith('openrouter/'):
-                provider = 'openrouter'
-                model = llm.split('/', 1)[1]
-            else:
-                provider, model = llm.split('/')
-        self._initialize_llm(model or "claude-3-7-sonnet-latest", provider or "anthropic")
-        self.parser = None
-
-        browser_config = {
-            'headless': headless,
-            'disable_security': True
-        }
-
-        if config:
-            browser_config.update(config)
-
-        self.config = browser_config
-
-        # Set up remote connection if specified
-        if remote_url:
-            if remote_url.startswith('wss://'):
-                self.config['wss_url'] = remote_url
-            elif remote_url.startswith('http'):
-                self.config['cdp_url'] = remote_url
-            self.remote_url = remote_url
-        else:
-            self.remote_url = None
-
-        # Set up local Chrome path if specified
-        if not headless and remote_url is None and chrome_path is None:
-            import os
-            import platform
-
-            def get_chrome_path():
-                """
-                Returns the correct path to the Chrome executable based on the OS.
-                If Chrome is not found, returns None.
-                """
-                chrome_paths = {
-                    "Darwin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # macOS
-                    "Windows": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",  # Windows
-                    "Linux": "/usr/bin/google-chrome"  # Linux
-                }
-
-                system = platform.system()
-                chrome_path_ = chrome_paths.get(system)
-
-                if chrome_path_ and os.path.isfile(chrome_path_):
-                    return chrome_path_
-
-                return None
-
-            chrome_path = get_chrome_path()
-        if chrome_path:
-            self.config['chrome_instance_path'] = chrome_path
-
-    def _initialize_llm(self, model: str, provider: str):
-        provider_key = provider.lower()
-        cls = _MODEL_MAP.get(provider_key)
-        if cls is None:
-            raise ValueError(f"Unbekannter LLM‑Provider: {provider}")
-        # optionale Parameter wie temperature können Sie ggf. über config reinsteuern
-        self.llm = cls(model=model)
-        # Hinweis: browser-use liest den API-Key standardmäßig via Umgebungsvariablen ein
-        # z.B. OPENAI_API_KEY, ANTHROPIC_API_KEY oder GOOGLE_API_KEY (für Gemini) :contentReference[oaicite:6]{index=6}
-        self.model_name = model
-        self.provider = provider_key
-
-    async def initialize(self):
-        """Initialize the browser and context"""
-        if self.is_initialized:
-            return
-
-        try:
-            # Create browser instance
-            self.browser = Browser(
-                config=BrowserConfig(**self.config)
-            )
-
-            # Create context configuration with better settings for scraping
-            context_config = BrowserContextConfig(
-                wait_for_network_idle_page_load_time=3.0,
-                highlight_elements=True,
-                viewport_expansion=500,
-                wait_between_actions=0.5  # Add a small delay between actions
-            )
-
-            # Initialize context
-            self.context = await self.browser.new_context(config=context_config)
-
-            # Create an initial page
-            browser_state = self.context
-            if not browser_state or not browser_state.tabs:
-                # If no tabs exist, create a new page
-                self.page = await self.context.new_tab()
-            else:
-                # Use the existing active tab
-                self.page = await self.context.get_current_page()
-
-            self.is_initialized = True
-
-        except Exception as e:
-            # Clean up resources in case of initialization error
-            if self.context:
-                await self.context.close()
-            if self.browser:
-                await self.browser.close()
-            raise Exception(f"Failed to initialize browser: {str(e)}")
-
-    async def create_agent(self, task: str, initial_actions=None):
-        """Create a browser agent with the specified task"""
-        #if not self.is_initialized:
-        #    await self.initialize()
-
-        self.agent = BrowserAgent(
-            task=task,
-            llm=self.llm,
-            #browser_context=self.context,
-            initial_actions=initial_actions,
-            #browser=self.browser,
-        )
-        return self.agent
-
-    async def run(self, task: str):
-        """Run the browser agent with the specified task"""
-        agent = await self.create_agent(task)
-        result = await agent.run()
-        return result
-
-    async def navigate(self, url: str):
-        """Navigate to a URL"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        # Get the current active page or create a new one if needed
-        try:
-            page = await self.context.get_current_page()
-            if not page:
-                page = await self.context.new_page()
-
-            # Navigate to the URL
-            await page.goto(url)
-            self.page = page
-            return page
-        except Exception as e:
-            raise Exception(f"Failed to navigate to {url}: {str(e)}")
-
-    async def get_tabs(self):
-        """Get all open tabs/pages"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        browser_state = await self.context.get_state()
-        return browser_state.tabs if browser_state else []
-
-    async def switch_to_tab(self, tab_index: int):
-        """Switch to a specific tab by index"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        browser_state = await self.context.get_state()
-        if not browser_state or not browser_state.tabs or tab_index >= len(browser_state.tabs):
-            raise ValueError(f"Tab index {tab_index} is out of range")
-
-        tab_id = browser_state.tabs[tab_index].id
-        await self.context.switch_to_tab(tab_id)
-        self.page = await self.context.get_current_page()
-        return self.page
-
-    async def create_new_tab(self):
-        """Create a new tab/page"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        browser_context = await self.context.get_playwright_context()
-        new_page = await browser_context.new_page()
-        self.page = new_page
-        return new_page
-
-    async def close_current_tab(self):
-        """Close the current tab/page"""
-        if not self.is_initialized:
-            return
-
-        page = await self.context.get_current_page()
-        if page:
-            await page.close()
-
-        # Update the current page reference
-        browser_state = await self.context.get_state()
-        if browser_state and browser_state.tabs:
-            await self.switch_to_tab(0)
-
-    async def execute_js(self, code: str, page=None):
-        """Execute JavaScript code in the browser context"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        if page is None:
-            pages = await self.context.pages()
-            if not pages:
-                page = await self.context.new_page()
-            else:
-                page = pages[0]
-
-        result = await page.evaluate(code)
-        return result
-
-    async def save_context(self):
-        """Save browser context state"""
-        if not self.is_initialized:
-            return None
-
-        return await self.browser.export_context(self.context)
-
-    async def restore_context(self, context_data):
-        """Restore browser context from saved state"""
-        if not self.is_initialized:
-            await self.initialize()
-
-        await self.browser.import_context(context_data)
-
-    async def close(self):
-        """Close the browser"""
-        if self.is_initialized and self.browser:
-            await self.browser.close()
-            self.is_initialized = False
-
-    # Add these methods to the BrowserWrapper class
-
-    def get_parser(self):
-        """Get a content parser for the browser"""
-        if self.parser is None:
-            self.parser = WebContentParser(self)
-        return self.parser
-
-    async def extract_markdown(self, page=None, selector="body", include_images=True):
-        """
-        Extract content from a webpage and convert it to markdown.
-        """
-        if not self.is_initialized:
-            await self.initialize()
-
-        if page is None:
-            pages = await self.context.pages()
-            if not pages:
-                page = await self.context.new_page()
-            else:
-                page = pages[0]
-
-        # JavaScript to convert HTML to markdown
-        script = """
-        (selector, includeImages) => {
-            const element = document.querySelector(selector);
-            if (!element) return '';
-
-            // Simple HTML to Markdown conversion function
-            const htmlToMarkdown = (node) => {
-                let result = '';
-
-                // Process text nodes
-                if (node.nodeType === Node.TEXT_NODE) {
-                    return node.textContent;
-                }
-
-                // Process element nodes
-                if (node.nodeType === Node.ELEMENT_NODE) {
-                    const tagName = node.tagName.toLowerCase();
-
-                    // Process by tag type
-                    switch(tagName) {
-                        case 'h1': return '# ' + getInnerText(node) + '\\n\\n';
-                        case 'h2': return '## ' + getInnerText(node) + '\\n\\n';
-                        case 'h3': return '### ' + getInnerText(node) + '\\n\\n';
-                        case 'h4': return '#### ' + getInnerText(node) + '\\n\\n';
-                        case 'h5': return '##### ' + getInnerText(node) + '\\n\\n';
-                        case 'h6': return '###### ' + getInnerText(node) + '\\n\\n';
-                        case 'p': return getInnerText(node) + '\\n\\n';
-                        case 'br': return '\\n';
-                        case 'hr': return '---\\n\\n';
-                        case 'b':
-                        case 'strong': return '**' + getInnerText(node) + '**';
-                        case 'i':
-                        case 'em': return '*' + getInnerText(node) + '*';
-                        case 'a': {
-                            const href = node.getAttribute('href');
-                            return '[' + getInnerText(node) + '](' + href + ')';
-                        }
-                        case 'img': {
-                            if (!includeImages) return '';
-                            const src = node.getAttribute('src');
-                            const alt = node.getAttribute('alt') || 'image';
-                            return '![' + alt + '](' + src + ')\\n\\n';
-                        }
-                        case 'code':
-                        case 'pre': return '`' + getInnerText(node) + '`';
-                        case 'ul': {
-                            let listResult = '\\n';
-                            Array.from(node.children).forEach(li => {
-                                if (li.tagName.toLowerCase() === 'li') {
-                                    listResult += '- ' + getInnerText(li) + '\\n';
-                                }
-                            });
-                            return listResult + '\\n';
-                        }
-                        case 'ol': {
-                            let listResult = '\\n';
-                            Array.from(node.children).forEach((li, index) => {
-                                if (li.tagName.toLowerCase() === 'li') {
-                                    listResult += (index + 1) + '. ' + getInnerText(li) + '\\n';
-                                }
-                            });
-                            return listResult + '\\n';
-                        }
-                        case 'blockquote': return '> ' + getInnerText(node) + '\\n\\n';
-                        default: {
-                            // Process child nodes for other elements
-                            for (const child of node.childNodes) {
-                                result += htmlToMarkdown(child);
-                            }
-                            return result;
-                        }
-                    }
-                }
-
-                return '';
-            };
-
-            // Helper function to get inner text with special handling
-            const getInnerText = (node) => {
-                let text = '';
-                for (const child of node.childNodes) {
-                    text += htmlToMarkdown(child);
-                }
-                return text;
-            };
-
-            return htmlToMarkdown(element);
-        }
-        """
-
-        try:
-            # Try to convert to markdown using our script
-            markdown = await page.evaluate(script, selector, include_images)
-
-            # Add a title if we have one
-            title = await page.title()
-            if title and not markdown.startswith("# "):
-                markdown = f"# {title}\n\n{markdown}"
-
-            return markdown
-        except Exception:
-            # Fallback to basic extraction if script fails
-            content = await self.extract_text(page, selector)
-            title = await page.title()
-            return f"# {title}\n\n{content}"
-
-    async def take_scrolling_screenshot(self, page=None, full_page=True, path=None,
-                                        initial_delay=1000, scroll_delay=500, format='png'):
-        """
-        Take a screenshot with scrolling functionality and delay.
-        """
-        if not self.is_initialized:
-            await self.initialize()
-
-        if page is None:
-            pages = await self.context.pages()
-            if not pages:
-                page = await self.context.new_page()
-            else:
-                page = pages[0]
-
-        # Wait for the initial delay to let content load
-        if initial_delay > 0:
-            await page.wait_for_timeout(initial_delay)
-
-        if full_page and scroll_delay > 0:
-            # Get page dimensions
-            dimensions = await page.evaluate("""
-                () => {
-                    return {
-                        width: document.documentElement.scrollWidth,
-                        height: document.documentElement.scrollHeight,
-                        windowHeight: window.innerHeight
-                    }
-                }
-            """)
-
-            # Scroll down the page gradually to trigger lazy loading
-            current_position = 0
-            while current_position < dimensions['height']:
-                await page.evaluate(f"window.scrollTo(0, {current_position})")
-                await page.wait_for_timeout(scroll_delay)
-                current_position += dimensions['windowHeight'] // 2  # Scroll by half viewport
-
-        # Reset scroll position to top
-        await page.evaluate("window.scrollTo(0, 0)")
-
-        # Take the screenshot
-        screenshot_params = {
-            'full_page': full_page,
-            'type': format
-        }
-
-        if path:
-            screenshot_params['path'] = path
-
-        return await page.screenshot(**screenshot_params)
-
-    async def extract_text(self, page=None, selector="body"):
-        """
-        Extract plain text from a webpage.
-        """
-        if not self.is_initialized:
-            await self.initialize()
-
-        if page is None:
-            pages = await self.context.pages()
-            if not pages:
-                page = await self.context.new_page()
-            else:
-                page = pages[0]
-
-        text = await page.evaluate("""
-            (selector) => {
-                const element = document.querySelector(selector);
-                return element ? element.innerText : '';
-            }
-        """, selector)
-
-        return text
-
-    async def extract_structured_content(self, page=None, config=None):
-        """
-        Extract structured content from a webpage based on a configuration.
-        """
-        if not self.is_initialized:
-            await self.initialize()
-
-        if page is None:
-            pages = await self.context.pages()
-            if not pages:
-                page = await self.context.new_page()
-            else:
-                page = pages[0]
-
-        if not config:
-            # Default configuration if none provided
-            config = {
-                'title': 'h1',
-                'headings': 'h2, h3, h4, h5, h6',
-                'paragraphs': 'p',
-                'links': 'a',
-                'images': 'img'
-            }
-
-        result = {}
-
-        for key, selector in config.items():
-            if key == 'links':
-                # Extract links with their href and text
-                result[key] = await page.evaluate("""
-                    (selector) => {
-                        return Array.from(document.querySelectorAll(selector))
-                            .map(el => ({
-                                text: el.innerText.trim(),
-                                href: el.href
-                            }))
-                            .filter(item => item.text && item.href);
-                    }
-                """, selector)
-            elif key == 'images':
-                # Extract images with their src and alt
-                result[key] = await page.evaluate("""
-                    (selector) => {
-                        return Array.from(document.querySelectorAll(selector))
-                            .map(el => ({
-                                src: el.src,
-                                alt: el.alt || ''
-                            }))
-                            .filter(item => item.src);
-                    }
-                """, selector)
-            else:
-                # Extract text content for other elements
-                result[key] = await page.evaluate("""
-                    (selector) => {
-                        return Array.from(document.querySelectorAll(selector))
-                            .map(el => el.innerText.trim())
-                            .filter(text => text);
-                    }
-                """, selector)
-
-        return result
-
-
-class Pipeline:
-    """
-        A pipeline for executing AI agent-driven tasks with interactive code execution and variable management.
-
-        The Pipeline class provides a structured environment for AI agents to:
-        1. Execute code in a controlled environment
-        2. Manage and track variables
-        3. Update methods dynamically
-        4. Save and load session states
-        5. Generate detailed variable descriptions
-
-        Attributes:
-            agent: The AI agent instance used for task execution
-            task (str): The task to be performed
-            mas_iter (int): Maximum number of iterations allowed (default: 12)
-            variables (Dict[str, Any]): Dictionary of variables available to the pipeline
-            top_n (Optional[int]): Limit variable descriptions to top N most used
-            execution_history (List[ExecutionRecord]): History of executed code and results
-            session_name (Optional[str]): Name of the current session if saved
-            ipython: IPython or MockIPython instance for code execution
-
-        Example:
-            >>> agent = get_free_agent("demo", "anthropic/claude-3-haiku-20240307")
-            >>> pipeline = Pipeline(
-            ...     agent=agent,
-            ...     variables={"n": 10}
-            ... )
-            >>> result = pipeline.run("Calculate fibonacci sequence")
-            >>> print(result.result)
-
-        Notes:
-            - The pipeline uses either IPython if available or a MockIPython implementation
-            - Variables can be provided as either a dictionary or list
-            - Session state can be saved and loaded
-            - Method updates are handled through a structured BaseModel approach
-        """
-    def __init__(
-        self,
-        agent: Any,
-        verbose: bool=False,
-        max_iter: int= 12,
-        variables: dict[str, Any] | list[Any] | None = None,
-        top_n: bool | None = None,
-        restore: bool | None = None,
-        max_think_after_think = None,
-        print_f=None,
-        web_js=False,
-        timeout_timer=25,
-        v_agent=None,
-        web_llm=None,
-    ):
-        """
-        Initialize the Pipeline.
-
-        Args:
-            agent: AI agent instance to use for task execution
-            verbose: print internal results
-            max_iter: Maximum number of iterations (default: 12)
-            variables: Dictionary or list of variables to make available
-            top_n: Limit variable descriptions to top N most used
-            web_js: if the agent is allow to use the web
-        """
-
-        self.timeout_timer = timeout_timer
-        self.top_n = top_n
-        self.max_iter = max_iter
-        self.max_think_after_think = max_think_after_think or max_iter // 2
-        self.agent = agent
-        self.v_agent = v_agent or agent
-        # self.agent.verbose = verbose
-        self.task = None
-        self.web_js = web_js
-        self.print_f = print_f
-        self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_func=self.print_f)
-        self.variables = self._process_variables(variables or {})
-        self.variables['auto_install'] = auto_install
-        self.execution_history = []
-        self.session_name = None
-
-        self.browser_session: BrowserWrapper | None = BrowserWrapper(llm=web_llm or agent.amd.model)
-        self.js_history: list[JSExecutionRecord] = []
-
-        self._session_dir = Path(get_app().appdata) / 'ChatSession' / agent.amd.name
-        self.ipython = MockIPython(self._session_dir, auto_remove=False)
-        self.chat_session = ChatSession(get_app().get_mod("isaa").get_memory(), space_name=f"ChatSession/{agent.amd.name}/Pipeline.session", max_length=max_iter)
-        self.process_memory = ChatSession(get_app().get_mod("isaa").get_memory(), space_name=f"ChatSession/{agent.amd.name}/Process.session", max_length=max_iter)
-
-        # Initialize interpreter with variables
-        self.init_keys = list(self.ipython.user_ns.keys()).copy()
-        if self.web_js:
-            self.variables['web_actions'] = self.browser_session.run
-            self.variables['browser_session'] = self.browser_session
-        self.ipython.user_ns.update(self.variables)
-
-        self.restore_var = restore
-
-        if restore:
-            self.restore()
-
-    def on_exit(self):
-        self.chat_session.on_exit()
-        self.process_memory.on_exit()
-        self.save_session(f"Pipeline_Session_{self.agent.amd.name}")
-
-    def restore(self):
-        self.load_session(f"Pipeline_Session_{self.agent.amd.name}")
-
-    def save_session(self, name: str):
-        """Save current session"""
-        self.session_name = name
-        self.ipython.save_session(name)
-
-    def load_session(self, name: str):
-        """Load saved session"""
-        self.ipython.load_session(name)
-        self.variables.update(self.ipython.user_ns)
-
-
-    def show_graph_html(self, output_file=None, get_output_html=False, get_output_net=False):
-
-        if output_file is None:
-            chat_graph = self.ipython._session_dir / 'chat_graph.html'
-            process_graph = self.ipython._session_dir / 'process_graph.html'
-            output_file = str(chat_graph.absolute())
-            p_output_file = str(process_graph.absolute())
-        else:
-            output_file = output_file + '_chat_graph.html'
-            p_output_file = output_file + '_process_graph.html'
-
-        return (self.chat_session.mem.memories.get(
-            self.chat_session.mem._sanitize_name(
-                self.chat_session.space_name)).vis(output_file=output_file,
-        get_output_html=get_output_html, get_output_net=get_output_net)  ,
-                self.process_memory.mem.memories.get(
-            self.process_memory.mem._sanitize_name(
-                self.process_memory.space_name)).vis(output_file=p_output_file,
-        get_output_html=get_output_html, get_output_net=get_output_net))
-
-    @staticmethod
-    def _process_variables(variables: dict[str, Any] | list[Any]) -> dict[str, Any]:
-        """
-        Process variables to generate meaningful names, using actual variable names where possible.
-        Instances get lowercase names based on their class names.
-
-        Args:
-            variables: Dictionary of variables or list of variables to process
-
-        Returns:
-            Dict[str, Any]: Processed variables with meaningful names
-        """
-        if isinstance(variables, dict):
-            return variables
-
-        processed = {}
-        name_counts = defaultdict(int)
-
-        # Get caller's frame to find variable names
-        caller_frame = currentframe().f_back
-        caller_locals = {**caller_frame.f_locals, **caller_frame.f_globals}
-
-        def find_var_name(obj: Any) -> str:
-            # Find original variable name if exists
-            var_names = [name for name, val in caller_locals.items()
-                         if val is obj and not name.startswith('_')]
-            if var_names:
-                return var_names[0]
-
-            # Special handling for functions
-            if isfunction(obj) or isclass(obj):
-                return obj.__name__
-            # Handle instances
-            elif hasattr(obj, '__class__'):
-                base_name = obj.__class__.__name__.lower()  # Lowercase for instances
-                count = name_counts[base_name]
-                name_counts[base_name] += 1
-                return f"{base_name}_{count + 1}" if count > 0 else base_name
-
-            return type(obj).__name__
-
-        # Process each variable
-        for var in variables:
-            name = find_var_name(var)
-            while name in processed:
-                if name.rpartition('_')[0]:
-                    base, _, num = name.rpartition('_')
-                    try:
-                        num = int(num) + 1
-                        name = f"{base}_{num}"
-                    except ValueError:
-                        name = f"{name}"
-                else:
-                    name = f"{name}"
-
-            processed[name] = var
-
-        return processed
-
-    def _generate_variable_descriptions(
-        self,
-        top_n: int | None = None
-    ) -> str:
-        """
-        Generate detailed descriptions of variables, showing args, kwargs, docstrings, and return values.
-
-        Args:
-            top_n: Optional limit to show only top N variables
-
-        Returns:
-            str: Formatted variable descriptions in Markdown
-        """
-        if top_n is None:
-            top_n = self.top_n
-
-
-        def get_type_name(tp):
-            if hasattr(tp, '__name__'):
-                return tp.__name__
-            elif isinstance(tp, types.UnionType):  # e.g., int | str (Python 3.10+)
-                return ' | '.join(get_type_name(arg) for arg in tp.__args__)
-            elif hasattr(tp, '__origin__'):  # e.g., list[int], Optional[str]
-                origin = get_type_name(tp.__origin__)
-                if hasattr(tp, '__args__'):
-                    args = ', '.join(get_type_name(arg) for arg in tp.__args__)
-                    return f"{origin}[{args}]"
-                return origin
-            elif hasattr(tp, '__class__'):
-                return tp.__class__.__name__
-            return str(tp)
-
-        def format_value_preview(var: Any) -> str:
-            """Format preview of variable contents"""
-            try:
-                if isinstance(var, int | float | bool | str):
-                    return f"`{repr(var)}`"
-                elif isinstance(var, list | tuple | set):
-                    preview = str(list(var)[:3])[:-1] + ", ...]"
-                    return f"{len(var)} items: {preview}"
-                elif isinstance(var, dict):
-                    preview_items = [f"{repr(k)}: {repr(v)}" for k, v in list(var.items())[:3]]
-                    return f"{len(var)} pairs: {{{', '.join(preview_items)}, ...}}"
-                return f"<{get_type_name(type(var))}>"
-            except:
-                return "<error getting value>"
-
-        def get_instance_state(var: Any) -> dict[str, Any]:
-            """Get current instance state"""
-            state = {}
-            if hasattr(var, '__dict__'):
-                for name, value in var.__dict__.items():
-                    if not name.startswith('_') and not callable(value):
-                        state[name] = format_value_preview(value)
-            return state
-
-        # Process variables
-        variables = self.variables.items()
-        if top_n:
-            variables = list(variables)[:top_n]
-
-        descriptions = []
-        for name, var in variables:
-            if name in ["PYTHON_EXEC", "__name__", "__builtins__", "__path__", "asyncio"]:
-                continue
-
-            desc_parts = [f"### {name}"]
-
-            # Handle different types
-            if isinstance(var, type):  # Class
-                desc_parts.append(f"**Type:** `class '{get_type_name(var)}'`")
-                if var.__doc__:
-                    desc_parts.append(f"**Documentation:**\n{var.__doc__.strip()}")
-
-                # Show methods
-                methods = []
-                for attr_name, attr in var.__dict__.items():
-                    if (not attr_name.startswith('_') or attr_name == "__init__") and (isfunction(attr) or ismethod(attr)):
-                        try:
-                            sig = signature(attr)
-                            is_a = asyncio.iscoroutinefunction(var)
-                            methods.append(f"- `{attr_name}{sig}` Async: `{is_a}")
-                            if attr.__doc__:
-                                r = attr.__doc__.split('\n')[0]
-                                methods.append(f"  {r}")
-                        except:
-                            methods.append(f"- `{attr_name}()`")
-                if methods:
-                    desc_parts.append("**Methods:**\n" + "\n".join(methods))
-
-            elif isfunction(var) or ismethod(var):  # Function
-                try:
-                    sig = signature(var)
-                    desc_parts.append(f"**Signature:** `{get_type_name(var)}{sig}`")
-                    is_a = asyncio.iscoroutinefunction(var)
-                    desc_parts.append(f"**IS Async:** `{is_a}`")
-                    if var.__doc__:
-                        desc_parts.append(f"**Documentation:**\n{var.__doc__.strip()}")
-                    ret_anno = sig.return_annotation
-                    if ret_anno != Signature.empty:
-                        desc_parts.append(f"**Returns:** `{ret_anno}`")
-                except:
-                    desc_parts.append(f"**Function:** `{get_type_name(var)}()`")
-
-            elif isinstance(var, BaseModel):  # Pydantic model
-                desc_parts.append(f"**Type:** Pydantic model '{get_type_name(var)}'")
-                fields = []
-                for field_name, field in var.model_fields.items():
-                    value = getattr(var, field_name, None)
-                    fields.append(f"- `{field_name}: {get_type_name(field.annotation)}` = {repr(value)}")
-                if fields:
-                    desc_parts.append("**Fields:**\n" + "\n".join(fields))
-
-            else:  # Instance
-                class_type = var.__class__
-                desc_parts.append(f"**Type:** `{class_type.__module__}.{get_type_name(class_type)}`")
-
-                # Instance initialization details
-                try:
-                    init = class_type.__init__
-                    sig = signature(init)
-                    params = list(sig.parameters.items())[1:]  # Skip self
-                    if params:
-                        args = []
-                        for name, param in params:
-                            if param.default == param.empty:
-                                args.append(name)
-                            else:
-                                args.append(f"{name}={param.default}")
-                        desc_parts.append(f"**Init Args:** `{', '.join(args)}`")
-                except:
-                    pass
-
-                # Instance state
-                state = get_instance_state(var)
-                if state:
-                    desc_parts.append("**Current instance State:**")
-                    for attr_name, attr_value in state.items():
-                        desc_parts.append(f"- `{attr_name}` = {attr_value}")
-
-                # Documentation
-                doc = getdoc(var) or getdoc(class_type)
-                if doc:
-                    desc_parts.append(f"**Documentation:**\n{doc.strip()}")
-
-            descriptions.append("\n".join(desc_parts))
-
-        return "\n\n".join(descriptions)
-
-    async def _execute_code(self, code: str, context:dict) -> ExecutionRecord:
-        """Execute code and track results"""
-        lang = context.get('lang', 'py')
-        try:
-
-            if'py' in lang:
-
-                return await self._execute_py(code)
-
-            elif self.web_js and 'js' in lang:
-                return await self._execute_js(code, context)
-
-        except Exception as e:
-            record = ExecutionRecord(code=code, result=None, error=str(e))
-            self.execution_history.append(record)
-            return record
-        record = ExecutionRecord(code=code, result=None, error=f"Invalid lang {lang} valid is, {'js' if self.web_js else 'py'}]")
-        self.execution_history.append(record)
-        return record
-
-    async def _execute_py(self, code) -> ExecutionRecord:
-        show = True #len(code) > 450 and code.count('while') > 1 and code.count('print') >= 1
-        result = await self.ipython.run_cell(code, show)
-
-        all_keys = list(self.ipython.user_ns.keys())
-
-        new_keys = [key for key in all_keys if key not in self.init_keys]
-        # Update pipeline variables from IPython namespace
-
-        for var_name in new_keys:
-            if var_name.startswith('_'):
-                continue
-            self.variables[var_name] = self.ipython.user_ns[var_name]
-
-        record = ExecutionRecord(code=code, result=result, error=None)
-        self.execution_history.append(record)
-        return record
-
-    async def _execute_js(self, code: str, context: dict) -> ExecutionRecord:
-        """Execute JavaScript code in browser context"""
-
-        if '<script>' in code:
-            code = code.split('<script>')[1]
-        if '</script>' in code:
-            code = code.split('</script>')[0]
-        def _format_error_markdown(error: str) -> str:
-            """Format error as Markdown"""
-            return f"""
-# Execution Error
-{error}
-"""
-
-        def _format_result_markdown(result_: dict) -> str:
-            """Format execution result as Markdown"""
-
-            def _clean_html_content(html: str) -> str:
-                """Clean HTML content and convert to Markdown-like format"""
-                soup = BeautifulSoup(html, 'html.parser')
-
-                # Remove scripts and styles
-                for script in soup(["script", "style"]):
-                    script.decompose()
-
-                # Extract text
-                text = soup.get_text()
-
-                # Clean up whitespace
-                lines = (line.strip() for line in text.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text = '\n'.join(chunk for chunk in chunks if chunk)
-
-                # Add Markdown formatting
-                text = re.sub(r'^(.+)$', r'> \1', text, flags=re.MULTILINE)
-
-                return text
-
-            md_parts = []
-
-            # Add title
-            md_parts.append("# Page Analysis Results\n")
-
-            # Format JavaScript result
-            if result_.get('js_result'):
-                md_parts.append("## JavaScript Execution Result")
-                md_parts.append("```")
-                md_parts.append(str(result_['js_result']))
-                md_parts.append("```\n")
-
-            # Format page state
-            if 'page_state' in result_:
-                md_parts.append("## Page Information")
-                md_parts.append(f"- **URL**: {result_['page_state']['url']}")
-                md_parts.append(f"- **Title**: {result_['page_state']['title']}\n")
-
-                # Clean and format content
-                if 'content' in result_['page_state']:
-                    content = _clean_html_content(result_['page_state']['content'])
-                    if content:
-                        md_parts.append("### Page Content")
-                        md_parts.append(content + "\n")
-
-            # Format extracted data
-            if result_.get('extracted_data'):
-                md_parts.append("## Extracted Data")
-                for key, value in result_['extracted_data'].items():
-                    if value:
-                        md_parts.append(f"### {key.replace('_', ' ').title()}")
-                        if isinstance(value, list):
-                            for item in value:
-                                md_parts.append(f"- {item}")
-                        else:
-                            md_parts.append(str(value))
-                        md_parts.append("")
-
-            return "\n".join(md_parts)
-
-        try:
-            # Prepare execution context
-            url = context.get('url')
-            page = None
-            result = None
-            page_state = {}
-
-            extracted_data = None
-            if url:
-                page = await self.browser_session.navigate(url)
-                parser = self.browser_session.get_parser()
-                markdown = await parser.to_markdown(page)
-
-                if 'patterns' in context:
-                    extracted_data = await parser.to_structured(page, context['patterns'])
-
-                page_state = {
-                    'url': page.url,
-                    'title': await page.title(),
-                    'content': markdown,
-                }
-
-            if code:
-                result = await self.browser_session.execute_js(code, page)
-
-                if isinstance(result, dict) and 'success' in result:
-                    if not result['success']:
-                        raise Exception(f"JavaScript Error: {result.get('error')}\nStack: {result.get('stack')}")
-                    result = result.get('result')
-
-            # Capture page state after execution
-
-
-            # Extract data using patterns if specified
-
-            # Create execution record
-            record = JSExecutionRecord(
-                code=code,
-                result=result,
-                page_state=page_state,
-                extracted_data=extracted_data
-            )
-
-            self.js_history.append(record)
-
-            # Convert to standard ExecutionRecord for pipeline
-            return ExecutionRecord(
-                code=code,
-                result=_format_result_markdown({
-                    'js_result': result,
-                    'page_state': page_state,
-                    'extracted_data': extracted_data
-                }),
-                error=None
-            )
-
-        except Exception as e:
-            error_md = _format_error_markdown(str(e))
-            return ExecutionRecord(code=code, result=None, error=error_md)
-
-
-    def __str__(self):
-        """String representation of pipeline session"""
-        return str(self.ipython)
-
-    async def _process_think_result(self, think_result: ThinkResult, task:str) -> tuple[ThinkState,  ExecutionRecord | str | None]:
-        """Process the result of agent thinking"""
-        if think_result.action == 'brake':
-            return ThinkState.BRAKE, think_result.content
-
-        elif think_result.action == 'update':
-            if think_result.context.get('object_name') is None:
-                return ThinkState.ACTION, "no object_name specified in context!"
-            if think_result.context.get('file') is not None:
-                self.ipython.user_ns['__file__'] = think_result.context.get('file')
-            result = await self.verbose_output.process(think_result.action,
-                                                       self.ipython.modify_code(code=think_result.content,
-                                                    object_name=think_result.context.get('object_name'),))
-            return ThinkState.PROCESSING, result
-
-        elif think_result.action == 'code':
-            if think_result.context.get('file') is not None:
-                self.ipython.user_ns['__file__'] = think_result.context.get('file')
-            result = await self._execute_code(think_result.content, think_result.context)
-            return ThinkState.PROCESSING, result
-
-        elif think_result.action == 'done':
-            return ThinkState.DONE, think_result.content
-
-        elif think_result.action == 'infos':
-            infos = await self.chat_session.get_reference(think_result.content, to_str=True)
-            return ThinkState.ACTION, infos
-
-        elif think_result.action == 'guide':
-            details = await self.process_memory.get_reference(think_result.content, to_str=True)
-            plan = await self.agent.a_run(f"""You are an AI guidance system designed to help determine the next step in a task and provide instructions on how to proceed. Your role is to analyze the given information and offer clear, actionable guidance for the next steps.
-
-First, carefully read and understand the main task:
-<main_task>
-{task}
-</main_task>
-
-Next, review the last thought of the agent, if available:
-<last_thought>
-{think_result.content}
-{think_result.context}
-</last_thought>
-
-Then, examine the processing history, if provided:
-<processing_history>
-{details}
-</processing_history>
-
-To determine the next step and provide guidance, follow these instructions:
-
-1. Analyze the main task, breaking it down into smaller, manageable steps if necessary.
-2. Consider the last thought and processing history to understand the current progress and context.
-3. Identify any gaps, challenges, or areas that need further attention.
-4. Determine the most logical and efficient next step to move the task forward.
-5. Provide clear, concise instructions on how to complete this next step.
-
-When formulating your response, follow this structure:
-
-1. Begin with a brief summary of the current situation, referencing the main task and any relevant information from the last thought or processing history.
-2. Clearly state the next step that should be taken.
-3. Provide detailed instructions on how to complete this step, including any specific techniques, methods, or considerations to keep in mind.
-4. If applicable, mention any potential challenges or pitfalls to be aware of during this step.
-5. Conclude with a brief statement on how this step contributes to the overall progress of the main task.
-
-Format your response using the following sections:
-<summary>
-(Include your summary of the current situation here)
-</summary>
-
-<next_step>
-(State the next step to be taken here)
-</next_step>
-
-<instructions>
-(Provide detailed instructions for completing the next step here)
-</instructions>
-
-<challenges>
-(If applicable, mention potential challenges or pitfalls here)
-</challenges>
-
-<conclusion>
-(Briefly state how this step contributes to overall progress)
-</conclusion>
-
-Remember to be clear, concise, and specific in your guidance. Avoid vague or ambiguous instructions, and provide concrete examples or explanations where necessary.""",persist_history=False, strategy_override="direct_llm")
-            return ThinkState.ACTION, plan
-
-        return ThinkState.ACTION, None
-
-    async def execute(self, code:str):
-        return str(await self._execute_code(code))
-
-    def clear(self):
-        self.chat_session.history = []
-        self.process_memory.history = []
-        self.execution_history = []
-        self.variables = {}
-        self.ipython.reset()
-        self.js_history = []
-
-    async def get_process_hint(self, task):
-        return await self.process_memory.get_reference(task, to_str=True), await self.chat_session.get_reference(task, to_str=True)
-
-    def show_vars(self):
-        return self.verbose_output.log_state("VARS", self.variables, override=True)
-
-    def set_file(self, full_file_path_and_name):
-        if not os.path.exists(full_file_path_and_name):
-            print("Invalid file")
-            return
-        self.ipython.user_ns["__file__"] = full_file_path_and_name
-
-    async def run(self, task, do_continue=False) -> PipelineResult:
-        """Run the pipeline with separated thinking and processing phases"""
-        state = ThinkState.ACTION
-        result = None
-        original_task = task
-        if not do_continue:
-            task = await self.agent.a_run(f"""You are an AI assistant tasked with refactoring a user-provided task description into a more structured format with context learning and examples. Your goal is to create a comprehensive and well-organized task description that incorporates model flows and potential code fixes.
-
-First, I will provide you with a task description and some example tasks. Please read them carefully:
-
-<existing_globals>
-{self._generate_variable_descriptions()}
-</existing_globals>
-
-<example_tasks>
-Task: Create a simple analysis of a list of numbers
-- Generate a list of 100 random numbers between 1-1000
-- Calculate the mean, median, and standard deviation
-- Create a histogram of the distribution
-- Print all results and display the plot
-
-Task: Create a reinforcement learning (RL) agent to play a simple game
-- Set up an OpenAI Gym environment (e.g., CartPole)
-- Implement a Q-learning or Deep Q-Network (DQN) agent
-- Train the model and optimize hyperparameters
-- Visualize learning progress with reward graphs
-- Save and reload trained models for inference
-- Provide an option to let the trained agent play in real time
-
-Task: Perform edge detection on an image
-- Load an image from a URL or local file
-- Convert the image to grayscale
-- Apply Gaussian blur to reduce noise
-- Use Canny edge detection to extract edges
-- Display the original and processed images side by side
-- Save the output image
-
-Task: Build a basic sentiment analysis system
-- Load a dataset of movie reviews (you can use a small sample)
-- Preprocess the text (remove punctuation, lowercase, etc.)
-- Create a TF-IDF vectorizer
-- Split data into training and testing sets
-- Train a classifier (e.g., Naive Bayes or LogisticRegression)
-- Evaluate performance with accuracy, precision, recall
-- Create a confusion matrix visualization
-- Make predictions on new sample texts
-</example_tasks>
-
-Now, please refactor the given task description using the following guidelines:
-
-1. Analyze the task description and identify the main components and objectives.
-
-2. Structure the refactored task in a similar format to the example tasks, including:
-   - A clear title that summarizes the task
-   - A difficulty level (Easy, Intermediate, Hard, or Super Hard)
-   - A brief introduction to the task's context and purpose
-   - A code block containing step-by-step instructions
-   - A list of required skills, libraries, or technologies
-
-3. Incorporate model flows by breaking down the task into logical steps and explaining the process flow.
-
-4. Include potential code fixes or common pitfalls that users might encounter while working on the task.
-
-5. Add context learning elements by providing brief explanations or resources for key concepts related to the task.
-
-6. Ensure that the refactored task is comprehensive and can stand alone as a learning exercise.
-
-Please provide your refactored task description within <refactored_task> tags. Use appropriate subheadings and formatting to make the description clear and easy to read.
-
-Additional tips:
-- Mention any prerequisites or assumed knowledge
-- Suggest potential extensions or variations of the task for further learning
-
-Remember to maintain the original intent and complexity of the task while improving its structure and clarity. the task is: {task}""", persist_history=False, strategy_override="direct_llm")
-            if '<refactored_task>' in task:
-                task = task.split('<refactored_task>')[1]
-            if '</refactored_task>' in task:
-                task = task.split('</refactored_task>')[0]
-        code_follow_up_prompt = f"""
-You are an AI assistant responsible for evaluating task completion and providing feedback on the execution process. Your goal is to determine if a given task has been completed based on the execution result, and to offer insights for future improvements.
-
-You will be provided with two inputs:
-<task_description>
-{original_task}
-{f'<refactored_task_description_from_ai>{task}</refactored_task_description_from_ai>' if not do_continue else ''}
-</task_description>
-
-<code>
-#CODE#
-</code>
-
-<execution_result>
-#EXECUTION_RESULT#
-</execution_result>
-
-First, carefully analyze the task description and the execution result. Determine whether the task has been completed successfully based on the information provided.
-
-If the task is completed:
-1. Prepare a brief statement indicating that the task is done.
-2. Summarize the output for the user in a clear and concise manner.
-
-If the task is not completed:
-1. Prepare a brief statement indicating that the task is not done.
-2. Identify the specific aspects of the task that remain incomplete.
-
-Regardless of task completion status, evaluate the procedure and effectiveness of the execution:
-1. Analyze the workflow: Describe the steps taken in the execution process.
-2. Assess effectiveness: Determine how well the procedure achieved the desired outcome.
-3. Identify errors: Pinpoint any mistakes or inefficiencies in the execution.
-4. Provide recommendations: Suggest improvements for future task executions.
-
-tip: Enclose mutil line strings property for python eval to function!
-tip: Set is_completed True if all requirements are completed from <task_description>.
-tip: Help the Agent with your analyses to finalize the <task_description>.
-{'tip: Prefer new informations from <execution_result> over <refactored_task_description_from_ai> based of <code>' if not do_continue else ''}
-note : for the final result only toke information from the <execution_result>. if the relevant informations is not avalabel try string withe tips in the recommendations. else set is_completed True and return the teh Task failed!
-Ensure that your evaluation is thorough, constructive, and provides actionable insights for improving future task executions.
-Add guidance based on the the last execution result"""
-        code_follow_up_prompt_ = [code_follow_up_prompt]
-        initial_prompt = f"""
-You are an AI py coding agent specializing in iterative development and code refinement, designed to perform tasks that involve thinking. Your goal is to complete the given task while demonstrating a clear thought process throughout the execution.
-SYSTEM STATE:
-<current_state>
-Iteration: #ITER#
-Status: #STATE#
-Last EXECUTION: #EXECUTION#
-</current_state>
-
-ENVIRONMENT: {'current file :'+self.ipython.user_ns.get("__file__")  if self.ipython.user_ns.get("__file__") is not None else ''}
-
-'''<global_variables>
-#LOCALS#
-</global_variables>'''
-
-MEMORY:
-<process_memory>
-#PHINT#
-</process_memory>
-
-<chat_memory>
-#CHINT#
-</chat_memory>
-
-VALIDATION CHECKLIST (Must verify before each action):
-1. ✓ Check existing variables in ENVIRONMENT <global_variables>
-2. ✓ Verify existing functions and classes
-3. ✓ Review current imports
-4. ✓ Confirm method signatures
-5. ✓ Validate state preservation
-
-WORKFLOW STEPS:
-1. Analyze Current State:
-   - Reason and use all avalabel context
-   - Do not repeat the same errors
-   - Review existing implementations
-   - Check variable values
-   - Verify import statements
-   - Document dependencies
-
-2. Plan Change:
-   - NO example/simulation/simulate
-   - No demo er moc Data no Simulations Allowed or u will die!!
-   - Use existing variables and code when possible
-   - Prefer updates over rewrites
-
-3. Execute Change:
-   - Use appropriate action
-   - Maintain existing state
-   - Document modifications
-   - Verify results
-
-You will use a structure called ThinkResult to organize your thoughts and actions.
-For each step of your task, follow this process:
-
-ACTIONS:
-1. 'code':
-    - MUST check <global_variables> first
-    - NEVER create demo functions
-    - Include 'reason'
-    - lang default 'py'
-    - Required: code in content
-    - code MUST call a function or display the row variabel / value at the end!
-    - Required: {{'context':{{'lang':'py',  'reason': ... }}...}}
-    - Optional file key in context example {{'context':{{'lang':'py',  'file': 'main.py' ,  'reason': ... }}...}}
-    - py code allows for toplevel await !!! use it !!! like
-:file-start:
-print("using toplevel await")
-await abc()
-:file-end:
-
-    - Tip: use comments to reason with in the code
-3. 'infos': Request specific details
-4. 'guide': Get step clarification use on complex task and ery 5 step for staying on trak!
-5. 'brake': Pause for assessment
-6. 'done': Summarize changes
-
-CODE CONSTRAINTS:
-1. State Preservation:
-   - ALL variables ar persist
-   - ALL functions remain
-   - ALL classes ar maintained
-
-2. Import Management:
-   - Check <global_variables> for modules
-   - Use absolute imports
-   - Document new dependencies
-
-3. Function Handling:
-   - NEVER overwrite existing
-   - Use update for changes
-   - Preserve signatures
-
-4. Variable Scope:
-   - Maintain existing scope
-   - Check for conflicts
-   - Document state changes
-
-EXECUTION RULES:
-1. VERIFY before create
-2. UPDATE don't replace
-3. TEST after each change
-
-Next Action Required:
-1. Review current state
-2. Check existing code
-3. Execute with state preservation
-
-!!CRITICAL!!
-- NO demo functions
-- NO placeholder functions
-- USE existing code
-- FOR Implementations prefer writing large production redy code chunks.
-- FOR reasoning and validation write small code blocks.
-- THE CODE must call something or end the code with an value!
-- NO INFINIT LOOPS! none breakable while loops ar not allowed, exception ui (closed by user)
-- NO 'python' top level return, only write the variabel or value itself!
-- 'code is run using exec! do not use !pip ...'
-'- instead use auto_install(package_name, install_method="pip", upgrade=False, quiet=False, version=None, extra_args=None)'
-# Example usage first time
-│ auto_install('pandas', version='1.3.0')
-│ import pandas
-│ auto_install('pygame')
-│ import pygame
-│ auto_install('numpy')
-│ import numpy as np
-!TIPS!
-- '<global_variables> can contain instances and functions you can use in your python' code
-- if the function is async you can use top level await
-- if their is missing of informations try running code to get the infos
-- if you got stuck or need assistance break with a question to the user.
-'- run functions from <global_variables> using name(*args, **kwargs) or await name(*args, **kwargs)'
-'- <global_variables> ar global accessible!'
-'- if an <global_variables> name is lower lists an redy to use instance'
-"""
-        p_hint, c_hint = await self.get_process_hint(task)
-        initial_prompt = initial_prompt.replace('#PHINT#', p_hint)
-        initial_prompt = initial_prompt.replace('#CHINT#', c_hint)
-        initial_prompt_ = initial_prompt
-        iter_i = 0
-        iter_p = 0
-        iter_tat = 0
-        next_infos = ""
-        if not do_continue:
-            await self.chat_session.add_message({'role': 'user', 'content': task})
-        else:
-            self.restore()
-            await self.chat_session.add_message({'role': 'user', 'content': task})
-
-        if self.web_js and self.browser_session is None:
-            self.browser_session = BrowserWrapper(llm=self.agent.amd.modle)
-
-        # await self.verbose_output.log_message('user', task)
-        self.verbose_output.log_header(task)
-        while state != ThinkState.DONE:
-            iter_i += 1
-            t0 = time.perf_counter()
-            prompt = initial_prompt.replace('#ITER#', f'{iter_i} max {self.max_iter}')
-            prompt = prompt.replace('#STATE#', f'{state.name}')
-            prompt = prompt.replace('#EXECUTION#', f'{next_infos}')  if next_infos else prompt.replace('Last EXECUTION: #EXECUTION#', '')
-            prompt = prompt.replace('#LOCALS#', f'{self._generate_variable_descriptions()}')
-            self.verbose_output.log_state(state.name, {})
-            self.verbose_output.print(Style.GREY(f"{iter_i}/{self.max_iter}"))
-            if state == ThinkState.ACTION:
-                iter_tat +=1
-                if iter_tat > self.max_think_after_think:
-                    state = ThinkState.BRAKE
-            else:
-                iter_tat = 0
-
-            if state == ThinkState.ACTION:
-                # Get agent's thoughts
-                think_dicts = await self.verbose_output.process(state.name, self.agent.a_format_class(
-                    ThinkResults,
-                    prompt,
-                    message_context=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy()+([self.process_memory.history[-1]] if self.process_memory.history else []) ,
-                ))
-                think_dicts = think_dicts.get("actions")
-                if think_dicts is None:
-                    think_dicts = [await self.verbose_output.process(state.name, self.agent.a_format_class(
-                        ThinkResult,
-                        prompt,
-                        message_context=self.chat_session.get_past_x(self.max_iter * 2, last_u=not do_continue).copy() + (
-                            [self.process_memory.history[-1]] if self.process_memory.history else []),
-                    ))]
-                if len(think_dicts) == 1:
-                    think_dict = think_dicts[0]
-                else:
-                    for think_dict in think_dicts[:-1]:
-                        if think_dict.get('context') is None:
-                            think_dict['context'] = {'context': 'N/A'}
-                        if not isinstance(think_dict.get('context'), dict):
-                            think_dict['context'] = {'context': think_dict.get('context')}
-                        think_result = ThinkResult(**think_dict)
-                        await self.chat_session.add_message(
-                            {'role': 'assistant', 'content': think_result.content + str(think_result.context)})
-                        state, result = await self.verbose_output.process(think_dict.get("action"),
-                                                                          self._process_think_result(think_result,
-                                                                                                     task=task))
-                        if result:
-                            await self.chat_session.add_message(
-                                {'role': 'system', 'content': 'Evaluation: ' + str(result)})
-                            await self.verbose_output.log_message('system', str(result))
-                    think_dict = think_dicts[-1]
-                self.verbose_output.formatter.print_code_block(think_dict.get("content"), 'python' if think_dict.get("context", {'lang': 'py'}).get('lang') == 'py' else 'javascript')
-                if think_dict.get('context') is None:
-                    think_dict['context'] = {'context': 'N/A'}
-                if not isinstance(think_dict.get('context'), dict):
-                    think_dict['context'] = {'context': think_dict.get('context')}
-                think_result = ThinkResult(**think_dict)
-                state, result = await self.verbose_output.process(think_dict.get("action"), self._process_think_result(think_result, task=task))
-                await self.chat_session.add_message({'role': 'assistant', 'content': think_result.content + str(think_result.context)})
-                if result:
-                    await self.chat_session.add_message({'role': 'system', 'content': 'Evaluation: '+str(result)})
-                    await self.verbose_output.log_message('system', str(result))
-                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(result))
-                    if isinstance(result ,ExecutionRecord):
-                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", result.code)
-                    else:
-                        code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#", self._generate_variable_descriptions())
-                else:
-                    code_follow_up_prompt_[0] = code_follow_up_prompt.replace("#EXECUTION_RESULT#", str(think_result))
-                    code_follow_up_prompt_[0] = code_follow_up_prompt_[0].replace("#CODE#",
-                                                                              self._generate_variable_descriptions())
-
-
-            elif state == ThinkState.PROCESSING:
-                # Get agent's thoughts
-                class Next(BaseModel):
-                    is_completed: bool
-                    recommendations: str
-                    errors: str
-                    effectiveness: str
-                    workflow: str
-                    text: str
-                # Format the agent's thoughts into a structured response
-                _agent = self.v_agent if self.v_agent is not None else self.agent
-                next_dict = await self.verbose_output.process(state.name, _agent.a_format_class(
-                    Next,
-                    code_follow_up_prompt_[0],
-                    message_context=self.chat_session.get_past_x(self.max_iter*2, last_u=not do_continue).copy(),
-                ))
-                next_infos = json.dumps(next_dict)
-                await self.verbose_output.log_process_result(next_dict)
-                await self.process_memory.add_message({'role': 'assistant', 'content': next_infos.replace('workflow:', 'past-workflow:')})
-                iter_p += 1
-                code_follow_up_prompt_[0] = code_follow_up_prompt
-                if not next_dict.get('is_completed', True):
-                    state = ThinkState.ACTION
-                    initial_prompt = initial_prompt_.replace('#ITER#',f'#ITER#\nReasoning assist result: {next_dict}')
-                    continue
-                elif next_dict.get('is_completed', False):
-                    result = next_dict.get('text', '')
-                    state = ThinkState.DONE
-                    continue
-                else:
-                    result = next_dict.get('text', '')
-                    break
-
-            elif state == ThinkState.BRAKE:
-                break
-
-            if iter_i < self.max_iter:
-                await asyncio.sleep(1)
-                # if time.perf_counter() -t0 < self.timeout_timer*2.5:
-                #     with Spinner(f"Prevent rate limit posing for {self.timeout_timer}s", symbols='+', time_in_s=self.timeout_timer, count_down=True):
-                #         await asyncio.sleep(self.timeout_timer)
-            else:
-                state = ThinkState.BRAKE
-                if isinstance(result, ExecutionRecord):
-                    result = result.result
-                elif isinstance(result, str):
-                    pass
-                else:
-                    result = "Max iterations"
-                break
-
-        self.verbose_output.log_state(state.name, {})
-
-        return PipelineResult(
-            variables=self.variables,
-            result=result,
-            execution_history=self.execution_history,
-            message=self.chat_session.get_past_x(iter_i*2, last_u=not do_continue),
-        )
-
-    async def run_project(self, task, lang='py', execute_function=None):
-        if execute_function is None:
-            if lang == 'py':
-                execute_function = default_python_execute_function
-            elif lang == 'rust':
-                execute_function = default_rust_execute_function
-            else:
-                raise ValueError(f"Unsupported language: {lang}")
-        class FileAction(BaseModel):
-            action: str
-            path: str
-            content: str | None = None
-
-        class ProjectThinkResult(BaseModel):
-            action: str
-            file_actions: list[FileAction]
-            reasoning: str
-
-        class ProjectPipelineResult(BaseModel):
-            result: str
-            execution_history: list[str]
-            files: dict[str, str]
-        state = ThinkState.ACTION
-        result = None
-        vfs = VirtualFileSystem(self._session_dir / f"project_{lang}")
-
-        project_prompt = f"""
-    You are an AI coding agent specializing in {lang} project development. Your task is to create, modify, and manage files within a project structure to complete the given task. Use the VirtualFileSystem to interact with files.
-
-    TASK DESCRIPTION:
-    {task}
-    CURRENT FILES:
-    #files#
-
-    WORKFLOW STEPS:
-    1. Analyze the current project state
-    2. Plan necessary changes or additions
-    3. Execute changes using file actions
-    4. Evaluate the project's progress
-
-    Use the ProjectThinkResult structure to organize your thoughts and actions:
-
-    class ProjectThinkResult(BaseModel):
-        action: str  # 'code', 'evaluate', 'done'
-        file_actions: List[FileAction]
-        reasoning: str
-
-    class FileAction(BaseModel):
-        action: str  # 'write', 'read', 'delete', 'list'
-        path: str
-        content: Optional[str] = None
-
-    EXECUTION RULES:
-    1. Use absolute paths for all file operations
-    2. Maintain a clear project structure
-    3. Document your code and reasoning
-    4. Ensure all necessary files are created and properly linked
-    5. Use the appropriate language syntax and best practices for {lang}
-
-    Next Action Required:
-    1. Review the current project state
-    2. Plan the next step in project development
-    3. Execute file actions to implement changes
-    """
-
-        execution_history = []
-        files = {}
-
-        iter_i = 0
-        self.verbose_output.log_header(task)
-
-        while state != ThinkState.DONE:
-            iter_i += 1
-            self.verbose_output.print(Style.GREY(f"{iter_i}/{self.max_iter}"))
-            if iter_i>self.max_iter:
-                break
-            if state == ThinkState.ACTION:
-                think_result = await self.agent.a_format_class(
-                    ProjectThinkResult,
-                    project_prompt.replace('#files#', vfs.print_file_structure()),
-                    message_context=execution_history
-                )
-                self.verbose_output.log_state(state.name, think_result)
-                think_result = ProjectThinkResult(**think_result)
-                for file_action in think_result.file_actions:
-                    path = file_action.path
-                    Path(file_action.path).mkdir(exist_ok=True)
-                    if file_action.action == 'write':
-                        vfs.write_file(path, file_action.content)
-                        files[path] = file_action.content
-                    elif file_action.action == 'read':
-                        content = vfs.read_file(path)
-                        files[path] = content
-                    elif file_action.action == 'delete':
-                        vfs.delete_file(path)
-                        files.pop(path, None)
-                    elif file_action.action == 'list':
-                        dir_contents = vfs.list_directory(path)
-                        files[path] = str(dir_contents)
-
-                if think_result.action == 'evaluate':
-                    state = ThinkState.PROCESSING
-                elif think_result.action == 'done':
-                    state = ThinkState.DONE
-
-                execution_history.append(f"Action: {think_result.action}\nReasoning: {think_result.reasoning}")
-
-            elif state == ThinkState.PROCESSING:
-                if execute_function:
-                    execution_result = await execute_function(files)
-                    execution_history.append(f"Execution Result: {execution_result}")
-
-                    evaluation_prompt = f"""
-    Evaluate the current state of the project based on the execution result:
-
-    {execution_result}
-
-    Determine if the project is complete or if further modifications are needed.
-    """
-                    evaluation = await self.agent.a_format_class(
-                        ProjectThinkResult,
-                        evaluation_prompt,
-                        message_context=execution_history
-                    )
-                    self.verbose_output.log_state(state.name, evaluation)
-                    evaluation = ProjectThinkResult(**evaluation)
-                    if evaluation.action == 'done':
-                        state = ThinkState.DONE
-                        result = execution_result
-                    else:
-                        state = ThinkState.ACTION
-                else:
-                    state = ThinkState.ACTION
-            else:
-                break
-
-        return ProjectPipelineResult(
-            result=result,
-            execution_history=execution_history,
-            files=files
-        )
-
-    async def __aenter__(self):
-        self.clear()
-        return self
-
-    async def configure(self, verbose=None, print_function=None, with_js=False, agent=None, variables=None, web_kwargs=None):
-        if verbose is not None and (print_function is not None or verbose != self.verbose_output.verbose):
-            if agent is None:
-                agent = self.agent
-            else:
-                self.agent = agent
-            agent.verbose = verbose
-            self.verbose_output = EnhancedVerboseOutput(verbose=verbose, print_f=print_function)
-
-            if print_function is not None:
-                agent.print_verbose = print_function
+        self._session_dir = Path(session_dir) if session_dir else Path(get_app().appdata) / '.tools_sessions'
+        self._session_dir.mkdir(exist_ok=True)
+        self.auto_remove = auto_remove
+        self.variable_manager = variable_manager
+
+        # Initialize Python execution environment
+        self.ipython = MockIPython(self._session_dir, auto_remove=auto_remove)
         if variables:
-            self.variables = {**self.variables, **self._process_variables(variables)}
-        if with_js and web_kwargs:
-            self.browser_session: BrowserWrapper | None = BrowserWrapper(**web_kwargs)
-        self.web_js = with_js
-        if self.restore_var:
-            self.restore()
+            self.ipython.user_ns.update(variables)
 
+        # Initialize virtual file system
+        self.vfs = VirtualFileSystem(self._session_dir / 'virtual_fs')
+
+        # Initialize Rust interface
+        self.cargo = CargoRustInterface(self._session_dir, auto_remove=auto_remove)
+
+        # Track execution state
+        self._execution_history = []
+        self._current_file = None
+
+    async def execute_python(self, code: str) -> str:
+        """
+        Execute Python code in the virtual environment.
+
+        Args:
+            code: Python code to execute
+
+        Returns:
+            Execution result as string
+        """
+        try:
+            result = await self.ipython.run_cell(code, live_output=False)
+
+            # Update variable manager if available
+            if self.variable_manager:
+                for key, value in self.ipython.user_ns.items():
+                    if not key.startswith('_') and key not in ['__name__', '__builtins__']:
+                        try:
+                            self.variable_manager.set(f"python.{key}", value)
+                        except:
+                            pass  # Ignore non-serializable variables
+
+            self._execution_history.append(('python', code, result))
+            return str(result) if result else "Execution completed"
+
+        except Exception as e:
+            error_msg = f"Python execution error: {str(e)}\n{traceback.format_exc()}"
+            self._execution_history.append(('python', code, error_msg))
+            return error_msg
+
+    async def execute_rust(self, code: str) -> str:
+        """
+        Execute Rust code using Cargo.
+
+        Args:
+            code: Rust code to execute
+
+        Returns:
+            Execution result as string
+        """
+        try:
+            # Setup project if needed
+            if not self.cargo.current_project:
+                await self.cargo.setup_project("temp_rust_project")
+
+            result = await self.cargo.run_code(code)
+            self._execution_history.append(('rust', code, result))
+            return result
+
+        except Exception as e:
+            error_msg = f"Rust execution error: {str(e)}"
+            self._execution_history.append(('rust', code, error_msg))
+            return error_msg
+
+    async def write_file(self, filepath: str, content: str, lines: str = "") -> str:
+        """
+        Write content to a file in the virtual file system.
+
+        Args:
+            filepath: Path to the file
+            content: Content to write
+            lines: Optional line range to write (e.g., "1-3" for lines 1 to 3)
+
+        Returns:
+            Success message
+        """
+
+        try:
+            if lines:
+                abs_path = self.vfs.overwrite_lines(filepath, content, lines)
+            else:
+                abs_path = self.vfs.write_file(filepath, content)
+
+            # Update variable manager if available
+            if self.variable_manager:
+                self.variable_manager.set(f"files.{filepath.replace('/', '.')}", {
+                    'path': str(abs_path),
+                    'size': len(content),
+                    'content_preview': content[:100] + '...' if len(content) > 100 else content
+                })
+
+            return f"File written successfully: {abs_path}"
+
+        except Exception as e:
+            return f"File write error: {str(e)}"
+
+    async def replace_in_file(self, filepath: str, old_content: str, new_content: str, precise: bool = True) -> str:
+        """
+        Replace exact content in file with new content.
+
+        Args:
+            filepath: Path to the file
+            old_content: Exact content to replace (empty string for insertion at start)
+            new_content: Content to replace with
+            precise: If True, requires exact match; if False, allows single occurrence replacement
+
+        Returns:
+            Success message or error
+        """
+        try:
+            # Read current file content
+            try:
+                current_content = self.vfs.read_file(filepath)
+            except:
+                return f"Error: File '{filepath}' not found or cannot be read"
+
+            # Handle insertion at start (empty old_content)
+            if not old_content:
+                updated_content = new_content + current_content
+                self.vfs.write_file(filepath, updated_content)
+                return f"Content inserted at start of '{filepath}'"
+
+            # Check if old_content exists
+            if old_content not in current_content:
+                return f"Error: Old content not found in '{filepath}' use read_file to check."
+
+            # Count occurrences
+            occurrences = current_content.count(old_content)
+
+            if precise and occurrences > 1:
+                return f"Error: Found {occurrences} occurrences of old content. Use precise=False to replace first occurrence."
+
+            # Replace content (first occurrence if multiple)
+            updated_content = current_content.replace(old_content, new_content, 1)
+
+            # Write updated content
+            self.vfs.write_file(filepath, updated_content)
+
+            return f"Successfully replaced content in '{filepath}' ({occurrences} occurrence{'s' if occurrences > 1 else ''} found, 1 replaced)"
+
+        except Exception as e:
+            return f"Replace error: {str(e)}"
+
+    async def read_file(self, filepath: str, lines: str="") -> str:
+        """
+        Read content from a file in the virtual file system.
+
+        Args:
+            filepath: Path to the file
+            lines: Optional line range to read (e.g., "1-3" for lines 1 to 3)
+
+        Returns:
+            File content or error message
+        """
+        try:
+            content = self.vfs.read_file(filepath)
+
+            if lines:
+                start, end = map(int, lines.split('-'))
+                content = '\n'.join(content.split('\n')[start-1:end])
+            # Update variable manager if available
+            if self.variable_manager:
+                self.variable_manager.set("files.last_read", {
+                    'path': filepath,
+                    'size': len(content),
+                    'content_preview': content[:200] + '...' if len(content) > 200 else content
+                })
+
+            return content
+
+        except Exception as e:
+            return f"File read error: {str(e)}"
+
+    async def list_files(self, dirpath: str = '.') -> str:
+        """
+        List files in a directory.
+
+        Args:
+            dirpath: Directory path to list
+
+        Returns:
+            File listing as string
+        """
+        try:
+            files = self.vfs.list_files(dirpath)
+            listing = "\n".join(f"- {file}" for file in files)
+            return f"Files in '{dirpath}':\n{listing}"
+
+        except Exception as e:
+            return f"File listing error: {str(e)}"
+
+    async def list_directory(self, dirpath: str = '.') -> str:
+        """
+        List contents of a directory.
+
+        Args:
+            dirpath: Directory path to list
+
+        Returns:
+            Directory listing as string
+        """
+        try:
+            contents = self.vfs.list_directory(dirpath)
+            listing = "\n".join(f"- {item}" for item in contents)
+
+            # Update variable manager if available
+            if self.variable_manager:
+                self.variable_manager.set("files.last_listing", {
+                    'directory': dirpath,
+                    'items': contents,
+                    'count': len(contents)
+                })
+
+            return f"Directory '{dirpath}' contents:\n{listing}"
+
+        except Exception as e:
+            return f"Directory listing error: {str(e)}"
+
+
+    async def create_directory(self, dirpath: str) -> str:
+        """
+        Create a new directory.
+
+        Args:
+            dirpath: Path of directory to create
+
+        Returns:
+            Success message
+        """
+        try:
+            abs_path = self.vfs.create_directory(dirpath)
+            return f"Directory created successfully: {abs_path}"
+
+        except Exception as e:
+            return f"Directory creation error: {str(e)}"
+
+    def set_base_directory(self, path: str) -> str:
+        """
+        Set the base directory for the virtual file system.
+
+        Args:
+            path: New base directory path
+
+        Returns:
+            Success message
+        """
+        try:
+            new_path = Path(path) if isinstance(path, str) else path
+            new_path = new_path.absolute()
+            print(f"New path: {new_path}")
+            new_path.mkdir(parents=True, exist_ok=True)
+            self.vfs.base_dir = new_path
+            self.vfs.current_dir = new_path
+
+            # Update MockIPython base directory and sys.path
+            result = self.ipython.set_base_directory(path)
+
+            return result
+
+        except Exception as e:
+            return f"Set base directory error: {str(e)}"
+
+    async def set_current_file(self, filepath: str) -> str:
+        """
+        Set the current file for Python execution context.
+
+        Args:
+            filepath: Path to set as current file
+
+        Returns:
+            Success message
+        """
+        try:
+            abs_path = self.vfs._resolve_path(filepath)
+            self.ipython.user_ns['__file__'] = str(abs_path)
+            self._current_file = str(abs_path)
+
+            return f"Current file set to: {abs_path}"
+
+        except Exception as e:
+            return f"Set current file error: {str(e)}"
+
+    async def install_package(self, package_name: str, version: str | None = None) -> str:
+        """
+        Install a Python package in the virtual environment.
+
+        Args:
+            package_name: Name of the package to install
+            version: Optional specific version to install
+
+        Returns:
+            Installation result
+        """
+        try:
+            code = f"""
+auto_install('{package_name}'{f", version='{version}'" if version else ""})
+import {package_name.split('[')[0]}  # Import base package name
+print(f"Successfully imported {package_name}")
+"""
+            result = await self.execute_python(code)
+            return result
+
+        except Exception as e:
+            return f"Package installation error: {str(e)}"
+
+    async def get_execution_history(self) -> str:
+        """
+        Get the execution history.
+
+        Returns:
+            Execution history as formatted string
+        """
+        if not self._execution_history:
+            return "No execution history available."
+
+        history_lines = []
+        for i, (lang, code, result) in enumerate(self._execution_history[-10:], 1):
+            history_lines.append(f"[{i}] {lang.upper()}:")
+            history_lines.append(f"    Code: {code[:100]}..." if len(code) > 100 else f"    Code: {code}")
+            history_lines.append(
+                f"    Result: {str(result)[:200]}..." if len(str(result)) > 200 else f"    Result: {result}")
+            history_lines.append("")
+
+        return "\n".join(history_lines)
+
+    async def clear_session(self) -> str:
+        """
+        Clear the current session (variables, history, files).
+
+        Returns:
+            Success message
+        """
+        try:
+            # Reset Python environment
+            self.ipython.reset()
+
+            # Clear execution history
+            self._execution_history.clear()
+
+            # Clear VFS if auto_remove is enabled
+            if self.auto_remove:
+                shutil.rmtree(self.vfs.base_dir, ignore_errors=True)
+                self.vfs.base_dir.mkdir(parents=True, exist_ok=True)
+                self.vfs.virtual_files.clear()
+
+            # Reset current file
+            self._current_file = None
+
+            return "Session cleared successfully"
+
+        except Exception as e:
+            return f"Clear session error: {str(e)}"
+
+    async def get_variables(self) -> str:
+        """
+        Get current variables in JSON format.
+
+        Returns:
+            Variables as JSON string
+        """
+        try:
+            # Get Python variables
+            py_vars = {}
+            for key, value in self.ipython.user_ns.items():
+                if not key.startswith('_') and key not in ['__name__', '__builtins__']:
+                    try:
+                        # Try to serialize the value
+                        json.dumps(value, default=str)
+                        py_vars[key] = str(value)[:200] if len(str(value)) > 200 else value
+                    except:
+                        py_vars[key] = f"<{type(value).__name__}>"
+
+            result = {
+                'python_variables': py_vars,
+                'current_file': self._current_file,
+                'vfs_base': str(self.vfs.base_dir),
+                'execution_count': len(self._execution_history)
+            }
+
+            return json.dumps(result, indent=2, default=str)
+
+        except Exception as e:
+            return f"Get variables error: {str(e)}"
+
+    def get_tools(self, name:str=None) -> list[tuple[Any, str, str]]:
+        """
+        Get all available tools as list of tuples (function, name, description).
+
+        Returns:
+            List of tool tuples
+        """
+        tools = [
+            # Code execution tools
+            (self.execute_python, "execute_python",
+             "Execute Python code in virtual environment. all variables ar available under the python scope.\n"
+             "The isaa_instance is available as isaa_instance in the python code."
+             " Args: code (str) -> str"),
+
+            # (self.execute_rust, "execute_rust",
+            #  "Execute Rust code using Cargo. Args: code (str) -> str"),
+
+            # File system tools
+            (self.write_file, "write_file",
+             "Write content to file in virtual filesystem. lines is a string with the line range to write (e.g., '1-3' for lines 1 to 3) Args: filepath (str), content (str), lines (str) = '' -> str"),
+
+            (self.write_file, "create_file",
+             "Write content to file in virtual filesystem.  Args: filepath (str), content (str) -> str"),
+
+            (self.replace_in_file, "replace_in_file",
+             "Replace exact content in file. Args: filepath (str), old_content (str), new_content (str), precise (bool) = True -> str"),
+
+            (self.read_file, "read_file",
+             "Read content from file in virtual filesystem. lines is a string with the line range to read (e.g., '1-3' for lines 1 to 3) Args: filepath (str), lines (str) = '' -> str"),
+
+            (self.list_files, "list_files",
+             "List files in directory. Args: dirpath (str) = '.' -> str"),
+
+            (self.list_directory, "list_directory",
+             "List directory contents. Args: dirpath (str) = '.' -> str"),
+
+            (self.create_directory, "create_directory",
+             "Create new directory. Args: dirpath (str) -> str"),
+
+            # Configuration tools
+            (self.set_base_directory, "set_base_directory",
+             "Set base directory for virtual filesystem. Args: path (str) -> str"),
+
+            (self.set_current_file, "set_current_file",
+             "Set current file for Python execution context. Args: filepath (str) -> str"),
+
+            (self.install_package, "install_package",
+             "Install Python package. Args: package_name (str), version (Optional[str]) -> str"),
+
+            # Session management tools
+            (self.get_execution_history, "get_execution_history",
+             "Get execution history. Args: None -> str"),
+
+            (self.clear_session, "clear_session",
+             "Clear current session. Args: None -> str"),
+
+            (self.get_variables, "get_variables",
+             "Get current variables as JSON. Args: None -> str"),
+        ]
+        if name is not None:
+            tools = [t for t in tools if t[1] == name][0]
+        return tools
+
+    def __aenter__(self):
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        if self.web_js:
-            await self.browser_session.close()
-            if self.restore_var:
-                self.save_session(f"Pipeline_Session_{self.agent.amd.name}")
-        if exc_type is not None:
-            print(f"Exception occurred: {exc_value}")
-        else:
-            print("Pipe Exit")
+    async def __aexit__(self, *exe):
+        await asyncio.sleep(0.01)
 
 ### -- extra -- ###
 
@@ -3884,77 +1996,3 @@ if __name__ == '__main__':
     #cleaned_result = super_strip(asd)
     #print(type(cleaned_result), len(asd), len(cleaned_result))
     #print(cleaned_result)
-
-if __name__ == "__main__":
-    #async def main():
-    #    agent = get_app("demo").get_mod("isaa").get_agent("self")
-    #    agent = await agent
-    #    pipeline = Pipeline(
-    #    agent = agent,
-    #    variables = {"n": 10})
-    #    result = await pipeline.run(task = "Calculate fibonacci sequence to n")
-    #    print(result.result)
-#
-#
-    #asyncio.run(main())
-    print(asyncio.run(BrowserWrapper().run("Finde eine Lösung für mein Problem. ich habe ine rust aplikation die beim ausführen der exe zurückgibt : returned non-zero exit status 3221225781. oder spezifischer : (exit code: 0xc0000135, STATUS_DLL_NOT_FOUND) ich nutze pyo3 damit rust python verwenden kann in einer venv so wiet habe ich nur das gefunde : https://github.com/PyO3/pyo3/issues/3589 wie fixe ich mein probelm?")))
-
-
-# Example usage and testing
-if __name__ == "__main__2":
-    async def demo():
-        # Create formatter instance
-        formatter = EnhancedVerboseOutput(verbose=True)
-
-        # Demo header
-        formatter.log_header("Dynamic Formatter Demo")
-
-        # Demo different message types
-        formatter.print_success("Formatter initialized successfully")
-        formatter.print_info("Adapting to terminal width...")
-        formatter.print_warning("This is a warning message")
-
-        # Demo section
-        formatter.print_section(
-            "Features",
-            "- Dynamic width adaptation\n- Clean formatting\n- Multiple output types\n- Progress indicators"
-        )
-
-        # Demo progress bar
-        for i in range(11):
-            formatter.print_progress_bar(i, 10, "Loading")
-            await asyncio.sleep(0.1)
-        print()  # New line after progress
-
-        # Demo state logging
-        formatter.log_state("PROCESSING", {
-            "current_task": "Data processing",
-            "items_processed": 150,
-            "items_remaining": 50
-        })
-
-        # Demo code block
-        formatter.print_code_block("""
-def example_function():
-    \"\"\"This is an example function\"\"\"
-    return "Hello, World!"
-        """.strip())
-
-        # Demo table
-        formatter.print_table(
-            ["Name", "Status", "Progress"],
-            [
-                ["Task 1", "Complete", "100%"],
-                ["Task 2", "In Progress", "65%"],
-                ["Task 3", "Pending", "0%"]
-            ]
-        )
-
-        # Demo spinner
-        await formatter.process("Processing data...", asyncio.sleep(2))
-
-        formatter.print_success("Demo completed!")
-
-
-    # Run demo
-    asyncio.run(demo())

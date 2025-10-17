@@ -15,8 +15,9 @@
 # "
 # For your tools:
 CHECKS_DEFINITIONS="
-ruff check .|Ruff|true
-safety check --full-report|Safety|true
+deptry .\toolboxv2\|Deptry|true
+ruff check .\toolboxv2\|Ruff|true
+safety scan --full-report|Safety|true
 " # Assuming both are critical for commit
 
 VERSIONS_CMD="tb -v"

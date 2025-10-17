@@ -104,7 +104,7 @@ print(f"Debug Mode: {app_instance.debug}")
 
 *   **`load_all_mods_in_file(working_dir="mods")` / `a_load_all_mods_in_file(...)` (async):**
     *   Scans the specified directory (default `./mods/`) and loads all valid Python modules found.
-# To [isaa](./isaa.md)
+
 ### Function Registration and Execution
 
 *   **`@app.tb(...)` Decorator (via `_create_decorator`):**
@@ -182,17 +182,17 @@ json_payload = await response_data.json()
 
 ### 2. `cli.md` - Documenting the Command Line Interface
 
-This should explain how to use the `tb` (or `python -m toolboxv2`) command-line tool, detailing its arguments and their effects.
+This should explain how to use the `tb` (or `python -m tb`) command-line tool, detailing its arguments and their effects.
 
 ```markdown
 # ToolBoxV2: Command Line Interface (CLI)
 
-ToolBoxV2 provides a command-line interface (CLI) for managing and running applications. It's typically invoked as `tb` (if installed globally or via an alias) or `python -m toolboxv2`.
+ToolBoxV2 provides a command-line interface (CLI) for managing and running applications. It's typically invoked as `tb` (if installed globally or via an alias) or `python -m tb`.
 
 ## General Usage
 
 ```bash
-python -m toolboxv2 [options] [sub-commands]
+python -m tb [options] [sub-commands]
 # or
 tb [options] [sub-commands]
 ```
@@ -209,7 +209,7 @@ The CLI script (`__main__.py`) performs the following main steps:
 
 ## Key CLI Arguments
 
-The following are some of the primary arguments available. Use `tb -h` or `python -m toolboxv2 -h` for a full list.
+The following are some of the primary arguments available. Use `tb -h` or `python -m tb -h` for a full list.
 
 *   **Instance and Mode:**
     *   `-init [name]`: Initializes ToolBoxV2 with a specific instance name (default: `main`).
@@ -295,25 +295,25 @@ The following are some of the primary arguments available. Use `tb -h` or `pytho
 
 ```bash
 # Get version information
-python -m toolboxv2 -v
+python -m tb -v
 
 # Load all modules and save function enums
-python -m toolboxv2 -l -sfe
+python -m tb -l -sfe
 
 # Run a specific function in MyModule
-python -m toolboxv2 -c MyModule my_function arg_value --kwargs param_name=kwarg_value
+python -m tb -c MyModule my_function arg_value --kwargs param_name=kwarg_value
 
 # Start the application with a custom flow named 'web_server' in debug mode
-python -m toolboxv2 -m web_server --debug -n my_web_instance
+python -m tb -m web_server --debug -n my_web_instance
 
 # Start a background daemon for the 'bg_processing' flow
-python -m toolboxv2 -m bg_processing -bg -n background_processor
+python -m tb -m bg_processing -bg -n background_processor
 
 # Connect to the background daemon with a live proxy application
-python -m toolboxv2 -m cli -fg -n background_processor
+python -m tb -m cli -fg -n background_processor
 
 # Kill the 'web_server' modi instance named 'my_web_instance'
-python -m toolboxv2 -m web_server --kill -n my_web_instance
+python -m tb -m web_server --kill -n my_web_instance
 ```
 
 ---

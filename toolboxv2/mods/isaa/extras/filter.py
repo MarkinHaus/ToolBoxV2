@@ -7,7 +7,7 @@ import sys
 
 # Import semantic search libraries:
 
-
+'''
 # --- Helper function for filtering pages ---
 def filter_relevant_texts(query: str,
                           texts: list[str],
@@ -57,7 +57,7 @@ def filter_relevant_texts(query: str,
             if similarity >= semantic_threshold:
                 relevant_texts.append(text)
     return relevant_texts
-
+'''
 
 
 def after_format_(d: str) -> dict:
@@ -147,7 +147,8 @@ def after_format(d:str)->dict:
     try:
         d = eval(clean(d))
     except SyntaxError:
-        print("Invalid syntax in input data")
+        pass
+        # print("Invalid syntax in input data")
         # return d
     if isinstance(d, str):
         try:

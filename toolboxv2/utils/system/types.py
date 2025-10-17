@@ -1,34 +1,31 @@
 import asyncio
+import base64
 import cProfile
 import io
+import json
 import logging
 import multiprocessing as mp
 import os
 import pstats
 import time
-from collections.abc import Callable
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from inspect import signature
-from types import ModuleType
-from typing import Any, Union
-
-from pydantic import BaseModel
-
-from ..system.db_cli_manager import ClusterManager
-from ..extras.blobs import BlobStorage
-from ..extras import generate_test_cases
-from ..extras.Style import Spinner
-from .all_functions_enums import *
-from .file_handler import FileHandler
-
-import asyncio
-import base64
-import inspect
-import json
 import traceback
 from collections.abc import AsyncGenerator, Callable
-from typing import Any, TypeVar
+from contextlib import contextmanager
+from dataclasses import field
+from datetime import timedelta, datetime
+from inspect import signature
+from types import ModuleType
+from typing import Any, TypeVar, Dict
+
+import psutil
+from pydantic import BaseModel
+
+from ..extras import generate_test_cases
+from ..extras.blobs import BlobStorage
+from ..extras.Style import Spinner
+from toolboxv2.utils.clis.db_cli_manager import ClusterManager
+from .all_functions_enums import *
+from .file_handler import FileHandler
 
 T = TypeVar('T')
 
@@ -620,18 +617,143 @@ class ApiResult(BaseModel):
         return res
 
 
-class Result:
+from typing import TypeVar, Generic, List, Optional, Type, get_origin, get_args
+import inspect
+
+T = TypeVar('T')
+
+
+class Result(Generic[T]):
     _task = None
+    _generic_type: Optional[Type] = None
+
     def __init__(self,
                  error: ToolBoxError,
                  result: ToolBoxResult,
                  info: ToolBoxInfo,
                  origin: Any | None = None,
+                 generic_type: Optional[Type] = None
                  ):
         self.error: ToolBoxError = error
         self.result: ToolBoxResult = result
         self.info: ToolBoxInfo = info
         self.origin = origin
+        self._generic_type = generic_type
+
+    def __class_getitem__(cls, item):
+        """Enable Result[Type] syntax"""
+
+        class TypedResult(cls):
+            _generic_type = item
+
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._generic_type = item
+
+        return TypedResult
+
+    def typed_get(self, key=None, default=None) -> T:
+        """Get data with type validation"""
+        data = self.get(key, default)
+
+        if self._generic_type and data is not None:
+            # Validate type matches generic parameter
+            if not self._validate_type(data, self._generic_type):
+                from toolboxv2 import get_logger
+                get_logger().warning(f"Type mismatch: expected {self._generic_type}, got {type(data)}")
+
+        return data
+
+    async def typed_aget(self, key=None, default=None) -> T:
+        """Async get data with type validation"""
+        data = await self.aget(key, default)
+
+        if self._generic_type and data is not None:
+            if not self._validate_type(data, self._generic_type):
+                from toolboxv2 import get_logger
+                get_logger().warning(f"Type mismatch: expected {self._generic_type}, got {type(data)}")
+
+        return data
+
+    def _validate_type(self, data, expected_type) -> bool:
+        """Validate data matches expected type"""
+        try:
+            # Handle List[Type] syntax
+            origin = get_origin(expected_type)
+            if origin is list or origin is List:
+                if not isinstance(data, list):
+                    return False
+
+                # Check list element types if specified
+                args = get_args(expected_type)
+                if args and data:
+                    element_type = args[0]
+                    return all(isinstance(item, element_type) for item in data)
+                return True
+
+            # Handle other generic types
+            elif origin is not None:
+                return isinstance(data, origin)
+
+            # Handle regular types
+            else:
+                return isinstance(data, expected_type)
+
+        except Exception:
+            return True  # Skip validation on error
+
+    @classmethod
+    def typed_ok(cls, data: T, data_info="", info="OK", interface=ToolBoxInterfaces.native) -> 'Result[T]':
+        """Create OK result with type information"""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=0, help_text=info)
+        result = ToolBoxResult(data_to=interface, data=data, data_info=data_info, data_type=type(data).__name__)
+
+        instance = cls(error=error, info=info_obj, result=result)
+        if hasattr(cls, '_generic_type'):
+            instance._generic_type = cls._generic_type
+
+        return instance
+
+    @classmethod
+    def typed_json(cls, data: T, info="OK", interface=ToolBoxInterfaces.remote, exec_code=0,
+                   status_code=None) -> 'Result[T]':
+        """Create JSON result with type information"""
+        error = ToolBoxError.none
+        info_obj = ToolBoxInfo(exec_code=status_code or exec_code, help_text=info)
+
+        result = ToolBoxResult(
+            data_to=interface,
+            data=data,
+            data_info="JSON response",
+            data_type="json"
+        )
+
+        instance = cls(error=error, info=info_obj, result=result)
+        if hasattr(cls, '_generic_type'):
+            instance._generic_type = cls._generic_type
+
+        return instance
+
+    def cast_to(self, target_type: Type[T]) -> 'Result[T]':
+        """Cast result to different type"""
+        new_result = Result(
+            error=self.error,
+            result=self.result,
+            info=self.info,
+            origin=self.origin,
+            generic_type=target_type
+        )
+        new_result._generic_type = target_type
+        return new_result
+
+    def get_type_info(self) -> Optional[Type]:
+        """Get the generic type information"""
+        return self._generic_type
+
+    def is_typed(self) -> bool:
+        """Check if result has type information"""
+        return self._generic_type is not None
 
     def as_result(self):
         return self
@@ -671,9 +793,7 @@ class Result:
             return False
         if self.info.exec_code == 0:
             return False
-        if self.info.exec_code == 200:
-            return False
-        return True
+        return self.info.exec_code != 200
 
     def is_ok(self):
         return not self.is_error()
@@ -732,11 +852,10 @@ class Result:
     def stream(cls,
                stream_generator: Any,  # Renamed from source for clarity
                content_type: str = "text/event-stream",  # Default to SSE
-               headers: Union[dict, None] = None,
+               headers: dict | None = None,
                info: str = "OK",
                interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
-               cleanup_func: Union[
-                   Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None):
+               cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None):
         """
         Create a streaming response Result. Handles SSE and other stream types.
 
@@ -812,8 +931,7 @@ class Result:
             stream_generator: Any,
             info: str = "OK",
             interface: ToolBoxInterfaces = ToolBoxInterfaces.remote,
-            cleanup_func: Union[
-                Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None,
+            cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None,
             # http_headers: Optional[dict] = None # If we want to allow overriding default SSE HTTP headers
             ):
         """
@@ -1024,16 +1142,16 @@ class Result:
         result = ToolBoxResult(data_to=interface, data=data, data_type=type(data).__name__)
         return cls(error=error, info=info, result=result)
 
-    def print(self, show=True, show_data=True, prifix=""):
-        data = '\n' + f"{((prifix + 'Data: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
+    def print(self, show=True, show_data=True, prifix="", full_data=False):
+        data = '\n' + f"{((prifix + f'Data_{self.result.data_type}: ' + str(self.result.data) if self.result.data is not None else 'NO Data') if not isinstance(self.result.data, Result) else self.result.data.print(show=False, show_data=show_data, prifix=prifix + '-')) if show_data else 'Data: private'}"
         origin = '\n' + f"{prifix + 'Origin: ' + str(self.origin) if self.origin is not None else 'NO Origin'}"
         text = (f"Function Exec code: {self.info.exec_code}"
                 f"\n{prifix}Info's:"
                 f" {self.info.help_text} {'<|> ' + str(self.result.data_info) if self.result.data_info is not None else ''}"
-                f"{origin}{data if not data.endswith('NO Data') else ''}")
+                f"{origin}{((data[:100]+'...') if not full_data else (data)) if not data.endswith('NO Data') else ''}\n")
         if not show:
             return text
-        print("\n======== Result ========\n" + text + "\n------- EndOfD -------")
+        print("\n======== Result ========\n" + text + "------- EndOfD -------")
         return self
 
     def log(self, show_data=True, prifix=""):
@@ -1207,6 +1325,96 @@ class MainToolType:
         return self.app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
 
 
+@dataclass
+class FootprintMetrics:
+    """Dataclass für Footprint-Metriken"""
+    # Uptime
+    start_time: float
+    uptime_seconds: float
+    uptime_formatted: str
+
+    # Memory (in MB)
+    memory_current: float
+    memory_max: float
+    memory_min: float
+    memory_percent: float
+
+    # CPU
+    cpu_percent_current: float
+    cpu_percent_max: float
+    cpu_percent_min: float
+    cpu_percent_avg: float
+    cpu_time_seconds: float
+
+    # Disk I/O (in MB)
+    disk_read_mb: float
+    disk_write_mb: float
+    disk_read_max: float
+    disk_read_min: float
+    disk_write_max: float
+    disk_write_min: float
+
+    # Network I/O (in MB)
+    network_sent_mb: float
+    network_recv_mb: float
+    network_sent_max: float
+    network_sent_min: float
+    network_recv_max: float
+    network_recv_min: float
+
+    # Additional Info
+    process_id: int
+    threads: int
+    open_files: int
+    connections: int
+
+    open_files_path: list[str]
+    connections_uri: list[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konvertiert Metriken in Dictionary"""
+        return {
+            'uptime': {
+                'seconds': self.uptime_seconds,
+                'formatted': self.uptime_formatted,
+            },
+            'memory': {
+                'current_mb': self.memory_current,
+                'max_mb': self.memory_max,
+                'min_mb': self.memory_min,
+                'percent': self.memory_percent,
+            },
+            'cpu': {
+                'current_percent': self.cpu_percent_current,
+                'max_percent': self.cpu_percent_max,
+                'min_percent': self.cpu_percent_min,
+                'avg_percent': self.cpu_percent_avg,
+                'time_seconds': self.cpu_time_seconds,
+            },
+            'disk': {
+                'read_mb': self.disk_read_mb,
+                'write_mb': self.disk_write_mb,
+                'read_max_mb': self.disk_read_max,
+                'read_min_mb': self.disk_read_min,
+                'write_max_mb': self.disk_write_max,
+                'write_min_mb': self.disk_write_min,
+            },
+            'network': {
+                'sent_mb': self.network_sent_mb,
+                'recv_mb': self.network_recv_mb,
+                'sent_max_mb': self.network_sent_max,
+                'sent_min_mb': self.network_sent_min,
+                'recv_max_mb': self.network_recv_max,
+                'recv_min_mb': self.network_recv_min,
+            },
+            'process': {
+                'pid': self.process_id,
+                'threads': self.threads,
+                'open_files': self.open_files,
+                'connections': self.connections,
+            }
+        }
+
 class AppType:
     prefix: str
     id: str
@@ -1218,6 +1426,7 @@ class AppType:
     data_dir: str
     config_dir: str
     info_dir: str
+    is_server:bool = False
 
     logger: logging.Logger
     logging_filename: str
@@ -1273,10 +1482,283 @@ class AppType:
     enable_profiling: bool = False
     sto = None
 
-    def __init__(self, prefix: None | str= None, args: AppArgs | None = None):
+    websocket_handlers: dict[str, dict[str, Callable]] = {}
+    _rust_ws_bridge: Any = None
+
+    docs_reader: Callable | None = None
+    docs_writer: Callable | None = None
+    get_update_suggestions: Callable | None = None
+    auto_update_docs: Callable | None = None
+    source_code_lookup: Callable | None = None
+
+    initial_docs_parse: Callable | None = None
+
+    def __init__(self, prefix=None, args=None):
         self.args_sto = args
         self.prefix = prefix
-        """proxi attr"""
+        self._footprint_start_time = time.time()
+        self._process = psutil.Process(os.getpid())
+
+        # Tracking-Daten für Min/Max/Avg
+        self._footprint_metrics = {
+            'memory': {'max': 0, 'min': float('inf'), 'samples': []},
+            'cpu': {'max': 0, 'min': float('inf'), 'samples': []},
+            'disk_read': {'max': 0, 'min': float('inf'), 'samples': []},
+            'disk_write': {'max': 0, 'min': float('inf'), 'samples': []},
+            'network_sent': {'max': 0, 'min': float('inf'), 'samples': []},
+            'network_recv': {'max': 0, 'min': float('inf'), 'samples': []},
+        }
+
+        # Initial Disk/Network Counters
+        try:
+            io_counters = self._process.io_counters()
+            self._initial_disk_read = io_counters.read_bytes
+            self._initial_disk_write = io_counters.write_bytes
+        except (AttributeError, OSError):
+            self._initial_disk_read = 0
+            self._initial_disk_write = 0
+
+        try:
+            net_io = psutil.net_io_counters()
+            self._initial_network_sent = net_io.bytes_sent
+            self._initial_network_recv = net_io.bytes_recv
+        except (AttributeError, OSError):
+            self._initial_network_sent = 0
+            self._initial_network_recv = 0
+
+    def _update_metric_tracking(self, metric_name: str, value: float):
+        """Aktualisiert Min/Max/Avg für eine Metrik"""
+        metrics = self._footprint_metrics[metric_name]
+        metrics['max'] = max(metrics['max'], value)
+        metrics['min'] = min(metrics['min'], value)
+        metrics['samples'].append(value)
+
+        # Begrenze die Anzahl der Samples (letzte 1000)
+        if len(metrics['samples']) > 1000:
+            metrics['samples'] = metrics['samples'][-1000:]
+
+    def _get_metric_avg(self, metric_name: str) -> float:
+        """Berechnet Durchschnitt einer Metrik"""
+        samples = self._footprint_metrics[metric_name]['samples']
+        return sum(samples) / len(samples) if samples else 0
+
+    def footprint(self, update_tracking: bool = True) -> FootprintMetrics:
+        """
+        Erfasst den aktuellen Ressourcen-Footprint der Toolbox-Instanz.
+
+        Args:
+            update_tracking: Wenn True, aktualisiert Min/Max/Avg-Tracking
+
+        Returns:
+            FootprintMetrics mit allen erfassten Metriken
+        """
+        current_time = time.time()
+        uptime_seconds = current_time - self._footprint_start_time
+
+        # Formatierte Uptime
+        uptime_delta = timedelta(seconds=int(uptime_seconds))
+        uptime_formatted = str(uptime_delta)
+
+        # Memory Metrics (in MB)
+        try:
+            mem_info = self._process.memory_info()
+            memory_current = mem_info.rss / (1024 * 1024)  # Bytes zu MB
+            memory_percent = self._process.memory_percent()
+
+            if update_tracking:
+                self._update_metric_tracking('memory', memory_current)
+
+            memory_max = self._footprint_metrics['memory']['max']
+            memory_min = self._footprint_metrics['memory']['min']
+            if memory_min == float('inf'):
+                memory_min = memory_current
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            memory_current = memory_max = memory_min = memory_percent = 0
+
+        # CPU Metrics
+        try:
+            cpu_percent_current = self._process.cpu_percent(interval=0.1)
+            cpu_times = self._process.cpu_times()
+            cpu_time_seconds = cpu_times.user + cpu_times.system
+
+            if update_tracking:
+                self._update_metric_tracking('cpu', cpu_percent_current)
+
+            cpu_percent_max = self._footprint_metrics['cpu']['max']
+            cpu_percent_min = self._footprint_metrics['cpu']['min']
+            cpu_percent_avg = self._get_metric_avg('cpu')
+
+            if cpu_percent_min == float('inf'):
+                cpu_percent_min = cpu_percent_current
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cpu_percent_current = cpu_percent_max = 0
+            cpu_percent_min = cpu_percent_avg = cpu_time_seconds = 0
+
+        # Disk I/O Metrics (in MB)
+        try:
+            io_counters = self._process.io_counters()
+            disk_read_bytes = io_counters.read_bytes - self._initial_disk_read
+            disk_write_bytes = io_counters.write_bytes - self._initial_disk_write
+
+            disk_read_mb = disk_read_bytes / (1024 * 1024)
+            disk_write_mb = disk_write_bytes / (1024 * 1024)
+
+            if update_tracking:
+                self._update_metric_tracking('disk_read', disk_read_mb)
+                self._update_metric_tracking('disk_write', disk_write_mb)
+
+            disk_read_max = self._footprint_metrics['disk_read']['max']
+            disk_read_min = self._footprint_metrics['disk_read']['min']
+            disk_write_max = self._footprint_metrics['disk_write']['max']
+            disk_write_min = self._footprint_metrics['disk_write']['min']
+
+            if disk_read_min == float('inf'):
+                disk_read_min = disk_read_mb
+            if disk_write_min == float('inf'):
+                disk_write_min = disk_write_mb
+        except (AttributeError, OSError, psutil.NoSuchProcess, psutil.AccessDenied):
+            disk_read_mb = disk_write_mb = 0
+            disk_read_max = disk_read_min = disk_write_max = disk_write_min = 0
+
+        # Network I/O Metrics (in MB)
+        try:
+            net_io = psutil.net_io_counters()
+            network_sent_bytes = net_io.bytes_sent - self._initial_network_sent
+            network_recv_bytes = net_io.bytes_recv - self._initial_network_recv
+
+            network_sent_mb = network_sent_bytes / (1024 * 1024)
+            network_recv_mb = network_recv_bytes / (1024 * 1024)
+
+            if update_tracking:
+                self._update_metric_tracking('network_sent', network_sent_mb)
+                self._update_metric_tracking('network_recv', network_recv_mb)
+
+            network_sent_max = self._footprint_metrics['network_sent']['max']
+            network_sent_min = self._footprint_metrics['network_sent']['min']
+            network_recv_max = self._footprint_metrics['network_recv']['max']
+            network_recv_min = self._footprint_metrics['network_recv']['min']
+
+            if network_sent_min == float('inf'):
+                network_sent_min = network_sent_mb
+            if network_recv_min == float('inf'):
+                network_recv_min = network_recv_mb
+        except (AttributeError, OSError):
+            network_sent_mb = network_recv_mb = 0
+            network_sent_max = network_sent_min = 0
+            network_recv_max = network_recv_min = 0
+
+        # Process Info
+        try:
+            process_id = self._process.pid
+            threads = self._process.num_threads()
+            open_files_path = [str(x.path).replace("\\", "/") for x in self._process.open_files()]
+            connections_uri = [f"{x.laddr}:{x.raddr} {str(x.status)}" for x in self._process.connections()]
+
+            open_files = len(open_files_path)
+            connections = len(connections_uri)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            process_id = os.getpid()
+            threads = open_files = connections = 0
+            open_files_path = []
+            connections_uri = []
+
+        return FootprintMetrics(
+            start_time=self._footprint_start_time,
+            uptime_seconds=uptime_seconds,
+            uptime_formatted=uptime_formatted,
+            memory_current=memory_current,
+            memory_max=memory_max,
+            memory_min=memory_min,
+            memory_percent=memory_percent,
+            cpu_percent_current=cpu_percent_current,
+            cpu_percent_max=cpu_percent_max,
+            cpu_percent_min=cpu_percent_min,
+            cpu_percent_avg=cpu_percent_avg,
+            cpu_time_seconds=cpu_time_seconds,
+            disk_read_mb=disk_read_mb,
+            disk_write_mb=disk_write_mb,
+            disk_read_max=disk_read_max,
+            disk_read_min=disk_read_min,
+            disk_write_max=disk_write_max,
+            disk_write_min=disk_write_min,
+            network_sent_mb=network_sent_mb,
+            network_recv_mb=network_recv_mb,
+            network_sent_max=network_sent_max,
+            network_sent_min=network_sent_min,
+            network_recv_max=network_recv_max,
+            network_recv_min=network_recv_min,
+            process_id=process_id,
+            threads=threads,
+            open_files=open_files,
+            connections=connections,
+            open_files_path=open_files_path,
+            connections_uri=connections_uri,
+        )
+
+    def print_footprint(self, detailed: bool = True) -> str:
+        """
+        Gibt den Footprint formatiert aus.
+
+        Args:
+            detailed: Wenn True, zeigt alle Details, sonst nur Zusammenfassung
+
+        Returns:
+            Formatierter Footprint-String
+        """
+        metrics = self.footprint()
+
+        output = [
+            "=" * 70,
+            f"TOOLBOX FOOTPRINT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 70,
+            f"\n📊 UPTIME",
+            f"  Runtime: {metrics.uptime_formatted}",
+            f"  Seconds: {metrics.uptime_seconds:.2f}s",
+            f"\n💾 MEMORY USAGE",
+            f"  Current:  {metrics.memory_current:.2f} MB ({metrics.memory_percent:.2f}%)",
+            f"  Maximum:  {metrics.memory_max:.2f} MB",
+            f"  Minimum:  {metrics.memory_min:.2f} MB",
+        ]
+
+        if detailed:
+            helper_ = '\n\t- '.join(metrics.open_files_path)
+            helper__ = '\n\t- '.join(metrics.connections_uri)
+            output.extend([
+                f"\n⚙️  CPU USAGE",
+                f"  Current:  {metrics.cpu_percent_current:.2f}%",
+                f"  Maximum:  {metrics.cpu_percent_max:.2f}%",
+                f"  Minimum:  {metrics.cpu_percent_min:.2f}%",
+                f"  Average:  {metrics.cpu_percent_avg:.2f}%",
+                f"  CPU Time: {metrics.cpu_time_seconds:.2f}s",
+                f"\n💿 DISK I/O",
+                f"  Read:     {metrics.disk_read_mb:.2f} MB (Max: {metrics.disk_read_max:.2f}, Min: {metrics.disk_read_min:.2f})",
+                f"  Write:    {metrics.disk_write_mb:.2f} MB (Max: {metrics.disk_write_max:.2f}, Min: {metrics.disk_write_min:.2f})",
+                f"\n🌐 NETWORK I/O",
+                f"  Sent:     {metrics.network_sent_mb:.2f} MB (Max: {metrics.network_sent_max:.2f}, Min: {metrics.network_sent_min:.2f})",
+                f"  Received: {metrics.network_recv_mb:.2f} MB (Max: {metrics.network_recv_max:.2f}, Min: {metrics.network_recv_min:.2f})",
+                f"\n🔧 PROCESS INFO",
+                f"  PID:         {metrics.process_id}",
+                f"  Threads:     {metrics.threads}",
+                f"\n📂 OPEN FILES",
+                f"  Open Files:  {metrics.open_files}",
+                f"  Open Files Path: \n\t- {helper_}",
+                f"\n🔗 NETWORK CONNECTIONS",
+                f"  Connections: {metrics.connections}",
+                f"  Connections URI: \n\t- {helper__}",
+            ])
+
+        output.append("=" * 70)
+
+        return "\n".join(output)
+
+
+
+    def start_server(self):
+        from toolboxv2.utils.clis.api import manage_server
+        if self.is_server:
+            return
+        manage_server("start")
+        self.is_server = False
 
     @staticmethod
     def exit_main(*args, **kwargs):
@@ -1308,7 +1790,7 @@ class AppType:
     def set_flows(self, r):
         """proxi attr"""
 
-    def run_flows(self, name, **kwargs):
+    async def run_flows(self, name, **kwargs):
         """proxi attr"""
 
     def rrun_flows(self, name, **kwargs):
@@ -1325,13 +1807,11 @@ class AppType:
         self.print("idle done")
 
     async def a_idle(self):
-        self.print("a idle")
+        self.print("a idle (running :"+("online)" if hasattr(self, 'daemon_app') else "offline)"))
         try:
             if hasattr(self, 'daemon_app'):
-                self.print("serving daemon")
                 await self.daemon_app.connect(self)
             else:
-                self.print("serving default")
                 while self.alive:
                     await asyncio.sleep(1)
         except KeyboardInterrupt:
@@ -1378,6 +1858,9 @@ class AppType:
 
     async def init_module(self, modular):
         return await self.load_mod(modular)
+
+    async def load_external_mods(self):
+        """proxi attr"""
 
     async def load_all_mods_in_file(self, working_dir="mods"):
         """proxi attr"""
@@ -1548,7 +2031,8 @@ class AppType:
                           row=False,
                           request_as_kwarg=False,
                           memory_cache_max_size=100,
-                          memory_cache_ttl=300):
+                          memory_cache_ttl=300,
+                          websocket_handler: str | None = None,):
         """proxi attr"""
 
         # data = {
@@ -1595,6 +2079,7 @@ class AppType:
            pre_compute=None,
            post_compute=None,
            api_methods=None,
+           websocket_handler: str | None = None,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -1659,7 +2144,6 @@ class AppType:
 
 
         if not self.functions:
-            print("Nothing to see")
             return
 
         def helper(_functions):
@@ -1790,38 +2274,6 @@ class AppType:
             f"\n{all_data['modular_run']=}\n{all_data['modular_sug']=}\n{all_data['modular_fatal_error']=}\n{total_coverage=}")
         d = analyze_data(all_data)
         return Result.ok(data=all_data, data_info=d)
-
-    @staticmethod
-    def calculate_complexity(filename_or_code):
-        from radon.complexity import cc_rank, cc_visit
-        if os.path.exists(filename_or_code):
-            with open(filename_or_code) as file:
-                code = file.read()
-        else:
-            code = filename_or_code
-
-        # Calculate and print Cyclomatic Complexity
-        complexity_results = cc_visit(code)
-        i = -1
-        avg_complexity = 0
-        for block in complexity_results:
-            complexity = block.complexity
-            i += 1
-            print(f"block: {block.name} {i} Class/Fuction/Methode : {block.letter}")
-            print(f"    fullname: {block.fullname}")
-            print(f"    Cyclomatic Complexity: {complexity}")
-            # Optional: Get complexity rank
-            avg_complexity += complexity
-            rank = cc_rank(complexity)
-            print(f"    Complexity Rank: {rank}")
-            # print(f"    lineno: {block.lineno}")
-            print(f"    endline: {block.endline}")
-            print(f"    col_offset: {block.col_offset}\n")
-        if i <= 0:
-            i += 2
-        avg_complexity = avg_complexity / i
-        print(f"\nAVG Complexity: {avg_complexity:.2f}")
-        print(f"Total Rank: {cc_rank(int(avg_complexity + i // 10))}")
 
     async def execute_function_test(self, module_name: str, function_name: str,
                                     function_data: dict, test_kwargs: dict,
@@ -2076,7 +2528,7 @@ class SSEGenerator:
                     if 'data' in json_data:
                         payload_content = json_data['data']
                         # If payload_content is complex, re-serialize it to JSON string
-                        if isinstance(payload_content, (dict, list)):
+                        if isinstance(payload_content, dict | list):
                             sse_data_field = json.dumps(payload_content)
                         else:  # Simple type (string, number, bool)
                             sse_data_field = str(payload_content)
@@ -2131,7 +2583,7 @@ class SSEGenerator:
     async def create_sse_stream(
         cls,
         source: Any,  # Changed from positional arg to keyword for clarity in Result.stream
-        cleanup_func: Union[Callable[[], None], Callable[[], T], Callable[[], AsyncGenerator[T, None]], None] = None
+        cleanup_func: Callable[[], None] | Callable[[], T] | Callable[[], AsyncGenerator[T, None]] | None = None
     ) -> AsyncGenerator[str, None]:
         """
         Convert any source to a properly formatted SSE stream.

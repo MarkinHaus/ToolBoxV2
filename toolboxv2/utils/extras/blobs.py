@@ -1,4 +1,6 @@
 # file: blobs.py
+import bisect
+import hashlib
 import io
 import json
 import os
@@ -14,8 +16,6 @@ import yaml
 from ..security.cryp import Code
 from ..system.getting_and_closing_app import get_logger
 
-import hashlib
-import bisect
 
 class ConsistentHashRing:
     """
@@ -207,6 +207,8 @@ class BlobStorage:
         return os.path.join(self.storage_directory, blob_id + '.blobcache')
 
     def _save_blob_to_cache(self, blob_id: str, data: bytes):
+        if not data or data is None:
+            return
         if blob_id not in self.blob_ids:
             self.blob_ids.append(blob_id)
         with open(self._get_blob_cache_filename(blob_id), 'wb') as f:
@@ -222,7 +224,7 @@ class BlobStorage:
     def exit(self):
         if len(self.blob_ids) < 5:
             return
-        for i in range(len(self.servers)//2+1):
+        for _i in range(len(self.servers)//2+1):
             self.share_blobs(self.blob_ids)
 
 
@@ -272,11 +274,13 @@ class BlobFile(io.IOBase):
     def __enter__(self):
         try:
             raw_blob_data = self.storage.read_blob(self.blob_id)
+            if raw_blob_data != b'' and (not raw_blob_data or raw_blob_data is None):
+                raw_blob_data = b""
             blob_content = pickle.loads(raw_blob_data)
         except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError) as e:
             if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
                 blob_content = {}  # Blob doesn't exist yet, treat as empty
-            elif isinstance(e, (EOFError, pickle.UnpicklingError)):
+            elif isinstance(e, EOFError | pickle.UnpicklingError):
                 blob_content = {}  # Blob is empty or corrupt, treat as empty for writing
             else:
                 self.storage.create_blob(blob_id=self.blob_id, data=pickle.dumps({}))
@@ -354,7 +358,7 @@ class BlobFile(io.IOBase):
         self.data_buffer = b''
 
     def write(self, data):
-        if 'w' not in self.mode: raise IOError("File not opened in write mode.")
+        if 'w' not in self.mode: raise OSError("File not opened in write mode.")
         if isinstance(data, str):
             self.data_buffer += data.encode()
         elif isinstance(data, bytes):
@@ -363,7 +367,7 @@ class BlobFile(io.IOBase):
             raise TypeError("write() argument must be str or bytes")
 
     def read(self):
-        if 'r' not in self.mode: raise IOError("File not opened in read mode.")
+        if 'r' not in self.mode: raise OSError("File not opened in read mode.")
         return self.data_buffer
 
     def read_json(self):

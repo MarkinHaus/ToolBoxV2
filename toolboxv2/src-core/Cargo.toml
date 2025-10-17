@@ -33,6 +33,9 @@ bytes = "1.10.0"
 actix-multipart = "0.7.2"
 futures-util = "0.3.31"
 serde_urlencoded = "0.7.1"
+dashmap = "6.1"
+actix = "0.13.5"
+actix-web-actors = "4.3.1+deprecated"
 
 [profile.release]
 opt-level = 3

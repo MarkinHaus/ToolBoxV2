@@ -34,6 +34,7 @@
     "style-loader": "^4.0.0",
     "tbjs": "file:tbjs",
     "terser-webpack-plugin": "^5.3.10",
+    "vscode": "^1.1.37",
     "webpack": "^5.95.0",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.1.0"

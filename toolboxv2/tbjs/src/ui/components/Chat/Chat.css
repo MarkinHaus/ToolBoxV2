@@ -1,0 +1,121 @@
+/* tbjs/ui/components/Chat/Chat.css */
+
+.tb-chat-widget {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 70vh;
+    width: 100%;
+    max-width: 600px;
+    background-color: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glass-shadow);
+    overflow: hidden;
+    font-size: var(--font-size-sm);
+}
+
+.tb-chat-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--theme-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tb-chat-header h3 {
+    margin: 0;
+    font-size: var(--font-size-base);
+    color: var(--theme-text);
+}
+
+.tb-chat-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--theme-text-muted);
+}
+
+.tb-chat-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--color-warning); /* Gelb für Verbindungsaufbau/getrennt */
+    transition: background-color var(--transition-fast);
+}
+
+.tb-chat-status-dot.connected {
+    background-color: var(--color-success);
+}
+
+.tb-chat-status-dot.error {
+    background-color: var(--color-error);
+}
+
+.tb-chat-messages {
+    flex-grow: 1;
+    padding: 1rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.tb-chat-message {
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-md);
+    max-width: 80%;
+    word-wrap: break-word;
+}
+
+.tb-chat-message.user-message {
+    background-color: var(--theme-primary);
+    color: var(--theme-text-on-primary);
+    align-self: flex-end; /* Eigene Nachrichten */
+}
+
+.tb-chat-message.other-message {
+    background-color: var(--input-bg);
+    border: 1px solid var(--theme-border);
+    align-self: flex-start; /* Nachrichten von anderen */
+}
+
+.tb-chat-message.system-message {
+    font-style: italic;
+    color: var(--theme-text-muted);
+    font-size: 0.8rem;
+    text-align: center;
+    align-self: center;
+    background: none;
+    padding: 0.2rem;
+}
+
+.tb-chat-message .msg-user {
+    font-weight: var(--font-weight-semibold);
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.75rem;
+}
+
+.tb-chat-input-area {
+    display: flex;
+    padding: 0.75rem;
+    border-top: 1px solid var(--theme-border);
+    gap: 0.5rem;
+}
+
+.tb-chat-input {
+    flex-grow: 1;
+    padding: 0.6rem 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--input-border);
+    background-color: var(--input-bg);
+    color: var(--theme-text);
+    font-size: var(--font-size-sm);
+}
+
+.tb-chat-input:focus {
+    outline: none;
+    border-color: var(--input-focus-border);
+}
