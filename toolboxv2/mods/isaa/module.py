@@ -3751,6 +3751,10 @@ def shell_tool_function(command: str) -> str:
 
     return json.dumps(result, ensure_ascii=False)
 
+@export(mod_name="isaa", name="listAllAgents", api=True, request_as_kwarg=True)
+async def list_all_agents(self, request: RequestData | None = None):
+    return self.config.get("agents-name-list", [])
+
 
 if __name__ == "__main__":
     # Example of running an async method from Tools if needed for testing

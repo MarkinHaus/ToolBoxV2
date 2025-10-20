@@ -56,6 +56,12 @@ class ToolBoxBackground {
             };
 
             console.log('Backend configured:', this.apiBase);
+
+            // Auto-login if we have credentials
+            if (this.authData.username && !this.authData.isAuthenticated) {
+                console.log('Attempting auto-login for:', this.authData.username);
+                await this.attemptReAuth();
+            }
         }
     } catch (error) {
         console.warn('Failed to load backend settings:', error);
@@ -237,6 +243,18 @@ class ToolBoxBackground {
                         .catch(err => sendResponse({ success: false, error: err.message }));
                     break;
 
+                case 'CHECK_SAVED_CREDENTIALS':
+                    this.checkSavedCredentials(message.url)
+                        .then(hasCredentials => sendResponse({ hasCredentials }))
+                        .catch(err => sendResponse({ hasCredentials: false, error: err.message }));
+                    break;
+
+                case 'AUTOFILL_FROM_INDICATOR':
+                    this.getPasswordForAutofill(message.url)
+                        .then(data => sendResponse({ success: true, data }))
+                        .catch(err => sendResponse({ success: false, error: err.message }));
+                    break;
+
                 case 'POTENTIAL_CREDENTIALS_DETECTED':
                 // Speichere die Daten im Session Storage, da der background script die Berechtigung hat
                     chrome.storage.session.set({ 'potential_credentials_to_save': message.credentials })
@@ -272,6 +290,13 @@ class ToolBoxBackground {
                         username: this.authData.username
                     });
                     break;
+
+                case 'START_WEB_LOGIN':
+                    this.startWebLogin(message.backend)
+                        .then(result => sendResponse(result))
+                        .catch(err => sendResponse({ success: false, error: err.message }));
+                    break;
+
                 default:
                     sendResponse({ success: false, error: 'Unknown message type' });
             }
@@ -407,6 +432,45 @@ class ToolBoxBackground {
     async activateQuickSearch(tab) {
         chrome.sidePanel.open({ windowId: tab.windowId });
         // The popup will handle switching to search tab
+    }
+
+    async checkSavedCredentials(url) {
+        try {
+            const response = await this.makeAPICall('/api/PasswordManager/get_password_for_autofill', 'POST', {
+                url: url
+            });
+
+            // Check if we got valid data back
+            if (response && response.result && response.result.data) {
+                return true;
+            } else if (response && response.data) {
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            console.warn('Failed to check saved credentials:', error);
+            return false;
+        }
+    }
+
+    async getPasswordForAutofill(url) {
+        try {
+            const response = await this.makeAPICall('/api/PasswordManager/get_password_for_autofill', 'POST', {
+                url: url
+            });
+
+            if (response && response.result && response.result.data) {
+                return response.result.data;
+            } else if (response && response.data) {
+                return response.data;
+            }
+
+            throw new Error('No password data found');
+        } catch (error) {
+            console.error('Failed to get password for autofill:', error);
+            throw error;
+        }
     }
 
     async triggerPasswordAutofill(tab) {
@@ -549,6 +613,145 @@ class ToolBoxBackground {
 
     return false;
 }
+
+    async startWebLogin(backend = null) {
+        console.log('🔐 Starting web login flow...');
+
+        // Determine backend URL
+        let loginBase = this.apiBase;
+        if (backend === 'local') {
+            loginBase = 'http://localhost:8080';
+        } else if (backend === 'remote') {
+            loginBase = 'https://simplecore.app';
+        }
+
+        // Generate unique session ID for this login attempt
+        const sessionId = this.generateSessionId();
+
+        // Create login URL using open_web_login_web
+        const loginUrl = `${loginBase}/api/CloudM/open_web_login_web?session_id=${sessionId}&return_to=browser&log_in_for=Browser`;
+
+        console.log('Opening login page:', loginUrl);
+
+        // Open login page in new tab
+        await chrome.tabs.create({ url: loginUrl, active: true });
+
+        // Start polling for authentication completion
+        return this.pollForAuthCompletion(loginBase, sessionId);
+    }
+
+    generateSessionId() {
+        // Generate a random session ID (similar to uuid.uuid4().hex in Python)
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        }).replace(/-/g, '');
+    }
+
+    async pollForAuthCompletion(baseUrl, sessionId, timeout = 300000) {
+        console.log('⏳ Polling for authentication completion...');
+
+        const startTime = Date.now();
+        const pollInterval = 2000; // Poll every 2 seconds
+
+        while (Date.now() - startTime < timeout) {
+            try {
+                // Check if authentication is complete
+                const response = await fetch(`${baseUrl}/api/CloudM/open_check_cli_auth`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+
+                if (!response.ok) {
+                    console.warn('Auth check failed:', response.status);
+                    await this.sleep(pollInterval);
+                    continue;
+                }
+
+                const result = await response.json();
+
+                if (result.authenticated || (result.result && result.result.authenticated)) {
+                    const authData = result.result || result;
+                    const jwtToken = authData.jwt_token;
+                    const username = authData.username;
+
+                    if (jwtToken && username) {
+                        console.log('✅ Authentication successful!');
+
+                        // Store credentials
+                        await this.storeAuthCredentials(username, jwtToken, baseUrl);
+
+                        // Show success notification
+                        this.showNotification(
+                            'Login Successful',
+                            `Welcome back, ${username}!`
+                        );
+
+                        return { success: true, username, message: 'Login successful' };
+                    }
+                }
+
+            } catch (error) {
+                console.warn('Polling error:', error);
+            }
+
+            // Wait before next poll
+            await this.sleep(pollInterval);
+        }
+
+        // Timeout reached
+        console.error('❌ Authentication timeout');
+        this.showNotification(
+            'Login Timeout',
+            'Authentication window expired. Please try again.'
+        );
+
+        return { success: false, error: 'Authentication timeout' };
+    }
+
+    async storeAuthCredentials(username, jwtToken, baseUrl) {
+        // Update internal auth data
+        this.authData = {
+            username: username,
+            jwt: jwtToken,
+            isAuthenticated: true
+        };
+
+        // Determine backend type from URL
+        let backend = 'local';
+        if (baseUrl.includes('simplecore.app')) {
+            backend = 'remote';
+        } else if (baseUrl !== 'http://localhost:8080') {
+            backend = 'custom';
+        }
+
+        // Update settings in storage
+        const stored = await chrome.storage.sync.get(['toolboxSettings']);
+        const settings = stored.toolboxSettings || {};
+
+        settings.username = username;
+        settings.jwt = jwtToken;
+        settings.isAuthenticated = true;
+        settings.backend = backend;
+        if (backend === 'custom') {
+            settings.customBackendUrl = baseUrl;
+        }
+
+        await chrome.storage.sync.set({ toolboxSettings: settings });
+
+        // Update apiBase
+        this.apiBase = baseUrl;
+
+        console.log('✅ Credentials stored successfully');
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
     showNotification(title, message) {
         try {

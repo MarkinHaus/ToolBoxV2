@@ -1,0 +1,42 @@
+[package]
+name = "tb-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tb"
+path = "src/main.rs"
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+tb-parser = { path = "../tb-parser" }
+tb-types = { path = "../tb-types" }
+tb-optimizer = { path = "../tb-optimizer" }
+tb-codegen = { path = "../tb-codegen" }
+tb-jit = { path = "../tb-jit" }
+tb-cache = { path = "../tb-cache" }
+tb-plugin = { path = "../tb-plugin", features = ["python", "javascript"] }
+tb-runtime = { path = "../tb-runtime" }
+
+clap.workspace = true
+rustyline.workspace = true
+colored.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tempfile = "3.8"
+dirs = "5.0"
+
+# Android-specific dependencies
+[target.'cfg(target_os = "android")'.dependencies]
+jni.workspace = true
+ndk.workspace = true
+ndk-context.workspace = true
+
+# iOS-specific dependencies
+[target.'cfg(target_os = "ios")'.dependencies]
+# iOS-specific crates can be added here if needed
+
+# Exclude interactive features on mobile platforms
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Desktop-only dependencies (REPL, etc.)
+

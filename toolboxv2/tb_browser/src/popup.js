@@ -35,8 +35,11 @@ class ToolBoxPopup {
             customBackendUrl: '',
             username: null,
             jwt: null,
-            isAuthenticated: false
+            isAuthenticated: false,
+            agentName: 'speed' // Default agent
         };
+
+        this.availableAgents = []; // Will be loaded from API
 
         this.init();
     }
@@ -56,6 +59,7 @@ class ToolBoxPopup {
         // Initialize components
         await this.loadSettings();
         await this.checkAuthStatus();
+        await this.loadAvailableAgents(); // Load agents from API
         this.setupEventListeners();
         this.initializeVoiceEngine();
         this.initializeTabSystem();
@@ -258,6 +262,7 @@ applySettings() {
     // Update UI if settings modal is open
     const backendSelector = document.getElementById('backendSelector');
     const customUrlInput = document.getElementById('customBackendUrl');
+    const agentSelector = document.getElementById('agentSelector');
 
     if (backendSelector) {
         backendSelector.value = this.settings.backend;
@@ -267,23 +272,89 @@ applySettings() {
         }
     }
 
+    // Update agent selector
+    if (agentSelector && this.settings.agentName) {
+        agentSelector.value = this.settings.agentName;
+    }
+
     this.updateAuthUI();
+}
+
+async loadAvailableAgents() {
+    try {
+        console.log('📋 Loading available agents...');
+        const response = await this.makeAPICall('/api/isaa/listAllAgents', 'GET', null);
+        console.log(' available agents...', response);
+        if (response && response.result && response.result.data) {
+            this.availableAgents = response.result.data;
+            console.log('✅ Loaded agents:', this.availableAgents);
+            this.populateAgentSelector();
+        } else if (response && response.data) {
+            this.availableAgents = response.data;
+            console.log('✅ Loaded agents:', this.availableAgents);
+            this.populateAgentSelector();
+        } else {
+            console.warn('⚠️ No agents found in response, using default');
+            this.availableAgents = ['speed']; // Fallback
+        }
+    } catch (error) {
+        console.warn('Failed to load agents:', error);
+        this.availableAgents = ['speed']; // Fallback to default
+    }
+}
+
+populateAgentSelector() {
+    const agentSelector = document.getElementById('agentSelector');
+    if (!agentSelector) return;
+
+    // Clear existing options
+    agentSelector.innerHTML = '';
+
+    // Add agents as options
+    this.availableAgents.forEach(agent => {
+        const option = document.createElement('option');
+        option.value = agent;
+        option.textContent = agent;
+        agentSelector.appendChild(option);
+    });
+
+    // Set current selection
+    if (this.settings.agentName) {
+        agentSelector.value = this.settings.agentName;
+    }
 }
 
 async checkAuthStatus() {
     if (!this.settings.username || !this.settings.jwt) {
         this.settings.isAuthenticated = false;
         await this.saveSettings();
+        this.updateAuthUI();
         return;
     }
 
     try {
         const response = await this.makeAPICall('/IsValidSession', 'GET', null);
-        this.settings.isAuthenticated = response.result?.data_info === 'Valid Session';
+
+        // Check multiple possible response formats
+        const isValid = response.result?.data_info === 'Valid Session' ||
+                       response.data_info === 'Valid Session' ||
+                       response.result?.valid === true ||
+                       response.valid === true ||
+                       (response.result?.status === 'ok' && response.result?.data_info) ||
+                       (response.status === 'ok' && response.data_info);
+
+        console.log('🔐 Auth check response:', response);
+        console.log('🔐 Is authenticated:', isValid);
+
+        this.settings.isAuthenticated = isValid;
 
         if (!this.settings.isAuthenticated) {
             // Try to re-authenticate
-            await this.attemptReAuth();
+            console.log('🔄 Attempting re-authentication...');
+            const reAuthSuccess = await this.attemptReAuth();
+            if (reAuthSuccess) {
+                console.log('✅ Re-authentication successful');
+            }
         }
     } catch (error) {
         console.warn('Auth check failed:', error);
@@ -303,9 +374,20 @@ async attemptReAuth() {
             Jwt_claim: this.settings.jwt
         });
 
-        if (response.result?.data_info === 'Valid Session') {
+        console.log('🔄 Re-auth response:', response);
+
+        // Check multiple possible response formats
+        const isValid = response.result?.data_info === 'Valid Session' ||
+                       response.data_info === 'Valid Session' ||
+                       response.result?.valid === true ||
+                       response.valid === true ||
+                       (response.result?.status === 'ok' && response.result?.data_info) ||
+                       (response.status === 'ok' && response.data_info);
+
+        if (isValid) {
             this.settings.isAuthenticated = true;
             await this.saveSettings();
+            this.updateAuthUI();
             return true;
         }
     } catch (error) {
@@ -555,7 +637,35 @@ updateAuthUI() {
             this.saveSettings();
         });
 
+        document.getElementById('agentSelector')?.addEventListener('change', (e) => {
+            this.settings.agentName = e.target.value;
+            this.saveSettings();
+            console.log('🤖 Agent changed to:', e.target.value);
+        });
+
+        document.getElementById('refreshAgentsBtn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('refreshAgentsBtn');
+            const originalHTML = btn.innerHTML;
+
+            // Show loading state
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; animation: spin 1s linear infinite;"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>';
+            btn.disabled = true;
+
+            await this.loadAvailableAgents();
+
+            // Restore button
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+
+            this.showSettingsFeedback('Agents refreshed!', false);
+            setTimeout(() => {
+                const feedback = document.getElementById('settingsFeedback');
+                if (feedback) feedback.textContent = '';
+            }, 2000);
+        });
+
         document.getElementById('loginBtn')?.addEventListener('click', () => this.handleSettingsLogin());
+        document.getElementById('webLoginBtn')?.addEventListener('click', () => this.handleWebLogin());
         document.getElementById('magicLinkBtn')?.addEventListener('click', () => this.handleMagicLinkLogin());
         document.getElementById('logoutBtn')?.addEventListener('click', () => this.handleSettingsLogout());
 
@@ -577,6 +687,34 @@ updateAuthUI() {
           }
         });
 
+    }
+
+    async handleWebLogin() {
+        this.showSettingsFeedback('Opening login page...', false);
+
+        try {
+            // Get current backend selection
+            const backend = this.settings.backend;
+
+            // Send message to background script to start web login
+            chrome.runtime.sendMessage({
+                type: 'START_WEB_LOGIN',
+                backend: backend
+            }, (response) => {
+                if (response?.success) {
+                    this.showSettingsFeedback('Login successful! Reloading...', false);
+                    // Reload settings to get new auth data
+                    setTimeout(async () => {
+                        await this.loadSettings();
+                        await this.checkAuthStatus();
+                    }, 1000);
+                } else {
+                    this.showSettingsFeedback(response?.error || 'Login failed', true);
+                }
+            });
+        } catch (error) {
+            this.showSettingsFeedback(error.message || 'Login failed', true);
+        }
     }
 
     async handleSettingsLogin() {
@@ -601,11 +739,22 @@ updateAuthUI() {
 
             const response = await this.makeAPICall('/validateSession', 'POST', payload);
 
-            if (response.result?.data_info === 'Valid Session') {
+            console.log('🔐 Login response:', response);
+
+            // Check multiple possible response formats
+            const isValid = response.result?.data_info === 'Valid Session' ||
+                           response.data_info === 'Valid Session' ||
+                           response.result?.valid === true ||
+                           response.valid === true ||
+                           (response.result?.status === 'ok' && response.result?.data_info) ||
+                           (response.status === 'ok' && response.data_info);
+
+            if (isValid) {
                 this.settings.username = username;
                 this.settings.jwt = jwt || null;
                 this.settings.isAuthenticated = true;
                 await this.saveSettings();
+                this.updateAuthUI();
                 this.showSettingsFeedback('Login successful!', false);
             } else {
                 this.showSettingsFeedback(response.error || 'Login failed', true);
@@ -1253,7 +1402,7 @@ updateAuthUI() {
                 const contextData = {
                     mini_task: 'Browser extension chat with page context. Must answer in ' + JSON.stringify(this.voiceLanguage) + ` language! Browser context: ${JSON.stringify(freshContext)}`,
                     user_task:message ,
-                    agent_name: 'speed',
+                    agent_name: this.settings.agentName || 'speed',
                     task_from: 'browser_extension',
                     message_history: this.chatHistory,
                 };
@@ -1416,7 +1565,7 @@ updateAuthUI() {
                       - Step 2: { "thought": "Now I will fill the password.", "action_type": "fill_form", "target_selector": "#password", "data": {"value": "secret"}, "continue": true }
                       - Step 3: { "thought": "The form is filled, I will now click the login button to complete the task.", "action_type": "click", "target_selector": "button[type='submit']", "continue": false }
                       `,
-                agent_name: 'speed',
+                agent_name: this.settings.agentName || 'speed',
                 auto_context: true
             });
 

@@ -1,0 +1,9 @@
+[package]
+name = "tb-optimizer"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+dashmap.workspace = true
+

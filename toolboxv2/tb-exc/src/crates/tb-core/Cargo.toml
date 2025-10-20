@@ -1,0 +1,17 @@
+[package]
+name = "tb-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dashmap.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+im.workspace = true
+sha2.workspace = true
+colored.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+

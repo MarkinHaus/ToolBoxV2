@@ -1,0 +1,30 @@
+[package]
+name = "tb-plugin"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+libloading = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+dashmap.workspace = true
+parking_lot = "0.12"
+dirs = "5.0"
+im.workspace = true
+
+# Optional FFI dependencies
+pyo3 = { version = "0.20", features = ["auto-initialize"], optional = true }
+boa_engine = { version = "0.17", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+libloading.workspace = true
+serde.workspace = true
+
+[features]
+default = []
+python = ["pyo3"]
+javascript = ["boa_engine"]
+all-plugins = ["python", "javascript"]
+

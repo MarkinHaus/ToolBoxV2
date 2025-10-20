@@ -1823,6 +1823,23 @@ input.voice-preview::placeholder {
     color: var(--text-primary);
 }
 
+.settings-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: var(--spacing-xs);
+    margin-bottom: 0;
+}
+
+/* Spin animation for refresh button */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .settings-select,
 .settings-input {
     width: 100%;

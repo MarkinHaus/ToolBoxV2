@@ -1,0 +1,9 @@
+[package]
+name = "tb-codegen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+thiserror.workspace = true
+

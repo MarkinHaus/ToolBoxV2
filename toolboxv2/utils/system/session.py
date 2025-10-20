@@ -1,5 +1,4 @@
 import asyncio
-import atexit
 import os
 import socket
 from typing import Any, Coroutine
@@ -9,7 +8,6 @@ from aiohttp import ClientResponse, ClientSession, MultipartWriter
 from requests import Response
 
 from ... import Code
-from ...tests.a_util import async_test
 from ..extras.blobs import BlobFile
 from ..singelton_class import Singleton
 from .getting_and_closing_app import get_app, get_logger
@@ -51,23 +49,6 @@ class Session(metaclass=Singleton):
             base = base.replace("api/", "")
         self.base = base
         self.base = base.rstrip('/')  # Ensure no trailing slash
-
-        async def helper():
-            try:
-                await self.session.close() if self._session is not None else None
-            except ClientConnectorError as e:
-                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-                return False
-            except socket.gaierror as e:
-                print(f"DNS-Auflösung fehlgeschlagen: {e}")
-                return False
-            except ClientError as e:
-                print(f"Allgemeiner Client-Fehler: {e}")
-                return False
-            except Exception as e:
-                pass
-
-        atexit.register(async_test(helper))
 
     @property
     def session(self):
@@ -168,7 +149,7 @@ class Session(metaclass=Singleton):
     def init(self):
         self._ensure_session()
 
-    async def login(self):
+    async def login(self, verbose=False):
         self._ensure_session()
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
             claim = blob.read()
@@ -194,16 +175,16 @@ class Session(metaclass=Singleton):
                 get_logger().warning("LogIn failed")
                 return False
         except ClientConnectorError as e:
-            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}") if verbose else None
             return False
         except socket.gaierror as e:
-            print(f"DNS-Auflösung fehlgeschlagen: {e}")
+            print(f"DNS-Auflösung fehlgeschlagen: {e}") if verbose else None
             return False
         except ClientError as e:
-            print(f"Allgemeiner Client-Fehler: {e}")
+            print(f"Allgemeiner Client-Fehler: {e}") if verbose else None
             return False
         except Exception as e:
-            print("Connection error", self.username, e)
+            print("Connection error", self.username, e) if verbose else None
             return False
 
     async def download_file(self, url, dest_folder="mods_sto"):
@@ -359,6 +340,23 @@ class Session(metaclass=Singleton):
                 print(f"Error session Fehler beim Hochladen der Datei {file_path}:", e, self.username)
 
 
+
+    async def cleanup(self):
+        """Cleanup session resources - should be called before application shutdown"""
+        try:
+            if self._session is not None and not self._session.closed:
+                await self._session.close()
+        except ClientConnectorError as e:
+            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
+        except socket.gaierror as e:
+            print(f"DNS-Auflösung fehlgeschlagen: {e}")
+        except ClientError as e:
+            print(f"Allgemeiner Client-Fehler: {e}")
+        except Exception as e:
+            pass
+        finally:
+            self._session = None
+            self._event_loop = None
 
     def exit(self):
         with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
