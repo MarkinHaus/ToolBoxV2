@@ -1,0 +1,22 @@
+[package]
+name = "tb-cache"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+dashmap.workspace = true
+serde.workspace = true
+bincode.workspace = true
+sha2.workspace = true
+blake3.workspace = true
+parking_lot = "0.12"
+memmap2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3.8"
+sha2.workspace = true
+blake3.workspace = true
+serde.workspace = true
+bincode.workspace = true
+

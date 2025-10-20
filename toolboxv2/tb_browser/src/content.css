@@ -58,12 +58,43 @@ form:hover .tb-form-indicator-wrapper {
     right: -10px !important;
     z-index: 10000 !important;
     opacity: 0.7 !important;
-    transition: opacity 0.3s ease !important;
+    transition: all 0.3s ease !important;
 }
 
 .tb-form-indicator:hover {
     opacity: 1 !important;
     transform: scale(1.1) !important;
+}
+
+/* Form indicator when credentials are available */
+.tb-form-indicator-has-data {
+    background: #4CAF50 !important; /* Green to indicate data available */
+    width: 32px !important; /* Larger size */
+    height: 32px !important;
+    font-size: 16px !important;
+    cursor: pointer !important;
+    animation: tb-pulse 2s ease-in-out infinite !important;
+    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7) !important;
+}
+
+.tb-form-indicator-has-data:hover {
+    opacity: 1 !important;
+    transform: scale(1.2) !important;
+    animation: none !important;
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.6) !important;
+}
+
+/* Pulse animation for indicator with data */
+@keyframes tb-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    }
 }
 
 /* Search highlights */

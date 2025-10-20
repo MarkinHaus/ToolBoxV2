@@ -1,0 +1,57 @@
+# TB Language - Cargo Configuration Example for Mobile Builds
+# Copy this file to .cargo/config.toml and adjust paths for your system
+
+# Android NDK Configuration
+# Replace <NDK_HOME> with your Android NDK path
+# Replace <HOST> with your platform: linux-x86_64, darwin-x86_64, or windows-x86_64
+# Replace <API> with minimum API level (21, 24, 28, etc.)
+
+# Example NDK paths:
+# Linux:   /home/user/Android/Sdk/ndk/26.1.10909125
+# macOS:   /Users/user/Library/Android/sdk/ndk/26.1.10909125
+# Windows: C:\Users\user\AppData\Local\Android\Sdk\ndk\26.1.10909125
+
+[target.aarch64-linux-android]
+ar = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/llvm-ar"
+linker = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/aarch64-linux-android<API>-clang"
+
+[target.armv7-linux-androideabi]
+ar = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/llvm-ar"
+linker = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/armv7a-linux-androideabi<API>-clang"
+
+[target.i686-linux-android]
+ar = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/llvm-ar"
+linker = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/i686-linux-android<API>-clang"
+
+[target.x86_64-linux-android]
+ar = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/llvm-ar"
+linker = "<NDK_HOME>/toolchains/llvm/prebuilt/<HOST>/bin/x86_64-linux-android<API>-clang"
+
+# iOS Configuration (macOS only)
+# iOS targets typically work out of the box on macOS with Xcode installed
+
+# Example configuration for Linux (API 24):
+# [target.aarch64-linux-android]
+# ar = "/home/user/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+# linker = "/home/user/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+
+# Example configuration for macOS (API 24):
+# [target.aarch64-linux-android]
+# ar = "/Users/user/Library/Android/sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+# linker = "/Users/user/Library/Android/sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+
+# Example configuration for Windows (API 24):
+# [target.aarch64-linux-android]
+# ar = "C:/Users/user/AppData/Local/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.exe"
+# linker = "C:/Users/user/AppData/Local/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android24-clang.cmd"
+
+# Build settings
+[build]
+# Uncomment to set default target
+# target = "aarch64-linux-android"
+
+# Environment variables
+[env]
+# Uncomment and set if needed
+# ANDROID_NDK_HOME = "<NDK_HOME>"
+

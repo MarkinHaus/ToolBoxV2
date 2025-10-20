@@ -760,7 +760,7 @@ class ToolBoxContent {
         }
     }
 
-    setupFormAutofill(form) {
+    async setupFormAutofill(form) {
         // Wrapper für unsere Indikatoren erstellen
         const wrapper = document.createElement('div');
         wrapper.className = 'tb-form-indicator-wrapper';
@@ -771,6 +771,23 @@ class ToolBoxContent {
         indicator.className = 'tb-form-indicator';
         indicator.title = 'ToolBox Pro hat dieses Formular erkannt';
         indicator.innerHTML = '🔐';
+
+        // Check if we have saved credentials for this page
+        const hasCredentials = await this.checkForSavedCredentials();
+
+        if (hasCredentials) {
+            // Change appearance if credentials exist
+            indicator.classList.add('tb-form-indicator-has-data');
+            indicator.title = 'Klicken zum Ausfüllen - Gespeicherte Anmeldedaten verfügbar';
+            indicator.style.cursor = 'pointer';
+
+            // Make it clickable to autofill
+            indicator.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                await this.triggerAutofillFromIndicator(form);
+            };
+        }
 
         // NEUER "Speichern"-Button
         const saveBtn = document.createElement('button');
@@ -790,6 +807,44 @@ class ToolBoxContent {
             form.style.position = 'relative';
         }
         form.appendChild(wrapper);
+    }
+
+    async checkForSavedCredentials() {
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'CHECK_SAVED_CREDENTIALS',
+                url: window.location.href
+            });
+
+            return response && response.hasCredentials;
+        } catch (error) {
+            console.warn('Failed to check for saved credentials:', error);
+            return false;
+        }
+    }
+
+    async triggerAutofillFromIndicator(form) {
+        try {
+            // Show loading feedback
+            this.showGestureFeedback('Lade Anmeldedaten...');
+
+            // Request autofill from background script
+            const response = await chrome.runtime.sendMessage({
+                type: 'AUTOFILL_FROM_INDICATOR',
+                url: window.location.href
+            });
+
+            if (response && response.success && response.data) {
+                // Autofill the form
+                await this.autofillPassword(response.data);
+                this.showGestureFeedback('✅ Ausgefüllt!');
+            } else {
+                this.showGestureFeedback('❌ Keine Daten gefunden');
+            }
+        } catch (error) {
+            console.error('Autofill from indicator failed:', error);
+            this.showGestureFeedback('❌ Fehler beim Ausfüllen');
+        }
     }
 
     handleManualSave(form) {

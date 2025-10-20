@@ -14,79 +14,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-
-# =================== Modern UI Helpers ===================
-
-def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
-    """Print a styled box header"""
-    title_text = f" {icon} {title} "
-    padding = (width - len(title_text)) // 2
-    icon_adjust = 1 if len(icon) == 1 else 0
-
-    print("\n┌" + "─" * width + "┐")
-    print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - icon_adjust) + "│")
-    print("├" + "─" * width + "┤")
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator
+)
 
 
-def print_box_content(text: str, style: str = "", width: int = 76):
-    """Print content inside a box"""
-    if style == "success":
-        icon = "✓"
-        text = f"{icon} {text}"
-    elif style == "error":
-        icon = "✗"
-        text = f"{icon} {text}"
-    elif style == "warning":
-        icon = "⚠"
-        text = f"{icon} {text}"
-    elif style == "info":
-        icon = "ℹ"
-        text = f"{icon} {text}"
+# =================== Modern UI Helpers (Spinner fallback) ===================
 
-    print("│ " + text.ljust(width - 2) + "│")
+# Note: print_box_header, print_box_content, print_box_footer, print_status, print_separator
+# are now imported from cli_printing
 
 
-def print_box_footer(width: int = 76):
-    """Print box footer"""
-    print("└" + "─" * width + "┘\n")
-
-
-def print_status(message: str, status: str = "info"):
-    """Print a status message with icon"""
-    icons = {
-        'success': '✓',
-        'error': '✗',
-        'warning': '⚠',
-        'info': 'ℹ',
-        'progress': '⟳',
-        'waiting': '⏳',
-        'install': '📦',
-        'build': '🔨',
-        'download': '⬇️'
-    }
-
-    colors = {
-        'success': '\033[92m',  # Green
-        'error': '\033[91m',  # Red
-        'warning': '\033[93m',  # Yellow
-        'info': '\033[94m',  # Blue
-        'progress': '\033[96m',  # Cyan
-        'waiting': '\033[95m',  # Magenta
-        'install': '\033[96m',  # Cyan
-        'build': '\033[92m',  # Green
-        'download': '\033[94m'  # Blue
-    }
-
-    reset = '\033[0m'
-    icon = icons.get(status, '•')
-    color = colors.get(status, '')
-
-    print(f"{color}{icon} {message}{reset}")
-
-
-def print_separator(char: str = "─", width: int = 76):
-    """Print a separator line"""
-    print(char * width)
 
 
 def print_menu_option(number: int, text: str, selected: bool = False):

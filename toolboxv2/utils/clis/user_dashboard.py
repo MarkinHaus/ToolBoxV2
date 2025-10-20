@@ -11,81 +11,27 @@ from .tcm_p2p_cli import cli_tcm_runner
 from ... import Style
 from ...mcp_server import MCPSafeIO
 
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator,
+    print_code_block
+)
 
 
 
-def interactive_user_dashboard():
+
+async def interactive_user_dashboard():
     """Modern interactive user dashboard and mini CLI"""
     import asyncio
     from pathlib import Path
 
     # =================== UI Helper Functions ===================
-
-    def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
-        """Print a styled box header"""
-        title_text = f" {icon} {title} "
-        padding = (width - len(title_text)) // 2
-        icon_adjust = 1 if len(icon) == 1 else 0
-
-        print("\n┌" + "─" * width + "┐")
-        print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - icon_adjust) + "│")
-        print("├" + "─" * width + "┤")
-
-    def print_box_content(text: str, style: str = "", width: int = 76):
-        """Print content inside a box"""
-
-        if style == "success":
-            icon = "✓"
-            text = f"{icon} {text}"
-        elif style == "error":
-            icon = "✗"
-            text = f"{icon} {text}"
-        elif style == "warning":
-            icon = "⚠"
-            text = f"{icon} {text}"
-        elif style == "info":
-            icon = "ℹ"
-            text = f"{icon} {text}"
-
-        print("│ " + text.ljust(width - 1) + "│")
-
-    def print_box_footer(width: int = 76):
-        """Print box footer"""
-        print("└" + "─" * width + "┘\n")
-
-    def print_status(message: str, status: str = "info"):
-        """Print a status message with icon"""
-        icons = {
-            'success': '✓',
-            'error': '✗',
-            'warning': '⚠',
-            'info': 'ℹ',
-            'progress': '⟳',
-            'module': '📦',
-            'function': '⚡',
-            'service': '🔧'
-        }
-
-        colors = {
-            'success': '\033[92m',
-            'error': '\033[91m',
-            'warning': '\033[93m',
-            'info': '\033[94m',
-            'progress': '\033[96m',
-            'module': '\033[95m',
-            'function': '\033[92m',
-            'service': '\033[96m'
-        }
-
-        reset = '\033[0m'
-        icon = icons.get(status, '•')
-        color = colors.get(status, '')
-
-        print(f"{color}{icon} {message}{reset}")
-
-    def print_separator(char: str = "─", width: int = 76):
-        """Print a separator line"""
-        print(char * width)
+    # Note: print_box_header, print_box_content, print_box_footer, print_status, print_separator
+    # are now imported from cli_printing at the top of the file
 
     def get_key():
         """Get single keypress (cross-platform)"""
@@ -382,19 +328,17 @@ def interactive_user_dashboard():
                 print('\033[2J\033[H')
 
                 print_box_header(f"Module: {self.current_module}", "📦")
-                print()
 
                 # Module info
                 try:
                     mod = self.app.get_mod(self.current_module)
                     version = getattr(mod, 'version', 'unknown')
-                    print(f"  Version: {version}")
+                    print_box_content(f"Version: {version}", "info")
                 except:
-                    print(f"  Version: unknown")
+                    print_box_content("Version: unknown", "warning")
 
-                print(f"  Functions: {len(self.current_functions)}")
-                print()
-                print_separator()
+                print_box_content(f"Functions: {len(self.current_functions)}", "info")
+                print_box_footer()
                 print()
 
                 if not self.current_functions:
@@ -780,17 +724,12 @@ def interactive_user_dashboard():
             print('\033[2J\033[H')
 
             print_box_header("System Status", "📊")
-            print_box_footer()
 
             # User info
-            print()
-            print_separator("─")
-            print("  User Information")
-            print_separator("─")
-
             try:
                 username = self.app.get_username() if hasattr(self.app, 'get_username') else "Guest"
-                print(f"  Username: {username}")
+                login_status = "Not logged in"
+                login_style = "error"
 
                 # Check login status
                 try:
@@ -800,59 +739,58 @@ def interactive_user_dashboard():
                     with BlobFile(f"claim/{username}/jwt.c", key=Code.DK()(), mode="r") as blob:
                         claim = blob.read()
                         if claim and claim != b'Error decoding':
-                            print(f"  Status: \033[92m✓ Logged in\033[0m")
-                        else:
-                            print(f"  Status: \033[91m✗ Not logged in\033[0m")
+                            login_status = "Logged in"
+                            login_style = "success"
                 except:
-                    print(f"  Status: \033[91m✗ Not logged in\033[0m")
+                    pass
             except:
-                print(f"  Username: Guest")
-                print(f"  Status: \033[91m✗ Not logged in\033[0m")
+                username = "Guest"
+                login_status = "Not logged in"
+                login_style = "error"
 
-            # System info
-            print()
-            print_separator("─")
-            print("  System Information")
-            print_separator("─")
-            print(f"  Instance: {self.app.id}")
-            print(f"  System: {system()}")
-            print(f"  Node: {node()}")
+            print_box_content(f"User: {username}", "info")
+            print_box_content(f"Status: {login_status}", login_style)
+            print_box_content(f"Instance: {self.app.id}", "info")
+            print_box_content(f"System: {system()} on {node()}", "info")
 
             # Modules
-            print()
-            print_separator("─")
-            print("  Modules")
-            print_separator("─")
             modules_count = len(self.app.functions.keys())
-            print(f"  Loaded modules: {modules_count}")
+            print_box_content(f"Loaded Modules: {modules_count}", "info")
 
-            # Services
-            print()
-            print_separator("─")
-            print("  Services Status")
+            # Services Status
             print_separator("─")
 
             # Check DB
+            db_status = "Available"
+            db_style = "success"
             try:
                 # Quick check without full status output
-                print(f"  Database: \033[92m✓ Available\033[0m")
+                pass
             except:
-                print(f"  Database: \033[91m✗ Not available\033[0m")
+                db_status = "Not available"
+                db_style = "error"
+
+            print_box_content(f"Database: {db_status}", db_style)
 
             # Check API
+            api_status = "Stopped"
+            api_style = "error"
+            api_info = ""
             try:
                 from toolboxv2.utils.system.state_system import read_server_state
                 pid, _, _ = read_server_state()
                 from toolboxv2.utils.system.state_system import is_process_running
                 if is_process_running(pid):
-                    print(f"  API Server: \033[92m✓ Running (PID: {pid})\033[0m")
-                else:
-                    print(f"  API Server: \033[91m✗ Stopped\033[0m")
+                    api_status = "Running"
+                    api_style = "success"
+                    api_info = f" (PID: {pid})"
             except:
-                print(f"  API Server: \033[91m✗ Stopped\033[0m")
+                pass
 
-            print()
-            print_separator()
+            print_box_content(f"API Server: {api_status}{api_info}", api_style)
+
+            print_box_footer()
+
             print_status("Press any key to go back...", "info")
             get_key()
 
@@ -1212,19 +1150,20 @@ def interactive_user_dashboard():
                 print('\033[2J\033[H')
 
                 print_box_header("Environment Variables", "🔧")
-                print_box_footer()
 
-                # Show current values
-                print()
-                print_separator("─")
-                print("  Current Variables:")
-                print_separator("─")
-
+                # Build ENV format string for display
+                env_content = ""
                 for var_name, description, value in env_vars:
-                    display_value = value if value else "\033[90m(not set)\033[0m"
-                    if len(display_value) > 40 and value:
-                        display_value = display_value[:37] + "..."
-                    print(f"  {var_name:<25} {display_value}")
+                    env_content += f"# {description}\n"
+                    if value:
+                        env_content += f"{var_name}={value}\n"
+                    else:
+                        env_content += f"# {var_name}=(not set)\n"
+                    env_content += "\n"
+
+                # Display as formatted ENV file
+                print_code_block(env_content.strip(), "env", show_line_numbers=False)
+                print_box_footer()
 
                 print()
                 print_separator("─")
@@ -1421,29 +1360,40 @@ def interactive_user_dashboard():
 
         async def view_config(self):
             """View current configuration"""
+            import json
             print('\033[2J\033[H')
 
             print_box_header("Current Configuration", "📝")
+
+            # Build configuration as JSON
+            modules_count = len(self.app.functions.keys())
+            config_data = {
+                "application": {
+                    "instance_id": self.app.id,
+                    "start_directory": str(self.app.start_dir),
+                    "system": system(),
+                    "node": node()
+                },
+                "modules": {
+                    "loaded_count": modules_count,
+                    "names": sorted(list(self.app.functions.keys())[:10])  # Show first 10
+                },
+                "environment": {
+                    "remote_base": os.getenv("TOOLBOXV2_REMOTE_BASE", "not set"),
+                    "app_base_url": os.getenv("APP_BASE_URL", "not set"),
+                    "db_mode": os.getenv("DB_MODE_KEY", "LC")
+                }
+            }
+
+            # Display as formatted JSON
+            config_json = json.dumps(config_data, indent=2)
+            print_code_block(config_json, "json", show_line_numbers=True)
+
+            if modules_count > 10:
+                print_box_content(f"... and {modules_count - 10} more modules", "info")
+
             print_box_footer()
 
-            print()
-            print_separator("─")
-            print("  Application Settings:")
-            print_separator("─")
-            print(f"  Instance ID: {self.app.id}")
-            print(f"  Start Directory: {self.app.start_dir}")
-            print(f"  System: {system()}")
-            print(f"  Node: {node()}")
-
-            print()
-            print_separator("─")
-            print("  Module Information:")
-            print_separator("─")
-            modules_count = len(self.app.functions.keys())
-            print(f"  Loaded Modules: {modules_count}")
-
-            print()
-            print_separator()
             print_status("Press any key to go back...", "info")
             get_key()
 
@@ -1465,18 +1415,17 @@ def interactive_user_dashboard():
             print('\033[2J\033[H')
 
             print_box_header("About ToolBoxV2", "ℹ️")
-            print()
 
             version = get_version_from_pyproject()
             from toolboxv2 import tb_root_dir, init_cwd
 
-            print(f"  ToolBoxV2 Interactive Dashboard")
-            print(f"  Version: {version}")
-            print(f"  System: {system()}")
-            print(f"  Python: {sys.version.split()[0]}")
-            print(f"  Home: {tb_root_dir}")
-            print(f"  Start: {init_cwd}")
-            print()
+            print_box_content("ToolBoxV2 Interactive Dashboard", "info")
+            print_box_content(f"Version: {version}", "info")
+            print_box_content(f"System: {system()}", "info")
+            print_box_content(f"Python: {sys.version.split()[0]}", "info")
+            print_separator("─")
+            print_box_content(f"Home: {tb_root_dir}", "info")
+            print_box_content(f"Start: {init_cwd}", "info")
             print(f"  A powerful, modular Python framework")
             print(f"  for building and managing tools.")
             print()
@@ -1512,36 +1461,44 @@ def interactive_user_dashboard():
 
         async def show_function_info(self, func):
             """Show detailed function information"""
+            import json
             print('\033[2J\033[H')
 
             print_box_header(f"Function Info: {func['name']}", "ℹ️")
-            print()
 
             func_data = func['data']
 
-            print(f"  Name: {func['name']}")
-            print(f"  Module: {self.current_module}")
-            print(f"  Type: {func_data.get('type', 'unknown')}")
+            # Build function info as JSON
+            info_data = {
+                "name": func['name'],
+                "module": self.current_module,
+                "type": func_data.get('type', 'unknown'),
+            }
 
             if 'version' in func_data:
-                print(f"  Version: {func_data['version']}")
+                info_data['version'] = func_data['version']
 
             if 'test' in func_data:
-                print(f"  Testable: {func_data['test']}")
+                info_data['testable'] = func_data['test']
+
+            # Display as formatted JSON
+            info_json = json.dumps(info_data, indent=2)
+            print_code_block(info_json, "json", show_line_numbers=False)
 
             # Try to get docstring
             try:
                 func_obj = func_data.get('func')
                 if func_obj and hasattr(func_obj, '__doc__') and func_obj.__doc__:
-                    print()
-                    print("  Description:")
-                    print_separator()
-                    for line in func_obj.__doc__.split('\n'):
-                        print(f"  {line}")
+                    print_separator("─")
+                    print_box_content("Description:", "info")
+                    docstring = func_obj.__doc__.strip()
+                    # Display docstring with auto-wrap
+                    for line in docstring.split('\n'):
+                        if line.strip():
+                            print_box_content(line.strip(), auto_wrap=True)
             except:
                 pass
 
-            print()
             print_box_footer()
 
             print_status("Press any key to continue...", "info")
@@ -1677,5 +1634,5 @@ def interactive_user_dashboard():
             await app.a_exit()
 
     # Run
-    asyncio.run(run_dashboard())
+    await run_dashboard()
 

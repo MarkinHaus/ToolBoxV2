@@ -1,0 +1,11 @@
+[package]
+name = "tb-types"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tb-core = { path = "../tb-core" }
+dashmap.workspace = true
+im.workspace = true
+thiserror.workspace = true
+

@@ -1832,7 +1832,7 @@ class ProductionMCPInterface:
 
 # Ersetze die main() Funktion (ca. Zeile ~980)
 
-def main():
+async def main():
     """Production main entry point with comprehensive CLI"""
     import argparse
 
@@ -2100,7 +2100,9 @@ Include API key in requests:
         print(f"{Style.CYAN('═' * 70)}\n")
 
     try:
-        asyncio.run(interface.start_server(args.mode))
+        await interface.start_server(args.mode)
+    except KeyboardInterrupt:
+        get_logger().info("MCP Server", "🛑 Server stopped by user")
     except Exception as e:
         get_logger().error("Main", f"Failed to start server: {e}")
         import traceback
@@ -2108,4 +2110,4 @@ Include API key in requests:
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

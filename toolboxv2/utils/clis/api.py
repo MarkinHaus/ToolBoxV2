@@ -25,6 +25,19 @@ except ImportError:
         print("FATAL: UI utilities not found. Ensure 'toolboxv2/extras/Style.py' exists.")
         sys.exit(1)
 
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator,
+    print_table_header,
+    print_table_row,
+    print_code_block,
+    run_visual_test
+)
+
 # --- Configuration ---
 try:
     import psutil
@@ -40,109 +53,6 @@ DEFAULT_EXECUTABLE_NAME = "simple-core-server"
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8080
 SOCKET_BACKLOG = 128
-
-# =================== Modern UI Helpers ===================
-
-def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
-    """Print a styled box header"""
-    title_text = f" {icon} {title} "
-    padding = (width - len(title_text)) // 2
-    icon_adjust = 1 if len(icon) == 2 else 1
-
-    print("\n┌" + "─" * width + "┐")
-    print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - icon_adjust) + "│")
-    print("├" + "─" * width + "┤")
-
-
-def print_box_content(text: str, style: str = "", width: int = 76):
-    """Print content inside a box"""
-    if style == "success":
-        icon = "✓"
-        text = f"{icon} {text}"
-    elif style == "error":
-        icon = "✗_"
-        text = f"{icon} {text}"
-    elif style == "warning":
-        icon = "⚠"
-        text = f"{icon} {text}"
-    elif style == "info":
-        icon = "ℹ"
-        text = f"{icon} {text}"
-
-    print("│ " + text.ljust(width - 1) + "│")
-
-
-def print_box_footer(width: int = 76):
-    """Print box footer"""
-    print("└" + "─" * width + "┘\n")
-
-
-def print_status(message: str, status: str = "info"):
-    """Print a status message with icon"""
-    icons = {
-        'success': '✓',
-        'error': '✗_',
-        'warning': '⚠',
-        'info': 'ℹ ',
-        'progress': '⟳',
-        'waiting': '⏳',
-        'server': '🖥️',
-        'network': '🌐',
-        'build': '🔨',
-        'update': '🔄'
-    }
-
-    colors = {
-        'success': '\033[92m',  # Green
-        'error': '\033[91m',  # Red
-        'warning': '\033[93m',  # Yellow
-        'info': '\033[94m',  # Blue
-        'progress': '\033[96m',  # Cyan
-        'waiting': '\033[95m',  # Magenta
-        'server': '\033[92m',  # Green
-        'network': '\033[94m',  # Blue
-        'build': '\033[96m',  # Cyan
-        'update': '\033[95m'  # Magenta
-    }
-
-    reset = '\033[0m'
-    icon = icons.get(status, '•')
-    color = colors.get(status, '')
-
-    print(f"{color}{icon} {message}{reset}")
-
-
-def print_separator(char: str = "─", width: int = 76):
-    """Print a separator line"""
-    print(char * width)
-
-
-def print_table_header(columns: list, widths: list):
-    """Print a table header with columns"""
-    header_parts = []
-    for (name, _), width in zip(columns, widths):
-        header_parts.append(f"{name:<{width}}")
-
-    print("  " + " │ ".join(header_parts))
-    print("  " + "─┼─".join("─" * w for w in widths))
-
-
-def print_table_row(values: list, widths: list, styles: list = None):
-    """Print a table row"""
-    if styles is None:
-        styles = [""] * len(values)
-
-    row_parts = []
-    for value, width, style in zip(values, widths, styles):
-        if style:
-            colored_value = getattr(Style, style.upper(), lambda x: x)(value)
-            padding = width - len(value)
-            row_parts.append(colored_value + " " * padding)
-        else:
-            row_parts.append(f"{value:<{width}}")
-
-    print("  " + " │ ".join(row_parts))
-
 
 # =================== Helper Functions ===================
 
@@ -376,7 +286,7 @@ def start_new_server(executable_path, version_str, use_posix_zdt):
         print_box_content(f"Port: {SERVER_PORT}", "success")
         print_box_footer()
     else:
-        print_box_header("Server Failed to Start", "✗_")
+        print_box_header("Server Failed to Start", "✗")
         print_box_content("Check logs for details", "error")
         print_box_footer()
         write_server_state(None, None, None)
@@ -586,7 +496,7 @@ def handle_build():
 
     except subprocess.CalledProcessError as e:
         print()
-        print_box_header("Build Failed", "✗_")
+        print_box_header("Build Failed", "✗")
         print_box_content("Compilation errors occurred", "error")
         print_box_footer()
         print("\nError output:")
@@ -594,7 +504,7 @@ def handle_build():
 
     except FileNotFoundError:
         print()
-        print_box_header("Build Failed", "✗_")
+        print_box_header("Build Failed", "✗")
         print_box_content("'cargo' command not found", "error")
         print_box_content("Is Rust installed and in your PATH?", "info")
         print_box_footer()
@@ -746,7 +656,7 @@ def manage_server(action: str, executable_path: str = None, version_str: str = "
             executable_path = get_executable_path()
 
         if not executable_path:
-            print_box_header("Executable Not Found", "✗_")
+            print_box_header("Executable Not Found", "✗")
             print_box_content("No compiled executable found", "error")
             print_box_content("Build first with: tb api build", "info")
             print_box_footer()
@@ -805,6 +715,7 @@ def cli_api_runner():
 ║    $ tb api debug                    # Run with hot reload                 ║
 ║    $ tb api clean                    # Clean build artifacts               ║
 ║    $ tb api remove-exe               # Remove compiled executable          ║
+║    $ tb api visual-test              # Run visual UI component test        ║
 ║                                                                            ║
 ║  Server Management:                                                        ║
 ║    $ tb api start                    # Start server                        ║
@@ -841,6 +752,7 @@ Zero-Downtime Updates:
     subparsers.add_parser('debug', help='Run in debug mode with hot reload')
     subparsers.add_parser('clean', help='Clean build artifacts')
     subparsers.add_parser('remove-exe', help='Remove release executable')
+    subparsers.add_parser('visual-test', help='Run visual test for UI components')
 
     # Server management commands
     actions = {
@@ -890,6 +802,10 @@ Zero-Downtime Updates:
 
     if args.action == 'debug':
         handle_debug()
+        return
+
+    if args.action == 'visual-test':
+        run_visual_test()
         return
 
     if not args.action:

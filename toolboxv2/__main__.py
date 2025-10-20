@@ -141,12 +141,10 @@ def start(pidname, args, filename):
     args = args[1:]
     args = ["-bgr" if arg == "-bg" else arg for arg in args]
 
-    if '-m' not in args or args[args.index('-m') + 1] == "toolboxv2":
-        args += ["-m", "bg"]
-    if caller.endswith('toolboxv2'):
-        args = ["toolboxv2"] + args
+    if caller.endswith('tb'):
+        args = ["tb"] + args
     else:
-        args = [sys.executable, "-m", "toolboxv2"] + args
+        args = [sys.executable, "-m", "tb"] + args
     if system() == "Windows":
         DETACHED_PROCESS = 0x00000008
         p = subprocess.Popen(args, creationflags=DETACHED_PROCESS)
@@ -186,7 +184,7 @@ After=network.target
 User={user}
 Group={group}
 WorkingDirectory={working_dir}
-ExecStart=tb -bgr -m {runner}
+ExecStart=tb -bgr {runner}
 Restart=always
 RestartSec=5
 
@@ -253,7 +251,7 @@ async def setup_service_windows():
             if runner.upper().strip() == "GUI":
                 command = '-c "from toolboxv2.__gui__ import start; start()"'
             else:
-                command = f"-m toolboxv2 -bg -m {runner}"
+                command = f"-m toolboxv2 -bgr {runner}"
             f.write(
                 f"""{sys.executable} {command}"""
             )
@@ -1392,6 +1390,8 @@ async def setup_app(ov_name=None, App=TbApp):
             res.print()
 
     if args.background_application_runner:
+        from toolboxv2.utils.extras.notification import quick_info
+        quick_info("Background Application", f"Starting background application {sys.argv}", timeout=12000)
         daemon_app = await DaemonApp(tb_app, args.host, args.port if args.port != 5000 else 6587, t=False)
         tb_app.daemon_app = daemon_app
         args.live_application = False
@@ -1477,7 +1477,7 @@ async def command_runner(tb_app, command, **kwargs):
     return r
 
 
-async def main(App=TbApp):
+async def main(App=TbApp, do_exit=True):
     """Console script for toolboxv2."""
     tb_app, args = await setup_app(App=App)
     __version__ = get_version_from_pyproject()
@@ -1639,7 +1639,7 @@ async def main(App=TbApp):
     if os.path.exists(pid_file):
         os.remove(pid_file)
 
-    if not tb_app.called_exit[0]:
+    if do_exit and not tb_app.called_exit[0]:
         await tb_app.a_exit()
         return 0
     # print(
@@ -1818,14 +1818,17 @@ def runner_setup():
             get_app().logger.info(f"Copied executable to '{bin_dir.resolve()}'")
         run_executable_in_background(gui_exe)
 
-    def status_helper():
+    async def status_helper():
         print("🔍 ToolBoxV2 System Status")
         print("═" * 40)
 
         # Check login status
         try:
+
             from toolboxv2.utils.system.session import get_app
             app = get_app("status_check")
+
+
 
             # Check if user is logged in
             try:
@@ -1846,6 +1849,13 @@ def runner_setup():
             except Exception:
                 print("🔐 Authentication: ❌ Not logged in")
 
+            from toolboxv2.mods.CloudM.mini import get_service_status
+            str1 = get_service_status(app.info_dir.replace(app.id,
+                                                           ''))
+
+            print(str1)
+
+
         except Exception as e:
             print(f"🔐 Authentication: ❌ Status check failed: {e}")
 
@@ -1853,7 +1863,7 @@ def runner_setup():
 
         # Existing status checks
         sys.argv = ["db", "status"]
-        cli_db_runner()
+        await cli_db_runner()
         print()
         print(Style.GREY("─" * 25))
         sys.argv = ["api", "status"]
@@ -1861,7 +1871,7 @@ def runner_setup():
         sys.argv = ["p2p", "status"]
         cli_tcm_runner()
 
-    def cli_web_login():
+    async def cli_web_login():
         """Enhanced CLI web login entry point with modern visual feedback"""
         import argparse
 
@@ -1912,11 +1922,11 @@ def runner_setup():
             app = get_app("CloudM.cli_web_login")
             res = await app.a_run_any("CloudM", "cli_web_login", force_remote=args.remote, force_local=args.local)
             return res
-        return asyncio.run(helper())
+        return await helper()
 
-    def logout():
+    async def logout():
         app = get_app("CloudM.cli_web_login")
-        return app.run_any("CloudM", "cli_logout")
+        return await app.a_run_any("CloudM", "cli_logout")
 
     async def run_flow_from_file_or_load_all_flows_and_mods_from_dir(app):
         from toolboxv2 import init_cwd
@@ -1933,13 +1943,13 @@ def runner_setup():
         await app.load_all_mods_in_file(init_cwd)
         app.flows = flows_dict_func(args.flow or '.py', args.remote, init_cwd, app.flows)
         if args.flow:
-            asyncio.run(app.run_flows(args.flow))
+            await app.run_flows(args.flow)
 
     run_c = run_flow_from_file_or_load_all_flows_and_mods_from_dir
 
-    def mods_manager():
+    async def mods_manager():
         app = get_app("CloudM.ModManager")
-        app.run_any("CloudM", "mods")
+        await app.a_run_any("CloudM", "mods")
 
     runner = {
         "venv": lambda: __import__('toolboxv2.utils.system.venv_runner', fromlist=['main']).main(),
@@ -1975,7 +1985,6 @@ def main_runner():
     # Normale Main-App
     else:
         # Clear screen for clean start
-        print('\033[2J\033[H')
         runner = runner_setup()
         runner_keys = list(RUNNER_KEYS)
         main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
@@ -1986,21 +1995,31 @@ def main_runner():
                 runner['flows'] = lambda : None
             if runner_name == "mcp":
                 TbApp.print = lambda *a, **k: None
-            loop.run_until_complete(main(TbApp))
+
+            async def main_helper(runner_name):
+
+                if runner_name is None and len(sys.argv) < 2:
+                    runner_name = "default"
+                await main(TbApp, runner_name is None)
+                # Wenn Runner angegeben
+                if runner_name:
+                    # Setze sys.argv für Runner
+                    sys.argv = [sys.argv[0]] + runner_args
+
+                    try:
+                        res = runner[runner_name]()
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except KeyboardInterrupt:
+                        sys.exit(0)
+
+                #if runner_name not in ["flows", "mcp"] and runner_name != "default":
+                #    await runner["default"]()
+            loop.run_until_complete(main_helper(runner_name))
         except KeyboardInterrupt:
             pass
 
-        if runner_name is None and len(sys.argv) < 2:
-            runner_name = "default"
-        # Wenn Runner angegeben
-        if runner_name:
-            # Setze sys.argv für Runner
-            sys.argv = [sys.argv[0]] + runner_args
 
-            try:
-                sys.exit(runner[runner_name]())
-            except KeyboardInterrupt:
-                sys.exit(0)
 
 
 import ctypes
@@ -2027,6 +2046,7 @@ def server_helper(instance_id:str="main", db_mode=None):
     print("Using Python executable env:", sys.executable)
     loop = asyncio.new_event_loop()
     sys.argv.append('-l')
+    sys.argv.append('--debug')
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
     if db_mode is None:

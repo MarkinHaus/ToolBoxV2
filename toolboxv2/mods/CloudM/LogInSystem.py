@@ -11,80 +11,18 @@ from toolboxv2 import App, get_app, Result, Code, Style, Spinner, RequestData
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.session import Session
 
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator
+)
+
 Name = 'CloudM'
 version = '0.0.4'
 export = get_app(f"{Name}.EXPORT").tb
-
-
-# =================== Visual Helper Functions ===================
-
-def print_box_header(title: str, icon: str = "ℹ"):
-    """Print a styled box header"""
-    width = 76
-    title_text = f" {icon} {title} "
-    padding = (width - len(title_text)) // 2
-
-    print("\n┌" + "─" * width + "┐")
-    print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - (1 if len(icon) == 1 else 0)) + "│")
-    print("├" + "─" * width + "┤")
-
-
-def print_box_content(text: str, style: str = ""):
-    """Print content inside a box"""
-    width = 76
-
-    if style == "success":
-        icon = "✓"
-        text = f"{icon} {text}"
-    elif style == "error":
-        icon = "✗"
-        text = f"{icon} {text}"
-    elif style == "warning":
-        icon = "⚠"
-        text = f"{icon} {text}"
-    elif style == "info":
-        icon = "ℹ "
-        text = f"{icon} {text}"
-
-    print("│ " + text.ljust(width - 1) + "│")
-
-
-def print_box_footer():
-    """Print box footer"""
-    width = 76
-    print("└" + "─" * width + "┘\n")
-
-
-def print_status(message: str, status: str = "info"):
-    """Print a status message with icon"""
-    icons = {
-        'success': '✓',
-        'error': '✗',
-        'warning': '⚠',
-        'info': 'ℹ',
-        'progress': '⟳',
-        'waiting': '⏳'
-    }
-
-    colors = {
-        'success': '\033[92m',  # Green
-        'error': '\033[91m',  # Red
-        'warning': '\033[93m',  # Yellow
-        'info': '\033[94m',  # Blue
-        'progress': '\033[96m',  # Cyan
-        'waiting': '\033[95m'  # Magenta
-    }
-
-    reset = '\033[0m'
-    icon = icons.get(status, '•')
-    color = colors.get(status, '')
-
-    print(f"{color}{icon} {message}{reset}")
-
-
-def print_separator(char: str = "─", width: int = 76):
-    """Print a separator line"""
-    print(char * width)
 
 
 def print_menu_option(number: int, text: str, selected: bool = False):
@@ -170,7 +108,7 @@ async def _remote_web_login(app: App):
     cli_session_id = uuid.uuid4().hex
 
     # Create login URL with CLI session tracking
-    login_url = f"{remote_base}/api/CloudM/open_cli_web_login_web?session_id={cli_session_id}&return_to=cli"
+    login_url = f"{remote_base}/api/CloudM/open_web_login_web?session_id={cli_session_id}&return_to=cli"
 
     print_status("Generating secure session...", "progress")
     print_status("Session ready!", "success")
@@ -223,7 +161,7 @@ async def _local_web_login(app: App):
     cli_session_id = uuid.uuid4().hex
 
     # Create login URL
-    login_url = f"{local_base}/api/CloudM/open_cli_web_login_web?session_id={cli_session_id}&return_to=cli"
+    login_url = f"{local_base}/api/CloudM/open_web_login_web?session_id={cli_session_id}&return_to=cli"
 
     print()
     print_separator("═")
@@ -303,14 +241,15 @@ async def _setup_local_server(app: App):
             print_status("Invalid choice, please enter 1, 2, or 3", "error")
 
 @export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def open_cli_web_login_web(app: App, request: RequestData, session_id=None, return_to=None):
-    """Handle web login flow for CLI"""
+async def open_web_login_web(app: App, request: RequestData, session_id=None, return_to=None, log_in_for="CLI"):
+    """Handle web login flow for CLI and Browser"""
     if request is None:
         return Result.default_internal_error("No request specified")
+
     template = """<div">
         <div class="login-card">
-            <h1>🔐 CLI Authentication</h1>
-            <p>Please authenticate to continue with CLI access</p>
+            <h1>🔐 XXX Authentication</h1>
+            <p>Please authenticate to continue with XXX access</p>
 
             <div id="loginForm">
                 <input type="text" id="username" placeholder="Username" required>
@@ -320,7 +259,7 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
             <div id="statusMessage" style="display: none; padding: 10px; margin: 10px 0; border-radius: 5px;"></div>
             <div id="successMessage" style="display: none;">
                 <h3>✅ Authentication Successful!</h3>
-                <p>You can now return to your CLI. This window will close automatically.</p>
+                <p>You can now return to your XXX. This window will close automatically.</p>
             </div>
         </div>
 
@@ -330,8 +269,8 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
         const sessionId = urlParams.get('session_id');
         const returnTo = urlParams.get('return_to');
 
-        console.log('[CLI Login] Session ID:', sessionId);
-        console.log('[CLI Login] Return to:', returnTo);
+        console.log('[XXX Login] Session ID:', sessionId);
+        console.log('[XXX Login] Return to:', returnTo);
 
         async function startLogin() {
             const username = document.getElementById('username').value;
@@ -341,7 +280,7 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
             }
 
             if (!sessionId) {
-                showStatus('Error: No session ID provided. Please restart the CLI login process.', 'error');
+                showStatus('Error: No session ID provided. Please restart the XXX login process.', 'error');
                 return;
             }
 
@@ -349,24 +288,24 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
 
             try {
                 // Use TB.js login system
-                console.log('[CLI Login] Attempting login for:', username);
+                console.log('[XXX Login] Attempting login for:', username);
                 const result = await window.TB.user.loginWithDeviceKey(username);
-                console.log('[CLI Login] Login result:', result);
+                console.log('[XXX Login] Login result:', result);
 
                 if (result.success) {
-                    showStatus('Login successful! Notifying CLI...', 'info');
+                    showStatus('Login successful! Notifying XXX...', 'info');
 
                     // Get the JWT token from TB.user state
                     const jwtToken = window.TB.user.getToken();
-                    console.log('[CLI Login] JWT Token:', jwtToken ? 'Found' : 'Not found');
+                    console.log('[XXX Login] JWT Token:', jwtToken ? 'Found' : 'Not found');
 
                     if (!jwtToken) {
                         showStatus('Error: No authentication token found. Please try again.', 'error');
                         return;
                     }
 
-                    // Complete CLI authentication by notifying the backend
-                    console.log('[CLI Login] Calling complete_cli_auth with session_id:', sessionId);
+                    // Complete XXX authentication by notifying the backend
+                    console.log('[XXX Login] Calling complete_cli_auth with session_id:', sessionId);
                     const completeResponse = await window.TB.api.request(
                         'CloudM',
                         'open_complete_cli_auth',
@@ -378,23 +317,23 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
                         'POST'
                     );
 
-                    console.log('[CLI Login] complete_cli_auth response:', completeResponse);
+                    console.log('[XXX Login] complete_cli_auth response:', completeResponse);
 
                     if (completeResponse.error === window.TB.ToolBoxError.none) {
                         showSuccess();
-                        console.log('[CLI Login] CLI authentication completed successfully');
+                        console.log('[XXX Login] XXX authentication completed successfully');
                         setTimeout(() => {
-                            console.log('[CLI Login] Closing window...');
+                            console.log('[XXX Login] Closing window...');
                             window.close();
                         }, 3000);
                     } else {
-                        showStatus('Error notifying CLI: ' + (completeResponse.info?.help_text || 'Unknown error'), 'error');
+                        showStatus('Error notifying XXX: ' + (completeResponse.info?.help_text || 'Unknown error'), 'error');
                     }
                 } else {
                     showStatus(result.message || 'Login failed', 'error');
                 }
             } catch (error) {
-                console.error('[CLI Login] Error:', error);
+                console.error('[XXX Login] Error:', error);
                 showStatus('Authentication error: ' + error.message, 'error');
             }
         }
@@ -441,19 +380,17 @@ async def open_cli_web_login_web(app: App, request: RequestData, session_id=None
 
         // Check if TB is available
         if (!window.TB) {
-            console.error('[CLI Login] TB framework not loaded!');
+            console.error('[XXX Login] TB framework not loaded!');
             showStatus('Error: TB framework not loaded. Please refresh the page.', 'error');
         } else {
-            console.log('[CLI Login] TB framework loaded successfully');
+            console.log('[XXX Login] TB framework loaded successfully');
         }
 
 
     </script>
 </div>
-"""
-    if request.session.valid:
-        # auto log in user
-        pass
+""".replace("XXX", log_in_for)
+
     return Result.html(template)
 
 async def _poll_for_auth_completion(app: App, base_url: str, session_id: str, timeout: int = 300):

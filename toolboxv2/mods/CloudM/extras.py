@@ -36,9 +36,10 @@ def openui(app:App):
     uis = json.loads(x)
     return [uis[name] for name in uis]
 
-@export(mod_name=Name, api=True, version=version, row=True)
+@export(mod_name=Name, api=True, version=version)
 def openVersion(self):
     return self.version
+
 @no_test
 def new_module(self, mod_name: str,
                *options):  # updater wie AI Functional and class based hybrid , file / folder |<futüre>| rust py

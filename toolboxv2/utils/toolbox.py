@@ -1198,6 +1198,17 @@ class App(AppType, metaclass=Singleton):
                 self.loop.stop()
 
     async def a_exit(self):
+
+        import inspect
+        self.sprint(f"exit requested from: {inspect.stack()[1].filename}::{inspect.stack()[1].lineno} function: {inspect.stack()[1].function}")
+
+        # Cleanup session before removing modules
+        try:
+            if hasattr(self, 'session') and self.session is not None:
+                await self.session.cleanup()
+        except Exception as e:
+            self.logger.debug(f"Session cleanup error (ignored): {e}")
+
         await self.a_remove_all_modules(delete=True)
         results = await asyncio.gather(
             *[asyncio.create_task(f()) for f in self.exit_tasks if asyncio.iscoroutinefunction(f)])

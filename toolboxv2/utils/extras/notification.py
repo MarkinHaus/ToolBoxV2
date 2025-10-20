@@ -790,10 +790,10 @@ def create_notification_system() -> NotificationSystem:
     return NotificationSystem()
 
 
-def quick_info(title: str, message: str):
+def quick_info(title: str, message: str, **kwargs):
     """Quick info notification"""
     notifier = create_notification_system()
-    notifier.show_notification(title, message, NotificationType.INFO)
+    notifier.show_notification(title, message, NotificationType.INFO, **kwargs)
 
 
 def quick_success(title: str, message: str, **kwargs):

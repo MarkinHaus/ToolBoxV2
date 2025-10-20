@@ -14,7 +14,8 @@ from typing import Optional, List, Dict, Any
 
 from toolboxv2.utils.tbx.install_support import function_runner as system_tbx_support
 from toolboxv2.utils.tbx.setup import function_runner as language_ide_extension
-from toolboxv2.utils.tbx.test.test_tb_lang import function_runner as test_tbx_examples
+from toolboxv2.utils.tbx.test.test_tb_lang2 import function_runner as test_tbx_examples
+
 # --- Enhanced UI Imports ---
 try:
     from toolboxv2.utils.extras.Style import Spinner, Style
@@ -54,76 +55,18 @@ except ImportError:
             def __exit__(self, *args):
                 pass
 
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator
+)
+
 # --- Configuration ---
-EXECUTABLE_NAME = "tbx"
-PROJECT_DIR = "tb-exc"
-
-
-# =================== Modern UI Helpers ===================
-
-def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
-    """Print a styled box header"""
-    title_text = f" {icon} {title} "
-    padding = (width - len(title_text)) // 2
-
-    print("\n┌" + "─" * width + "┐")
-    print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - 1 if len(icon) == 1 else 0) + "│")
-    print("├" + "─" * width + "┤")
-
-
-def print_box_content(text: str, style: str = "", width: int = 76):
-    """Print content inside a box"""
-    icons = {
-        "success": "✓",
-        "error": "✗",
-        "warning": "⚠",
-        "info": "ℹ"
-    }
-
-    if style in icons:
-        text = f"{icons[style]} {text}"
-
-    print("│ " + text.ljust(width - 1) + "│")
-
-
-def print_box_footer(width: int = 76):
-    """Print box footer"""
-    print("└" + "─" * width + "┘\n")
-
-
-def print_status(message: str, status: str = "info"):
-    """Print a status message with icon"""
-    icons = {
-        'success': '✓',
-        'error': '✗',
-        'warning': '⚠',
-        'info': 'ℹ',
-        'progress': '⟳',
-        'build': '🔨',
-        'rocket': '🚀'
-    }
-
-    colors = {
-        'success': '\033[92m',
-        'error': '\033[91m',
-        'warning': '\033[93m',
-        'info': '\033[94m',
-        'progress': '\033[96m',
-        'build': '\033[93m',
-        'rocket': '\033[95m'
-    }
-
-    reset = '\033[0m'
-    icon = icons.get(status, '•')
-    color = colors.get(status, '')
-
-    print(f"{color}{icon} {message}{reset}")
-
-
-def print_separator(char: str = "─", width: int = 76):
-    """Print a separator line"""
-    print(char * width)
-
+EXECUTABLE_NAME = "tb"
+PROJECT_DIR = "tb-exc/src"
 
 # =================== Helper Functions ===================
 
@@ -166,6 +109,253 @@ def detect_shell():
     else:
         return "sh", "-c"
 
+
+def _build_native(project_dir: Path, release: bool, export_bin: bool) -> bool:
+    """Build for the current native platform"""
+    shell, shell_flag = detect_shell()
+
+    build_cmd = "cargo build"
+    if release:
+        build_cmd += " --release"
+
+    with Spinner(f"Compiling TB Language ({'release' if release else 'debug'} mode)", symbols='d'):
+        result = subprocess.run(
+            [shell, shell_flag, build_cmd],
+            cwd=project_dir,
+            capture_output=False,
+            text=True,
+            check=False,
+            encoding=sys.stdout.encoding or 'utf-8'
+        )
+
+    if result.returncode != 0:
+        print_status("Build failed!", "error")
+        return False
+
+    print_status("Build successful!", "success")
+
+    # Export to bin directory
+    if export_bin:
+        return _export_to_bin(project_dir, release, "native")
+
+    return True
+
+
+def _build_desktop_target(project_dir: Path, release: bool, rust_target: str, export_bin: bool) -> bool:
+    """Build for a specific desktop target"""
+    shell, shell_flag = detect_shell()
+
+    build_cmd = f"cargo build --target {rust_target}"
+    if release:
+        build_cmd += " --release"
+
+    with Spinner(f"Compiling for {rust_target}", symbols='d'):
+        result = subprocess.run(
+            [shell, shell_flag, build_cmd],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding=sys.stdout.encoding or 'utf-8'
+        )
+
+    if result.returncode != 0:
+        print_status(f"Build failed for {rust_target}!", "error")
+        if result.stderr:
+            print(Style.GREY(result.stderr))
+        return False
+
+    print_status(f"Build successful for {rust_target}!", "success")
+
+    # Export to bin directory
+    if export_bin:
+        return _export_to_bin(project_dir, release, rust_target)
+
+    return True
+
+
+def _build_mobile_platform(project_dir: Path, release: bool, platform_name: str, export_bin: bool) -> bool:
+    """Build for mobile platform using build scripts"""
+    system = platform.system()
+
+    # Determine which script to use
+    if system == "Windows":
+        script_path = project_dir / "build-mobile.ps1"
+        script_cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path), platform_name]
+    else:
+        script_path = project_dir / "build-mobile.sh"
+        script_cmd = ["bash", str(script_path), platform_name]
+
+    # Add debug flag if needed
+    if not release:
+        if system == "Windows":
+            script_cmd.insert(-1, "-Debug")
+        else:
+            script_cmd.append("--debug")
+
+    # Check if script exists
+    if not script_path.exists():
+        print_status(f"Mobile build script not found: {script_path}", "error")
+        print_status("Please ensure build-mobile scripts are in the project directory", "info")
+        return False
+
+    # Make script executable on Unix
+    if system != "Windows":
+        os.chmod(script_path, 0o755)
+
+    with Spinner(f"Building for {platform_name} (using {script_path.name})", symbols='d'):
+        result = subprocess.run(
+            script_cmd,
+            cwd=project_dir,
+            capture_output=False,
+            text=True,
+            check=False,
+            encoding=sys.stdout.encoding or 'utf-8'
+        )
+
+    if result.returncode != 0:
+        print_status(f"Mobile build failed for {platform_name}!", "error")
+        return False
+
+    print_status(f"Mobile build successful for {platform_name}!", "success")
+
+    # Export to bin directory
+    if export_bin:
+        return _export_mobile_to_bin(project_dir, release, platform_name)
+
+    return True
+
+
+def _build_all_platforms(project_dir: Path, release: bool, export_bin: bool) -> bool:
+    """Build for all supported platforms"""
+    print_status("Building for all platforms...", "info")
+    print()
+
+    success = True
+
+    # Build native first
+    print_box_header("Building Native", "🖥️")
+    if not _build_native(project_dir, release, export_bin):
+        success = False
+    print()
+
+    # Build Android
+    print_box_header("Building Android", "📱")
+    if not _build_mobile_platform(project_dir, release, "android", export_bin):
+        success = False
+    print()
+
+    # Build iOS (only on macOS)
+    if platform.system() == "Darwin":
+        print_box_header("Building iOS", "🍎")
+        if not _build_mobile_platform(project_dir, release, "ios", export_bin):
+            success = False
+        print()
+    else:
+        print_status("Skipping iOS build (requires macOS)", "warning")
+
+    return success
+
+def _export_to_bin(project_dir: Path, release: bool, rust_target: str) -> bool:
+    """Export compiled binary to bin directory"""
+    bin_dir = get_tb_root() / "bin"
+    bin_dir.mkdir(exist_ok=True)
+
+    build_type = "release" if release else "debug"
+
+    # Determine source path based on target
+    if rust_target == "native":
+        target_dir = project_dir / "target" / build_type
+    else:
+        target_dir = project_dir / "target" / rust_target / build_type
+
+    # Find executable
+    exe_name = EXECUTABLE_NAME
+    if rust_target == "native" and platform.system() == "Windows":
+        exe_name += ".exe"
+
+    source_path = target_dir / exe_name
+
+    if not source_path.exists():
+        print_status(f"Warning: Compiled executable not found at {source_path}", "warning")
+        return False
+
+    # Create target-specific subdirectory in bin
+    if rust_target == "native":
+        dest_dir = bin_dir
+        dest_name = exe_name
+    else:
+        dest_dir = bin_dir / rust_target
+        dest_dir.mkdir(exist_ok=True)
+        dest_name = exe_name
+
+    dest_path = dest_dir / dest_name
+
+    # Copy executable
+    if dest_path.exists():
+        os.remove(dest_path)
+    shutil.copy(source_path, dest_path)
+
+    # Make executable on Unix
+    if platform.system() != "Windows" and not dest_name.endswith(".exe"):
+        os.chmod(dest_path, 0o755)
+
+    print_status(f"✓ Exported to: {dest_path}", "success")
+    return True
+
+
+def _export_mobile_to_bin(project_dir: Path, release: bool, platform_name: str) -> bool:
+    """Export mobile libraries to bin directory"""
+    bin_dir = get_tb_root() / "bin" / platform_name
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    build_type = "release" if release else "debug"
+    target_base = project_dir / "target"
+
+    # Define mobile targets
+    if platform_name == "android":
+        targets = {
+            "aarch64-linux-android": "arm64-v8a",
+            "armv7-linux-androideabi": "armeabi-v7a",
+            "i686-linux-android": "x86",
+            "x86_64-linux-android": "x86_64"
+        }
+        lib_name = "libtb_runtime.so"
+    elif platform_name == "ios":
+        targets = {
+            "aarch64-apple-ios": "device",
+            "x86_64-apple-ios": "simulator-intel",
+            "aarch64-apple-ios-sim": "simulator-arm64"
+        }
+        lib_name = "libtb_runtime.a"
+    else:
+        print_status(f"Unknown mobile platform: {platform_name}", "error")
+        return False
+
+    exported_count = 0
+
+    for rust_target, arch_name in targets.items():
+        source_path = target_base / rust_target / build_type / lib_name
+
+        if source_path.exists():
+            dest_dir = bin_dir / arch_name
+            dest_dir.mkdir(exist_ok=True)
+            dest_path = dest_dir / lib_name
+
+            shutil.copy(source_path, dest_path)
+            print_status(f"✓ Exported {arch_name}: {dest_path}", "success")
+            exported_count += 1
+        else:
+            print_status(f"⚠ Not found: {source_path}", "warning")
+
+    if exported_count > 0:
+        print_status(f"Exported {exported_count} {platform_name} libraries to {bin_dir}", "info")
+        return True
+    else:
+        print_status(f"No {platform_name} libraries found to export", "warning")
+        return False
+
+
 def handle_system_support(args):
     """Handle system support operations"""
     return system_tbx_support(*args)
@@ -179,10 +369,18 @@ def handle_test_examples(args):
     return test_tbx_examples(args)
 # =================== Command Handlers ===================
 
-def handle_build(release: bool = True):
-    """Build the TB language executable"""
+def handle_build(release: bool = True, target: str = "native", export_bin: bool = True):
+    """
+    Build the TB language executable for various targets
+
+    Args:
+        release: Build in release mode (default: True)
+        target: Build target - native, windows, linux, macos, android, ios, all (default: native)
+        export_bin: Export binaries to bin directory (default: True)
+    """
     print_box_header("Building TB Language", "🔨")
     print_box_content(f"Mode: {'Release' if release else 'Debug'}", "info")
+    print_box_content(f"Target: {target}", "info")
     print_box_footer()
 
     project_dir = get_project_dir()
@@ -191,55 +389,53 @@ def handle_build(release: bool = True):
         print_status(f"Project directory not found: {project_dir}", "error")
         return False
 
+    # Define target mappings
+    desktop_targets = {
+        "windows": "x86_64-pc-windows-msvc",
+        "linux": "x86_64-unknown-linux-gnu",
+        "macos": "x86_64-apple-darwin",
+        "macos-arm": "aarch64-apple-darwin",
+    }
+
+    mobile_targets = {
+        "android": ["aarch64-linux-android", "armv7-linux-androideabi",
+                    "i686-linux-android", "x86_64-linux-android"],
+        "ios": ["aarch64-apple-ios", "x86_64-apple-ios", "aarch64-apple-ios-sim"],
+    }
+
     try:
-        shell, shell_flag = detect_shell()
+        # Handle different target types
+        if target == "native":
+            # Build for current platform
+            return _build_native(project_dir, release, export_bin)
 
-        build_cmd = "cargo build"
-        if release:
-            build_cmd += " --release"
+        elif target in ["windows", "linux", "macos", "macos-arm"]:
+            # Build for specific desktop platform
+            return _build_desktop_target(project_dir, release, desktop_targets[target], export_bin)
 
-        with Spinner(f"Compiling TB Language ({'release' if release else 'debug'} mode)", symbols='d'):
-            result = subprocess.run(
-                [shell, shell_flag, build_cmd],
-                cwd=project_dir,
-                capture_output=False,
-                text=True,
-                check=False,
-                encoding=sys.stdout.encoding or 'utf-8'
-            )
+        elif target == "android":
+            # Build for all Android targets using mobile script
+            return _build_mobile_platform(project_dir, release, "android", export_bin)
 
-        print_status("Build successful!", "success")
+        elif target == "ios":
+            # Build for all iOS targets using mobile script
+            return _build_mobile_platform(project_dir, release, "ios", export_bin)
 
-        # Copy to bin directory
-        exe_path = get_executable_path()
-        if exe_path:
-            bin_dir = get_tb_root() / "bin"
-            bin_dir.mkdir(exist_ok=True)
+        elif target == "all":
+            # Build for all platforms
+            return _build_all_platforms(project_dir, release, export_bin)
 
-            dest_path = bin_dir / exe_path.name
-
-            if dest_path.exists():
-                os.remove(dest_path)
-            shutil.copy(exe_path, dest_path)
-
-            # Make executable on Unix
-            if platform.system() != "Windows":
-                os.chmod(dest_path, 0o755)
-
-            print_status(f"Executable installed to: {dest_path}", "info")
-            return True
         else:
-            print_status("Warning: Could not find compiled executable", "warning")
+            print_status(f"Unknown target: {target}", "error")
             return False
 
-    except subprocess.CalledProcessError as e:
-        print_status("Build failed!", "error")
-        print(Style.GREY(e.stderr))
-        return False
     except FileNotFoundError:
         print_status("Build failed: 'cargo' command not found", "error")
         print_status("Is Rust installed and in your PATH?", "info")
         print_status("Install from: https://rustup.rs", "info")
+        return False
+    except Exception as e:
+        print_status(f"Build failed: {e}", "error")
         return False
 
 
@@ -439,7 +635,7 @@ A TB Language project.
 
 
 ```bash
-tb run src/main.tb
+tb run x src/main.tb
 Building
 bash
 tb compile src/main.tb bin/{project_name}
@@ -563,8 +759,12 @@ def cli_tbx_main():
 ╠════════════════════════════════════════════════════════════════════════════╣
 ║                                                                            ║
 ║  Setup & Build:                                                            ║
-║    $ tb run build                    # Build TB Language (release)         ║
+║    $ tb run build                    # Build TB Language (native/release)  ║
 ║    $ tb run build --debug            # Build in debug mode                 ║
+║    $ tb run build --target android   # Build for Android (all archs)       ║
+║    $ tb run build --target ios       # Build for iOS (all archs)           ║
+║    $ tb run build --target windows   # Cross-compile for Windows           ║
+║    $ tb run build --target all       # Build for all platforms             ║
 ║    $ tb run clean                    # Clean build artifacts               ║
 ║                                                                            ║
 ║  Running Programs:                                                         ║
@@ -598,6 +798,13 @@ def cli_tbx_main():
     # Build command
     p_build = Copysubparsers.add_parser('build', help='Build TB Language executable')
     p_build.add_argument('--debug', action='store_true', help='Build in debug mode')
+    p_build.add_argument('--target',
+                        choices=['native', 'windows', 'linux', 'macos', 'macos-arm',
+                                'android', 'ios', 'all'],
+                        default='native',
+                        help='Build target platform (default: native)')
+    p_build.add_argument('--no-export', action='store_true',
+                        help='Skip exporting to bin directory')
 
     # Clean command
     Copysubparsers.add_parser('clean', help='Clean build artifacts')
@@ -649,7 +856,11 @@ def cli_tbx_main():
 
     # Execute command
     if args.command == 'build':
-        success = handle_build(release=not args.debug)
+        success = handle_build(
+            release=not args.debug,
+            target=args.target,
+            export_bin=not args.no_export
+        )
     elif args.command == 'clean':
         success = handle_clean()
     elif args.command == 'x':

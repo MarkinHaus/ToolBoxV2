@@ -25,6 +25,17 @@ except ImportError:
         print("FATAL: UI utilities not found. Ensure 'toolboxv2/extras/Style.py' exists.")
         sys.exit(1)
 
+# --- CLI Printing Utilities ---
+from toolboxv2.utils.clis.cli_printing import (
+    print_box_header,
+    print_box_content,
+    print_box_footer,
+    print_status,
+    print_separator,
+    print_table_header,
+    print_table_row
+)
+
 # --- Configuration ---
 try:
     import psutil
@@ -38,108 +49,6 @@ except ImportError:
 CLUSTER_CONFIG_FILE = "cluster_config.json"
 # The base name of the Rust executable
 EXECUTABLE_NAME = "r_blob_db"
-
-
-# =================== Modern UI Helpers ===================
-
-def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
-    """Print a styled box header"""
-    title_text = f" {icon} {title} "
-    padding = (width - len(title_text)) // 2
-
-    print("\n┌" + "─" * width + "┐")
-    print("│" + " " * padding + title_text + " " * (width - padding - len(title_text) - (1 if len(icon) == 1 else 0)) + "│")
-    print("├" + "─" * width + "┤")
-
-
-def print_box_content(text: str, style: str = "", width: int = 76):
-    """Print content inside a box"""
-    if style == "success":
-        icon = "✓"
-        text = f"{icon} {text}"
-    elif style == "error":
-        icon = "✗"
-        text = f"{icon} {text}"
-    elif style == "warning":
-        icon = "⚠"
-        text = f"{icon} {text}"
-    elif style == "info":
-        icon = "ℹ"
-        text = f"{icon} {text}"
-
-    print("│ " + text.ljust(width - 1) + "│")
-
-
-def print_box_footer(width: int = 76):
-    """Print box footer"""
-    print("└" + "─" * width + "┘\n")
-
-
-def print_status(message: str, status: str = "info"):
-    """Print a status message with icon"""
-    icons = {
-        'success': '✓',
-        'error': '✗',
-        'warning': '⚠',
-        'info': 'ℹ',
-        'progress': '⟳',
-        'waiting': '⏳',
-        'database': '🗄️',
-        'server': '🖥️',
-        'network': '🌐'
-    }
-
-    colors = {
-        'success': '\033[92m',  # Green
-        'error': '\033[91m',  # Red
-        'warning': '\033[93m',  # Yellow
-        'info': '\033[94m',  # Blue
-        'progress': '\033[96m',  # Cyan
-        'waiting': '\033[95m',  # Magenta
-        'database': '\033[96m',  # Cyan
-        'server': '\033[92m',  # Green
-        'network': '\033[94m'  # Blue
-    }
-
-    reset = '\033[0m'
-    icon = icons.get(status, '•')
-    color = colors.get(status, '')
-
-    print(f"{color}{icon} {message}{reset}")
-
-
-def print_separator(char: str = "─", width: int = 76):
-    """Print a separator line"""
-    print(char * width)
-
-
-def print_table_header(columns: List[tuple], widths: List[int]):
-    """Print a table header with columns"""
-    header_parts = []
-    for (name, _), width in zip(columns, widths):
-        header_parts.append(f"{name:<{width}}")
-
-    print("  " + " │ ".join(header_parts))
-    print("  " + "─┼─".join("─" * w for w in widths))
-
-
-def print_table_row(values: List[str], widths: List[int], styles: List[str] = None):
-    """Print a table row"""
-    if styles is None:
-        styles = [""] * len(values)
-
-    row_parts = []
-    for value, width, style in zip(values, widths, styles):
-        if style:
-            colored_value = getattr(Style, style.upper(), lambda x: x)(value)
-            # Account for ANSI codes in width calculation
-            padding = width - len(value)
-            row_parts.append(colored_value + " " * padding)
-        else:
-            row_parts.append(f"{value:<{width}}")
-
-    print("  " + " │ ".join(row_parts))
-
 
 # =================== Helper Functions ===================
 
@@ -1271,7 +1180,7 @@ async def handle_discover(manager: ClusterManager):
 
 # =================== CLI Entry Point ===================
 
-def cli_db_runner():
+async def cli_db_runner():
     """The main entry point for the CLI application."""
 
     parser = argparse.ArgumentParser(
@@ -1366,10 +1275,9 @@ def cli_db_runner():
     manager = ClusterManager()
 
     if args.action == 'discover':
-        import asyncio
-        asyncio.run(handle_discover(manager))
+        await handle_discover(manager)
         return
-
+    executable_path = None
     if args.action in ['start', 'update']:
         executable_path = get_executable_path(update=(args.action == 'update'))
         if not executable_path:
@@ -1389,8 +1297,9 @@ def cli_db_runner():
         manager.update_all_rolling(executable_path, args.version, args.instance_id)
     else:
         import asyncio
-        asyncio.run(handle_discover(manager))
+        await handle_discover(manager)
 
 
 if __name__ == "__main__":
-    cli_db_runner()
+    import asyncio
+    asyncio.run(cli_db_runner())

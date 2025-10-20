@@ -145,8 +145,8 @@ def find_tb_binary() -> str:
     for path in paths_to_try:
         print(f"  • {path}")
     print(f"\n{Colors.CYAN}Build the binary with:{Colors.RESET}")
-    print(f"  tb x build")
-    sys.exit(1)
+    print(f"  tb run build")
+    return ""
 
 def run_tb(code: str, mode: str = "jit", timeout: int = 10) -> Tuple[bool, str, str]:
     """

@@ -56,10 +56,10 @@ class VoiceType(str, Enum):
     FEMALE_4 = "female_4"
 
 class CharacterRole(str, Enum):
-    PROTAGONIST = "protagonist"
-    ANTAGONIST = "antagonist"
-    SIDEKICK = "sidekick"
-    MYSTERIOUS = "mysterious"
+    PROTAGONIST = "Protagonist"
+    ANTAGONIST = "Antagonist"
+    SIDEKICK = "Sidekick"
+    MYSTERIOUS = "Mysterious"
 
 class ImageStyle(str, Enum):
     IMAX = "imax"

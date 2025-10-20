@@ -331,6 +331,21 @@
             </div>
 
             <div class="settings-section">
+                <h4>AI Agent Selection</h4>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <select id="agentSelector" class="settings-select" style="flex: 1; margin-bottom: 0;">
+                        <option value="speed">speed (default)</option>
+                    </select>
+                    <button id="refreshAgentsBtn" class="action-btn" style="padding: 8px 12px; margin-bottom: 0;" title="Refresh agent list">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                        </svg>
+                    </button>
+                </div>
+                <p class="settings-hint">Select which AI agent to use for tasks and chat</p>
+            </div>
+
+            <div class="settings-section">
                 <h4>Authentication</h4>
                 <div id="authStatus" class="auth-status">
                     <span class="status-dot"></span>
@@ -338,9 +353,15 @@
                 </div>
 
                 <div id="loginForm" class="login-form">
+                    <button id="webLoginBtn" class="action-btn primary" style="width: 100%; margin-bottom: 15px;">
+                        🔐 Login with Browser
+                    </button>
+
+                    <div class="divider">OR</div>
+
                     <input type="text" id="settings-username" placeholder="Username" class="settings-input">
                     <input type="password" id="settings-jwt" placeholder="JWT Token (optional)" class="settings-input">
-                    <button id="loginBtn" class="action-btn primary">Login</button>
+                    <button id="loginBtn" class="action-btn">Manual Login</button>
 
                     <div class="divider">OR</div>
 
