@@ -131,6 +131,7 @@ suite = TestSuite()
 # ═══════════════════════════════════════════════════════════════════════════
 # TB BINARY HELPER
 # ═══════════════════════════════════════════════════════════════════════════
+TB_BINARY = None
 
 def escape_path_for_tb(path: str) -> str:
     """Escape backslashes in Windows paths for TB string literals."""
@@ -164,15 +165,14 @@ def find_tb_binary() -> str:
     print(f"{Colors.YELLOW}Tried paths:{Colors.RESET}")
     for path in paths:
         print(f"  • {path}")
-    print(f"\n{Colors.CYAN}Build with: cargo build --release{Colors.RESET}")
-    sys.exit(1)
+    print(f"\n{Colors.CYAN}Build with: tb run build{Colors.RESET}")
 
-
-TB_BINARY = find_tb_binary()
 
 
 def run_tb(code: str, mode: str = "jit", timeout: int = 30):
-    global LAST_COMPILE_MS, LAST_EXEC_MS
+    global LAST_COMPILE_MS, LAST_EXEC_MS, TB_BINARY
+    if TB_BINARY is None:
+        TB_BINARY = find_tb_binary()
     LAST_COMPILE_MS = None
     LAST_EXEC_MS = None
 
@@ -2742,7 +2742,7 @@ if response.status == 200 {
 def test_http_post_json(mode):
     assert_output("""
 let session = http_session("https://httpbin.org")
-let data = {"name": "TB Test", "value": 42}
+let data = {name: "TB Test", value: 42}
 let response = http_request(session, "/post", "POST", data)
 if response.status == 200 {
     print("POST successful")
@@ -2788,7 +2788,7 @@ print(len(data["user"]["scores"]))
 @test("Utils: JSON stringify", "Built-in Functions - Utils")
 def test_json_stringify(mode):
     assert_output("""
-let data = {"name": "Charlie", "active": true}
+let data = {name: "Charlie", active: true}
 let json = json_stringify(data)
 print("JSON created")
 """, "JSON created", mode)
@@ -2796,7 +2796,7 @@ print("JSON created")
 @test("Utils: JSON round-trip", "Built-in Functions - Utils")
 def test_json_roundtrip(mode):
     assert_output("""
-let original = {"test": "value", "number": 42}
+let original = {test: "value", number: 42}
 let json_str = json_stringify(original)
 let parsed = json_parse(json_str)
 print(parsed["test"])
@@ -2815,7 +2815,7 @@ print(data["age"])
 @test("Utils: YAML stringify", "Built-in Functions - Utils")
 def test_yaml_stringify(mode):
     assert_output("""
-let data = {"name": "Bob", "port": 8080}
+let data = {name: "Bob", port: 8080}
 let yaml = yaml_stringify(data)
 print("YAML created")
 """, "YAML created", mode)
@@ -2823,7 +2823,7 @@ print("YAML created")
 @test("Utils: YAML round-trip", "Built-in Functions - Utils")
 def test_yaml_roundtrip(mode):
     assert_output("""
-let original = {"service": "api", "version": 2}
+let original = {service: "api", version: 2}
 let yaml_str = yaml_stringify(original)
 let parsed = yaml_parse(yaml_str)
 print(parsed["service"])
@@ -2887,7 +2887,7 @@ if len(iso) > 10 {
 @test("Integration: File I/O with JSON", "Built-in Functions - Integration")
 def test_integration_file_json(mode):
     assert_output("""
-let data = {"users": ["Alice", "Bob", "Charlie"], "count": 3}
+let data = {users: ["Alice", "Bob", "Charlie"], count: 3}
 let json_str = json_stringify(data)
 write_file("users.json", json_str)
 
@@ -2913,9 +2913,9 @@ def test_integration_time_json(mode):
     assert_output("""
 let now = time()
 let time_data = {
-    "year": now["year"],
-    "month": now["month"],
-    "timezone": now["timezone"]
+    year: now["year"],
+    month: now["month"],
+    timezone: now["timezone"]
 }
 let json = json_stringify(time_data)
 let parsed = json_parse(json)
@@ -2926,7 +2926,7 @@ print(parsed["timezone"])
 def test_integration_blob_json(mode):
     assert_output("""
 let storage = blob_init(["http://localhost:8080"])
-let config = {"app": "TB Lang", "version": "1.0"}
+let config = {app: "TB Lang", version: "1.0"}
 let json_str = json_stringify(config)
 let blob_id = blob_create(storage, json_str)
 print("Config stored in blob")
@@ -2937,7 +2937,7 @@ def test_integration_stress(mode):
     assert_output("""
 let results = []
 for i in range(10) {
-    let data = {"index": i, "timestamp": time()["timestamp"]}
+    let data = {index: i, timestamp: time()["timestamp"]}
     let json = json_stringify(data)
     results = push(results, json)
 }
@@ -2999,5 +2999,6 @@ def function_runner(args):
 
 
 if __name__ == "__main__":
+    TB_BINARY = find_tb_binary()
     success = main()
     sys.exit(0 if success else 1)
