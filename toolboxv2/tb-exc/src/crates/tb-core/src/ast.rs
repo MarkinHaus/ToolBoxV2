@@ -225,6 +225,7 @@ pub enum BinaryOp {
     GtEq,
     And,
     Or,
+    In,  // Membership test: "x" in list, "key" in dict, "sub" in string
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

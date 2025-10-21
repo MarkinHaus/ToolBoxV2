@@ -1,10 +1,12 @@
 use tb_core::*;
 use std::sync::Arc;
+use std::path::PathBuf;
 
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
-    source: Arc<String>,  // NEW: Original source code for extracting plugin bodies
+    source: Arc<String>,  // Original source code for extracting plugin bodies
+    source_context: Option<SourceContext>,  // NEW: For better error messages
 }
 
 impl Parser {
@@ -13,14 +15,27 @@ impl Parser {
             tokens,
             pos: 0,
             source: Arc::new(String::new()),
+            source_context: None,
         }
     }
 
     pub fn new_with_source(tokens: Vec<Token>, source: String) -> Self {
+        let source_arc = Arc::new(source.clone());
         Self {
             tokens,
             pos: 0,
-            source: Arc::new(source),
+            source: Arc::clone(&source_arc),
+            source_context: Some(SourceContext::new(source, None)),
+        }
+    }
+
+    pub fn new_with_source_and_path(tokens: Vec<Token>, source: String, file_path: PathBuf) -> Self {
+        let source_arc = Arc::new(source.clone());
+        Self {
+            tokens,
+            pos: 0,
+            source: Arc::clone(&source_arc),
+            source_context: Some(SourceContext::new(source, Some(file_path))),
         }
     }
 
@@ -249,10 +264,15 @@ impl Parser {
             TokenKind::Config => self.parse_config_block(),
             TokenKind::Import => self.parse_import_block(),
             TokenKind::Plugin => self.parse_plugin_block(),
-            _ => Err(TBError::SyntaxError {
-                location: format!("{}:{}", self.current().span.line, self.current().span.column),
-                message: "Expected config, import, or plugin after @".to_string(),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: "Expected config, import, or plugin after @".to_string(),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 
@@ -295,9 +315,12 @@ impl Parser {
                 self.advance();
                 s
             } else {
+                let span = self.current().span;
                 return Err(TBError::SyntaxError {
-                    location: format!("{}:{}", self.current().span.line, self.current().span.column),
+                    location: format!("{}:{}", span.line, span.column),
                     message: "Expected string path in import".to_string(),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
                 });
             };
 
@@ -348,18 +371,28 @@ impl Parser {
                         "javascript" => PluginLanguage::JavaScript,
                         "go" => PluginLanguage::Go,
                         "rust" => PluginLanguage::Rust,
-                        _ => return Err(TBError::SyntaxError {
-                            location: format!("{}:{}", self.current().span.line, self.current().span.column),
-                            message: format!("Unknown plugin language: {}", lang_str),
-                        }),
+                        _ => {
+                            let span = self.current().span;
+                            return Err(TBError::SyntaxError {
+                                location: format!("{}:{}", span.line, span.column),
+                                message: format!("Unknown plugin language: {}", lang_str),
+                                span: Some(span),
+                                source_context: self.source_context.clone(),
+                            });
+                        }
                     };
                     self.advance();
                     plugin_lang
                 }
-                _ => return Err(TBError::SyntaxError {
-                    location: format!("{}:{}", self.current().span.line, self.current().span.column),
-                    message: "Expected plugin language (python, javascript, go, rust)".to_string(),
-                }),
+                _ => {
+                    let span = self.current().span;
+                    return Err(TBError::SyntaxError {
+                        location: format!("{}:{}", span.line, span.column),
+                        message: "Expected plugin language (python, javascript, go, rust)".to_string(),
+                        span: Some(span),
+                        source_context: self.source_context.clone(),
+                    });
+                }
             };
 
             // Parse name (string)
@@ -368,9 +401,12 @@ impl Parser {
                 self.advance();
                 n
             } else {
+                let span = self.current().span;
                 return Err(TBError::SyntaxError {
-                    location: format!("{}:{}", self.current().span.line, self.current().span.column),
+                    location: format!("{}:{}", span.line, span.column),
                     message: "Expected plugin name (string)".to_string(),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
                 });
             };
 
@@ -566,10 +602,15 @@ impl Parser {
                 self.expect(TokenKind::RBrace)?;
                 Ok(ConfigValue::Dict(entries))
             }
-            _ => Err(TBError::SyntaxError {
-                location: format!("{}:{}", self.current().span.line, self.current().span.column),
-                message: "Expected config value".to_string(),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: "Expected config value".to_string(),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 
@@ -625,10 +666,15 @@ impl Parser {
                     _ => Ok(Type::Generic(Arc::new(type_name))),
                 }
             }
-            _ => Err(TBError::SyntaxError {
-                location: format!("{}:{}", self.current().span.line, self.current().span.column),
-                message: "Expected type".to_string(),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: "Expected type".to_string(),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 
@@ -702,6 +748,7 @@ impl Parser {
             TokenKind::Gt,
             TokenKind::LtEq,
             TokenKind::GtEq,
+            TokenKind::In,  // "x" in list, "key" in dict, "sub" in string
         ]) {
             self.advance();
             let right = self.parse_term()?;
@@ -856,6 +903,52 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Ident(name, span))
             }
+            TokenKind::Fn => {
+                // Lambda function: fn(params) { body } or fn(params) expr
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+
+                let mut params = Vec::new();
+                while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+                    let param_name = match &self.current().kind {
+                        TokenKind::Ident(name) => Arc::clone(name),
+                        _ => return Err(TBError::SyntaxError {
+                            location: format!("{}:{}", self.current().span.line, self.current().span.column),
+                            message: "Expected parameter name".to_string(),
+                            span: Some(self.current().span),
+                            source_context: self.source_context.clone(),
+                        }),
+                    };
+                    self.advance();
+
+                    params.push(Parameter {
+                        name: param_name,
+                        type_annotation: None,
+                    });
+
+                    if !self.check(&TokenKind::RParen) {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+
+                // Parse body: either { block } or single expression
+                let body = if self.check(&TokenKind::LBrace) {
+                    self.advance();
+                    let expr = self.parse_expression()?;
+                    self.expect(TokenKind::RBrace)?;
+                    Box::new(expr)
+                } else {
+                    Box::new(self.parse_expression()?)
+                };
+
+                let end_span = *body.span();
+                Ok(Expression::Lambda {
+                    params,
+                    body,
+                    span: span.merge(&end_span),
+                })
+            }
             TokenKind::LParen => {
                 self.advance();
                 let expr = self.parse_expression()?;
@@ -876,7 +969,31 @@ impl Parser {
                 let mut entries = Vec::new();
 
                 while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-                    let key = self.expect_ident()?;
+                    // ✅ PERFORMANCE: Fast path for common cases (Ident and String)
+                    // Accept three forms of keys:
+                    // 1. Identifier: {name: value}
+                    // 2. String literal: {"name": value} or {'name': value}
+                    let key = match &self.current().kind {
+                        TokenKind::Ident(name) => {
+                            let key = Arc::clone(name);
+                            self.advance();
+                            key
+                        }
+                        TokenKind::String(s) => {
+                            let key = Arc::clone(s);
+                            self.advance();
+                            key
+                        }
+                        _ => {
+                            return Err(TBError::SyntaxError {
+                                location: format!("{}:{}", self.current().span.line, self.current().span.column),
+                                message: format!("Expected identifier or string as dict key, found {:?}", self.current().kind),
+                                span: Some(self.current().span),
+                                source_context: self.source_context.clone(),
+                            });
+                        }
+                    };
+
                     self.expect(TokenKind::Colon)?;
                     let value = self.parse_expression()?;
 
@@ -922,10 +1039,15 @@ impl Parser {
                 })
             }
 
-            _ => Err(TBError::SyntaxError {
-                location: format!("{}:{}", span.line, span.column),
-                message: format!("Unexpected token: {:?}", self.current().kind),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: format!("Unexpected token: {:?}", self.current().kind),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 
@@ -962,6 +1084,7 @@ impl Parser {
                     TokenKind::Gt => BinaryOp::Gt,
                     TokenKind::LtEq => BinaryOp::LtEq,
                     TokenKind::GtEq => BinaryOp::GtEq,
+                    TokenKind::In => BinaryOp::In,
                     _ => return None,
                 });
             }
@@ -1013,13 +1136,12 @@ impl Parser {
             self.advance();
             Ok(span)
         } else {
+            let span = self.current().span;
             Err(TBError::SyntaxError {
-                location: format!(
-                    "{}:{}",
-                    self.current().span.line,
-                    self.current().span.column
-                ),
+                location: format!("{}:{}", span.line, span.column),
                 message: format!("Expected {:?}, found {:?}", kind, self.current().kind),
+                span: Some(span),
+                source_context: self.source_context.clone(),
             })
         }
     }
@@ -1031,14 +1153,15 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(TBError::SyntaxError {
-                location: format!(
-                    "{}:{}",
-                    self.current().span.line,
-                    self.current().span.column
-                ),
-                message: format!("Expected identifier, found {:?}", self.current().kind),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: format!("Expected identifier, found {:?}", self.current().kind),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 
@@ -1095,9 +1218,12 @@ impl Parser {
                             inclusive,
                         })
                     } else {
+                        let span = self.current().span;
                         Err(TBError::SyntaxError {
-                            location: format!("{}:{}", self.current().span.line, self.current().span.column),
+                            location: format!("{}:{}", span.line, span.column),
                             message: "Expected integer after range operator".to_string(),
+                            span: Some(span),
+                            source_context: self.source_context.clone(),
                         })
                     }
                 } else {
@@ -1124,14 +1250,15 @@ impl Parser {
                     Ok(Pattern::Ident(name))
                 }
             }
-            _ => Err(TBError::SyntaxError {
-                location: format!(
-                    "{}:{}",
-                    self.current().span.line,
-                    self.current().span.column
-                ),
-                message: format!("Expected pattern, found {:?}", self.current().kind),
-            }),
+            _ => {
+                let span = self.current().span;
+                Err(TBError::SyntaxError {
+                    location: format!("{}:{}", span.line, span.column),
+                    message: format!("Expected pattern, found {:?}", self.current().kind),
+                    span: Some(span),
+                    source_context: self.source_context.clone(),
+                })
+            }
         }
     }
 }

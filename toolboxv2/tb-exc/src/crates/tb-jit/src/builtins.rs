@@ -52,18 +52,14 @@ fn register_len(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("len".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "len() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("len() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
                 Value::String(s) => Ok(Value::Int(s.len() as i64)),
                 Value::List(items) => Ok(Value::Int(items.len() as i64)),
                 Value::Dict(map) => Ok(Value::Int(map.len() as i64)),
-                _ => Err(TBError::RuntimeError {
-                    message: format!("len() not supported for {}", args[0].type_name()),
-                }),
+                _ => Err(TBError::runtime_error(format!("len() not supported for {}", args[0].type_name()))),
             }
         }),
     }));
@@ -75,9 +71,7 @@ fn register_push(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("push".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 2 {
-                return Err(TBError::RuntimeError {
-                    message: "push() takes exactly 2 arguments".to_string(),
-                });
+                return Err(TBError::runtime_error("push() takes exactly 2 arguments".to_string()));
             }
 
             match &args[0] {
@@ -86,9 +80,7 @@ fn register_push(env: &mut ImHashMap<Arc<String>, Value>) {
                     new_items.push(args[1].clone());
                     Ok(Value::List(Arc::new(new_items)))
                 }
-                _ => Err(TBError::RuntimeError {
-                    message: "push() requires a list".to_string(),
-                }),
+                _ => Err(TBError::runtime_error("push() requires a list".to_string())),
             }
         }),
     }));
@@ -100,25 +92,19 @@ fn register_pop(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("pop".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "pop() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("pop() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
                 Value::List(items) => {
                     if items.is_empty() {
-                        return Err(TBError::RuntimeError {
-                            message: "Cannot pop from empty list".to_string(),
-                        });
+                        return Err(TBError::runtime_error("Cannot pop from empty list".to_string()));
                     }
                     let mut new_items = (**items).clone();
                     new_items.pop();
                     Ok(Value::List(Arc::new(new_items)))
                 }
-                _ => Err(TBError::RuntimeError {
-                    message: "pop() requires a list".to_string(),
-                }),
+                _ => Err(TBError::runtime_error("pop() requires a list".to_string())),
             }
         }),
     }));
@@ -130,9 +116,7 @@ fn register_keys(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("keys".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "keys() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("keys() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
@@ -142,9 +126,7 @@ fn register_keys(env: &mut ImHashMap<Arc<String>, Value>) {
                         .collect();
                     Ok(Value::List(Arc::new(keys)))
                 }
-                _ => Err(TBError::RuntimeError {
-                    message: "keys() requires a dict".to_string(),
-                }),
+                _ => Err(TBError::runtime_error("keys() requires a dict".to_string())),
             }
         }),
     }));
@@ -156,9 +138,7 @@ fn register_values(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("values".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "values() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("values() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
@@ -166,9 +146,7 @@ fn register_values(env: &mut ImHashMap<Arc<String>, Value>) {
                     let values: Vec<Value> = map.values().cloned().collect();
                     Ok(Value::List(Arc::new(values)))
                 }
-                _ => Err(TBError::RuntimeError {
-                    message: "values() requires a dict".to_string(),
-                }),
+                _ => Err(TBError::runtime_error("values() requires a dict".to_string())),
             }
         }),
     }));
@@ -184,24 +162,18 @@ fn register_range(env: &mut ImHashMap<Arc<String>, Value>) {
                     if let Value::Int(n) = args[0] {
                         (0, n)
                     } else {
-                        return Err(TBError::RuntimeError {
-                            message: "range() requires integer arguments".to_string(),
-                        });
+                        return Err(TBError::runtime_error("range() requires integer arguments".to_string()));
                     }
                 }
                 2 => {
                     if let (Value::Int(a), Value::Int(b)) = (&args[0], &args[1]) {
                         (*a, *b)
                     } else {
-                        return Err(TBError::RuntimeError {
-                            message: "range() requires integer arguments".to_string(),
-                        });
+                        return Err(TBError::runtime_error("range() requires integer arguments".to_string()));
                     }
                 }
                 _ => {
-                    return Err(TBError::RuntimeError {
-                        message: "range() takes 1 or 2 arguments".to_string(),
-                    });
+                    return Err(TBError::runtime_error("range() takes 1 or 2 arguments".to_string()));
                 }
             };
 
@@ -217,9 +189,7 @@ fn register_str(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("str".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "str() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("str() takes exactly 1 argument".to_string()));
             }
 
             Ok(Value::String(Arc::new(args[0].to_string())))
@@ -233,9 +203,7 @@ fn register_int(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("int".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "int() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("int() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
@@ -244,14 +212,10 @@ fn register_int(env: &mut ImHashMap<Arc<String>, Value>) {
                 Value::String(s) => {
                     s.parse::<i64>()
                         .map(Value::Int)
-                        .map_err(|_| TBError::RuntimeError {
-                            message: format!("Cannot convert '{}' to int", s),
-                        })
+                        .map_err(|_| TBError::runtime_error(format!("Cannot convert '{}' to int", s)))
                 }
                 Value::Bool(b) => Ok(Value::Int(if *b { 1 } else { 0 })),
-                _ => Err(TBError::RuntimeError {
-                    message: format!("Cannot convert {} to int", args[0].type_name()),
-                }),
+                _ => Err(TBError::runtime_error(format!("Cannot convert {} to int", args[0].type_name()))),
             }
         }),
     }));
@@ -263,9 +227,7 @@ fn register_float(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("float".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "float() takes exactly 1 argument".to_string(),
-                });
+                return Err(TBError::runtime_error("float() takes exactly 1 argument".to_string()));
             }
 
             match &args[0] {
@@ -274,13 +236,9 @@ fn register_float(env: &mut ImHashMap<Arc<String>, Value>) {
                 Value::String(s) => {
                     s.parse::<f64>()
                         .map(Value::Float)
-                        .map_err(|_| TBError::RuntimeError {
-                            message: format!("Cannot convert '{}' to float", s),
-                        })
+                        .map_err(|_| TBError::runtime_error(format!("Cannot convert '{}' to float", s)))
                 }
-                _ => Err(TBError::RuntimeError {
-                    message: format!("Cannot convert {} to float", args[0].type_name()),
-                }),
+                _ => Err(TBError::runtime_error(format!("Cannot convert {} to float", args[0].type_name()))),
             }
         }),
     }));
@@ -296,16 +254,12 @@ fn register_file_exists(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("file_exists".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.is_empty() || args.len() > 2 {
-                return Err(TBError::RuntimeError {
-                    message: "file_exists() takes 1-2 arguments: path, blob=false".to_string(),
-                });
+                return Err(TBError::runtime_error("file_exists() takes 1-2 arguments: path, blob=false".to_string()));
             }
 
             let path = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "file_exists() path must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("file_exists() path must be a string".to_string())),
             };
 
             let is_blob = if args.len() > 1 {
@@ -334,16 +288,12 @@ fn register_read_file(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("read_file".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.is_empty() || args.len() > 2 {
-                return Err(TBError::RuntimeError {
-                    message: "read_file() takes 1-2 arguments: path, blob=false".to_string(),
-                });
+                return Err(TBError::runtime_error("read_file() takes 1-2 arguments: path, blob=false".to_string()));
             }
 
             let path = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "read_file() path must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("read_file() path must be a string".to_string())),
             };
 
             let is_blob = if args.len() > 1 {
@@ -356,16 +306,12 @@ fn register_read_file(env: &mut ImHashMap<Arc<String>, Value>) {
             };
 
             if is_blob {
-                Err(TBError::RuntimeError {
-                    message: "Blob file reading not yet implemented".to_string(),
-                })
+                Err(TBError::runtime_error("Blob file reading not yet implemented".to_string()))
             } else {
                 // Read real file
                 std::fs::read_to_string(&path)
                     .map(|content| Value::String(Arc::new(content)))
-                    .map_err(|e| TBError::RuntimeError {
-                        message: format!("Failed to read file '{}': {}", path, e),
-                    })
+                    .map_err(|e| TBError::runtime_error(format!("Failed to read file '{}': {}", path, e)))
             }
         }),
     }));
@@ -377,23 +323,17 @@ fn register_write_file(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("write_file".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() < 2 || args.len() > 3 {
-                return Err(TBError::RuntimeError {
-                    message: "write_file() takes 2-3 arguments: path, content, blob=false".to_string(),
-                });
+                return Err(TBError::runtime_error("write_file() takes 2-3 arguments: path, content, blob=false".to_string()));
             }
 
             let path = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "write_file() path must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("write_file() path must be a string".to_string())),
             };
 
             let content = match &args[1] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "write_file() content must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("write_file() content must be a string".to_string())),
             };
 
             let is_blob = if args.len() > 2 {
@@ -406,16 +346,12 @@ fn register_write_file(env: &mut ImHashMap<Arc<String>, Value>) {
             };
 
             if is_blob {
-                Err(TBError::RuntimeError {
-                    message: "Blob file writing not yet implemented".to_string(),
-                })
+                Err(TBError::runtime_error("Blob file writing not yet implemented".to_string()))
             } else {
                 // Write real file
                 std::fs::write(&path, content)
                     .map(|_| Value::None)
-                    .map_err(|e| TBError::RuntimeError {
-                        message: format!("Failed to write file '{}': {}", path, e),
-                    })
+                    .map_err(|e| TBError::runtime_error(format!("Failed to write file '{}': {}", path, e)))
             }
         }),
     }));
@@ -427,23 +363,17 @@ fn register_append_file(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("append_file".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() < 2 || args.len() > 3 {
-                return Err(TBError::RuntimeError {
-                    message: "append_file() takes 2-3 arguments: path, content, blob=false".to_string(),
-                });
+                return Err(TBError::runtime_error("append_file() takes 2-3 arguments: path, content, blob=false".to_string()));
             }
 
             let path = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "append_file() path must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("append_file() path must be a string".to_string())),
             };
 
             let content = match &args[1] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "append_file() content must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("append_file() content must be a string".to_string())),
             };
 
             let is_blob = if args.len() > 2 {
@@ -456,9 +386,7 @@ fn register_append_file(env: &mut ImHashMap<Arc<String>, Value>) {
             };
 
             if is_blob {
-                Err(TBError::RuntimeError {
-                    message: "Blob file appending not yet implemented".to_string(),
-                })
+                Err(TBError::runtime_error("Blob file appending not yet implemented".to_string()))
             } else {
                 // Append to real file
                 use std::io::Write;
@@ -468,9 +396,7 @@ fn register_append_file(env: &mut ImHashMap<Arc<String>, Value>) {
                     .open(&path)
                     .and_then(|mut file| file.write_all(content.as_bytes()))
                     .map(|_| Value::None)
-                    .map_err(|e| TBError::RuntimeError {
-                        message: format!("Failed to append to file '{}': {}", path, e),
-                    })
+                    .map_err(|e| TBError::runtime_error(format!("Failed to append to file '{}': {}", path, e)))
             }
         }),
     }));
@@ -482,16 +408,12 @@ fn register_delete_file(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("delete_file".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.is_empty() || args.len() > 2 {
-                return Err(TBError::RuntimeError {
-                    message: "delete_file() takes 1-2 arguments: path, blob=false".to_string(),
-                });
+                return Err(TBError::runtime_error("delete_file() takes 1-2 arguments: path, blob=false".to_string()));
             }
 
             let path = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "delete_file() path must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("delete_file() path must be a string".to_string())),
             };
 
             let is_blob = if args.len() > 1 {
@@ -504,16 +426,12 @@ fn register_delete_file(env: &mut ImHashMap<Arc<String>, Value>) {
             };
 
             if is_blob {
-                Err(TBError::RuntimeError {
-                    message: "Blob file deletion not yet implemented".to_string(),
-                })
+                Err(TBError::runtime_error("Blob file deletion not yet implemented".to_string()))
             } else {
                 // Delete real file
                 std::fs::remove_file(&path)
                     .map(|_| Value::None)
-                    .map_err(|e| TBError::RuntimeError {
-                        message: format!("Failed to delete file '{}': {}", path, e),
-                    })
+                    .map_err(|e| TBError::runtime_error(format!("Failed to delete file '{}': {}", path, e)))
             }
         }),
     }));
@@ -529,24 +447,18 @@ fn register_json_parse(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("json_parse".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "json_parse() takes exactly 1 argument: json_string".to_string(),
-                });
+                return Err(TBError::runtime_error("json_parse() takes exactly 1 argument: json_string".to_string()));
             }
 
             let json_str = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "json_parse() argument must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("json_parse() argument must be a string".to_string())),
             };
 
             // Parse JSON and convert to TB Value
             serde_json::from_str::<serde_json::Value>(&json_str)
                 .map(|json_val| json_to_tb_value(&json_val))
-                .map_err(|e| TBError::RuntimeError {
-                    message: format!("JSON parse error: {}", e),
-                })
+                .map_err(|e| TBError::runtime_error(format!("JSON parse error: {}", e)))
         }),
     }));
     env.insert(Arc::new("json_parse".to_string()), func);
@@ -557,9 +469,7 @@ fn register_json_stringify(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("json_stringify".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.is_empty() || args.len() > 2 {
-                return Err(TBError::RuntimeError {
-                    message: "json_stringify() takes 1-2 arguments: value, pretty=false".to_string(),
-                });
+                return Err(TBError::runtime_error("json_stringify() takes 1-2 arguments: value, pretty=false".to_string()));
             }
 
             let pretty = if args.len() > 1 {
@@ -582,9 +492,7 @@ fn register_json_stringify(env: &mut ImHashMap<Arc<String>, Value>) {
 
             result
                 .map(|s| Value::String(Arc::new(s)))
-                .map_err(|e| TBError::RuntimeError {
-                    message: format!("JSON stringify error: {}", e),
-                })
+                .map_err(|e| TBError::runtime_error(format!("JSON stringify error: {}", e)))
         }),
     }));
     env.insert(Arc::new("json_stringify".to_string()), func);
@@ -595,24 +503,18 @@ fn register_yaml_parse(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("yaml_parse".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "yaml_parse() takes exactly 1 argument: yaml_string".to_string(),
-                });
+                return Err(TBError::runtime_error("yaml_parse() takes exactly 1 argument: yaml_string".to_string()));
             }
 
             let yaml_str = match &args[0] {
                 Value::String(s) => s.to_string(),
-                _ => return Err(TBError::RuntimeError {
-                    message: "yaml_parse() argument must be a string".to_string(),
-                }),
+                _ => return Err(TBError::runtime_error("yaml_parse() argument must be a string".to_string())),
             };
 
             // Parse YAML and convert to TB Value
             serde_yaml::from_str::<serde_yaml::Value>(&yaml_str)
                 .map(|yaml_val| yaml_to_tb_value(&yaml_val))
-                .map_err(|e| TBError::RuntimeError {
-                    message: format!("YAML parse error: {}", e),
-                })
+                .map_err(|e| TBError::runtime_error(format!("YAML parse error: {}", e)))
         }),
     }));
     env.insert(Arc::new("yaml_parse".to_string()), func);
@@ -623,9 +525,7 @@ fn register_yaml_stringify(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("yaml_stringify".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() != 1 {
-                return Err(TBError::RuntimeError {
-                    message: "yaml_stringify() takes exactly 1 argument: value".to_string(),
-                });
+                return Err(TBError::runtime_error("yaml_stringify() takes exactly 1 argument: value".to_string()));
             }
 
             // Convert TB Value to YAML
@@ -633,9 +533,7 @@ fn register_yaml_stringify(env: &mut ImHashMap<Arc<String>, Value>) {
 
             serde_yaml::to_string(&yaml_val)
                 .map(|s| Value::String(Arc::new(s)))
-                .map_err(|e| TBError::RuntimeError {
-                    message: format!("YAML stringify error: {}", e),
-                })
+                .map_err(|e| TBError::runtime_error(format!("YAML stringify error: {}", e)))
         }),
     }));
     env.insert(Arc::new("yaml_stringify".to_string()), func);
@@ -646,12 +544,20 @@ fn register_time(env: &mut ImHashMap<Arc<String>, Value>) {
         name: Arc::new("time".to_string()),
         func: Arc::new(|args: Vec<Value>| {
             if args.len() > 1 {
-                return Err(TBError::RuntimeError {
-                    message: "time() takes 0-1 arguments: timezone".to_string(),
-                });
+                return Err(TBError::runtime_error("time() takes 0-1 arguments: timezone".to_string()));
             }
 
             use chrono::{Local, Datelike, Timelike};
+
+            // Extract timezone argument
+            let timezone_str = if args.is_empty() {
+                "Local".to_string()
+            } else {
+                match &args[0] {
+                    Value::String(s) => s.to_string(),
+                    _ => "Local".to_string(),
+                }
+            };
 
             let now = Local::now();
 
@@ -665,6 +571,9 @@ fn register_time(env: &mut ImHashMap<Arc<String>, Value>) {
             time_dict.insert(Arc::new("second".to_string()), Value::Int(now.second() as i64));
             time_dict.insert(Arc::new("timestamp".to_string()), Value::Int(now.timestamp()));
             time_dict.insert(Arc::new("iso8601".to_string()), Value::String(Arc::new(now.to_rfc3339())));
+
+            // Add timezone field
+            time_dict.insert(Arc::new("timezone".to_string()), Value::String(Arc::new(timezone_str)));
 
             Ok(Value::Dict(Arc::new(time_dict)))
         }),
@@ -780,4 +689,3 @@ fn tb_value_to_yaml(val: &Value) -> serde_yaml::Value {
         _ => serde_yaml::Value::Null,
     }
 }
-

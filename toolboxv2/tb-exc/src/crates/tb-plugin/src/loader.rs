@@ -28,9 +28,7 @@ impl PluginLoader {
         // Check if file exists
         if !path.exists() {
             tb_debug_plugin!("load_library: File does not exist!");
-            return Err(TBError::PluginError {
-                message: format!("Library file not found: {}", path.display()),
-            });
+            return Err(TBError::plugin_error(format!("Library file not found: {}", path.display())));
         }
 
         // Get file size for debugging
@@ -49,9 +47,7 @@ impl PluginLoader {
         let lib = unsafe {
             Library::new(path).map_err(|e| {
                 tb_debug_plugin!("load_library: Failed to load: {}", e);
-                TBError::PluginError {
-                    message: format!("Failed to load plugin: {}", e),
-                }
+                TBError::plugin_error(format!("Failed to load plugin: {}", e))
             })?
         };
 
@@ -84,9 +80,7 @@ impl PluginLoader {
                 tb_debug_plugin!("  1. Function is not exported (missing #[no_mangle] or extern \"C\")");
                 tb_debug_plugin!("  2. Function name is mangled");
                 tb_debug_plugin!("  3. Function signature doesn't match PluginFn");
-                TBError::PluginError {
-                    message: format!("Function '{}' not found: {}", name, e),
-                }
+                TBError::plugin_error(format!("Function '{}' not found: {}", name, e))
             })?
         };
 
@@ -155,9 +149,7 @@ impl PluginLoader {
                 tb_debug_plugin!("Compiling Rust external file: {}", library_path.display());
 
                 // Read the source code
-                let source_code = std::fs::read_to_string(library_path).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to read Rust source file: {}", e),
-                })?;
+                let source_code = std::fs::read_to_string(library_path).map_err(|e| TBError::plugin_error(format!("Failed to read Rust source file: {}", e)))?;
 
                 // Compile to library
                 let compiled_lib = self.compile_inline_to_library(language, &source_code)?;
@@ -172,9 +164,7 @@ impl PluginLoader {
                 tb_debug_plugin!("Compiling Go external file: {}", library_path.display());
 
                 // Read the source code
-                let source_code = std::fs::read_to_string(library_path).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to read Go source file: {}", e),
-                })?;
+                let source_code = std::fs::read_to_string(library_path).map_err(|e| TBError::plugin_error(format!("Failed to read Go source file: {}", e)))?;
 
                 // Compile to library
                 let compiled_lib = self.compile_inline_to_library(language, &source_code)?;
@@ -228,9 +218,7 @@ impl PluginLoader {
             }
             _ => {
                 tb_debug_plugin!("Inline execution not supported for {:?} {:?}", language, mode);
-                Err(TBError::PluginError {
-                    message: format!("Unsupported plugin configuration: {:?} {:?}", language, mode),
-                })
+                Err(TBError::plugin_error(format!("Unsupported plugin configuration: {:?} {:?}", language, mode)))
             }
         }
     }
@@ -251,9 +239,7 @@ impl PluginLoader {
             .join("tb-lang")
             .join("plugins");
 
-        std::fs::create_dir_all(&cache_dir).map_err(|e| TBError::PluginError {
-            message: format!("Failed to create cache directory: {}", e),
-        })?;
+        std::fs::create_dir_all(&cache_dir).map_err(|e| TBError::plugin_error(format!("Failed to create cache directory: {}", e)))?;
 
         // Generate hash-based filename for caching
         use std::collections::hash_map::DefaultHasher;
@@ -268,12 +254,8 @@ impl PluginLoader {
 
                 // Write source to temporary file
                 let source_file = cache_dir.join(format!("plugin_{}.py", hash));
-                let mut file = std::fs::File::create(&source_file).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to create source file: {}", e),
-                })?;
-                file.write_all(source_code.as_bytes()).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to write source file: {}", e),
-                })?;
+                let mut file = std::fs::File::create(&source_file).map_err(|e| TBError::plugin_error(format!("Failed to create source file: {}", e)))?;
+                file.write_all(source_code.as_bytes()).map_err(|e| TBError::plugin_error(format!("Failed to write source file: {}", e)))?;
 
                 // Compile with Nuitka
                 let output_name = format!("plugin_{}", hash);
@@ -299,31 +281,23 @@ impl PluginLoader {
                         source_file.to_str().unwrap(),
                     ])
                     .status()
-                    .map_err(|e| TBError::PluginError {
-                        message: format!("Failed to run Nuitka: {}. Make sure Nuitka is installed (pip install nuitka)", e),
-                    })?;
+                    .map_err(|e| TBError::plugin_error(format!("Failed to run Nuitka: {}. Make sure Nuitka is installed (pip install nuitka)", e)))?;
 
                 if !status.success() {
-                    return Err(TBError::PluginError {
-                        message: "Nuitka compilation failed".to_string(),
-                    });
+                    return Err(TBError::plugin_error("Nuitka compilation failed"));
                 }
 
                 Ok(output_path)
             }
             PluginLanguage::JavaScript => {
-                Err(TBError::PluginError {
-                    message: "JavaScript inline compilation not yet implemented. Use JIT mode instead.".to_string(),
-                })
+                Err(TBError::plugin_error("JavaScript inline compilation not yet implemented. Use JIT mode instead."))
             }
             PluginLanguage::Rust => {
                 tb_debug_plugin!("Compiling Rust inline code");
 
                 // Create temporary Cargo project
                 let project_dir = cache_dir.join(format!("rust_plugin_{}", hash));
-                std::fs::create_dir_all(&project_dir).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to create project directory: {}", e),
-                })?;
+                std::fs::create_dir_all(&project_dir).map_err(|e| TBError::plugin_error(format!("Failed to create project directory: {}", e)))?;
 
                 // Write Cargo.toml
                 let cargo_toml = format!(r#"[package]
@@ -338,20 +312,14 @@ crate-type = ["cdylib"]
 [dependencies]
 rayon = "1.8"
 "#, hash, hash);
-                std::fs::write(project_dir.join("Cargo.toml"), cargo_toml).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to write Cargo.toml: {}", e),
-                })?;
+                std::fs::write(project_dir.join("Cargo.toml"), cargo_toml).map_err(|e| TBError::plugin_error(format!("Failed to write Cargo.toml: {}", e)))?;
 
                 // Create src directory
                 let src_dir = project_dir.join("src");
-                std::fs::create_dir_all(&src_dir).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to create src directory: {}", e),
-                })?;
+                std::fs::create_dir_all(&src_dir).map_err(|e| TBError::plugin_error(format!("Failed to create src directory: {}", e)))?;
 
                 // Write lib.rs with source code
-                std::fs::write(src_dir.join("lib.rs"), source_code).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to write lib.rs: {}", e),
-                })?;
+                std::fs::write(src_dir.join("lib.rs"), source_code).map_err(|e| TBError::plugin_error(format!("Failed to write lib.rs: {}", e)))?;
 
                 // Determine output library name
                 let output_name = if cfg!(windows) {
@@ -377,14 +345,10 @@ rayon = "1.8"
                     .args(&["build", "--release"])
                     .current_dir(&project_dir)
                     .status()
-                    .map_err(|e| TBError::PluginError {
-                        message: format!("Failed to run cargo: {}. Make sure Rust is installed.", e),
-                    })?;
+                    .map_err(|e| TBError::plugin_error(format!("Failed to run cargo: {}. Make sure Rust is installed.", e)))?;
 
                 if !status.success() {
-                    return Err(TBError::PluginError {
-                        message: "Rust compilation failed".to_string(),
-                    });
+                    return Err(TBError::plugin_error("Rust compilation failed"));
                 }
 
                 tb_debug_plugin!("Rust compilation succeeded");
@@ -423,15 +387,11 @@ rayon = "1.8"
                 if !compiled_lib.exists() {
                     tb_debug_plugin!("ERROR: Compiled library not found!");
                     tb_debug_plugin!("Expected: {}", compiled_lib.display());
-                    return Err(TBError::PluginError {
-                        message: format!("Compiled library not found: {}", compiled_lib.display()),
-                    });
+                    return Err(TBError::plugin_error(format!("Compiled library not found: {}", compiled_lib.display())));
                 }
 
                 tb_debug_plugin!("Found compiled library, copying to cache...");
-                std::fs::copy(&compiled_lib, &output_path).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to copy compiled library: {}", e),
-                })?;
+                std::fs::copy(&compiled_lib, &output_path).map_err(|e| TBError::plugin_error(format!("Failed to copy compiled library: {}", e)))?;
 
                 tb_debug_plugin!("Successfully copied to: {}", output_path.display());
 
@@ -442,9 +402,7 @@ rayon = "1.8"
 
                 // Create temporary Go project
                 let project_dir = cache_dir.join(format!("go_plugin_{}", hash));
-                std::fs::create_dir_all(&project_dir).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to create Go project directory: {}", e),
-                })?;
+                std::fs::create_dir_all(&project_dir).map_err(|e| TBError::plugin_error(format!("Failed to create Go project directory: {}", e)))?;
 
                 // Write Go source file with CGO exports
                 let go_file = project_dir.join("plugin.go");
@@ -452,9 +410,7 @@ rayon = "1.8"
                 // Wrap functions with CGO exports
                 let wrapped_code = self.wrap_go_code_for_cgo(source_code)?;
 
-                std::fs::write(&go_file, wrapped_code).map_err(|e| TBError::PluginError {
-                    message: format!("Failed to write Go source file: {}", e),
-                })?;
+                std::fs::write(&go_file, wrapped_code).map_err(|e| TBError::plugin_error(format!("Failed to write Go source file: {}", e)))?;
 
                 // Determine output library name
                 let output_name = if cfg!(windows) {
@@ -485,14 +441,10 @@ rayon = "1.8"
                     ])
                     .current_dir(&project_dir)
                     .status()
-                    .map_err(|e| TBError::PluginError {
-                        message: format!("Failed to run go build: {}. Make sure Go is installed.", e),
-                    })?;
+                    .map_err(|e| TBError::plugin_error(format!("Failed to run go build: {}. Make sure Go is installed.", e)))?;
 
                 if !status.success() {
-                    return Err(TBError::PluginError {
-                        message: "Go compilation failed".to_string(),
-                    });
+                    return Err(TBError::plugin_error("Go compilation failed"));
                 }
 
                 tb_debug_plugin!("Go compilation succeeded: {}", output_path.display());
@@ -514,25 +466,17 @@ rayon = "1.8"
 
         Python::with_gil(|py| {
             let code = std::fs::read_to_string(script_path)
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Failed to read Python script: {}", e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Failed to read Python script: {}", e)))?;
 
             let module = PyModule::from_code(py, &code, "plugin", "plugin")
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Python compilation error: {}", e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
 
             let func = module.getattr(function_name)
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Function '{}' not found: {}", function_name, e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
             let py_args = self.values_to_python(py, args)?;
             let result = func.call(py_args.as_ref(py), None)
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Python execution error: {}", e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?;
 
             self.python_to_value(result)
         })
@@ -555,20 +499,14 @@ rayon = "1.8"
 
         Python::with_gil(|py| {
             let module = PyModule::from_code(py, source_code, "plugin", "plugin")
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Python compilation error: {}", e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
 
             let func = module.getattr(function_name)
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Function '{}' not found: {}", function_name, e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
             let py_args = self.values_to_python(py, args)?;
             let result = func.call(py_args.as_ref(py), None)
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Python execution error: {}", e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?;
 
             self.python_to_value(result)
         })
@@ -581,9 +519,7 @@ rayon = "1.8"
         _function_name: &str,
         _args: Vec<Value>,
     ) -> Result<Value> {
-        Err(TBError::PluginError {
-            message: "Python support not enabled. Rebuild with --features python".to_string(),
-        })
+        Err(TBError::plugin_error("Python support not enabled. Rebuild with --features python"))
     }
 
     #[cfg(not(feature = "python"))]
@@ -593,9 +529,7 @@ rayon = "1.8"
         _function_name: &str,
         _args: Vec<Value>,
     ) -> Result<Value> {
-        Err(TBError::PluginError {
-            message: "Python support not enabled. Rebuild with --features python".to_string(),
-        })
+        Err(TBError::plugin_error("Python support not enabled. Rebuild with --features python"))
     }
 
     #[cfg(feature = "javascript")]
@@ -609,31 +543,21 @@ rayon = "1.8"
 
         let mut context = Context::default();
         let code = std::fs::read_to_string(script_path)
-            .map_err(|e| TBError::PluginError {
-                message: format!("Failed to read JavaScript file: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Failed to read JavaScript file: {}", e)))?;
 
         context.eval(Source::from_bytes(&code))
-            .map_err(|e| TBError::PluginError {
-                message: format!("JavaScript compilation error: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("JavaScript compilation error: {}", e)))?;
 
         let func = context.eval(Source::from_bytes(function_name))
-            .map_err(|e| TBError::PluginError {
-                message: format!("Function '{}' not found: {}", function_name, e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
         let js_args = self.values_to_js(&mut context, args)?;
 
         let result = func
             .as_callable()
-            .ok_or_else(|| TBError::PluginError {
-                message: format!("{} is not a function", function_name),
-            })?
+            .ok_or_else(|| TBError::plugin_error(format!("{} is not a function", function_name)))?
             .call(&JsValue::undefined(), &js_args, &mut context)
-            .map_err(|e| TBError::PluginError {
-                message: format!("JavaScript execution error: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("JavaScript execution error: {}", e)))?;
 
         self.js_to_value(result)
     }
@@ -650,26 +574,18 @@ rayon = "1.8"
         let mut context = Context::default();
 
         context.eval(Source::from_bytes(source_code))
-            .map_err(|e| TBError::PluginError {
-                message: format!("JavaScript compilation error: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("JavaScript compilation error: {}", e)))?;
 
         let func = context.eval(Source::from_bytes(function_name))
-            .map_err(|e| TBError::PluginError {
-                message: format!("Function '{}' not found: {}", function_name, e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
         let js_args = self.values_to_js(&mut context, args)?;
 
         let result = func
             .as_callable()
-            .ok_or_else(|| TBError::PluginError {
-                message: format!("{} is not a function", function_name),
-            })?
+            .ok_or_else(|| TBError::plugin_error(format!("{} is not a function", function_name)))?
             .call(&JsValue::undefined(), &js_args, &mut context)
-            .map_err(|e| TBError::PluginError {
-                message: format!("JavaScript execution error: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("JavaScript execution error: {}", e)))?;
 
         self.js_to_value(result)
     }
@@ -681,9 +597,7 @@ rayon = "1.8"
         _function_name: &str,
         _args: Vec<Value>,
     ) -> Result<Value> {
-        Err(TBError::PluginError {
-            message: "JavaScript support not enabled. Rebuild with --features javascript".to_string(),
-        })
+        Err(TBError::plugin_error("JavaScript support not enabled. Rebuild with --features javascript"))
     }
 
     #[cfg(not(feature = "javascript"))]
@@ -693,9 +607,7 @@ rayon = "1.8"
         _function_name: &str,
         _args: Vec<Value>,
     ) -> Result<Value> {
-        Err(TBError::PluginError {
-            message: "JavaScript support not enabled. Rebuild with --features javascript".to_string(),
-        })
+        Err(TBError::plugin_error("JavaScript support not enabled. Rebuild with --features javascript"))
     }
 
     // Helper methods for Python conversion
@@ -725,9 +637,7 @@ rayon = "1.8"
                 for item in items.iter() {
                     let py_item = self.value_to_python(py, item)?;
                     py_list.append(py_item)
-                        .map_err(|e| TBError::PluginError {
-                            message: format!("Failed to append to Python list: {}", e),
-                        })?;
+                        .map_err(|e| TBError::plugin_error(format!("Failed to append to Python list: {}", e)))?;
                 }
                 Ok(py_list.to_object(py))
             }
@@ -737,9 +647,7 @@ rayon = "1.8"
                 for (key, val) in map.iter() {
                     let py_val = self.value_to_python(py, val)?;
                     py_dict.set_item(key.as_ref(), py_val)
-                        .map_err(|e| TBError::PluginError {
-                            message: format!("Failed to set Python dict item: {}", e),
-                        })?;
+                        .map_err(|e| TBError::plugin_error(format!("Failed to set Python dict item: {}", e)))?;
                 }
                 Ok(py_dict.to_object(py))
             }
@@ -819,9 +727,7 @@ rayon = "1.8"
                 for (i, item) in items.iter().enumerate() {
                     let js_item = self.value_to_js(context, item)?;
                     js_array.set(i, js_item, true, context)
-                        .map_err(|e| TBError::PluginError {
-                            message: format!("Failed to set array element: {}", e),
-                        })?;
+                        .map_err(|e| TBError::plugin_error(format!("Failed to set array element: {}", e)))?;
                 }
                 Ok(js_array.into())
             }
@@ -831,9 +737,7 @@ rayon = "1.8"
                 for (key, val) in map.iter() {
                     let js_val = self.value_to_js(context, val)?;
                     js_obj.set(key.as_ref().clone(), js_val, true, context)
-                        .map_err(|e| TBError::PluginError {
-                            message: format!("Failed to set object property: {}", e),
-                        })?;
+                        .map_err(|e| TBError::plugin_error(format!("Failed to set object property: {}", e)))?;
                 }
                 Ok(js_obj.into())
             }
@@ -871,9 +775,7 @@ rayon = "1.8"
                     let mut items = Vec::new();
                     for i in 0..length {
                         let item = js_obj.get(i, &mut context)
-                            .map_err(|e| TBError::PluginError {
-                                message: format!("Failed to get array element: {}", e),
-                            })?;
+                            .map_err(|e| TBError::plugin_error(format!("Failed to get array element: {}", e)))?;
                         items.push(self.js_to_value(item)?);
                     }
                     return Ok(Value::List(std::sync::Arc::new(items)));
@@ -904,9 +806,7 @@ rayon = "1.8"
         args: Vec<Value>,
     ) -> Result<Value> {
         let code = std::fs::read_to_string(script_path)
-            .map_err(|e| TBError::PluginError {
-                message: format!("Failed to read Go script: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Failed to read Go script: {}", e)))?;
 
         self.execute_go_jit_inline(&code, function_name, args)
     }
@@ -924,9 +824,7 @@ rayon = "1.8"
 
         // Create temporary directory
         let temp_dir = std::env::temp_dir().join(format!("tb_go_{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).map_err(|e| TBError::PluginError {
-            message: format!("Failed to create temp directory: {}", e),
-        })?;
+        std::fs::create_dir_all(&temp_dir).map_err(|e| TBError::plugin_error(format!("Failed to create temp directory: {}", e)))?;
 
         // Create Go file with main wrapper
         let go_file = temp_dir.join("main.go");
@@ -959,9 +857,7 @@ func main() {{
             go_args
         );
 
-        std::fs::write(&go_file, wrapped_code).map_err(|e| TBError::PluginError {
-            message: format!("Failed to write Go file: {}", e),
-        })?;
+        std::fs::write(&go_file, wrapped_code).map_err(|e| TBError::plugin_error(format!("Failed to write Go file: {}", e)))?;
 
         tb_debug_plugin!("Running: go run {}", go_file.display());
 
@@ -969,18 +865,14 @@ func main() {{
         let output = Command::new("go")
             .args(&["run", go_file.to_str().unwrap()])
             .output()
-            .map_err(|e| TBError::PluginError {
-                message: format!("Failed to run Go: {}. Make sure Go is installed.", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Failed to run Go: {}. Make sure Go is installed.", e)))?;
 
         // Clean up temp directory
         let _ = std::fs::remove_dir_all(&temp_dir);
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(TBError::PluginError {
-                message: format!("Go execution failed: {}", stderr),
-            });
+            return Err(TBError::plugin_error(format!("Go execution failed: {}", stderr)));
         }
 
         // Parse output

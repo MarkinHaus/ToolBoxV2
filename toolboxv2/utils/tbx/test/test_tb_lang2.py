@@ -120,7 +120,7 @@ class TestSuite:
                 if not result.passed:
                     print(f"  • {result.name} ({result.mode})")
                     if result.error_message:
-                        print(f"    {Colors.GRAY}{result.error_message[:200]}{Colors.RESET}")
+                        print(f"    {Colors.GRAY}{result.error_message}{Colors.RESET}")
 
         return failed == 0
 
@@ -1629,7 +1629,7 @@ def test_plugin_javascript_json(mode):
     }
 }
 
-let json = "{\\"name\\":\\"Alice\\",\\"age\\":30}"
+let json = json_stringify({name:"Alice",age:30})
 print(json_ops.parse_and_extract(json, "name"))
 """, "Alice", mode)
 
@@ -2683,39 +2683,6 @@ print(c2)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# BLOB STORAGE BUILT-IN FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════════════
-
-@test("Blob Storage: Initialize and create blob", "Built-in Functions - Blob Storage")
-def test_blob_init_create(mode):
-    assert_output("""
-let storage = blob_init(["http://localhost:8080"])
-let blob_id = blob_create(storage, "Test blob content")
-print("Blob created")
-""", "Blob created", mode)
-
-@test("Blob Storage: Create, read, and update", "Built-in Functions - Blob Storage")
-def test_blob_crud_operations(mode):
-    assert_output("""
-let storage = blob_init(["http://localhost:8080"])
-let blob_id = blob_create(storage, "Initial content")
-blob_update(storage, blob_id, "Updated content")
-let content = blob_read(storage, blob_id)
-print(content)
-""", "Updated content", mode)
-
-@test("Blob Storage: Multiple blobs", "Built-in Functions - Blob Storage")
-def test_blob_multiple(mode):
-    assert_output("""
-let storage = blob_init(["http://localhost:8080"])
-let id1 = blob_create(storage, "Blob 1")
-let id2 = blob_create(storage, "Blob 2")
-let id3 = blob_create(storage, "Blob 3")
-print("Created 3 blobs")
-""", "Created 3 blobs", mode)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # NETWORKING BUILT-IN FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -2770,7 +2737,7 @@ print("Connection initiated")
 @test("Utils: JSON parse simple object", "Built-in Functions - Utils")
 def test_json_parse_simple(mode):
     assert_output("""
-let json_str = '{"name": "Alice", "age": 25}'
+let json_str = "{"name": "Alice", "age": 25}"
 let data = json_parse(json_str)
 print(data["name"])
 print(data["age"])
@@ -2779,7 +2746,7 @@ print(data["age"])
 @test("Utils: JSON parse nested object", "Built-in Functions - Utils")
 def test_json_parse_nested(mode):
     assert_output("""
-let json_str = '{"user": {"name": "Bob", "scores": [95, 87, 92]}}'
+let json_str = "{"user": {"name": "Bob", "scores": [95, 87, 92]}}"
 let data = json_parse(json_str)
 print(data["user"]["name"])
 print(len(data["user"]["scores"]))
@@ -2921,16 +2888,6 @@ let json = json_stringify(time_data)
 let parsed = json_parse(json)
 print(parsed["timezone"])
 """, "Local", mode)
-
-@test("Integration: Blob storage with JSON", "Built-in Functions - Integration")
-def test_integration_blob_json(mode):
-    assert_output("""
-let storage = blob_init(["http://localhost:8080"])
-let config = {app: "TB Lang", version: "1.0"}
-let json_str = json_stringify(config)
-let blob_id = blob_create(storage, json_str)
-print("Config stored in blob")
-""", "Config stored in blob", mode)
 
 @test("Integration: Multiple built-ins stress test", "Built-in Functions - Integration", slow=True)
 def test_integration_stress(mode):

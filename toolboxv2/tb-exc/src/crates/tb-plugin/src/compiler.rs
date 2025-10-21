@@ -54,14 +54,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Failed to run rustc: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Failed to run rustc: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Rust compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Rust compilation failed"));
         }
 
         Ok(output_file)
@@ -104,14 +100,10 @@ impl PluginCompiler {
             let status = Command::new("pip")
                 .args(&["install", "--quiet", dep])
                 .status()
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Failed to install {}: {}", dep, e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Failed to install {}: {}", dep, e)))?;
 
             if !status.success() {
-                return Err(TBError::PluginError {
-                    message: format!("Failed to install dependency: {}", dep),
-                });
+                return Err(TBError::plugin_error(format!("Failed to install dependency: {}", dep)));
             }
         }
         Ok(())
@@ -131,14 +123,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Nuitka compilation failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Nuitka compilation failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Python compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Python compilation failed"));
         }
 
         Ok(output_file)
@@ -204,14 +192,10 @@ impl PluginCompiler {
             .arg("install")
             .current_dir(&self.temp_dir)
             .status()
-            .map_err(|e| TBError::PluginError {
-                message: format!("npm install failed: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("npm install failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::PluginError {
-                message: "npm install failed".to_string(),
-            });
+            return Err(TBError::plugin_error("npm install failed"));
         }
         Ok(())
     }
@@ -228,14 +212,10 @@ impl PluginCompiler {
                 &format!("--outfile={}", output_file.display()),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("esbuild failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("esbuild failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "JavaScript bundling failed".to_string(),
-            });
+            return Err(TBError::compilation_error("JavaScript bundling failed"));
         }
 
         Ok(output_file)
@@ -264,14 +244,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Go compilation failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Go compilation failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Go compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Go compilation failed"));
         }
 
         Ok(output_file)

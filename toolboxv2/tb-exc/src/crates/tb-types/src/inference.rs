@@ -33,12 +33,10 @@ impl TypeInference {
                     // String concatenation
                     (Type::String, Type::String) if matches!(op, BinaryOp::Add) => Ok(Type::String),
 
-                    _ => Err(TBError::TypeError {
-                        message: format!(
-                            "Cannot apply {:?} to types {:?} and {:?}",
-                            op, left, right
-                        ),
-                    }),
+                    _ => Err(TBError::type_error(format!(
+                        "Cannot apply {:?} to types {:?} and {:?}",
+                        op, left, right
+                    ))),
                 }
             }
             BinaryOp::Eq | BinaryOp::NotEq => {
@@ -48,9 +46,7 @@ impl TypeInference {
                    matches!(right, Type::Any) {
                     Ok(Type::Bool)
                 } else {
-                    Err(TBError::TypeError {
-                        message: format!("Cannot compare {:?} and {:?}", left, right),
-                    })
+                    Err(TBError::type_error(format!("Cannot compare {:?} and {:?}", left, right)))
                 }
             }
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
@@ -62,9 +58,7 @@ impl TypeInference {
                     | (Type::Float, Type::Int)
                     | (Type::Any, _)
                     | (_, Type::Any) => Ok(Type::Bool),
-                    _ => Err(TBError::TypeError {
-                        message: format!("Cannot compare {:?} and {:?}", left, right),
-                    }),
+                    _ => Err(TBError::type_error(format!("Cannot compare {:?} and {:?}", left, right))),
                 }
             }
             BinaryOp::And | BinaryOp::Or => {
@@ -72,9 +66,20 @@ impl TypeInference {
                 match (left, right) {
                     (Type::Bool, Type::Bool) => Ok(Type::Bool),
                     (Type::Any, _) | (_, Type::Any) => Ok(Type::Bool),
-                    _ => Err(TBError::TypeError {
-                        message: format!("Logical operations require bool, got {:?} and {:?}", left, right),
-                    }),
+                    _ => Err(TBError::type_error(format!(
+                        "Logical operations require bool, got {:?} and {:?}", left, right
+                    ))),
+                }
+            }
+            BinaryOp::In => {
+                // Membership test: left in right
+                // right can be: String, List, Dict
+                // Always returns Bool
+                match right {
+                    Type::String | Type::List(_) | Type::Dict(_, _) | Type::Any => Ok(Type::Bool),
+                    _ => Err(TBError::type_error(format!(
+                        "'in' operator requires String, List, or Dict on right side, got {:?}", right
+                    ))),
                 }
             }
         }
@@ -86,15 +91,11 @@ impl TypeInference {
             UnaryOp::Neg => match operand {
                 Type::Int => Ok(Type::Int),
                 Type::Float => Ok(Type::Float),
-                _ => Err(TBError::TypeError {
-                    message: format!("Cannot negate type {:?}", operand),
-                }),
+                _ => Err(TBError::type_error(format!("Cannot negate type {:?}", operand))),
             },
             UnaryOp::Not => match operand {
                 Type::Bool => Ok(Type::Bool),
-                _ => Err(TBError::TypeError {
-                    message: format!("Cannot apply 'not' to type {:?}", operand),
-                }),
+                _ => Err(TBError::type_error(format!("Cannot apply 'not' to type {:?}", operand))),
             },
         }
     }
@@ -123,9 +124,7 @@ impl TypeInference {
             // Int/Float promotion
             (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
 
-            _ => Err(TBError::TypeError {
-                message: format!("Cannot unify types {:?} and {:?}", a, b),
-            }),
+            _ => Err(TBError::type_error(format!("Cannot unify types {:?} and {:?}", a, b))),
         }
     }
 

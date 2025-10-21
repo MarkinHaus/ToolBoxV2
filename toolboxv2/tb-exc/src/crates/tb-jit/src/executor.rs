@@ -1,6 +1,7 @@
 use crate::builtins;
 use im::HashMap as ImHashMap;
 use std::sync::Arc;
+use std::path::PathBuf;
 use tb_core::*;
 use tb_plugin::PluginLoader;
 
@@ -11,6 +12,7 @@ pub struct JitExecutor {
     should_break: bool,
     should_continue: bool,
     plugin_loader: Arc<PluginLoader>,
+    source_context: Option<SourceContext>,
 }
 
 impl JitExecutor {
@@ -24,7 +26,15 @@ impl JitExecutor {
             should_break: false,
             should_continue: false,
             plugin_loader: Arc::new(PluginLoader::new()),
+            source_context: None,
         }
+    }
+
+    /// Create a new JitExecutor with source context for better error messages
+    pub fn new_with_source(source: String, file_path: Option<PathBuf>) -> Self {
+        let mut executor = Self::new();
+        executor.source_context = Some(SourceContext::new(source, file_path));
+        executor
     }
 
     pub fn execute(&mut self, program: &Program) -> Result<Value> {
@@ -32,7 +42,10 @@ impl JitExecutor {
         let mut last = Value::None;
 
         for (i, stmt) in program.statements.iter().enumerate() {
-            tb_debug_jit!("Executing statement {}: {:?}", i, stmt);
+            // Get source code snippet for this statement
+            let debug_info = self.get_statement_debug_info(stmt);
+            tb_debug_jit!("Statement {}: {} | {}", i + 1, debug_info.location, debug_info.source_line);
+
             last = self.eval_statement(stmt)?;
 
             if self.return_value.is_some() {
@@ -41,7 +54,7 @@ impl JitExecutor {
             }
         }
 
-        tb_debug_jit!("Execution completed with result: {:?}", last);
+        tb_debug_jit!("Execution completed successfully");
         Ok(last)
     }
 
@@ -53,11 +66,9 @@ impl JitExecutor {
                 Ok(Value::None)
             }
 
-            Statement::Assign { name, value, .. } => {
+            Statement::Assign { name, value, span } => {
                 if !self.env.contains_key(name) {
-                    return Err(TBError::UndefinedVariable {
-                        name: name.to_string(),
-                    });
+                    return Err(self.undefined_variable_with_context(name.to_string(), Some(*span)));
                 }
 
                 let val = self.eval_expression(value)?;
@@ -89,7 +100,7 @@ impl JitExecutor {
                 }
             }
 
-            Statement::For { variable, iterable, body, .. } => {
+            Statement::For { variable, iterable, body, span } => {
                 let iter_value = self.eval_expression(iterable)?;
 
                 match iter_value {
@@ -115,9 +126,10 @@ impl JitExecutor {
                         }
                         Ok(Value::None)
                     }
-                    _ => Err(TBError::RuntimeError {
-                        message: format!("Cannot iterate over {}", iter_value.type_name()),
-                    }),
+                    _ => Err(self.runtime_error_with_context(
+                        format!("Cannot iterate over {}", iter_value.type_name()),
+                        Some(*span)
+                    )),
                 }
             }
 
@@ -147,7 +159,7 @@ impl JitExecutor {
                 Ok(Value::None)
             }
 
-            Statement::Match { value, arms, .. } => {
+            Statement::Match { value, arms, span } => {
                 let match_value = self.eval_expression(value)?;
 
                 for arm in arms {
@@ -156,9 +168,10 @@ impl JitExecutor {
                     }
                 }
 
-                Err(TBError::RuntimeError {
-                    message: "No matching pattern in match expression".to_string(),
-                })
+                Err(self.runtime_error_with_context(
+                    "No matching pattern in match expression".to_string(),
+                    Some(*span)
+                ))
             }
 
             Statement::Return { value, .. } => {
@@ -237,18 +250,16 @@ impl JitExecutor {
         match expr {
             Expression::Literal(lit, _) => Ok(self.eval_literal(lit)),
 
-            Expression::Ident(name, _) => {
+            Expression::Ident(name, span) => {
                 self.env.get(name)
                     .cloned()
-                    .ok_or_else(|| TBError::UndefinedVariable {
-                        name: name.to_string(),
-                    })
+                    .ok_or_else(|| self.undefined_variable_with_context(name.to_string(), Some(*span)))
             }
 
-            Expression::Binary { op, left, right, .. } => {
+            Expression::Binary { op, left, right, span } => {
                 let left_val = self.eval_expression(left)?;
                 let right_val = self.eval_expression(right)?;
-                self.eval_binary_op(*op, left_val, right_val)
+                self.eval_binary_op(*op, left_val, right_val, *span)
             }
 
             Expression::Unary { op, operand, .. } => {
@@ -256,14 +267,14 @@ impl JitExecutor {
                 self.eval_unary_op(*op, val)
             }
 
-            Expression::Call { callee, args, .. } => {
+            Expression::Call { callee, args, span } => {
                 let func = self.eval_expression(callee)?;
                 let arg_values: Result<Vec<_>> = args.iter()
                     .map(|arg| self.eval_expression(arg))
                     .collect();
                 let arg_values = arg_values?;
 
-                self.call_function(func, arg_values)
+                self.call_function(func, arg_values, *span)
             }
 
             Expression::List { elements, .. } => {
@@ -282,25 +293,27 @@ impl JitExecutor {
                 Ok(Value::Dict(Arc::new(map)))
             }
 
-            Expression::Index { object, index, .. } => {
+            Expression::Index { object, index, span } => {
                 let obj = self.eval_expression(object)?;
                 let idx = self.eval_expression(index)?;
-                self.eval_index(obj, idx)
+                self.eval_index(obj, idx, *span)
             }
 
-            Expression::Member { object, member, .. } => {
+            Expression::Member { object, member, span } => {
                 let obj = self.eval_expression(object)?;
                 match obj {
                     Value::Dict(map) => {
                         map.get(member)
                             .cloned()
-                            .ok_or_else(|| TBError::RuntimeError {
-                                message: format!("Key '{}' not found", member),
-                            })
+                            .ok_or_else(|| self.runtime_error_with_context(
+                                format!("Key '{}' not found", member),
+                                Some(*span)
+                            ))
                     }
-                    _ => Err(TBError::RuntimeError {
-                        message: format!("Cannot access member on {}", obj.type_name()),
-                    }),
+                    _ => Err(self.runtime_error_with_context(
+                        format!("Cannot access member on {}", obj.type_name()),
+                        Some(*span)
+                    )),
                 }
             }
 
@@ -313,9 +326,27 @@ impl JitExecutor {
                     }
                 }
 
-                Err(TBError::InvalidOperation {
-                    message: "No matching pattern in match expression".to_string(),
-                })
+                Err(TBError::invalid_operation("No matching pattern in match expression".to_string()))
+            }
+
+            Expression::Lambda { params, body, span } => {
+                // Create anonymous function
+                let param_names: Vec<Arc<String>> = params.iter()
+                    .map(|p| Arc::clone(&p.name))
+                    .collect();
+
+                // Convert expression body to statement block
+                let body_stmt = Statement::Expression {
+                    expr: (**body).clone(),
+                    span: *span,
+                };
+
+                Ok(Value::Function(Arc::new(Function {
+                    name: Arc::new("<lambda>".to_string()),
+                    params: param_names,
+                    body: vec![body_stmt],
+                    return_type: None,
+                })))
             }
 
             _ => Ok(Value::None),
@@ -356,7 +387,7 @@ impl JitExecutor {
 
 
 
-    fn eval_binary_op(&self, op: BinaryOp, left: Value, right: Value) -> Result<Value> {
+    fn eval_binary_op(&self, op: BinaryOp, left: Value, right: Value, span: Span) -> Result<Value> {
         match op {
             BinaryOp::Add => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -366,9 +397,7 @@ impl JitExecutor {
                 (Value::String(a), Value::String(b)) => {
                     Ok(Value::String(Arc::new(format!("{}{}", a, b))))
                 }
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid addition".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid addition".to_string())),
             },
 
             BinaryOp::Sub => match (left, right) {
@@ -376,9 +405,7 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - b as f64)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid subtraction".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid subtraction".to_string())),
             },
 
             BinaryOp::Mul => match (left, right) {
@@ -386,9 +413,7 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * b as f64)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid multiplication".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid multiplication".to_string())),
             },
 
             BinaryOp::Div => match (left, right) {
@@ -396,16 +421,12 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) if b != 0 => Ok(Value::Float(a / b as f64)),
-                _ => Err(TBError::RuntimeError {
-                    message: "Division by zero".to_string(),
-                }),
+                _ => Err(self.runtime_error_with_context("Division by zero".to_string(), Some(span))),
             },
 
             BinaryOp::Mod => match (left, right) {
                 (Value::Int(a), Value::Int(b)) if b != 0 => Ok(Value::Int(a % b)),
-                _ => Err(TBError::RuntimeError {
-                    message: "Invalid modulo operation".to_string(),
-                }),
+                _ => Err(self.runtime_error_with_context("Invalid modulo operation".to_string(), Some(span))),
             },
 
             BinaryOp::Eq => Ok(Value::Bool(self.values_equal(&left, &right))),
@@ -416,9 +437,7 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a < b as f64)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid comparison".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
             },
 
             BinaryOp::Gt => match (left, right) {
@@ -426,29 +445,44 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a > b as f64)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid comparison".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
             },
 
             BinaryOp::LtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid comparison".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
             },
 
             BinaryOp::GtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Invalid comparison".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
             },
 
             BinaryOp::And => Ok(Value::Bool(left.is_truthy() && right.is_truthy())),
             BinaryOp::Or => Ok(Value::Bool(left.is_truthy() || right.is_truthy())),
+
+            BinaryOp::In => {
+                // Membership test: "x" in list, "key" in dict, "sub" in string
+                match (&left, &right) {
+                    // String in String (substring check)
+                    (Value::String(needle), Value::String(haystack)) => {
+                        Ok(Value::Bool(haystack.contains(needle.as_str())))
+                    }
+                    // Value in List
+                    (_, Value::List(list)) => {
+                        Ok(Value::Bool(list.iter().any(|v| v == &left)))
+                    }
+                    // Key in Dict
+                    (Value::String(key), Value::Dict(dict)) => {
+                        Ok(Value::Bool(dict.contains_key(key)))
+                    }
+                    _ => Err(TBError::invalid_operation(
+                        format!("'in' operator not supported for {} in {}", left.type_name(), right.type_name())
+                    )),
+                }
+            }
         }
     }
 
@@ -457,15 +491,13 @@ impl JitExecutor {
             UnaryOp::Neg => match operand {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
-                _ => Err(TBError::InvalidOperation {
-                    message: "Cannot negate non-numeric value".to_string(),
-                }),
+                _ => Err(TBError::invalid_operation("Cannot negate non-numeric value".to_string())),
             },
             UnaryOp::Not => Ok(Value::Bool(!operand.is_truthy())),
         }
     }
 
-    fn eval_index(&self, object: Value, index: Value) -> Result<Value> {
+    fn eval_index(&self, object: Value, index: Value, span: Span) -> Result<Value> {
         match (object, index) {
             (Value::List(items), Value::Int(i)) => {
                 let idx = if i < 0 {
@@ -476,35 +508,32 @@ impl JitExecutor {
 
                 items.get(idx)
                     .cloned()
-                    .ok_or_else(|| TBError::RuntimeError {
-                        message: format!("Index {} out of bounds", i),
-                    })
+                    .ok_or_else(|| self.runtime_error_with_context(
+                        format!("Index {} out of bounds", i),
+                        Some(span)
+                    ))
             }
             (Value::Dict(map), Value::String(key)) => {
                 map.get(&key)
                     .cloned()
-                    .ok_or_else(|| TBError::RuntimeError {
-                        message: format!("Key '{}' not found", key),
-                    })
+                    .ok_or_else(|| self.runtime_error_with_context(
+                        format!("Key '{}' not found", key),
+                        Some(span)
+                    ))
             }
-            _ => Err(TBError::RuntimeError {
-                message: "Invalid index operation".to_string(),
-            }),
+            _ => Err(self.runtime_error_with_context("Invalid index operation".to_string(), Some(span))),
         }
     }
 
-    fn call_function(&mut self, func: Value, args: Vec<Value>) -> Result<Value> {
+    fn call_function(&mut self, func: Value, args: Vec<Value>, span: Span) -> Result<Value> {
         match func {
             Value::Function(f) => {
                 // Check argument count
                 if args.len() != f.params.len() {
-                    return Err(TBError::RuntimeError {
-                        message: format!(
-                            "Expected {} arguments, got {}",
-                            f.params.len(),
-                            args.len()
-                        ),
-                    });
+                    return Err(self.runtime_error_with_context(
+                        format!("Expected {} arguments, got {}", f.params.len(), args.len()),
+                        Some(span)
+                    ));
                 }
 
                 // Create new environment with O(1) clone
@@ -514,6 +543,7 @@ impl JitExecutor {
                     should_break: false,
                     should_continue: false,
                     plugin_loader: Arc::clone(&self.plugin_loader),
+                    source_context: self.source_context.clone(),
                 };
 
                 // Bind parameters
@@ -531,9 +561,10 @@ impl JitExecutor {
                 (f.func)(args)
             }
 
-            _ => Err(TBError::RuntimeError {
-                message: format!("Cannot call {}", func.type_name()),
-            }),
+            _ => Err(self.runtime_error_with_context(
+                format!("Cannot call {}", func.type_name()),
+                Some(span)
+            )),
         }
     }
 
@@ -615,9 +646,7 @@ impl JitExecutor {
 
         // Read the file content
         let source_code = std::fs::read_to_string(&canonical_path)
-            .map_err(|e| TBError::PluginError {
-                message: format!("Failed to read plugin file '{}': {}", canonical_path.display(), e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("Failed to read plugin file '{}': {}", canonical_path.display(), e)))?;
 
         tb_debug_plugin!("Read {} bytes from plugin file", source_code.len());
 
@@ -693,16 +722,14 @@ impl JitExecutor {
         }
 
         // All strategies failed - return error with helpful message
-        Err(TBError::PluginError {
-            message: format!(
+        Err(TBError::plugin_error(format!(
                 "Plugin file not found: '{}'\nTried:\n  1. Direct path: {}\n  2. CWD relative: {:?}\n  3. Test relative: {:?}\n  4. Normalized: {}",
                 file_path,
                 path_buf.display(),
                 std::env::current_dir().ok().map(|cwd| cwd.join(file_path)),
                 test_relative,
                 normalized
-            ),
-        })
+            )))
     }
 
     fn extract_function_names(
@@ -760,6 +787,102 @@ impl JitExecutor {
             }
         }
     }
+
+    /// Create a runtime error with source context and span
+    fn runtime_error_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::RuntimeError {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+                call_stack: vec![],
+            }
+        } else {
+            TBError::runtime_error(message)
+        }
+    }
+
+    /// Create an undefined variable error with source context and span
+    fn undefined_variable_with_context(&self, name: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::UndefinedVariable {
+                name,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::undefined_variable(name)
+        }
+    }
+
+    /// Get debug information for a statement (source code + location)
+    fn get_statement_debug_info(&self, stmt: &Statement) -> StatementDebugInfo {
+        let span = self.get_statement_span(stmt);
+
+        if let Some(ctx) = &self.source_context {
+            let source_line = ctx.get_line_content(span.line);
+            let location = format!("Line {}", span.line);
+
+            StatementDebugInfo {
+                location,
+                source_line: source_line.trim().to_string(),
+                statement_type: self.get_statement_type_name(stmt),
+            }
+        } else {
+            StatementDebugInfo {
+                location: format!("Line {}", span.line),
+                source_line: self.get_statement_type_name(stmt).to_string(),
+                statement_type: self.get_statement_type_name(stmt),
+            }
+        }
+    }
+
+    /// Get the span for a statement
+    fn get_statement_span(&self, stmt: &Statement) -> Span {
+        match stmt {
+            Statement::Let { span, .. } => *span,
+            Statement::Assign { span, .. } => *span,
+            Statement::Function { span, .. } => *span,
+            Statement::If { span, .. } => *span,
+            Statement::For { span, .. } => *span,
+            Statement::While { span, .. } => *span,
+            Statement::Match { span, .. } => *span,
+            Statement::Return { span, .. } => *span,
+            Statement::Break { span } => *span,
+            Statement::Continue { span } => *span,
+            Statement::Expression { span, .. } => *span,
+            Statement::Import { span, .. } => *span,
+            Statement::Config { span, .. } => *span,
+            Statement::Plugin { span, .. } => *span,
+        }
+    }
+
+    /// Get a human-readable name for the statement type
+    fn get_statement_type_name(&self, stmt: &Statement) -> &'static str {
+        match stmt {
+            Statement::Let { .. } => "let",
+            Statement::Assign { .. } => "assign",
+            Statement::Function { .. } => "fn",
+            Statement::If { .. } => "if",
+            Statement::For { .. } => "for",
+            Statement::While { .. } => "while",
+            Statement::Match { .. } => "match",
+            Statement::Return { .. } => "return",
+            Statement::Break { .. } => "break",
+            Statement::Continue { .. } => "continue",
+            Statement::Expression { .. } => "expr",
+            Statement::Import { .. } => "import",
+            Statement::Config { .. } => "config",
+            Statement::Plugin { .. } => "plugin",
+        }
+    }
+}
+
+/// Debug information for a statement
+struct StatementDebugInfo {
+    location: String,
+    source_line: String,
+    statement_type: &'static str,
 }
 
 impl Default for JitExecutor {

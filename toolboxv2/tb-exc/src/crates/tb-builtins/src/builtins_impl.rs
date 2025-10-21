@@ -12,31 +12,23 @@ use std::collections::HashMap;
 /// create_server(on_connect, on_disconnect, on_msg, host, port, type) -> server_id
 pub fn builtin_create_server(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 6 {
-        return Err(TBError::RuntimeError {
-            message: "create_server() takes 6 arguments: on_connect, on_disconnect, on_msg, host, port, type".to_string(),
-        });
+        return Err(TBError::runtime_error("create_server() takes 6 arguments: on_connect, on_disconnect, on_msg, host, port, type"));
     }
 
     // Extract callbacks (would need to be stored and called from TB runtime)
     let host = match &args[3] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "create_server() host must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("create_server() host must be a string")),
     };
 
     let port = match &args[4] {
         Value::Int(i) => *i as u16,
-        _ => return Err(TBError::RuntimeError {
-            message: "create_server() port must be an integer".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("create_server() port must be an integer")),
     };
 
     let server_type = match &args[5] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "create_server() type must be a string (tcp/udp)".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("create_server() type must be a string (tcp/udp)")),
     };
 
     let server_id = format!("server_{}:{}_{}", server_type, host, port);
@@ -50,30 +42,22 @@ pub fn builtin_create_server(args: Vec<Value>) -> Result<Value, TBError> {
 /// connect_to(on_connect, on_disconnect, on_msg, host, port, type) -> connection_id
 pub fn builtin_connect_to(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 6 {
-        return Err(TBError::RuntimeError {
-            message: "connect_to() takes 6 arguments: on_connect, on_disconnect, on_msg, host, port, type".to_string(),
-        });
+        return Err(TBError::runtime_error("connect_to() takes 6 arguments: on_connect, on_disconnect, on_msg, host, port, type"));
     }
 
     let host = match &args[3] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "connect_to() host must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("connect_to() host must be a string")),
     };
 
     let port = match &args[4] {
         Value::Int(i) => *i as u16,
-        _ => return Err(TBError::RuntimeError {
-            message: "connect_to() port must be an integer".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("connect_to() port must be an integer")),
     };
 
     let conn_type = match &args[5] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "connect_to() type must be a string (tcp/udp)".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("connect_to() type must be a string (tcp/udp)")),
     };
 
     let conn_id = format!("conn_{}:{}_{}", conn_type, host, port);
@@ -99,16 +83,12 @@ pub fn builtin_connect_to(args: Vec<Value>) -> Result<Value, TBError> {
 /// send_to(connection_id, message) -> None
 pub fn builtin_send_to(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 2 {
-        return Err(TBError::RuntimeError {
-            message: "send_to() takes 2 arguments: connection_id, message".to_string(),
-        });
+        return Err(TBError::runtime_error("send_to() takes 2 arguments: connection_id, message"));
     }
 
     let conn_id = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "send_to() connection_id must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("send_to() connection_id must be a string")),
     };
 
     let message = match &args[1] {
@@ -116,13 +96,9 @@ pub fn builtin_send_to(args: Vec<Value>) -> Result<Value, TBError> {
         Value::Dict(_) => {
             // Convert dict to JSON
             serde_json::to_string(&args[1])
-                .map_err(|e| TBError::RuntimeError {
-                    message: format!("Failed to serialize message: {}", e),
-                })?
+                .map_err(|e| TBError::runtime_error(format!("Failed to serialize message: {}", e)))?
         }
-        _ => return Err(TBError::RuntimeError {
-            message: "send_to() message must be a string or dict".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("send_to() message must be a string or dict")),
     };
 
     RUNTIME.block_on(async {
@@ -147,16 +123,12 @@ pub fn builtin_send_to(args: Vec<Value>) -> Result<Value, TBError> {
 /// http_session(base_url, headers, cookies_file) -> session_id
 pub fn builtin_http_session(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() < 1 || args.len() > 3 {
-        return Err(TBError::RuntimeError {
-            message: "http_session() takes 1-3 arguments: base_url, headers, cookies_file".to_string(),
-        });
+        return Err(TBError::runtime_error("http_session() takes 1-3 arguments: base_url, headers, cookies_file"));
     }
 
     let base_url = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "http_session() base_url must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("http_session() base_url must be a string")),
     };
 
     let headers = if args.len() > 1 {
@@ -197,53 +169,39 @@ pub fn builtin_http_session(args: Vec<Value>) -> Result<Value, TBError> {
 /// http_request(session_id, url, method, data) -> response_dict
 pub fn builtin_http_request(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() < 3 || args.len() > 4 {
-        return Err(TBError::RuntimeError {
-            message: "http_request() takes 3-4 arguments: session_id, url, method, data".to_string(),
-        });
+        return Err(TBError::runtime_error("http_request() takes 3-4 arguments: session_id, url, method, data"));
     }
 
     let session_id = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "http_request() session_id must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("http_request() session_id must be a string")),
     };
 
     let url = match &args[1] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "http_request() url must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("http_request() url must be a string")),
     };
 
     let method = match &args[2] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "http_request() method must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("http_request() method must be a string")),
     };
 
     let data = if args.len() > 3 {
         match &args[3] {
             Value::Dict(_) | Value::String(_) => {
                 Some(serde_json::to_value(&args[3])
-                    .map_err(|e| TBError::RuntimeError {
-                        message: format!("Failed to serialize data: {}", e),
-                    })?)
+                    .map_err(|e| TBError::runtime_error(format!("Failed to serialize data: {}", e)))?)
             }
             Value::None => None,
-            _ => return Err(TBError::RuntimeError {
-                message: "http_request() data must be a dict, string, or None".to_string(),
-            }),
+            _ => return Err(TBError::runtime_error("http_request() data must be a dict, string, or None")),
         }
     } else {
         None
     };
 
     let session = HTTP_SESSIONS.get(&session_id)
-        .ok_or_else(|| TBError::RuntimeError {
-            message: format!("HTTP session not found: {}", session_id),
-        })?;
+        .ok_or_else(|| TBError::runtime_error(format!("HTTP session not found: {}", session_id)))?;
 
     let response = RUNTIME.block_on(async {
         session.request(url, method, data).await
@@ -281,16 +239,12 @@ pub fn builtin_http_request(args: Vec<Value>) -> Result<Value, TBError> {
 /// json_parse(json_str: str) -> dict
 pub fn builtin_json_parse(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 1 {
-        return Err(TBError::RuntimeError {
-            message: "json_parse() takes 1 argument: json_str".to_string(),
-        });
+        return Err(TBError::runtime_error("json_parse() takes 1 argument: json_str"));
     }
 
     let json_str = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "json_parse() argument must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("json_parse() argument must be a string")),
     };
 
     let json_value: serde_json::Value = utils::json_parse(&json_str)?;
@@ -331,9 +285,7 @@ pub fn builtin_json_parse(args: Vec<Value>) -> Result<Value, TBError> {
 /// json_stringify(dict: dict, pretty: bool = false) -> str
 pub fn builtin_json_stringify(args: Vec<Value>) -> Result<Value, TBError> {
     if args.is_empty() || args.len() > 2 {
-        return Err(TBError::RuntimeError {
-            message: "json_stringify() takes 1-2 arguments: value, pretty".to_string(),
-        });
+        return Err(TBError::runtime_error("json_stringify() takes 1-2 arguments: value, pretty"));
     }
 
     let pretty = if args.len() > 1 {
@@ -381,16 +333,12 @@ pub fn builtin_json_stringify(args: Vec<Value>) -> Result<Value, TBError> {
 /// yaml_parse(yaml_str: str) -> dict
 pub fn builtin_yaml_parse(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 1 {
-        return Err(TBError::RuntimeError {
-            message: "yaml_parse() takes 1 argument: yaml_str".to_string(),
-        });
+        return Err(TBError::runtime_error("yaml_parse() takes 1 argument: yaml_str"));
     }
 
     let yaml_str = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "yaml_parse() argument must be a string".to_string(),
-        }),
+        _ => return Err(TBError::runtime_error("yaml_parse() argument must be a string")),
     };
 
     let yaml_value: serde_yaml::Value = utils::yaml_parse(&yaml_str)?;
@@ -434,9 +382,7 @@ pub fn builtin_yaml_parse(args: Vec<Value>) -> Result<Value, TBError> {
 /// yaml_stringify(dict: dict) -> str
 pub fn builtin_yaml_stringify(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 1 {
-        return Err(TBError::RuntimeError {
-            message: "yaml_stringify() takes 1 argument: value".to_string(),
-        });
+        return Err(TBError::runtime_error("yaml_stringify() takes 1 argument: value"));
     }
 
     // Convert TB Value to serde_yaml::Value
@@ -476,9 +422,7 @@ pub fn builtin_yaml_stringify(args: Vec<Value>) -> Result<Value, TBError> {
 /// time(timezone: str = "auto") -> dict
 pub fn builtin_time(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() > 1 {
-        return Err(TBError::RuntimeError {
-            message: "time() takes 0-1 arguments: timezone".to_string(),
-        });
+        return Err(TBError::runtime_error("time() takes 0-1 arguments: timezone"));
     }
 
     let timezone = if args.is_empty() {
@@ -487,9 +431,7 @@ pub fn builtin_time(args: Vec<Value>) -> Result<Value, TBError> {
         match &args[0] {
             Value::String(s) => Some(s.to_string()),
             Value::None => None,
-            _ => return Err(TBError::RuntimeError {
-                message: "time() timezone must be a string or None".to_string(),
-            }),
+            _ => return Err(TBError::runtime_error("time() timezone must be a string or None")),
         }
     };
 

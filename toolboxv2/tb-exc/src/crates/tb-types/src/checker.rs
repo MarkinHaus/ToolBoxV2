@@ -1,11 +1,13 @@
 use crate::{TypeEnvironment, TypeInference};
 use std::sync::Arc;
+use std::path::PathBuf;
 use tb_core::*;
 
 /// Type checker with inference and validation
 pub struct TypeChecker {
     env: TypeEnvironment,
     errors: Vec<TBError>,
+    source_context: Option<SourceContext>,
 }
 
 impl TypeChecker {
@@ -18,7 +20,15 @@ impl TypeChecker {
         Self {
             env,
             errors: Vec::new(),
+            source_context: None,
         }
+    }
+
+    /// Create a new TypeChecker with source context for better error messages
+    pub fn new_with_source(source: String, file_path: Option<PathBuf>) -> Self {
+        let mut checker = Self::new();
+        checker.source_context = Some(SourceContext::new(source, file_path));
+        checker
     }
 
     fn register_builtins(env: &mut TypeEnvironment) {
@@ -129,18 +139,16 @@ impl TypeChecker {
     /// Check a statement and update environment
     pub fn check_statement(&mut self, stmt: &Statement) -> Result<Type> {
         match stmt {
-            Statement::Let { name, type_annotation, value, .. } => {
+            Statement::Let { name, type_annotation, value, span } => {
                 let inferred_type = self.check_expression(value)?;
 
                 // Validate against annotation if provided
                 if let Some(annotated) = type_annotation {
                     if !self.is_assignable(&inferred_type, annotated) {
-                        return Err(TBError::TypeError {
-                            message: format!(
-                                "Type mismatch: expected {:?}, got {:?}",
-                                annotated, inferred_type
-                            ),
-                        });
+                        return Err(self.type_error_with_context(
+                            format!("Type mismatch: expected {:?}, got {:?}", annotated, inferred_type),
+                            Some(*span)
+                        ));
                     }
                 }
 
@@ -148,28 +156,26 @@ impl TypeChecker {
                 Ok(Type::None)
             }
 
-            Statement::Assign { name, value, .. } => {
+            Statement::Assign { name, value, span } => {
                 // Check if variable exists
-                let existing_type = self.env.lookup(name).ok_or_else(|| TBError::UndefinedVariable {
-                    name: name.to_string(),
-                })?.clone();
+                let existing_type = self.env.lookup(name)
+                    .ok_or_else(|| TBError::undefined_variable(name.to_string()))?
+                    .clone();
 
                 let value_type = self.check_expression(value)?;
 
                 // Check type compatibility
                 if !self.is_assignable(&value_type, &existing_type) {
-                    return Err(TBError::TypeError {
-                        message: format!(
-                            "Cannot assign {:?} to variable of type {:?}",
-                            value_type, existing_type
-                        ),
-                    });
+                    return Err(self.type_error_with_context(
+                        format!("Cannot assign {:?} to variable of type {:?}", value_type, existing_type),
+                        Some(*span)
+                    ));
                 }
 
                 Ok(Type::None)
             }
 
-            Statement::Function { name, params, return_type, body, .. } => {
+            Statement::Function { name, params, return_type, body, span } => {
                 // Create function type
                 let param_types: Vec<Type> = params
                     .iter()
@@ -242,25 +248,24 @@ impl TypeChecker {
                     if !has_return && expected_return != &Type::None {
                         // Allow it - runtime will check
                     } else if !types_match {
-                        return Err(TBError::TypeError {
-                            message: format!(
-                                "Function return type mismatch: expected {:?}, got {:?}",
-                                expected_return, body_type
-                            ),
-                        });
+                        return Err(self.type_error_with_context(
+                            format!("Function return type mismatch: expected {:?}, got {:?}", expected_return, body_type),
+                            Some(*span)
+                        ));
                     }
                 }
 
                 Ok(Type::None)
             }
 
-            Statement::If { condition, then_block, else_block, .. } => {
+            Statement::If { condition, then_block, else_block, span } => {
                 let cond_type = self.check_expression(condition)?;
                 // Allow Type::Any for dynamic conditions (e.g., from dict lookups)
                 if cond_type != Type::Bool && cond_type != Type::Any {
-                    return Err(TBError::TypeError {
-                        message: format!("If condition must be bool, got {:?}", cond_type),
-                    });
+                    return Err(self.type_error_with_context(
+                        format!("If condition must be bool, got {:?}", cond_type),
+                        Some(*span)
+                    ));
                 }
 
                 // Check branches in child scopes
@@ -282,7 +287,7 @@ impl TypeChecker {
                 Ok(Type::None)
             }
 
-            Statement::For { variable, iterable, body, .. } => {
+            Statement::For { variable, iterable, body, span } => {
                 let iter_type = self.check_expression(iterable)?;
 
                 // Extract element type from iterable
@@ -295,9 +300,10 @@ impl TypeChecker {
                     Type::Generic(_) => Type::Any,
                     // Allow iteration over Type::Any
                     Type::Any => Type::Any,
-                    _ => return Err(TBError::TypeError {
-                        message: format!("Cannot iterate over {:?}", iter_type),
-                    }),
+                    _ => return Err(self.type_error_with_context(
+                        format!("Cannot iterate over {:?}", iter_type),
+                        Some(*span)
+                    )),
                 };
 
                 // Check body in child scope with loop variable
@@ -314,12 +320,13 @@ impl TypeChecker {
                 Ok(Type::None)
             }
 
-            Statement::While { condition, body, .. } => {
+            Statement::While { condition, body, span } => {
                 let cond_type = self.check_expression(condition)?;
                 if cond_type != Type::Bool {
-                    return Err(TBError::TypeError {
-                        message: format!("While condition must be bool, got {:?}", cond_type),
-                    });
+                    return Err(self.type_error_with_context(
+                        format!("While condition must be bool, got {:?}", cond_type),
+                        Some(*span)
+                    ));
                 }
 
                 let old_env = self.env.clone();
@@ -341,14 +348,14 @@ impl TypeChecker {
 
             Statement::Expression { expr, .. } => self.check_expression(expr),
 
-            Statement::Match { value, arms, .. } => {
+            Statement::Match { value, arms, span } => {
                 let value_type = self.check_expression(value)?;
 
                 let mut result_type: Option<Type> = None;
 
                 for arm in arms {
                     // Check pattern matches value type
-                    self.check_pattern(&arm.pattern, &value_type)?;
+                    self.check_pattern(&arm.pattern, &value_type, *span)?;
 
                     // Check arm body
                     let arm_type = self.check_expression(&arm.body)?;
@@ -397,9 +404,7 @@ impl TypeChecker {
             Expression::Ident(name, _span) => {
                 self.env.lookup(name.as_ref())
                     .cloned()
-                    .ok_or_else(|| TBError::UndefinedVariable {
-                        name: name.to_string(),
-                    })
+                    .ok_or_else(|| TBError::undefined_variable(name.to_string()))
             }
 
             Expression::Binary { op, left, right, .. } => {
@@ -427,7 +432,7 @@ impl TypeChecker {
                 }
             }
 
-            Expression::Call { callee, args, .. } => {
+            Expression::Call { callee, args, span } => {
                 let func_type = self.check_expression(callee)?;
 
                 match func_type {
@@ -436,13 +441,10 @@ impl TypeChecker {
                         let is_variadic = params.iter().any(|p| matches!(p, Type::Any));
 
                         if !is_variadic && args.len() != params.len() {
-                            return Err(TBError::TypeError {
-                                message: format!(
-                                    "Expected {} arguments, got {}",
-                                    params.len(),
-                                    args.len()
-                                ),
-                            });
+                            return Err(self.type_error_with_context(
+                                format!("Expected {} arguments, got {}", params.len(), args.len()),
+                                Some(*span)
+                            ));
                         }
 
                         // Check argument types
@@ -461,12 +463,10 @@ impl TypeChecker {
                                     matches!(arg_type, Type::Generic(_));
 
                                 if !types_match {
-                                    return Err(TBError::TypeError {
-                                        message: format!(
-                                            "Argument type mismatch: expected {:?}, got {:?}",
-                                            param_type, arg_type
-                                        ),
-                                    });
+                                    return Err(self.type_error_with_context(
+                                        format!("Argument type mismatch: expected {:?}, got {:?}", param_type, arg_type),
+                                        Some(*span)
+                                    ));
                                 }
                             }
                         }
@@ -481,13 +481,14 @@ impl TypeChecker {
                         }
                         Ok(Type::Any)
                     }
-                    _ => Err(TBError::TypeError {
-                        message: format!("Cannot call non-function type {:?}", func_type),
-                    }),
+                    _ => Err(self.type_error_with_context(
+                        format!("Cannot call non-function type {:?}", func_type),
+                        Some(*span)
+                    )),
                 }
             }
 
-            Expression::List { elements, .. } => {
+            Expression::List { elements, span } => {
                 if elements.is_empty() {
                     return Ok(Type::List(Box::new(Type::Generic(Arc::new("T".to_string())))));
                 }
@@ -499,12 +500,10 @@ impl TypeChecker {
                     let elem_type = self.check_expression(elem)?;
                     // Use is_assignable instead of types_compatible for better Dict(String, Any) handling
                     if !self.is_assignable(&elem_type, &first_type) && !self.is_assignable(&first_type, &elem_type) {
-                        return Err(TBError::TypeError {
-                            message: format!(
-                                "List elements must have compatible types, got {:?} and {:?}",
-                                first_type, elem_type
-                            ),
-                        });
+                        return Err(self.type_error_with_context(
+                            format!("List elements must have compatible types, got {:?} and {:?}", first_type, elem_type),
+                            Some(*span)
+                        ));
                     }
                 }
 
@@ -545,27 +544,26 @@ impl TypeChecker {
                 }
             }
 
-            Expression::Index { object, index, .. } => {
+            Expression::Index { object, index, span } => {
                 let obj_type = self.check_expression(object)?;
                 let idx_type = self.check_expression(index)?;
 
                 match obj_type {
                     Type::List(elem_type) => {
                         if idx_type != Type::Int && !matches!(idx_type, Type::Any) {
-                            return Err(TBError::TypeError {
-                                message: "List index must be int".to_string(),
-                            });
+                            return Err(self.type_error_with_context(
+                                "List index must be int".to_string(),
+                                Some(*span)
+                            ));
                         }
                         Ok(*elem_type)
                     }
                     Type::Dict(key_type, value_type) => {
                         if !self.is_assignable(&idx_type, &key_type) && !matches!(idx_type, Type::Any) {
-                            return Err(TBError::TypeError {
-                                message: format!(
-                                    "Dict key type mismatch: expected {:?}, got {:?}",
-                                    key_type, idx_type
-                                ),
-                            });
+                            return Err(self.type_error_with_context(
+                                format!("Dict key type mismatch: expected {:?}, got {:?}", key_type, idx_type),
+                                Some(*span)
+                            ));
                         }
                         Ok(*value_type)
                     }
@@ -576,29 +574,32 @@ impl TypeChecker {
                         if name.as_str() == "list" || name.as_str() == "dict" {
                             Ok(Type::Any)
                         } else {
-                            Err(TBError::TypeError {
-                                message: format!("Cannot index type Generic({})", name),
-                            })
+                            Err(self.type_error_with_context(
+                                format!("Cannot index type Generic({})", name),
+                                Some(*span)
+                            ))
                         }
                     }
-                    ref other => Err(TBError::TypeError {
-                        message: format!("Cannot index type {:?}", other),
-                    }),
+                    ref other => Err(self.type_error_with_context(
+                        format!("Cannot index type {:?}", other),
+                        Some(*span)
+                    )),
                 }
             }
 
-            Expression::Match { value, arms, .. } => {
+            Expression::Match { value, arms, span } => {
                 let value_type = self.check_expression(value)?;
 
                 if arms.is_empty() {
-                    return Err(TBError::TypeError {
-                        message: "Match expression must have at least one arm".to_string(),
-                    });
+                    return Err(self.type_error_with_context(
+                        "Match expression must have at least one arm".to_string(),
+                        Some(*span)
+                    ));
                 }
 
                 // Check all patterns are compatible with value type
                 for arm in arms {
-                    self.check_pattern(&arm.pattern, &value_type)?;
+                    self.check_pattern(&arm.pattern, &value_type, *span)?;
                 }
 
                 // All arms should return the same type
@@ -606,12 +607,10 @@ impl TypeChecker {
                 for arm in &arms[1..] {
                     let arm_type = self.check_expression(&arm.body)?;
                     if !TypeInference::types_compatible(&first_arm_type, &arm_type) {
-                        return Err(TBError::TypeError {
-                            message: format!(
-                                "Match arms have incompatible types: {:?} vs {:?}",
-                                first_arm_type, arm_type
-                            ),
-                        });
+                        return Err(self.type_error_with_context(
+                            format!("Match arms have incompatible types: {:?} vs {:?}", first_arm_type, arm_type),
+                            Some(*span)
+                        ));
                     }
                 }
 
@@ -642,29 +641,25 @@ impl TypeChecker {
         }
     }
 
-    fn check_pattern(&self, pattern: &Pattern, value_type: &Type) -> Result<()> {
+    fn check_pattern(&self, pattern: &Pattern, value_type: &Type, span: Span) -> Result<()> {
         match pattern {
             Pattern::Literal(lit) => {
                 let pattern_type = TypeInference::infer_literal(lit);
                 if !TypeInference::types_compatible(&pattern_type, value_type) {
-                    return Err(TBError::TypeError {
-                        message: format!(
-                            "Pattern type {:?} doesn't match value type {:?}",
-                            pattern_type, value_type
-                        ),
-                    });
+                    return Err(self.type_error_with_context(
+                        format!("Pattern type {:?} doesn't match value type {:?}", pattern_type, value_type),
+                        Some(span)
+                    ));
                 }
                 Ok(())
             }
             Pattern::Range { .. } => {
                 // Range patterns only work with integers
                 if !matches!(value_type, Type::Int) && !matches!(value_type, Type::Any) {
-                    return Err(TBError::TypeError {
-                        message: format!(
-                            "Range pattern requires Int type, got {:?}",
-                            value_type
-                        ),
-                    });
+                    return Err(self.type_error_with_context(
+                        format!("Range pattern requires Int type, got {:?}", value_type),
+                        Some(span)
+                    ));
                 }
                 Ok(())
             }
@@ -701,6 +696,19 @@ impl TypeChecker {
 
     pub fn environment(&self) -> &TypeEnvironment {
         &self.env
+    }
+
+    /// Create a type error with source context and span
+    fn type_error_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::TypeError {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::type_error(message)
+        }
     }
 }
 

@@ -33,8 +33,8 @@ pub fn run_file(
     let mut lexer = Lexer::new(&source, Arc::clone(&interner));
     let tokens = lexer.tokenize();
 
-    // Parse (with source for plugin extraction)
-    let mut parser = Parser::new_with_source(tokens, source.clone());
+    // Parse (with source and file path for better error messages)
+    let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
     // Load imports before type checking
@@ -42,8 +42,8 @@ pub fn run_file(
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
 
-    // Type check
-    let mut type_checker = TypeChecker::new();
+    // Type check (with source context for better error messages)
+    let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
     type_checker.check_program(&program)?;
 
     // Optimize
@@ -54,8 +54,8 @@ pub fn run_file(
 
     match mode {
         "jit" => {
-            // JIT execution
-            let mut executor = JitExecutor::new();
+            // JIT execution (with source context for better error messages)
+            let mut executor = JitExecutor::new_with_source(source.clone(), Some(file.to_path_buf()));
             executor.execute(&program)
         }
         "compile" => {
@@ -70,17 +70,19 @@ pub fn run_file(
 
             // Compile with rustc
             let output = temp_dir.path().join("program");
-            let status = Command::new("rustc")
+            let compile_output = Command::new("rustc")
                 .args(&[
                     "-C", "opt-level=3",
                     "-o", output.to_str().unwrap(),
                     rust_file.to_str().unwrap(),
                 ])
-                .status()?;
+                .output()?;
 
-            if !status.success() {
+            if !compile_output.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_output.stderr);
                 return Err(tb_core::TBError::CompilationError {
                     message: "Rust compilation failed".to_string(),
+                    compiler_output: Some(stderr.to_string()),
                 });
             }
 
@@ -93,9 +95,7 @@ pub fn run_file(
 
             Ok(Value::None)
         }
-        _ => Err(tb_core::TBError::RuntimeError {
-            message: format!("Unknown mode: {}", mode),
-        }),
+        _ => Err(tb_core::TBError::runtime_error(format!("Unknown mode: {}", mode))),
     }
 }
 
@@ -111,7 +111,7 @@ pub fn compile_file(
     let mut lexer = Lexer::new(&source, Arc::clone(&interner));
     let tokens = lexer.tokenize();
 
-    let mut parser = Parser::new_with_source(tokens, source.clone());
+    let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
     // ✅ FIX: Load imports before type checking (same as run_file)
@@ -119,7 +119,8 @@ pub fn compile_file(
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
 
-    let mut type_checker = TypeChecker::new();
+    // Type check (with source context for better error messages)
+    let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
     type_checker.check_program(&program)?;
 
     let mut optimizer_config = OptimizerConfig::default();
@@ -181,14 +182,16 @@ codegen-units = 1
     fs::write(src_dir.join("main.rs"), rust_code)?;
 
     // Compile with cargo
-    let status = Command::new("cargo")
-        .args(&["build", "--release", "--quiet"])
+    let compile_output = Command::new("cargo")
+        .args(&["build", "--release"])
         .current_dir(project_dir)
-        .status()?;
+        .output()?;
 
-    if !status.success() {
+    if !compile_output.status.success() {
+        let stderr = String::from_utf8_lossy(&compile_output.stderr);
         return Err(tb_core::TBError::CompilationError {
             message: "Rust compilation failed".to_string(),
+            compiler_output: Some(stderr.to_string()),
         });
     }
 
@@ -252,26 +255,22 @@ fn load_imports(
             // On Windows, provide more detailed error with proper path formatting
             #[cfg(target_os = "windows")]
             {
-                tb_core::TBError::RuntimeError {
-                    message: format!(
+                tb_core::TBError::runtime_error(format!(
                         "Failed to load import '{}': {} (normalized: {})",
                         canonical_path.display(),
                         e,
                         canonical_path.to_string_lossy().replace("\\\\?\\", "")
-                    ),
-                }
+                    ))
             }
             #[cfg(not(target_os = "windows"))]
             {
-                tb_core::TBError::RuntimeError {
-                    message: format!("Failed to load import '{}': {}", canonical_path.display(), e),
-                }
+                tb_core::TBError::runtime_error(format!("Failed to load import '{}': {}", canonical_path.display(), e))
             }
         })?;
 
         let mut lexer = Lexer::new(&source, Arc::clone(&interner));
         let tokens = lexer.tokenize();
-        let mut parser = Parser::new_with_source(tokens, source.clone());
+        let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), canonical_path.clone());
         let mut import_program = parser.parse()?;
 
         // Mark as loaded - use canonical path

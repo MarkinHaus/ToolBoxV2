@@ -101,11 +101,23 @@ impl RustCodeGenerator {
         writeln!(self.buffer, "#![allow(unused)]")?;
         writeln!(self.buffer)?;
         writeln!(self.buffer, "use std::collections::HashMap;")?;
+
+        // Add serde imports if needed
+        if self.uses_serde_json || self.uses_serde_yaml {
+            writeln!(self.buffer, "use serde::{{Serialize, Deserialize}};")?;
+        }
         writeln!(self.buffer)?;
 
         // ✅ PHASE 1: DictValue enum for heterogeneous dictionaries
         writeln!(self.buffer, "// DictValue enum for heterogeneous dictionaries")?;
-        writeln!(self.buffer, "#[derive(Debug, Clone)]")?;
+
+        // Add Serialize and Deserialize derives if needed
+        if self.uses_serde_json || self.uses_serde_yaml {
+            writeln!(self.buffer, "#[derive(Debug, Clone, Serialize, Deserialize)]")?;
+        } else {
+            writeln!(self.buffer, "#[derive(Debug, Clone)]")?;
+        }
+
         writeln!(self.buffer, "enum DictValue {{")?;
         writeln!(self.buffer, "    Int(i64),")?;
         writeln!(self.buffer, "    Float(f64),")?;
@@ -296,6 +308,46 @@ impl RustCodeGenerator {
         // ✅ FIX: Overloaded versions for DictValue
         writeln!(self.buffer, "fn keys_dictvalue(dv: &DictValue) -> Vec<String> {{ dv.as_dict().keys().cloned().collect() }}")?;
         writeln!(self.buffer, "fn values_dictvalue(dv: &DictValue) -> Vec<DictValue> {{ dv.as_dict().values().cloned().collect() }}")?;
+
+        // time() function - overloaded versions
+        // time() -> HashMap (no args, uses Local timezone)
+        writeln!(self.buffer, "fn time() -> HashMap<String, DictValue> {{")?;
+        writeln!(self.buffer, "    time_with_tz(\"Local\".to_string())")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+
+        // time(timezone: String) -> HashMap
+        writeln!(self.buffer, "fn time_with_tz(timezone: String) -> HashMap<String, DictValue> {{")?;
+        writeln!(self.buffer, "    use std::time::{{SystemTime, UNIX_EPOCH}};")?;
+        writeln!(self.buffer, "    let now = SystemTime::now();")?;
+        writeln!(self.buffer, "    let duration = now.duration_since(UNIX_EPOCH).unwrap();")?;
+        writeln!(self.buffer, "    let timestamp = duration.as_secs() as i64;")?;
+        writeln!(self.buffer, "    ")?;
+        writeln!(self.buffer, "    // Simple date/time calculation (UTC)")?;
+        writeln!(self.buffer, "    let days_since_epoch = timestamp / 86400;")?;
+        writeln!(self.buffer, "    let seconds_today = timestamp % 86400;")?;
+        writeln!(self.buffer, "    let hour = (seconds_today / 3600) as i64;")?;
+        writeln!(self.buffer, "    let minute = ((seconds_today % 3600) / 60) as i64;")?;
+        writeln!(self.buffer, "    let second = (seconds_today % 60) as i64;")?;
+        writeln!(self.buffer, "    ")?;
+        writeln!(self.buffer, "    // Approximate year/month/day (simplified)")?;
+        writeln!(self.buffer, "    let year = 1970 + (days_since_epoch / 365) as i64;")?;
+        writeln!(self.buffer, "    let day_of_year = (days_since_epoch % 365) as i64;")?;
+        writeln!(self.buffer, "    let month = (day_of_year / 30 + 1).min(12) as i64;")?;
+        writeln!(self.buffer, "    let day = (day_of_year % 30 + 1) as i64;")?;
+        writeln!(self.buffer, "    ")?;
+        writeln!(self.buffer, "    let mut map = HashMap::new();")?;
+        writeln!(self.buffer, "    map.insert(\"year\".to_string(), DictValue::Int(year));")?;
+        writeln!(self.buffer, "    map.insert(\"month\".to_string(), DictValue::Int(month));")?;
+        writeln!(self.buffer, "    map.insert(\"day\".to_string(), DictValue::Int(day));")?;
+        writeln!(self.buffer, "    map.insert(\"hour\".to_string(), DictValue::Int(hour));")?;
+        writeln!(self.buffer, "    map.insert(\"minute\".to_string(), DictValue::Int(minute));")?;
+        writeln!(self.buffer, "    map.insert(\"second\".to_string(), DictValue::Int(second));")?;
+        writeln!(self.buffer, "    map.insert(\"timestamp\".to_string(), DictValue::Int(timestamp));")?;
+        writeln!(self.buffer, "    map.insert(\"timezone\".to_string(), DictValue::String(timezone));")?;
+        writeln!(self.buffer, "    map.insert(\"iso8601\".to_string(), DictValue::String(format!(\"{{:04}}-{{:02}}-{{:02}}T{{:02}}:{{:02}}:{{:02}}Z\", year, month, day, hour, minute, second)));")?;
+        writeln!(self.buffer, "    map")?;
+        writeln!(self.buffer, "}}")?;
 
         writeln!(self.buffer)?;
         Ok(())
@@ -531,6 +583,39 @@ impl RustCodeGenerator {
                 let left_type = self.infer_expr_type(left)?;
                 let right_type = self.infer_expr_type(right)?;
 
+                // Special handling for 'in' operator
+                if matches!(op, BinaryOp::In) {
+                    match &right_type {
+                        Type::String => {
+                            // String in String (substring check)
+                            self.generate_expression(right)?;
+                            write!(self.buffer, ".contains(")?;
+                            self.generate_expression(left)?;
+                            write!(self.buffer, ")")?;
+                        }
+                        Type::List(_) => {
+                            // Value in List
+                            self.generate_expression(right)?;
+                            write!(self.buffer, ".contains(&")?;
+                            self.generate_expression(left)?;
+                            write!(self.buffer, ")")?;
+                        }
+                        Type::Dict(_, _) => {
+                            // Key in Dict
+                            self.generate_expression(right)?;
+                            write!(self.buffer, ".contains_key(&")?;
+                            self.generate_expression(left)?;
+                            write!(self.buffer, ")")?;
+                        }
+                        _ => {
+                            return Err(TBError::compilation_error(
+                                format!("'in' operator not supported for type {:?}", right_type)
+                            ));
+                        }
+                    }
+                    return Ok(());
+                }
+
                 // Special handling for string concatenation
                 if matches!(op, BinaryOp::Add) && (matches!(left_type, Type::String) || matches!(right_type, Type::String)) {
                     write!(self.buffer, "format!(\"{{}}{{}}\", ")?;
@@ -760,15 +845,17 @@ impl RustCodeGenerator {
                         write!(self.buffer, ").ok()")?;
                         return Ok(());
                     }
-                    // Time function
+                    // ✅ time() function - handle with/without timezone argument
                     else if name.as_str() == "time" {
-                        self.uses_chrono = true;
-                        write!(self.buffer, "{{")?;
-                        write!(self.buffer, "use chrono::{{Local, Datelike, Timelike}}; ")?;
-                        write!(self.buffer, "let now = Local::now(); ")?;
-                        write!(self.buffer, "format!(\"{{{{year:{{}},month:{{}},day:{{}},hour:{{}},minute:{{}},second:{{}},timestamp:{{}},iso8601:{{}}}}}}\", ")?;
-                        write!(self.buffer, "now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second(), now.timestamp(), now.to_rfc3339())")?;
-                        write!(self.buffer, "}}")?;
+                        if args.is_empty() {
+                            // time() with no args
+                            write!(self.buffer, "time()")?;
+                        } else {
+                            // time(timezone) with timezone arg
+                            write!(self.buffer, "time_with_tz(")?;
+                            self.generate_expression(&args[0])?;
+                            write!(self.buffer, ")")?;
+                        }
                         return Ok(());
                     }
                 }
@@ -810,28 +897,32 @@ impl RustCodeGenerator {
             }
 
             Expression::Index { object, index, .. } => {
-                // ✅ PHASE 1: Handle dict indexing with potential DictValue unwrapping
+                // ✅ PERFORMANCE: Fast dictionary/list indexing
                 let obj_type = self.infer_expr_type(object).ok();
 
-                self.generate_expression(object)?;
-                write!(self.buffer, "[")?;
-
-                // For dict indexing, we need to use &String
+                // For dict indexing, use .get().unwrap().clone()
                 if matches!(obj_type, Some(Type::Dict(_, _))) {
-                    write!(self.buffer, "&")?;
-                    self.generate_expression(index)?;
+                    self.generate_expression(object)?;
+                    write!(self.buffer, ".get(")?;
+
+                    // ✅ FIX: Check if index is a string literal
+                    if let Expression::Literal(Literal::String(s), _) = index.as_ref() {
+                        // Direct string literal - no .to_string() needed
+                        write!(self.buffer, "\"{}\"", s)?;
+                    } else {
+                        // Dynamic expression - need reference
+                        write!(self.buffer, "&(")?;
+                        self.generate_expression(index)?;
+                        write!(self.buffer, ")")?;
+                    }
+
+                    write!(self.buffer, ").unwrap().clone()")?;
                 } else {
-                    // For list/array indexing, convert i64 to usize
-                    write!(self.buffer, "(")?;
+                    // For list/array indexing, use [] with usize
+                    self.generate_expression(object)?;
+                    write!(self.buffer, "[(")?;
                     self.generate_expression(index)?;
-                    write!(self.buffer, " as usize)")?;
-                }
-
-                write!(self.buffer, "]")?;
-
-                // For dicts, clone the value to avoid ownership issues
-                if matches!(obj_type, Some(Type::Dict(_, _))) {
-                    write!(self.buffer, ".clone()")?;
+                    write!(self.buffer, " as usize)]")?;
                 }
             }
 
@@ -865,6 +956,19 @@ impl RustCodeGenerator {
                     write!(self.buffer, "map ")?;
                     write!(self.buffer, "}}")?;
                 }
+            }
+
+            Expression::Lambda { params, body, .. } => {
+                // Generate closure: |param1, param2| { body }
+                write!(self.buffer, "|")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(self.buffer, ", ")?;
+                    }
+                    write!(self.buffer, "{}", param.name)?;
+                }
+                write!(self.buffer, "| ")?;
+                self.generate_expression(body)?;
             }
 
             Expression::Match { value, arms, .. } => {
@@ -913,7 +1017,7 @@ impl RustCodeGenerator {
                     }
                 }
 
-                // ✅ FIX #1: Dictionary member access - always use indexing for dicts
+                // ✅ PERFORMANCE: Fast dictionary member access with [] indexing
                 let obj_type = self.infer_expr_type(object).ok();
                 let is_dict = matches!(obj_type, Some(Type::Dict(_, _)));
 
@@ -930,14 +1034,14 @@ impl RustCodeGenerator {
                 };
 
                 if is_dict || is_dict_var {
-                    // Access dict using indexing and clone the value
+                    // Access dict using fast indexing and clone the value
                     // user.age  →  user[&"age".to_string()].clone()
                     self.generate_expression(object)?;
                     write!(self.buffer, "[&\"{}\".to_string()].clone()", member)?;
                 } else if is_nested_dict_access {
-                    // Nested dict access: data.nested.value → data["nested"].get("value").unwrap().clone()
+                    // Nested dict access: data.nested.value → data["nested"]["value"].clone()
                     self.generate_expression(object)?;
-                    write!(self.buffer, ".get(\"{}\").unwrap().clone()", member)?;
+                    write!(self.buffer, "[\"{}\"].clone()", member)?;
                 } else {
                     // Fallback for other member access
                     self.generate_expression(object)?;
@@ -1048,6 +1152,7 @@ impl RustCodeGenerator {
             BinaryOp::GtEq => ">=",
             BinaryOp::And => "&&",
             BinaryOp::Or => "||",
+            BinaryOp::In => "IN",  // Special handling needed
         }
     }
 
@@ -1138,7 +1243,7 @@ impl RustCodeGenerator {
                         }
                     }
                     BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt |
-                    BinaryOp::LtEq | BinaryOp::GtEq | BinaryOp::And | BinaryOp::Or => {
+                    BinaryOp::LtEq | BinaryOp::GtEq | BinaryOp::And | BinaryOp::Or | BinaryOp::In => {
                         Ok(Type::Bool)
                     }
                     _ => Ok(Type::Int),
@@ -1174,11 +1279,23 @@ impl RustCodeGenerator {
                 // Try to infer from known built-ins
                 if let Expression::Ident(name, _) = callee.as_ref() {
                     match name.as_str() {
+                        // Type conversions
                         "int" => Ok(Type::Int),
                         "float" => Ok(Type::Float),
                         "str" => Ok(Type::String),
+
+                        // Utilities
                         "len" => Ok(Type::Int),
                         "range" => Ok(Type::List(Box::new(Type::Int))),
+                        "print" => Ok(Type::None),
+
+                        // Time
+                        "time" => Ok(Type::Dict(
+                            Box::new(Type::String),
+                            Box::new(Type::Any)  // Values can be Int or String
+                        )),
+
+                        // List operations
                         "push" | "pop" => {
                             // ✅ PHASE 2: Infer list type from first argument
                             if !args.is_empty() {
@@ -1187,8 +1304,22 @@ impl RustCodeGenerator {
                                 Ok(Type::List(Box::new(Type::Any)))
                             }
                         }
-                        "keys" | "values" => Ok(Type::List(Box::new(Type::Any))),
-                        "print" => Ok(Type::None),
+                        "keys" => Ok(Type::List(Box::new(Type::String))),
+                        "values" => Ok(Type::List(Box::new(Type::Any))),
+
+                        // JSON/YAML
+                        "json_parse" | "yaml_parse" => Ok(Type::Any),
+                        "json_stringify" | "yaml_stringify" => Ok(Type::String),
+
+                        // File I/O
+                        "read_file" => Ok(Type::String),
+                        "write_file" | "append_file" | "delete_file" => Ok(Type::None),
+                        "file_exists" => Ok(Type::Bool),
+                        "open" => Ok(Type::String),  // Returns file handle ID
+
+                        // Networking
+                        "http_request" => Ok(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+                        "http_session" => Ok(Type::String),  // Returns session ID
                         // File I/O functions
                         "file_exists" => Ok(Type::Bool),
                         "read_file" => Ok(Type::String),
@@ -1196,8 +1327,7 @@ impl RustCodeGenerator {
                         // JSON/YAML functions
                         "json_parse" | "yaml_parse" => Ok(Type::Any),
                         "json_stringify" | "yaml_stringify" => Ok(Type::String),
-                        // Time function
-                        "time" => Ok(Type::String),
+                        // ✅ time() type is defined above at line 1284-1287
                         _ => {
                             // ✅ PHASE 3: Look up function in tracked types
                             if let Some(func_type) = self.variable_types.get(name) {
@@ -1254,6 +1384,17 @@ impl RustCodeGenerator {
                     Type::Dict(_, value_type) => Ok((*value_type).clone()),
                     _ => Ok(Type::Any),
                 }
+            }
+            Expression::Lambda { params, body, .. } => {
+                // Infer lambda type: fn(param_types) -> return_type
+                let param_types: Vec<Type> = params.iter()
+                    .map(|p| p.type_annotation.clone().unwrap_or(Type::Any))
+                    .collect();
+                let return_type = Box::new(self.infer_expr_type(body)?);
+                Ok(Type::Function {
+                    params: param_types,
+                    return_type,
+                })
             }
             _ => Ok(Type::Any),
         }
@@ -1816,9 +1957,9 @@ impl RustCodeGenerator {
                 // ✅ PASS 23 FIX #1: Resolve file path with multiple strategies
                 let resolved_path = self.resolve_plugin_file_path(path.as_ref())?;
                 std::fs::read_to_string(&resolved_path)
-                    .map_err(|e| TBError::PluginError {
-                        message: format!("Failed to read plugin file '{}': {}", resolved_path.display(), e),
-                    })?
+                    .map_err(|e| TBError::plugin_error(format!(
+                        "Failed to read plugin file '{}': {}", resolved_path.display(), e
+                    )))?
             }
         };
 
@@ -3316,16 +3457,14 @@ impl RustCodeGenerator {
         }
 
         // All strategies failed - return error with helpful message
-        Err(TBError::PluginError {
-            message: format!(
-                "Plugin file not found: '{}'\nTried:\n  1. Direct path: {}\n  2. CWD relative: {:?}\n  3. Test relative: {:?}\n  4. Normalized: {}",
-                file_path,
-                path_buf.display(),
-                std::env::current_dir().ok().map(|cwd| cwd.join(file_path)),
-                test_relative,
-                normalized
-            ),
-        })
+        Err(TBError::plugin_error(format!(
+            "Plugin file not found: '{}'\nTried:\n  1. Direct path: {}\n  2. CWD relative: {:?}\n  3. Test relative: {:?}\n  4. Normalized: {}",
+            file_path,
+            path_buf.display(),
+            std::env::current_dir().ok().map(|cwd| cwd.join(file_path)),
+            test_relative,
+            normalized
+        )))
     }
 }
 
