@@ -1,9 +1,9 @@
-use crate::builtins;
 use im::HashMap as ImHashMap;
 use std::sync::Arc;
 use std::path::PathBuf;
 use tb_core::*;
 use tb_plugin::PluginLoader;
+use tb_builtins; // ADDED
 
 /// JIT executor using tree-walking interpreter with persistent data structures
 pub struct JitExecutor {
@@ -18,7 +18,14 @@ pub struct JitExecutor {
 impl JitExecutor {
     pub fn new() -> Self {
         let mut env = ImHashMap::new();
-        builtins::register_builtins(&mut env);
+        // Centralized built-in registration
+        for (name, func) in tb_builtins::register_all_builtins() {
+            let native_func = Value::NativeFunction(Arc::new(NativeFunction {
+                name: Arc::new(name.to_string()),
+                func: Arc::new(func),
+            }));
+            env.insert(Arc::new(name.to_string()), native_func);
+        }
 
         Self {
             env,

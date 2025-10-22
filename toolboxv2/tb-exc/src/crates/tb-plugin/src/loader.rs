@@ -118,6 +118,23 @@ impl PluginLoader {
         Ok(value)
     }
 
+    pub fn unload_library(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy().to_string();
+        tb_debug_plugin!("Unloading library: {}", path_str);
+
+        if let Some((_, lib_arc)) = self.loaded_libraries.remove(&path_str) {
+            let lib_ptr_str = format!("{:p}:", Arc::as_ptr(&lib_arc));
+            self.function_cache.retain(|key, _| !key.starts_with(&lib_ptr_str));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn list_loaded_libraries(&self) -> Vec<String> {
+        self.loaded_libraries.iter().map(|r| r.key().clone()).collect()
+    }
+
     /// Load and execute plugin with runtime execution support
     pub fn load_and_execute(
         &self,
@@ -126,8 +143,7 @@ impl PluginLoader {
         library_path: &Path,
         function_name: &str,
         args: Vec<Value>,
-    ) -> Result<Value> {
-        use tb_core::{PluginLanguage, PluginMode};
+    ) -> Result<Value> {        use tb_core::{PluginLanguage, PluginMode};
 
         tb_debug_plugin!("load_and_execute: {:?} {:?} {} {}", language, mode, library_path.display(), function_name);
 

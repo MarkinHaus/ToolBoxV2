@@ -14,11 +14,20 @@ pub mod error;
 pub mod builtins_impl;
 
 use std::sync::Arc;
-use tb_core::{Value, TBError};
+use tb_core::{Value, TBError, Program};
+
+use tb_cache::CacheManager;
+use tb_plugin::PluginLoader;
+use tokio::task::JoinHandle;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
 pub use error::{BuiltinError, BuiltinResult};
+
+use crate::builtins_impl::*;
+
+// Import all built-in functions
+use crate::builtins_impl::*;
 
 /// Global runtime for async operations
 pub static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -36,6 +45,21 @@ pub static NETWORK_SERVERS: Lazy<DashMap<String, Arc<networking::ServerHandle>>>
 /// Global HTTP session registry
 pub static HTTP_SESSIONS: Lazy<DashMap<String, Arc<networking::HttpSession>>> = Lazy::new(DashMap::new);
 
+// NEUE GLOBALE ZUSTÄNDE HINZUFÜGEN
+pub static CACHE_MANAGER: Lazy<Arc<CacheManager>> = Lazy::new(|| {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("tb-lang");
+    Arc::new(CacheManager::new(cache_dir, 100).expect("Failed to create CacheManager"))
+});
+
+pub static PLUGIN_LOADER: Lazy<Arc<PluginLoader>> = Lazy::new(|| {
+    Arc::new(PluginLoader::new())
+});
+
+pub static ACTIVE_TASKS: Lazy<DashMap<String, JoinHandle<Result<Value, TBError>>>> =
+    Lazy::new(DashMap::new);
+
 /// Register all built-in functions
 pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     let mut builtins = Vec::new();
@@ -45,6 +69,19 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("read_file", builtin_read_file as BuiltinFn));
     builtins.push(("write_file", builtin_write_file as BuiltinFn));
     builtins.push(("file_exists", builtin_file_exists as BuiltinFn));
+    builtins.push(("list_dir", builtins_impl::builtin_list_dir as BuiltinFn));
+    builtins.push(("create_dir", builtins_impl::builtin_create_dir as BuiltinFn));
+    builtins.push(("delete_file", builtins_impl::builtin_delete_file as BuiltinFn));
+
+    // System
+    builtins.push(("execute", builtins_impl::builtin_execute as BuiltinFn));
+    builtins.push(("get_env", builtins_impl::builtin_get_env as BuiltinFn));
+    builtins.push(("sleep", builtins_impl::builtin_sleep as BuiltinFn));
+
+    // Introspection
+    builtins.push(("type_of", builtins_impl::builtin_type_of as BuiltinFn));
+    builtins.push(("dir", builtins_impl::builtin_dir as BuiltinFn));
+    builtins.push(("has_attr", builtins_impl::builtin_has_attr as BuiltinFn));
 
     // Networking
     builtins.push(("create_server", builtins_impl::builtin_create_server as BuiltinFn));
@@ -60,118 +97,32 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("yaml_stringify", builtins_impl::builtin_yaml_stringify as BuiltinFn));
     builtins.push(("time", builtins_impl::builtin_time as BuiltinFn));
 
+    // Cache Management
+    builtins.push(("cache_stats", builtins_impl::builtin_cache_stats as BuiltinFn));
+    builtins.push(("cache_clear", builtins_impl::builtin_cache_clear as BuiltinFn));
+    builtins.push(("cache_invalidate", builtins_impl::builtin_cache_invalidate as BuiltinFn));
+
+    // Plugin Management
+    builtins.push(("list_plugins", builtins_impl::builtin_list_plugins as BuiltinFn));
+    builtins.push(("reload_plugin", builtins_impl::builtin_reload_plugin as BuiltinFn));
+    builtins.push(("unload_plugin", builtins_impl::builtin_unload_plugin as BuiltinFn));
+    builtins.push(("plugin_info", builtins_impl::builtin_plugin_info as BuiltinFn));
+
+    // Async Task Management
+    builtins.push(("spawn", builtins_impl::builtin_spawn as BuiltinFn));
+    builtins.push(("await_task", builtins_impl::builtin_await_task as BuiltinFn));
+    builtins.push(("cancel_task", builtins_impl::builtin_cancel_task as BuiltinFn));
+
+    // Serialisierung & Hashing
+    builtins.push(("bincode_serialize", builtins_impl::builtin_bincode_serialize as BuiltinFn));
+    builtins.push(("bincode_deserialize", builtins_impl::builtin_bincode_deserialize as BuiltinFn));
+    builtins.push(("hash", builtins_impl::builtin_hash as BuiltinFn));
+
     builtins
 }
 
 /// Built-in function signature
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, TBError>;
 
-// ============================================================================
-// FILE I/O BUILT-INS
-// ============================================================================
 
-/// open(path: str, mode: str, key: str = None, encoding: str = "utf-8") -> FileHandle
-fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 5 {
-        return Err(TBError::runtime_error("open() takes 1-4 arguments: path, mode, key, encoding"));
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("open() path must be a string")),
-    };
-
-    let mode = if args.len() > 1 {
-        match &args[1] {
-            Value::String(s) => s.to_string(),
-            _ => "r".to_string(),
-        }
-    } else {
-        "r".to_string()
-    };
-
-    let key = if args.len() > 3 {
-        match &args[3] {
-            Value::String(s) => Some(s.to_string()),
-            Value::None => None,
-            _ => return Err(TBError::runtime_error("open() key must be a string or None")),
-        }
-    } else {
-        None
-    };
-
-    let encoding = if args.len() > 4 {
-        match &args[4] {
-            Value::String(s) => s.to_string(),
-            _ => "utf-8".to_string(),
-        }
-    } else {
-        "utf-8".to_string()
-    };
-
-    let handle = RUNTIME.block_on(async {
-        file_io::open_file(path, mode, key, encoding).await
-    })?;
-
-    Ok(Value::String(Arc::new(handle)))
-}
-
-/// read_file(path: str) -> str
-fn builtin_read_file(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 1 {
-        return Err(TBError::runtime_error("read_file() takes 1 argument: path"));
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("read_file() path must be a string")),
-    };
-
-    let content = RUNTIME.block_on(async {
-        file_io::read_file(path, false).await
-    })?;
-
-    Ok(Value::String(Arc::new(content)))
-}
-
-/// write_file(path: str, content: str) -> None
-fn builtin_write_file(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::runtime_error("write_file() takes 2 arguments: path, content"));
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("write_file() path must be a string")),
-    };
-
-    let content = match &args[1] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("write_file() content must be a string")),
-    };
-
-    RUNTIME.block_on(async {
-        file_io::write_file(path, content, false).await
-    })?;
-
-    Ok(Value::None)
-}
-
-/// file_exists(path: str) -> bool
-fn builtin_file_exists(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 1 {
-        return Err(TBError::runtime_error("file_exists() takes 1 argument: path"));
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("file_exists() path must be a string")),
-    };
-
-    let exists = RUNTIME.block_on(async {
-        file_io::file_exists(path, false).await
-    })?;
-
-    Ok(Value::Bool(exists))
-}
 

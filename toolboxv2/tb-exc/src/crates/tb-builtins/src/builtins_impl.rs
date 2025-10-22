@@ -2,8 +2,532 @@
 
 use crate::*;
 use std::sync::Arc;
-use tb_core::{Value, TBError};
+use tb_core::{Value, TBError, Program};
 use std::collections::HashMap;
+use im::HashMap as ImHashMap;
+use tokio::process::Command;
+use sha2::{Sha256, Sha512, Sha224, Sha384, Digest};
+
+// ============================================================================
+// FILE I/O BUILT-INS
+// ============================================================================
+
+/// open(path: str, mode: str, key: str = None, encoding: str = "utf-8") -> FileHandle
+pub fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() || args.len() > 5 {
+        return Err(TBError::runtime_error("open() takes 1-4 arguments: path, mode, key, encoding"));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("open() path must be a string")),
+    };
+
+    let mode = if args.len() > 1 {
+        match &args[1] {
+            Value::String(s) => s.to_string(),
+            _ => "r".to_string(),
+        }
+    } else {
+        "r".to_string()
+    };
+
+    let key = if args.len() > 3 {
+        match &args[3] {
+            Value::String(s) => Some(s.to_string()),
+            Value::None => None,
+            _ => return Err(TBError::runtime_error("open() key must be a string or None")),
+        }
+    } else {
+        None
+    };
+
+    let encoding = if args.len() > 4 {
+        match &args[4] {
+            Value::String(s) => s.to_string(),
+            _ => "utf-8".to_string(),
+        }
+    } else {
+        "utf-8".to_string()
+    };
+
+    let handle = RUNTIME.block_on(async {
+        file_io::open_file(path, mode, key, encoding).await
+    })?;
+
+    Ok(Value::String(Arc::new(handle)))
+}
+
+/// read_file(path: str) -> str
+pub fn builtin_read_file(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() || args.len() > 1 {
+        return Err(TBError::runtime_error("read_file() takes 1 argument: path"));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("read_file() path must be a string")),
+    };
+
+    let content = RUNTIME.block_on(async {
+        file_io::read_file(path, false).await
+    })?;
+
+    Ok(Value::String(Arc::new(content)))
+}
+
+/// write_file(path: str, content: str) -> None
+pub fn builtin_write_file(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("write_file() takes 2 arguments: path, content"));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("write_file() path must be a string")),
+    };
+
+    let content = match &args[1] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("write_file() content must be a string")),
+    };
+
+    RUNTIME.block_on(async {
+        file_io::write_file(path, content, false).await
+    })?;
+
+    Ok(Value::None)
+}
+
+/// file_exists(path: str) -> bool
+pub fn builtin_file_exists(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("file_exists() takes 1 argument: path"));
+    }
+
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("file_exists() path must be a string")),
+    };
+
+    let exists = RUNTIME.block_on(async {
+        file_io::file_exists(path, false).await
+    })?;
+
+    Ok(Value::Bool(exists))
+}
+
+
+// ============================================================================
+// INTROSPEKTION
+// ============================================================================
+
+/// type_of(value) -> str
+pub fn builtin_type_of(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("type_of() takes 1 argument"));
+    }
+    Ok(Value::String(Arc::new(args[0].type_name().to_string())))
+}
+
+/// dir(object) -> list[str]
+pub fn builtin_dir(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("dir() takes 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Dict(map) => {
+            let keys: Vec<Value> = map.keys()
+                .map(|k| Value::String(Arc::clone(k)))
+                .collect();
+            Ok(Value::List(Arc::new(keys)))
+        }
+        _ => Ok(Value::List(Arc::new(vec![]))) // Leere Liste für andere Typen
+    }
+}
+
+/// has_attr(object, name: str) -> bool
+pub fn builtin_has_attr(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("has_attr() takes 2 arguments"));
+    }
+
+    let attr_name = match &args[1] {
+        Value::String(s) => s,
+        _ => return Err(TBError::runtime_error("Attribute name must be a string")),
+    };
+
+    match &args[0] {
+        Value::Dict(map) => Ok(Value::Bool(map.contains_key(attr_name))),
+        _ => Ok(Value::Bool(false)),
+    }
+}
+
+// ============================================================================
+// SYSTEM & I/O
+// ============================================================================
+
+pub fn builtin_list_dir(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("list_dir() takes 1 argument: path"));
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("path must be a string")),
+    };
+
+    let entries = RUNTIME.block_on(async {
+        file_io::list_dir(path).await
+    })?;
+
+    let values: Vec<Value> = entries.into_iter().map(|s| Value::String(Arc::new(s))).collect();
+    Ok(Value::List(Arc::new(values)))
+}
+
+pub fn builtin_create_dir(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() < 1 || args.len() > 2 {
+        return Err(TBError::runtime_error("create_dir() takes 1-2 arguments: path, recursive=false"));
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("path must be a string")),
+    };
+    let recursive = if args.len() == 2 {
+        match &args[1] {
+            Value::Bool(b) => *b,
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    RUNTIME.block_on(async {
+        file_io::create_dir(path, recursive).await
+    })?;
+
+    Ok(Value::None)
+}
+
+pub fn builtin_delete_file(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("delete_file() takes 1 argument: path"));
+    }
+    let path = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("path must be a string")),
+    };
+
+    RUNTIME.block_on(async {
+        file_io::delete_file(path, false).await
+    })?;
+
+    Ok(Value::None)
+}
+
+pub fn builtin_execute(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() {
+        return Err(TBError::runtime_error("execute() requires at least one argument for the command"));
+    }
+
+    let command_args: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+    let (command, args) = command_args.split_first().unwrap();
+
+    let output = RUNTIME.block_on(async {
+        Command::new(command)
+            .args(args)
+            .output()
+            .await
+    })?;
+
+    let mut result_map = ImHashMap::new();
+    result_map.insert(Arc::new("status".to_string()), Value::Int(output.status.code().unwrap_or(-1) as i64));
+    result_map.insert(Arc::new("stdout".to_string()), Value::String(Arc::new(String::from_utf8_lossy(&output.stdout).to_string())));
+    result_map.insert(Arc::new("stderr".to_string()), Value::String(Arc::new(String::from_utf8_lossy(&output.stderr).to_string())));
+
+    Ok(Value::Dict(Arc::new(result_map)))
+}
+
+pub fn builtin_get_env(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("get_env() takes 1 argument: var_name"));
+    }
+    let var_name = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("var_name must be a string")),
+    };
+
+    match std::env::var(var_name) {
+        Ok(val) => Ok(Value::String(Arc::new(val))),
+        Err(_) => Ok(Value::None),
+    }
+}
+
+pub fn builtin_sleep(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("sleep() takes 1 argument: seconds"));
+    }
+    let seconds = match &args[0] {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => *f,
+        _ => return Err(TBError::runtime_error("seconds must be a number")),
+    };
+
+    RUNTIME.block_on(async {
+        tokio::time::sleep(tokio::time::Duration::from_secs_f64(seconds)).await;
+    });
+
+    Ok(Value::None)
+}
+
+
+// ============================================================================
+// CACHE MANAGEMENT
+// ============================================================================
+
+/// cache_stats() -> dict
+pub fn builtin_cache_stats(_args: Vec<Value>) -> Result<Value, TBError> {
+    let mut stats_map = ImHashMap::new();
+
+    // Hot Cache
+    let hot_stats = CACHE_MANAGER.stats();
+    let mut hot_map = ImHashMap::new();
+    hot_map.insert(Arc::new("entries".to_string()), Value::Int(hot_stats.hot_cache_entries as i64));
+    hot_map.insert(Arc::new("size_bytes".to_string()), Value::Int(hot_stats.hot_cache_bytes as i64));
+    stats_map.insert(Arc::new("hot_cache".to_string()), Value::Dict(Arc::new(hot_map)));
+
+    // Import Cache
+    let import_stats = CACHE_MANAGER.import_cache().stats();
+    let mut import_map = ImHashMap::new();
+    import_map.insert(Arc::new("entries".to_string()), Value::Int(import_stats.entries as i64));
+    import_map.insert(Arc::new("size_bytes".to_string()), Value::Int(import_stats.total_bytes as i64));
+    stats_map.insert(Arc::new("import_cache".to_string()), Value::Dict(Arc::new(import_map)));
+
+    Ok(Value::Dict(Arc::new(stats_map)))
+}
+
+/// cache_clear(cache_name: str = "all")
+pub fn builtin_cache_clear(args: Vec<Value>) -> Result<Value, TBError> {
+    let cache_name = if args.is_empty() {
+        "all".to_string()
+    } else if let Value::String(s) = &args[0] {
+        s.to_string()
+    } else {
+        return Err(TBError::runtime_error("cache_clear() argument must be a string"));
+    };
+
+    match cache_name.as_str() {
+        "hot" => CACHE_MANAGER.clear_hot_cache(),
+        "imports" => CACHE_MANAGER.import_cache().clear()?,
+        // "artifacts" => CACHE_MANAGER.artifact_cache().clear()?, // Annahme: clear() wird implementiert
+        "all" => {
+            CACHE_MANAGER.clear_hot_cache();
+            CACHE_MANAGER.import_cache().clear()?;
+            // CACHE_MANAGER.artifact_cache().clear()?;
+        }
+        _ => return Err(TBError::runtime_error(format!("Unknown cache: {}", cache_name))),
+    }
+
+    Ok(Value::Bool(true))
+}
+
+/// cache_invalidate(module_path: str)
+pub fn builtin_cache_invalidate(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() {
+        return Err(TBError::runtime_error("cache_invalidate() requires a module path"));
+    }
+    let path = match &args[0] {
+        Value::String(s) => std::path::PathBuf::from(s.as_ref()),
+        _ => return Err(TBError::runtime_error("Path must be a string")),
+    };
+
+    CACHE_MANAGER.import_cache().invalidate(&path)?;
+    Ok(Value::Bool(true))
+}
+
+
+// ============================================================================
+// PLUGIN MANAGEMENT
+// ============================================================================
+
+/// list_plugins() -> list[str]
+pub fn builtin_list_plugins(_args: Vec<Value>) -> Result<Value, TBError> {
+    let loaded = PLUGIN_LOADER.list_loaded_libraries(); // Annahme: diese Methode wird implementiert
+    let values: Vec<Value> = loaded.into_iter().map(|s| Value::String(Arc::new(s))).collect();
+    Ok(Value::List(Arc::new(values)))
+}
+
+/// unload_plugin(name: str) -> bool
+pub fn builtin_unload_plugin(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() { return Err(TBError::runtime_error("unload_plugin() requires a plugin name")); }
+    let name = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("Plugin name must be a string")),
+    };
+
+    let result = PLUGIN_LOADER.unload_library(std::path::Path::new(&name));
+    Ok(Value::Bool(result))
+}
+
+/// reload_plugin(name: str) -> bool
+pub fn builtin_reload_plugin(args: Vec<Value>) -> Result<Value, TBError> {
+    // Implementierung: zuerst unload, dann load.
+    // Hier ist Vorsicht geboten, um Race Conditions zu vermeiden.
+    // Fürs Erste:
+    let name_val = args.get(0).ok_or_else(|| TBError::runtime_error("reload_plugin requires a name"))?.clone();
+    builtin_unload_plugin(vec![name_val])?;
+    // Der nächste Aufruf einer Funktion aus dem Plugin wird es neu laden (Lazy Loading).
+    Ok(Value::Bool(true))
+}
+
+/// plugin_info(name: str) -> dict
+pub fn builtin_plugin_info(args: Vec<Value>) -> Result<Value, TBError> {
+    // Diese Funktion benötigt Zugriff auf die Plugin-Metadaten,
+    // die idealerweise in einer globalen Registry gespeichert werden.
+    Ok(Value::Dict(Arc::new(ImHashMap::new()))) // Placeholder
+}
+
+
+// ============================================================================
+// ASYNC TASK MANAGEMENT
+// ============================================================================
+
+/// spawn(func: fn, args: list) -> task_id
+pub fn builtin_spawn(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("spawn() takes 2 arguments: function, args_list"));
+    }
+
+    let func = match &args[0] {
+        Value::Function(f) => Arc::clone(f),
+        _ => return Err(TBError::runtime_error("First argument to spawn() must be a function")),
+    };
+
+    let func_args = match &args[1] {
+        Value::List(l) => (**l).clone(),
+        _ => return Err(TBError::runtime_error("Second argument to spawn() must be a list")),
+    };
+
+    // WICHTIG: Hier fehlt der Executor-Kontext (Environment).
+    // Eine vollständige Implementierung benötigt Zugriff auf den aktuellen JitExecutor.
+    // Als Vereinfachung gehen wir davon aus, dass die Funktion keine Umgebungsvariablen benötigt.
+
+    let handle = RUNTIME.spawn(async move {
+        // In einem echten Szenario würde hier ein neuer Executor mit geklontem Env erstellt.
+        // Vereinfachung:
+        if func.params.len() != func_args.len() {
+            return Err(TBError::runtime_error("Argument count mismatch in spawned task"));
+        }
+        // Direkter Aufruf ist hier nicht trivial. Der Body der Funktion muss evaluiert werden.
+        // Das ist ein komplexes Problem, das eine enge Integration mit dem Executor erfordert.
+        // Als Platzhalter geben wir einen Fehler zurück.
+        Err(TBError::runtime_error("Spawning functions is not fully implemented yet."))
+    });
+
+    let task_id = uuid::Uuid::new_v4().to_string();
+    ACTIVE_TASKS.insert(task_id.clone(), handle);
+
+    Ok(Value::String(Arc::new(task_id)))
+}
+
+
+/// await_task(task_id) -> value
+pub fn builtin_await_task(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 { return Err(TBError::runtime_error("await_task() takes 1 argument")); }
+    let task_id = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("Task ID must be a string")),
+    };
+
+    if let Some((_, handle)) = ACTIVE_TASKS.remove(&task_id) {
+        let result = RUNTIME.block_on(handle)
+            .map_err(|e| BuiltinError::TaskError(format!("Task panicked: {}", e)))??;
+        Ok(result)
+    } else {
+        Err(BuiltinError::TaskError(format!("Task not found: {}", task_id)).into())
+    }
+}
+
+/// cancel_task(task_id) -> bool
+pub fn builtin_cancel_task(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 { return Err(TBError::runtime_error("cancel_task() takes 1 argument")); }
+    let task_id = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("Task ID must be a string")),
+    };
+
+    if let Some(entry) = ACTIVE_TASKS.get(&task_id) {
+        entry.value().abort();
+        ACTIVE_TASKS.remove(&task_id);
+        Ok(Value::Bool(true))
+    } else {
+        Ok(Value::Bool(false))
+    }
+}
+
+
+// ============================================================================
+// SERIALIZATION & HASHING
+// ============================================================================
+
+pub fn builtin_bincode_serialize(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("bincode_serialize() takes 1 argument"));
+    }
+    let value = &args[0];
+    let encoded: Vec<u8> = bincode::serialize(value).map_err(|e| TBError::runtime_error(format!("bincode serialization failed: {}", e)))?;
+    Ok(Value::List(Arc::new(encoded.into_iter().map(|b| Value::Int(b as i64)).collect())))
+}
+
+pub fn builtin_bincode_deserialize(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("bincode_deserialize() takes 1 argument"));
+    }
+    let bytes_val = match &args[0] {
+        Value::List(l) => l,
+        _ => return Err(TBError::runtime_error("argument must be a list of bytes (integers)"))
+    };
+
+    let bytes: Vec<u8> = bytes_val.iter().map(|v| match v {
+        Value::Int(i) => *i as u8,
+        _ => 0,
+    }).collect();
+
+    let decoded: Value = bincode::deserialize(&bytes).map_err(|e| TBError::runtime_error(format!("bincode deserialization failed: {}", e)))?;
+    Ok(decoded)
+}
+
+
+pub fn builtin_hash(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("hash() requires 2 arguments: algorithm, data"));
+    }
+    let algo = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(TBError::runtime_error("algorithm must be a string")),
+    };
+    let data_val = args[1].clone();
+    let data = match data_val {
+        Value::String(s) => s.as_bytes().to_vec(),
+        Value::List(l) => l.iter().map(|v| match v {
+            Value::Int(i) => *i as u8,
+            _ => 0,
+        }).collect(),
+        _ => return Err(TBError::runtime_error("data must be a string or a list of bytes")),
+    };
+
+    let hash_str = match algo.as_str() {
+        "sha256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            let result = hasher.finalize();
+            format!("{:x}", result)
+        }
+        _ => return Err(TBError::runtime_error(format!("unsupported hash algorithm: {}", algo))),
+    };
+
+    Ok(Value::String(Arc::new(hash_str)))
+}
 
 // ============================================================================
 // NETWORKING BUILT-INS
@@ -447,4 +971,3 @@ pub fn builtin_time(args: Vec<Value>) -> Result<Value, TBError> {
 
     Ok(Value::Dict(Arc::new(tb_map)))
 }
-

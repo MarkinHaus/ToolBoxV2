@@ -28,6 +28,9 @@ pub enum BuiltinError {
 
     #[error("Runtime error: {0}")]
     Runtime(String),
+
+    #[error("Task error: {0}")]
+    TaskError(String),
 }
 
 pub type BuiltinResult<T> = Result<T, BuiltinError>;
