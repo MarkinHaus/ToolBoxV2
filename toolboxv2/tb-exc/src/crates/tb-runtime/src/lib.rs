@@ -470,6 +470,17 @@ impl Len for DictValue {
     }
 }
 
+impl Len for &DictValue {
+    fn tb_len(&self) -> i64 {
+        match self {
+            DictValue::List(v) => v.len() as i64,
+            DictValue::Dict(m) => m.len() as i64,
+            DictValue::String(s) => s.len() as i64,
+            _ => 0,
+        }
+    }
+}
+
 impl<K, V> Len for HashMap<K, V> {
     fn tb_len(&self) -> i64 {
         self.len() as i64
@@ -841,11 +852,33 @@ pub fn round(x: f64) -> f64 {
 // JSON/YAML FUNCTIONS
 // ============================================================================
 
+/// Helper: Convert DictValue to serde_json::Value
+fn dict_value_to_json_value(val: &DictValue) -> serde_json::Value {
+    match val {
+        DictValue::Int(i) => serde_json::Value::Number((*i).into()),
+        DictValue::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        DictValue::String(s) => serde_json::Value::String(s.clone()),
+        DictValue::Bool(b) => serde_json::Value::Bool(*b),
+        DictValue::List(list) => {
+            serde_json::Value::Array(list.iter().map(dict_value_to_json_value).collect())
+        },
+        DictValue::Dict(map) => {
+            let mut json_map = serde_json::Map::new();
+            for (k, v) in map {
+                json_map.insert(k.clone(), dict_value_to_json_value(v));
+            }
+            serde_json::Value::Object(json_map)
+        },
+    }
+}
+
 /// Helper: Convert serde_json::Value to DictValue
 fn json_value_to_dict_value(val: &serde_json::Value) -> DictValue {
     match val {
         serde_json::Value::Null => DictValue::Int(0),
-        serde_json::Value::Bool(b) => DictValue::Int(if *b { 1 } else { 0 }),
+        serde_json::Value::Bool(b) => DictValue::Bool(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 DictValue::Int(i)
@@ -916,7 +949,12 @@ pub fn json_parse(json_str: String) -> Option<HashMap<String, DictValue>> {
 
 /// JSON stringify function
 pub fn json_stringify(value: &HashMap<String, DictValue>) -> String {
-    serde_json::to_string(value).unwrap_or_default()
+    let mut json_map = serde_json::Map::new();
+    for (k, v) in value {
+        json_map.insert(k.clone(), dict_value_to_json_value(v));
+    }
+    let json_value = serde_json::Value::Object(json_map);
+    serde_json::to_string(&json_value).unwrap_or_default()
 }
 
 /// YAML parse function

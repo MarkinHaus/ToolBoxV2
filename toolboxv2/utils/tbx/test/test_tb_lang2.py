@@ -188,11 +188,14 @@ def find_tb_binary() -> str:
             Path("tb"),
         ]
 
+    paths = [os.environ.get("TB_EXE"), os.environ.get("TB_BINARY")]+paths
     # Add .exe for Windows
     if os.name == 'nt':
         paths = [Path(str(p) + ".exe") for p in paths]
 
     for path in paths:
+        if path is None:
+            continue
         if shutil.which(str(path)) or os.path.exists(path):
             return str(path)
 
@@ -3150,8 +3153,8 @@ print("Session created")
 @test("Networking: HTTP GET request", "Built-in Functions - Networking", slow=True)
 def test_http_get_request(mode):
     assert_output("""
-let session = http_session("https://httpbin.org")
-let response = http_request(session, "/get", "GET", None)
+let session = http_session("https://google.com")
+let response = http_request(session, "/", "GET", None)
 if response["status"] == 200 {
     print("GET successful")
 } else {
@@ -3162,9 +3165,9 @@ if response["status"] == 200 {
 @test("Networking: HTTP POST request with JSON", "Built-in Functions - Networking", slow=True)
 def test_http_post_json(mode):
     assert_output("""
-let session = http_session("https://httpbin.org")
+let session = http_session("https://simplecore.app")
 let data = {"name": "TB Test", "value": 42}
-let response = http_request(session, "/post", "POST", data)
+let response = http_request(session, "/api/CloudM/openVersion", "POST", data)
 if response["status"] == 200 {
     print("POST successful")
 } else {
@@ -3321,8 +3324,8 @@ print(len(loaded_data["users"]))
 @test("Integration: HTTP with JSON parsing", "Built-in Functions - Integration", slow=True)
 def test_integration_http_json(mode):
     assert_output("""
-let session = http_session("https://httpbin.org")
-let response = http_request(session, "/json", "GET", None)
+let session = http_session("https://simplecore.app")
+let response = http_request(session, "/api/CloudM/openVersion", "GET", None)
 if response["status"] == 200 {
     let data = json_parse(response["body"])
     print("JSON response parsed")

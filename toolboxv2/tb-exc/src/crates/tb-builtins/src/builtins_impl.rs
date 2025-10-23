@@ -677,6 +677,11 @@ pub fn builtin_create_server(args: Vec<Value>) -> Result<Value, TBError> {
     // Store server handle
     networking::NETWORK_SERVERS.insert(server_id_clone.clone(), server_handle);
 
+    // Add a small delay to allow the server to start listening
+    RUNTIME.block_on(async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    });
+
     Ok(Value::String(Arc::new(server_id_clone)))
 }
 

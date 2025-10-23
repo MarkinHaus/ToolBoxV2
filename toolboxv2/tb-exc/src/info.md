@@ -332,5 +332,110 @@ Die aktuelle Type Inference läuft top-down. Für bessere Ergebnisse wäre ein t
 
 ---
 
-**Nächste Session**: Fokus auf Type Inference für Empty Lists und Dictionary Value Extraction
+**Nächste Session**:
 
+Hallo! Gerne analysiere ich die Fehler in deinem Rust-Code und gebe dir eine detaillierte Anleitung zur Behebung.
+
+### Zusammenfassende Analyse
+
+Dein Projekt leidet unter drei Hauptkategorien von Problemen:
+
+1.  **Kompilierungswarnungen:** Zahlreiche Warnungen weisen auf ungenutzten Code, ungenutzte Importe und veraltete Funktionsaufrufe hin. Diese verhindern die Kompilierung nicht, deuten aber auf Code-Qualitätsprobleme und potenzielle Fehlerquellen hin.
+2.  **Kompilierungsfehler:** Die Tests im "compiled" Modus schlagen systematisch fehl, weil der Codegenerator (`tb-codegen`) semantisch fehlerhaften Rust-Code erzeugt. Die generierten `src/main.rs`-Dateien enthalten Typ-Inkonsistenzen, falsche API-Aufrufe und logische Fehler, die der Rust-Compiler korrekt als Fehler meldet.
+3.  **Laufzeitfehler:** Einige Tests, die kompilieren (insbesondere im JIT-Modus), schlagen zur Laufzeit fehl. Dies betrifft vor allem Netzwerkoperationen und die JSON-Verarbeitung und deutet auf Logikfehler in der Implementierung der Built-in-Funktionen oder im Test-Setup hin.
+
+Nachfolgend findest du eine detaillierte Anleitung zur Behebung für jede dieser Kategorien.
+
+---
+
+### Kategorie 1: Code-Hygiene und Warnungen
+
+Diese Probleme sind am einfachsten zu beheben und verbessern die Wartbarkeit des Codes erheblich. Die meisten Vorschläge werden direkt vom Rust-Compiler gemacht.
+
+*   **Problem:** Ungenutzter Code (dead code), ungenutzte Importe, ungenutzte Variablen und veraltete (deprecated) Methoden.
+*   **Wo:** In fast allen Crates, insbesondere `tb-core`, `tb-plugin`, `tb-builtins` und `tb-runtime`.
+
+#### Fix-Anleitung:
+
+1.  **Ungenutzte Methoden und Felder (`dead_code`) entfernen:**
+    *   **Was:** In `tb-core/src/error.rs` werden die Methoden `error_type`, `main_message`, `get_span_and_context` und `get_hint` nie verwendet. In `tb-builtins/src/networking.rs` werden die Felder `headers`, `cookies_file` in `HttpSession` sowie `remote_addr` in `TcpClient` und `UdpClient` nie gelesen.
+    *   **Wie:** Entferne diese Methoden und Felder, wenn sie nicht benötigt werden. Falls du sie für die Zukunft behalten möchtest, markiere sie mit dem Attribut `#[allow(dead_code)]` direkt über der Definition, um die Warnung zu unterdrücken.
+    *   **Warum:** Dies hält den Code sauber und reduziert die kognitive Last beim Lesen.
+
+2.  **Ungenutzte Importe (`unused_imports`) entfernen:**
+    *   **Was:** Es gibt viele `use`-Anweisungen für Module, die nicht verwendet werden (z.B. `use std::collections::HashMap;` in `tb-plugin/src/loader.rs`).
+    *   **Wie:** Führe den Befehl `cargo fix --allow-dirty` aus. Cargo kann die meisten dieser Warnungen automatisch beheben, indem es die überflüssigen `use`-Statements entfernt.
+    *   **Warum:** Unnötige Importe machen den Code unübersichtlich und können zu längeren Kompilierzeiten führen.
+
+3.  **Ungenutzte Variablen (`unused_variables`) behandeln:**
+    *   **Was:** Variablen wie `metadata` in `tb-plugin/src/loader.rs` werden deklariert, aber nie verwendet.
+    *   **Wie:** Benenne die Variablen um, indem du einen Unterstrich (`_`) vor den Namen setzt (z.B. `_metadata`). Dies signalisiert dem Compiler, dass die Variable absichtlich nicht verwendet wird.
+    *   **Warum:** Dies zeigt explizit an, dass eine Variable ignoriert wird, und verhindert Warnungen, ohne die Code-Logik zu ändern.
+
+4.  **Veraltete Methoden (`deprecated`) ersetzen:**
+    *   **Was:** In `tb-builtins/src/utils.rs` wird die veraltete Methode `dt.timestamp_subsec_micros()` verwendet.
+    *   **Wie:** Ersetze den Aufruf durch die vom Compiler empfohlene Methode: `dt.and_utc().timestamp_subsec_micros()`.
+    *   **Warum:** Veraltete Methoden können in zukünftigen Versionen der Bibliothek entfernt werden, was zu Kompilierungsfehlern führen würde. Ein frühzeitiger Austausch sichert die Langlebigkeit des Codes.
+
+5.  **Namenskonventionen (`non_snake_case`) korrigieren:**
+    *   **Was:** Funktionen wie `builtin_forEach` und `forEach` verwenden `camelCase` anstatt des in Rust üblichen `snake_case`.
+    *   **Wie:** Benenne die Funktionen in `builtin_for_each` und `for_each` um.
+    *   **Warum:** Die Einhaltung von Namenskonventionen verbessert die Lesbarkeit und macht den Code für andere Rust-Entwickler verständlicher.
+
+---
+
+### Kategorie 2: Kompilierungsfehler im "Compiled Mode"
+
+Dies ist die kritischste Kategorie, da sie das Kompilieren der Tests verhindert. Die Ursache liegt im Codegenerator (`tb-codegen`), der fehlerhaften Rust-Code erzeugt.
+
+*   **Problem:** Der generierte Code in `src/main.rs` (in temporären Verzeichnissen) enthält zahlreiche Typfehler (E0308), ungültige Operationen (E0608, E0605) und Trait-Fehler (E0277).
+*   **Wo:** Die Fehler müssen in `tb-codegen/src/rust_codegen.rs` behoben werden.
+
+#### Fix-Anleitung:
+
+1.  **Typ-Inkonsistenzen (E0308 - mismatched types):**
+    *   **Problem:** Der Generator erzeugt Code, der Funktionen mit falschen Datentypen aufruft. Beispielsweise wird ein `String` in einen `Vec<i64>` gepusht oder `json_parse` mit einem `DictValue` anstelle eines `String` aufgerufen.
+    *   **Lösung in `rust_codegen.rs`:**
+        *   **Kontextsensitive Typumwandlung:** Implementiere eine bessere Typverfolgung (`variable_types` Map). Bevor eine Variable in einer Funktion wie `push` oder `json_parse` verwendet wird, muss der Generator prüfen, ob eine Konvertierung notwendig ist.
+        *   **Beispiel 1:** `json_parse(response.get("body").unwrap().clone())` muss zu `json_parse(response.get("body").unwrap().clone().to_string())` oder einer ähnlichen Konvertierung werden.
+        *   **Beispiel 2:** Die generierten Platzhalter-Implementierungen für Plugin-Funktionen (`// TODO: Implement plugin function`) müssen korrekte Standardwerte des erwarteten Rückgabetyps zurückgeben.
+            *   Für `-> i64`: `return 0;`
+            *   Für `-> String`: `return String::new();`
+            *   Für `-> Vec<i64>`: `return Vec::new();`
+
+2.  **Falscher Index- und Feldzugriff (E0608, E0609):**
+    *   **Problem:** Der generierte Code versucht, auf den Enum-Typ `DictValue` mit `[]` zuzugreifen oder greift auf nicht existierende Felder (`.sum`, `.mean`) zu.
+    *   **Lösung in `rust_codegen.rs`:**
+        *   **`DictValue`-Zugriff:** Ändere die Codegenerierung für den Zugriff auf Dictionary-Elemente. Anstelle von `data["user"]` muss der Code `data.get("user").unwrap()` generieren. Da `DictValue` ein Enum ist, müssen anschließend Hilfsmethoden wie `.as_dict()`, `.as_int()` etc. verwendet werden, um an den Wert zu kommen. Beispiel: `data.get("user").unwrap().as_dict().get("name").unwrap().as_string()`.
+        *   **Feldzugriff:** Der Generator muss erkennen, dass eine Variable (z.B. `stats`) ein `Vec<i64>` ist und entsprechende Methodenaufrufe generieren, z.B. `stats.iter().sum::<i64>()` anstelle von `stats.sum`.
+
+3.  **Ungültige Casts und Trait-Fehler (E0605, E0277):**
+    *   **Problem:** Der Code versucht, einen `String` in `usize` zu casten, um ihn als Array-Index zu verwenden. Die `len()`-Funktion wird auf einem `i64` aufgerufen.
+    *   **Lösung in `rust_codegen.rs`:**
+        *   **Index-Casting:** Stelle sicher, dass nur numerische Ausdrücke zu `usize` gecastet werden. Ein `String`-Index für ein `Vec` ist grundsätzlich falsch und deutet auf einen schweren Logikfehler im Generator hin. Der Zugriff sollte stattdessen auf einer `HashMap` mit einem String-Schlüssel erfolgen.
+        *   **`len()`-Aufrufe:** Die Typverfolgung muss korrekt erkennen, dass die Variable, auf der `len()` aufgerufen wird, ein Vektor oder ein anderer unterstützter Typ ist. Wenn eine Funktion wie `array_ops_filter_even` einen Vektor zurückgeben soll, muss die Variable `evens` korrekt als `Vec<i64>` typisiert werden.
+
+---
+
+### Kategorie 3: Laufzeitfehler und fehlschlagende Tests
+
+Diese Fehler treten auf, obwohl der Code (teilweise) kompiliert, und deuten auf Probleme in der Logik oder im Test-Setup hin.
+
+*   **Problem:** Falsche Ausgaben bei Netzwerk- und JSON-Tests sowie Verbindungsfehler.
+*   **Wo:** `tb-builtins/src/networking.rs`, `tb-runtime/src/lib.rs` und die Testlogik selbst.
+
+#### Fix-Anleitung:
+
+1.  **Networking-Fehler (`GET/POST failed`, `connection refused`):**
+    *   **Was:** HTTP-Anfragen schlagen fehl, und eine TCP-Verbindung wird abgewiesen.
+    *   **Wie:**
+        *   **HTTP-Logik:** Überprüfe `http_request` in `tb-runtime/src/lib.rs`. Wahrscheinlich werden Fehler (z.B. Timeout, ungültige URL) nicht korrekt behandelt und führen pauschal zu einer `"failed"`-Ausgabe. Implementiere eine aussagekräftigere Fehlerbehandlung.
+        *   **TCP-Test:** Der Fehler `os error 10061` (Connection refused) bedeutet, dass kein Server auf dem Zielport lauscht. Der Test `Networking: TCP connection (jit)` muss vor dem Aufruf von `connect_to` einen Server mit `create_server` starten und sicherstellen, dass dieser bereit ist.
+    *   **Warum:** Robuste Netzwerktests erfordern eine korrekte Fehlerbehandlung und eine kontrollierte Umgebung (z.B. einen Test-Server).
+
+2.  **Falsche Ausgabe (`Expected: 'Local', Got: '{...}'`):**
+    *   **Was:** Anstatt eines spezifischen Feldwerts aus einem Dictionary wird das gesamte Objekt ausgegeben.
+    *   **Wie:** Dies ist ein Folgefehler der Probleme aus Kategorie 2. Der Codegenerator erzeugt `print(&data)` anstatt des korrekten `print(&data.get("timezone").unwrap())`. Nachdem der `DictValue`-Zugriff im Codegenerator korrigiert wurde, sollte dieses Problem behoben sein.
+    *   **Warum:** Um einen Wert aus einem Dictionary auszugeben, muss explizit auf diesen Wert über seinen Schlüssel zugegriffen werden.
+
+Ich hoffe, diese detaillierte Analyse und die Anleitungen helfen dir, die Fehler zu beheben. Die Korrektur des Codegenerators wird den größten Teil der Probleme lösen. Viel Erfolg
