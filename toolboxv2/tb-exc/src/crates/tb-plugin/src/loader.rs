@@ -4,11 +4,21 @@ use libloading::{Library, Symbol};
 use std::path::Path;
 use std::sync::Arc;
 use tb_core::{Result, TBError, Value, tb_debug_plugin};
+use std::collections::HashMap;
+
+/// Plugin metadata
+#[derive(Debug, Clone)]
+pub struct PluginMetadata {
+    pub path: String,
+    pub language: String,
+    pub functions: Vec<String>,
+}
 
 /// Plugin loader with lazy loading and caching
 pub struct PluginLoader {
     loaded_libraries: DashMap<String, Arc<Library>>,
     function_cache: DashMap<String, PluginFn>,
+    plugin_metadata: DashMap<String, PluginMetadata>,
 }
 
 impl PluginLoader {
@@ -16,7 +26,18 @@ impl PluginLoader {
         Self {
             loaded_libraries: DashMap::new(),
             function_cache: DashMap::new(),
+            plugin_metadata: DashMap::new(),
         }
+    }
+
+    /// Get plugin metadata
+    pub fn get_plugin_info(&self, plugin_name: &str) -> Option<PluginMetadata> {
+        self.plugin_metadata.get(plugin_name).map(|m| m.value().clone())
+    }
+
+    /// Store plugin metadata
+    pub fn store_metadata(&self, plugin_name: String, metadata: PluginMetadata) {
+        self.plugin_metadata.insert(plugin_name, metadata);
     }
 
     /// Load plugin library (lazy, cached)

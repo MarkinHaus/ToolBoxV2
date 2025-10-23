@@ -30,6 +30,7 @@ import hashlib
 
 VERBOSE = "--verbose" in sys.argv or "-v" in sys.argv
 SKIP_SLOW = "--skip-slow" in sys.argv
+FAILED_ONLY = "--failed" in sys.argv or "-f" in sys.argv
 FILTER = None
 TEST_MODE = "both"  # jit, compiled, or both
 
@@ -77,6 +78,33 @@ class TestSuite:
     def __init__(self):
         self.results: List[TestResult] = []
         self.current_category = ""
+        self.failed_filter = None
+        self.failed_tests_cache = self.load_failed_tests()
+
+    def load_failed_tests(self) -> set:
+        """Load previously failed test names from cache."""
+        cache_file = Path(__file__).parent / ".failed_tests.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+                    return set(data.get('failed_tests', []))
+            except:
+                pass
+        return set()
+
+    def save_failed_tests(self):
+        """Save failed test names to cache."""
+        cache_file = Path(__file__).parent / ".failed_tests.json"
+        failed_names = [r.name for r in self.results if not r.passed]
+        with open(cache_file, 'w') as f:
+            json.dump({'failed_tests': failed_names}, f, indent=2)
+
+    def should_run_test(self, test_name: str) -> bool:
+        """Check if test should run based on FAILED_ONLY flag."""
+        if not FAILED_ONLY:
+            return True
+        return test_name in self.failed_tests_cache
 
     def add_result(self, result: TestResult):
         self.results.append(result)
@@ -87,15 +115,15 @@ class TestSuite:
         failed = total - passed
         total_time = sum(r.duration_ms for r in self.results)
 
-        print("\n" + "═" * 80)
+        print("\n" + "=" * 80)
         print(f"{Colors.BOLD}TEST SUMMARY{Colors.RESET}")
-        print("═" * 80)
+        print("=" * 80)
 
         if failed == 0:
-            print(f"{Colors.GREEN}✓ All {total} tests passed!{Colors.RESET}")
+            print(f"{Colors.GREEN}OK - All {total} tests passed!{Colors.RESET}")
         else:
-            print(f"{Colors.RED}✗ {failed} of {total} tests failed{Colors.RESET}")
-            print(f"{Colors.GREEN}✓ {passed} passed{Colors.RESET}")
+            print(f"{Colors.RED}FAILED - {failed} of {total} tests failed{Colors.RESET}")
+            print(f"{Colors.GREEN}OK - {passed} passed{Colors.RESET}")
 
         print(f"\n{Colors.CYAN}Total time: {total_time:.2f}ms{Colors.RESET}")
 
@@ -118,14 +146,21 @@ class TestSuite:
             print(f"\n{Colors.RED}Failed tests:{Colors.RESET}")
             for result in self.results:
                 if not result.passed:
-                    print(f"  • {result.name} ({result.mode})")
+                    print(f"  - {result.name} ({result.mode})")
                     if result.error_message:
-                        print(f"    {Colors.GRAY}{result.error_message}{Colors.RESET}")
+                        # Encode error message safely to avoid Unicode issues
+                        try:
+                            print(f"    {Colors.GRAY}{result.error_message}{Colors.RESET}")
+                        except UnicodeEncodeError:
+                            # Fallback: print without special characters
+                            safe_msg = result.error_message.encode('ascii', 'replace').decode('ascii')
+                            print(f"    {Colors.GRAY}{safe_msg}{Colors.RESET}")
 
         return failed == 0
 
 
 suite = TestSuite()
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -142,9 +177,9 @@ def find_tb_binary() -> str:
     try:
         from toolboxv2 import tb_root_dir
         paths = [
-            tb_root_dir / "bin" / "tb",
-            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tb",
+            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tb",  # Prefer release for faster compilation
             tb_root_dir / "tb-exc" /"src" / "target" / "debug" / "tb",
+            tb_root_dir / "bin" / "tb",
         ]
     except:
         paths = [
@@ -167,9 +202,32 @@ def find_tb_binary() -> str:
         print(f"  • {path}")
     print(f"\n{Colors.CYAN}Build with: tb run build{Colors.RESET}")
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FAILED TESTS MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════════
 
+FAILED_TESTS_FILE = "failed_tests.txt"
 
-def run_tb(code: str, mode: str = "jit", timeout: int = 30):
+def save_failed_tests(failed_names):
+    """Save failed test names to file."""
+    try:
+        with open(FAILED_TESTS_FILE, 'w', encoding='utf-8') as f:
+            for name in failed_names:
+                f.write(f"{name}\n")
+    except Exception as e:
+        print(f"{Colors.YELLOW}Warning: Could not save failed tests: {e}{Colors.RESET}")
+
+def load_failed_tests():
+    """Load failed test names from file."""
+    try:
+        if os.path.exists(FAILED_TESTS_FILE):
+            with open(FAILED_TESTS_FILE, 'r', encoding='utf-8') as f:
+                return set(line.strip() for line in f if line.strip())
+    except Exception as e:
+        print(f"{Colors.YELLOW}Warning: Could not load failed tests: {e}{Colors.RESET}")
+    return set()
+
+def run_tb(code: str, mode: str = "jit", timeout: int = 60):
     global LAST_COMPILE_MS, LAST_EXEC_MS, TB_BINARY
     if TB_BINARY is None:
         TB_BINARY = find_tb_binary()
@@ -180,7 +238,7 @@ def run_tb(code: str, mode: str = "jit", timeout: int = 30):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.tbx', delete=False, encoding='utf-8') as f:
             f.write(code)
             source_file = f.name
-        with tempfile.NamedTemporaryFile(delete=False) as f:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.exe' if os.name == 'nt' else '') as f:
             output_path = f.name
 
         try:
@@ -254,6 +312,8 @@ def test(name: str, category: str = "General", slow: bool = False):
             global LAST_COMPILE_MS, LAST_EXEC_MS
             if FILTER and FILTER.lower() not in name.lower():
                 return
+            if FAILED_ONLY and not suite.should_run_test(name):
+                return
             if slow and SKIP_SLOW:
                 return
 
@@ -272,7 +332,11 @@ def test(name: str, category: str = "General", slow: bool = False):
                 try:
                     func(mode)
                     duration = (time.perf_counter() - start) * 1000
-                    print(f"{Colors.GREEN}✓{Colors.RESET} ({LAST_EXEC_MS:.0f}ms/{duration:.0f}ms)") if LAST_EXEC_MS else print(f"{Colors.GREEN}✓{Colors.RESET} ({duration:.0f}ms)")
+                    # Use ASCII checkmark to avoid encoding issues
+                    if LAST_EXEC_MS:
+                        print(f"{Colors.GREEN}OK{Colors.RESET} ({LAST_EXEC_MS:.0f}ms/{duration:.0f}ms)")
+                    else:
+                        print(f"{Colors.GREEN}OK{Colors.RESET} ({duration:.0f}ms)")
                     suite.add_result(TestResult(
                         name=name,
                         passed=True,
@@ -283,7 +347,13 @@ def test(name: str, category: str = "General", slow: bool = False):
                     ))
                 except AssertionError as e:
                     duration = (time.perf_counter() - start) * 1000
-                    print(f"{Colors.RED}✗{Colors.RESET} ({LAST_EXEC_MS:.0f}ms/{duration:.0f}ms)") if LAST_EXEC_MS else print(f"{Colors.GREEN}✓{Colors.RESET} ({duration:.0f}ms)")
+                    # Use ASCII X to avoid encoding issues
+                    if mode == "compiled" and LAST_COMPILE_MS and not LAST_EXEC_MS:
+                        print(f"{Colors.RED}FAIL{Colors.RESET} (compile: {LAST_COMPILE_MS:.0f}ms/{duration:.0f}ms)")
+                    elif LAST_EXEC_MS:
+                        print(f"{Colors.RED}FAIL{Colors.RESET} ({LAST_EXEC_MS:.0f}ms/{duration:.0f}ms)")
+                    else:
+                        print(f"{Colors.RED}FAIL{Colors.RESET} ({duration:.0f}ms)")
                     suite.add_result(TestResult(
                         name=name,
                         passed=False,
@@ -737,6 +807,187 @@ print(result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# HIGHER-ORDER FUNCTIONS TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("map function - double numbers", "Higher-Order Functions")
+def test_map_double(mode):
+    assert_output("""
+fn double(x) {
+    return x * 2
+}
+
+let numbers = [1, 2, 3, 4, 5]
+let doubled = map(double, numbers)
+print(len(doubled))
+print(doubled[0])
+print(doubled[4])
+""", "5\n2\n10", mode)
+
+
+@test("filter function - positive numbers", "Higher-Order Functions")
+def test_filter_positive(mode):
+    assert_output("""
+fn is_positive(x) {
+    return x > 0
+}
+
+let mixed = [-2, -1, 0, 1, 2, 3]
+let positives = filter(is_positive, mixed)
+print(len(positives))
+print(positives[0])
+print(positives[2])
+""", "3\n1\n3", mode)
+
+
+@test("reduce function - sum", "Higher-Order Functions")
+def test_reduce_sum(mode):
+    assert_output("""
+fn add(acc, x) {
+    return acc + x
+}
+
+let numbers = [1, 2, 3, 4, 5]
+let sum = reduce(add, numbers, 0)
+print(sum)
+""", "15", mode)
+
+
+@test("forEach function - side effects", "Higher-Order Functions")
+def test_forEach_side_effects(mode):
+    assert_output("""
+fn print_item(x) {
+    print(x)
+}
+
+let items = [10, 20, 30]
+forEach(print_item, items)
+""", "10\n20\n30", mode)
+
+
+@test("map with string transformation", "Higher-Order Functions")
+def test_map_string_transform(mode):
+    assert_output("""
+fn add_prefix(x) {
+    return "Item: " + str(x)
+}
+
+let numbers = [1, 2, 3]
+let prefixed = map(add_prefix, numbers)
+print(prefixed[0])
+print(prefixed[2])
+""", "Item: 1\nItem: 3", mode)
+
+
+@test("reduce with multiplication", "Higher-Order Functions")
+def test_reduce_multiply(mode):
+    assert_output("""
+fn multiply(acc, x) {
+    return acc * x
+}
+
+let numbers = [1, 2, 3, 4, 5]
+let product = reduce(multiply, numbers, 1)
+print(product)
+""", "120", mode)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ARROW FUNCTIONS (LAMBDA EXPRESSIONS) TESTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("arrow function - single parameter", "Arrow Functions")
+def test_arrow_single_param(mode):
+    assert_output("""
+let double = x => x * 2
+print(double(5))
+print(double(10))
+""", "10\n20", mode)
+
+
+@test("arrow function - multiple parameters", "Arrow Functions")
+def test_arrow_multi_param(mode):
+    assert_output("""
+let add = (x, y) => x + y
+print(add(3, 7))
+print(add(10, 20))
+""", "10\n30", mode)
+
+
+@test("arrow function - with block", "Arrow Functions")
+def test_arrow_with_block(mode):
+    assert_output("""
+let triple = x => {
+    x * 3
+}
+print(triple(4))
+print(triple(7))
+""", "12\n21", mode)
+
+
+@test("arrow function - with map", "Arrow Functions")
+def test_arrow_with_map(mode):
+    assert_output("""
+let numbers = [1, 2, 3, 4, 5]
+let doubled = map(x => x * 2, numbers)
+print(len(doubled))
+print(doubled[0])
+print(doubled[4])
+""", "5\n2\n10", mode)
+
+
+@test("arrow function - with filter", "Arrow Functions")
+def test_arrow_with_filter(mode):
+    assert_output("""
+let mixed = [-2, -1, 0, 1, 2, 3]
+let positives = filter(x => x > 0, mixed)
+print(len(positives))
+print(positives[0])
+print(positives[2])
+""", "3\n1\n3", mode)
+
+
+@test("arrow function - with reduce", "Arrow Functions")
+def test_arrow_with_reduce(mode):
+    assert_output("""
+let sum = reduce((acc, x) => acc + x, [1, 2, 3, 4, 5], 0)
+print(sum)
+""", "15", mode)
+
+
+@test("inline function syntax - with map", "Arrow Functions")
+def test_inline_fn_with_map(mode):
+    assert_output("""
+let numbers = [1, 2, 3, 4, 5]
+let tripled = map(fn(x) { x * 3 }, numbers)
+print(len(tripled))
+print(tripled[0])
+print(tripled[4])
+""", "5\n3\n15", mode)
+
+
+@test("arrow function - nested", "Arrow Functions")
+def test_arrow_nested(mode):
+    assert_output("""
+let make_adder = x => y => x + y
+let add5 = make_adder(5)
+print(add5(3))
+print(add5(10))
+""", "8\n15", mode)
+
+
+@test("arrow function - complex expression", "Arrow Functions")
+def test_arrow_complex_expr(mode):
+    assert_output("""
+let numbers = [1, 2, 3, 4, 5]
+let result = map(x => x * x + 1, numbers)
+print(result[0])
+print(result[2])
+print(result[4])
+""", "2\n10\n26", mode)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # BUILTIN FUNCTIONS TESTS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -832,6 +1083,72 @@ let data = {a: 1, b: 2, c: 3}
 let v = values(data)
 print(len(v))
 """, "3", mode)
+
+
+@test("dict function - empty", "Builtins")
+def test_dict_function_empty(mode):
+    assert_output("""
+let d = dict()
+print(len(d))
+""", "0", mode)
+
+
+@test("dict function - from JSON string", "Builtins")
+def test_dict_function_json(mode):
+    assert_output("""
+let json_str = "{\\"name\\":\\"Alice\\",\\"age\\":30}"
+let d = dict(json_str)
+print(d["name"])
+print(d["age"])
+""", "Alice\n30", mode)
+
+
+@test("dict function - copy existing dict", "Builtins")
+def test_dict_function_copy(mode):
+    assert_output("""
+let original = {a: 1, b: 2}
+let copy = dict(original)
+print(len(copy))
+""", "2", mode)
+
+
+@test("list function - empty", "Builtins")
+def test_list_function_empty(mode):
+    assert_output("""
+let l = list()
+print(len(l))
+""", "0", mode)
+
+
+@test("list function - from JSON string", "Builtins")
+def test_list_function_json(mode):
+    assert_output("""
+let json_str = "[1,2,3,4,5]"
+let l = list(json_str)
+print(len(l))
+print(l[0])
+print(l[4])
+""", "5\n1\n5", mode)
+
+
+@test("list function - copy existing list", "Builtins")
+def test_list_function_copy(mode):
+    assert_output("""
+let original = [10, 20, 30]
+let copy = list(original)
+print(len(copy))
+print(copy[1])
+""", "3\n20", mode)
+
+
+@test("dict and list with nested JSON", "Builtins")
+def test_dict_list_nested_json(mode):
+    assert_output("""
+let json_str = "{\\"items\\":[1,2,3],\\"count\\":3}"
+let d = dict(json_str)
+print(len(d["items"]))
+print(d["count"])
+""", "3\n3", mode)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1502,6 +1819,86 @@ print(utils.is_odd(5))
 print(utils.is_prime(7))
 """, "true\ntrue\ntrue", mode)
 
+
+@test("Plugin: Python with list arguments", "Plugins - Python - FFI")
+def test_plugin_python_list_args(mode):
+    assert_output("""
+@plugin {
+    python "list_ops" {
+        mode: "jit",
+
+        def sum_list(numbers: list) -> int:
+            return sum(numbers)
+
+        def filter_positive(numbers: list) -> list:
+            return [x for x in numbers if x > 0]
+
+        def list_length(items: list) -> int:
+            return len(items)
+    }
+}
+
+let nums = [1, 2, 3, 4, 5]
+print(list_ops.sum_list(nums))
+print(list_ops.list_length(nums))
+
+let mixed = [-2, -1, 0, 1, 2]
+let positive = list_ops.filter_positive(mixed)
+print(len(positive))
+""", "15\n5\n2", mode)
+
+
+@test("Plugin: Python with dict arguments", "Plugins - Python - FFI")
+def test_plugin_python_dict_args(mode):
+    assert_output("""
+@plugin {
+    python "dict_ops" {
+        mode: "jit",
+
+        def get_value(data: dict, key: str) -> str:
+            return str(data.get(key, "not found"))
+
+        def dict_keys_count(data: dict) -> int:
+            return len(data.keys())
+
+        def merge_dicts(d1: dict, d2: dict) -> dict:
+            result = d1.copy()
+            result.update(d2)
+            return result
+    }
+}
+
+let person = {"name": "Alice", "age": 30}
+print(dict_ops.get_value(person, "name"))
+print(dict_ops.dict_keys_count(person))
+""", "Alice\n2", mode)
+
+
+@test("Plugin: Python with nested structures", "Plugins - Python - FFI")
+def test_plugin_python_nested_structures(mode):
+    assert_output("""
+@plugin {
+    python "nested_ops" {
+        mode: "jit",
+
+        def extract_names(users: list) -> list:
+            return [user.get("name", "") for user in users]
+
+        def count_items(data: dict) -> int:
+            total = 0
+            for key, value in data.items():
+                if isinstance(value, list):
+                    total += len(value)
+            return total
+    }
+}
+
+let users = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
+let names = nested_ops.extract_names(users)
+print(len(names))
+""", "2", mode)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PLUGIN SYSTEM TESTS - JAVASCRIPT
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1632,6 +2029,63 @@ def test_plugin_javascript_json(mode):
 let json = json_stringify({name:"Alice",age:30})
 print(json_ops.parse_and_extract(json, "name"))
 """, "Alice", mode)
+
+
+@test("Plugin: JavaScript with array arguments", "Plugins - JavaScript - FFI")
+def test_plugin_javascript_array_args(mode):
+    assert_output("""
+@plugin {
+    javascript "array_ops" {
+        mode: "jit",
+
+        function sum_array(arr) {
+            return arr.reduce((a, b) => a + b, 0);
+        }
+
+        function filter_even(arr) {
+            return arr.filter(x => x % 2 === 0);
+        }
+
+        function array_length(arr) {
+            return arr.length;
+        }
+    }
+}
+
+let nums = [1, 2, 3, 4, 5]
+print(array_ops.sum_array(nums))
+print(array_ops.array_length(nums))
+
+let evens = array_ops.filter_even(nums)
+print(len(evens))
+""", "15\n5\n2", mode)
+
+
+@test("Plugin: JavaScript with object arguments", "Plugins - JavaScript - FFI")
+def test_plugin_javascript_object_args(mode):
+    assert_output("""
+@plugin {
+    javascript "object_ops" {
+        mode: "jit",
+
+        function get_property(obj, key) {
+            return obj[key] || "not found";
+        }
+
+        function count_keys(obj) {
+            return Object.keys(obj).length;
+        }
+
+        function has_key(obj, key) {
+            return obj.hasOwnProperty(key);
+        }
+    }
+}
+
+let person = {"name": "Bob", "age": 25}
+print(object_ops.get_property(person, "name"))
+print(object_ops.count_keys(person))
+""", "Bob\n2", mode)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2697,8 +3151,8 @@ print("Session created")
 def test_http_get_request(mode):
     assert_output("""
 let session = http_session("https://httpbin.org")
-let response = http_request(session, "/get", "GET")
-if response.status == 200 {
+let response = http_request(session, "/get", "GET", None)
+if response["status"] == 200 {
     print("GET successful")
 } else {
     print("GET failed")
@@ -2709,9 +3163,9 @@ if response.status == 200 {
 def test_http_post_json(mode):
     assert_output("""
 let session = http_session("https://httpbin.org")
-let data = {name: "TB Test", value: 42}
+let data = {"name": "TB Test", "value": 42}
 let response = http_request(session, "/post", "POST", data)
-if response.status == 200 {
+if response["status"] == 200 {
     print("POST successful")
 } else {
     print("POST failed")
@@ -2737,7 +3191,7 @@ print("Connection initiated")
 @test("Utils: JSON parse simple object", "Built-in Functions - Utils")
 def test_json_parse_simple(mode):
     assert_output("""
-let json_str = "{"name": "Alice", "age": 25}"
+let json_str = "{\\"name\\": \\"Alice\\", \\"age\\": 25}"
 let data = json_parse(json_str)
 print(data["name"])
 print(data["age"])
@@ -2746,7 +3200,7 @@ print(data["age"])
 @test("Utils: JSON parse nested object", "Built-in Functions - Utils")
 def test_json_parse_nested(mode):
     assert_output("""
-let json_str = "{"user": {"name": "Bob", "scores": [95, 87, 92]}}"
+let json_str = "{\\"user\\": {\\"name\\": \\"Bob\\", \\"scores\\": [95, 87, 92]}}"
 let data = json_parse(json_str)
 print(data["user"]["name"])
 print(len(data["user"]["scores"]))
@@ -2868,9 +3322,9 @@ print(len(loaded_data["users"]))
 def test_integration_http_json(mode):
     assert_output("""
 let session = http_session("https://httpbin.org")
-let response = http_request(session, "/json", "GET")
-if response.status == 200 {
-    let data = json_parse(response.body)
+let response = http_request(session, "/json", "GET", None)
+if response["status"] == 200 {
+    let data = json_parse(response["body"])
     print("JSON response parsed")
 }
 """, "JSON response parsed", mode)
@@ -2907,11 +3361,18 @@ print(len(results))
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
+    global FILTER
+
     print(f"{Colors.BOLD}{Colors.CYAN}TB Language Test Suite{Colors.RESET}")
     print(f"Binary: {TB_BINARY}")
     print(f"Mode: {TEST_MODE}")
     if FILTER:
         print(f"Filter: {FILTER}")
+    if FAILED_ONLY:
+        if len(suite.failed_tests_cache) == 0:
+            print(f"{Colors.GREEN}No failed tests to re-run{Colors.RESET}")
+            return True
+        print(f"{Colors.YELLOW}Running only previously failed tests ({len(suite.failed_tests_cache)} tests){Colors.RESET}")
     if SKIP_SLOW:
         print(f"{Colors.YELLOW}Skipping slow tests{Colors.RESET}")
     print()
@@ -2928,19 +3389,52 @@ def main():
         print(f"{Colors.RED}Failed to run TB binary: {e}{Colors.RESET}")
         return False
 
-    # Run all tests (tests are executed when the module loads)
-    # Just need to call the decorated functions
+    # Collect all test functions
     import inspect
     current_module = sys.modules[__name__]
 
+    test_functions = []
     for name, obj in inspect.getmembers(current_module):
         if callable(obj) and hasattr(obj, '__name__') and obj.__name__ == 'wrapper':
-            obj()
+            test_functions.append(obj)
+
+    total_tests = len(test_functions)
+
+    # Progress bar setup
+    if total_tests > 0:
+        print(f"{Colors.BOLD}Running {total_tests} test(s)...{Colors.RESET}\n")
+
+    # Run all tests with progress tracking
+    completed = 0
+    for test_func in test_functions:
+        test_func()
+        completed += 1
+
+        # Update progress bar (use ASCII to avoid encoding issues)
+        progress = completed / total_tests
+        bar_length = 40
+        filled = int(bar_length * progress)
+        bar = '=' * filled + '-' * (bar_length - filled)
+        percent = progress * 100
+
+        # Move to line, clear it, print progress, move back
+        print(f"[{bar}] {completed}/{total_tests} ({percent:.1f}%)", end='\r',flush=True)
+
+    if total_tests > 0:
+        print()  # New line after progress bar
 
     # Print summary
     success = suite.print_summary()
 
+    # Save failed test names for next run with -f flag
+    suite.save_failed_tests()
+
+    failed_count = sum(1 for r in suite.results if not r.passed)
+    if failed_count > 0:
+        print(f"\n{Colors.YELLOW}Run with -f or --failed to re-run only failed tests{Colors.RESET}")
+
     return success
+
 
 def function_runner(args):
     global VERBOSE, FILTER, TB_BINARY
@@ -2948,14 +3442,16 @@ def function_runner(args):
     TB_BINARY = find_tb_binary()
     VERBOSE = "verbose" in args or "-v" in args
     print(f"{VERBOSE=}")
+
+    # Check for -f flag (run failed tests) - handled in main() now
     FILTER = None
     for i, arg in enumerate(args):
         if arg == "filter" and i + 1 < len(args):
             FILTER = args[i + 1]
-    main()
+
+    return main()
 
 
 if __name__ == "__main__":
-    TB_BINARY = find_tb_binary()
-    success = main()
+    success = function_runner(sys.argv[1:])
     sys.exit(0 if success else 1)

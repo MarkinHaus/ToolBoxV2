@@ -12,6 +12,7 @@ pub mod networking;
 pub mod utils;
 pub mod error;
 pub mod builtins_impl;
+pub mod task_runtime;
 
 use std::sync::Arc;
 use tb_core::{Value, TBError, Program};
@@ -39,9 +40,6 @@ pub static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .expect("Failed to create Tokio runtime")
 });
 
-/// Global network server registry
-pub static NETWORK_SERVERS: Lazy<DashMap<String, Arc<networking::ServerHandle>>> = Lazy::new(DashMap::new);
-
 /// Global HTTP session registry
 pub static HTTP_SESSIONS: Lazy<DashMap<String, Arc<networking::HttpSession>>> = Lazy::new(DashMap::new);
 
@@ -60,9 +58,33 @@ pub static PLUGIN_LOADER: Lazy<Arc<PluginLoader>> = Lazy::new(|| {
 pub static ACTIVE_TASKS: Lazy<DashMap<String, JoinHandle<Result<Value, TBError>>>> =
     Lazy::new(DashMap::new);
 
+/// Global environment snapshot for spawned tasks
+/// This is updated by the JIT executor before calling spawn
+pub static TASK_ENVIRONMENT: Lazy<Arc<parking_lot::RwLock<im::HashMap<Arc<String>, Value>>>> =
+    Lazy::new(|| Arc::new(parking_lot::RwLock::new(im::HashMap::new())));
+
 /// Register all built-in functions
 pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     let mut builtins = Vec::new();
+
+    // Type Conversions
+    builtins.push(("int", builtins_impl::builtin_int as BuiltinFn));
+    builtins.push(("str", builtins_impl::builtin_str as BuiltinFn));
+    builtins.push(("float", builtins_impl::builtin_float as BuiltinFn));
+    builtins.push(("dict", builtins_impl::builtin_dict as BuiltinFn));
+    builtins.push(("list", builtins_impl::builtin_list as BuiltinFn));
+
+    // Basic Collections
+    builtins.push(("len", builtins_impl::builtin_len as BuiltinFn));
+    builtins.push(("push", builtins_impl::builtin_push as BuiltinFn));
+    builtins.push(("pop", builtins_impl::builtin_pop as BuiltinFn));
+    builtins.push(("keys", builtins_impl::builtin_keys as BuiltinFn));
+    builtins.push(("values", builtins_impl::builtin_values as BuiltinFn));
+    builtins.push(("range", builtins_impl::builtin_range as BuiltinFn));
+    builtins.push(("print", builtins_impl::builtin_print as BuiltinFn));
+
+    // Module Import
+    builtins.push(("import", builtins_impl::builtin_import as BuiltinFn));
 
     // File I/O
     builtins.push(("open", builtin_open as BuiltinFn));
@@ -85,6 +107,7 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
 
     // Networking
     builtins.push(("create_server", builtins_impl::builtin_create_server as BuiltinFn));
+    builtins.push(("stop_server", builtins_impl::builtin_stop_server as BuiltinFn));
     builtins.push(("connect_to", builtins_impl::builtin_connect_to as BuiltinFn));
     builtins.push(("send_to", builtins_impl::builtin_send_to as BuiltinFn));
     builtins.push(("http_session", builtins_impl::builtin_http_session as BuiltinFn));
@@ -117,6 +140,12 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("bincode_serialize", builtins_impl::builtin_bincode_serialize as BuiltinFn));
     builtins.push(("bincode_deserialize", builtins_impl::builtin_bincode_deserialize as BuiltinFn));
     builtins.push(("hash", builtins_impl::builtin_hash as BuiltinFn));
+
+    // Higher-Order Functions
+    builtins.push(("map", builtins_impl::builtin_map as BuiltinFn));
+    builtins.push(("filter", builtins_impl::builtin_filter as BuiltinFn));
+    builtins.push(("reduce", builtins_impl::builtin_reduce as BuiltinFn));
+    builtins.push(("forEach", builtins_impl::builtin_forEach as BuiltinFn));
 
     builtins
 }

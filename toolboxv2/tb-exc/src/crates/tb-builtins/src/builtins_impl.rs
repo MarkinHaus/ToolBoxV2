@@ -1,12 +1,44 @@
 //! Implementation of remaining built-in functions
 
 use crate::*;
+use crate::error::BuiltinError;
 use std::sync::Arc;
 use tb_core::{Value, TBError, Program};
 use std::collections::HashMap;
 use im::HashMap as ImHashMap;
 use tokio::process::Command;
 use sha2::{Sha256, Sha512, Sha224, Sha384, Digest};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Convert TB Value to serde_json::Value
+fn convert_tb_to_json(val: &Value) -> serde_json::Value {
+    match val {
+        Value::None => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Int(i) => serde_json::Value::Number((*i).into()),
+        Value::Float(f) => {
+            serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        Value::String(s) => serde_json::Value::String(s.to_string()),
+        Value::List(items) => {
+            let arr: Vec<serde_json::Value> = items.iter().map(convert_tb_to_json).collect();
+            serde_json::Value::Array(arr)
+        }
+        Value::Dict(map) => {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in map.iter() {
+                obj.insert(k.to_string(), convert_tb_to_json(v));
+            }
+            serde_json::Value::Object(obj)
+        }
+        _ => serde_json::Value::Null,
+    }
+}
 
 // ============================================================================
 // FILE I/O BUILT-INS
@@ -382,9 +414,31 @@ pub fn builtin_reload_plugin(args: Vec<Value>) -> Result<Value, TBError> {
 
 /// plugin_info(name: str) -> dict
 pub fn builtin_plugin_info(args: Vec<Value>) -> Result<Value, TBError> {
-    // Diese Funktion benötigt Zugriff auf die Plugin-Metadaten,
-    // die idealerweise in einer globalen Registry gespeichert werden.
-    Ok(Value::Dict(Arc::new(ImHashMap::new()))) // Placeholder
+    if args.is_empty() {
+        return Err(TBError::runtime_error("plugin_info() requires a plugin name"));
+    }
+
+    let plugin_name = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(TBError::runtime_error("Plugin name must be a string")),
+    };
+
+    // Get metadata from plugin loader
+    if let Some(metadata) = PLUGIN_LOADER.get_plugin_info(plugin_name) {
+        let mut dict = ImHashMap::new();
+        dict.insert(Arc::new("path".to_string()), Value::String(Arc::new(metadata.path)));
+        dict.insert(Arc::new("language".to_string()), Value::String(Arc::new(metadata.language)));
+
+        let functions: Vec<Value> = metadata.functions
+            .into_iter()
+            .map(|f| Value::String(Arc::new(f)))
+            .collect();
+        dict.insert(Arc::new("functions".to_string()), Value::List(Arc::new(functions)));
+
+        Ok(Value::Dict(Arc::new(dict)))
+    } else {
+        Err(TBError::runtime_error(&format!("Plugin '{}' not found", plugin_name)))
+    }
 }
 
 
@@ -408,20 +462,15 @@ pub fn builtin_spawn(args: Vec<Value>) -> Result<Value, TBError> {
         _ => return Err(TBError::runtime_error("Second argument to spawn() must be a list")),
     };
 
-    // WICHTIG: Hier fehlt der Executor-Kontext (Environment).
-    // Eine vollständige Implementierung benötigt Zugriff auf den aktuellen JitExecutor.
-    // Als Vereinfachung gehen wir davon aus, dass die Funktion keine Umgebungsvariablen benötigt.
+    // Clone the current environment for the spawned task
+    let env = TASK_ENVIRONMENT.read().clone();
 
     let handle = RUNTIME.spawn(async move {
-        // In einem echten Szenario würde hier ein neuer Executor mit geklontem Env erstellt.
-        // Vereinfachung:
-        if func.params.len() != func_args.len() {
-            return Err(TBError::runtime_error("Argument count mismatch in spawned task"));
-        }
-        // Direkter Aufruf ist hier nicht trivial. Der Body der Funktion muss evaluiert werden.
-        // Das ist ein komplexes Problem, das eine enge Integration mit dem Executor erfordert.
-        // Als Platzhalter geben wir einen Fehler zurück.
-        Err(TBError::runtime_error("Spawning functions is not fully implemented yet."))
+        // Execute the function in a new task with the cloned environment
+        use crate::task_runtime::TaskExecutor;
+
+        let mut executor = TaskExecutor::new(env);
+        executor.execute_function(&func, func_args)
     });
 
     let task_id = uuid::Uuid::new_v4().to_string();
@@ -533,34 +582,125 @@ pub fn builtin_hash(args: Vec<Value>) -> Result<Value, TBError> {
 // NETWORKING BUILT-INS
 // ============================================================================
 
-/// create_server(on_connect, on_disconnect, on_msg, host, port, type) -> server_id
+/// create_server(protocol, address, callbacks) -> server_id
+/// protocol: "tcp" or "udp"
+/// address: "host:port"
+/// callbacks: dict with on_connect, on_disconnect, on_message functions
 pub fn builtin_create_server(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 6 {
-        return Err(TBError::runtime_error("create_server() takes 6 arguments: on_connect, on_disconnect, on_msg, host, port, type"));
+    if args.len() < 2 {
+        return Err(TBError::runtime_error(
+            "create_server requires at least 2 arguments: protocol, address"
+        ));
     }
 
-    // Extract callbacks (would need to be stored and called from TB runtime)
-    let host = match &args[3] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("create_server() host must be a string")),
+    let protocol = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(TBError::runtime_error("create_server: protocol must be a string")),
     };
 
-    let port = match &args[4] {
-        Value::Int(i) => *i as u16,
-        _ => return Err(TBError::runtime_error("create_server() port must be an integer")),
+    let address = match &args[1] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(TBError::runtime_error("create_server: address must be a string")),
     };
 
-    let server_type = match &args[5] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("create_server() type must be a string (tcp/udp)")),
+    // Parse address (format: "host:port")
+    let parts: Vec<&str> = address.split(':').collect();
+    if parts.len() != 2 {
+        return Err(TBError::runtime_error(&format!(
+            "create_server: invalid address format '{}', expected 'host:port'", address
+        )));
+    }
+
+    let host = parts[0].to_string();
+    let port: u16 = parts[1].parse().map_err(|_| {
+        TBError::runtime_error(&format!("create_server: invalid port '{}'", parts[1]))
+    })?;
+
+    // Extract callbacks from args[2] (dictionary with on_connect, on_disconnect, on_message)
+    let (on_connect, on_disconnect, on_message) = if args.len() > 2 {
+        match &args[2] {
+            Value::Dict(dict) => {
+                let on_connect = dict.get(&Arc::new("on_connect".to_string()))
+                    .and_then(|v| match v {
+                        Value::Function(f) => Some((**f).clone()),
+                        _ => None,
+                    });
+
+                let on_disconnect = dict.get(&Arc::new("on_disconnect".to_string()))
+                    .and_then(|v| match v {
+                        Value::Function(f) => Some((**f).clone()),
+                        _ => None,
+                    });
+
+                let on_message = dict.get(&Arc::new("on_message".to_string()))
+                    .and_then(|v| match v {
+                        Value::Function(f) => Some((**f).clone()),
+                        _ => None,
+                    });
+
+                (on_connect, on_disconnect, on_message)
+            }
+            _ => (None, None, None),
+        }
+    } else {
+        (None, None, None)
     };
 
-    let server_id = format!("server_{}:{}_{}", server_type, host, port);
+    // Create server based on protocol
+    let server_id = uuid::Uuid::new_v4().to_string();
+    let server_id_clone = server_id.clone();
 
-    // Note: Actual callback handling would require integration with TB runtime
-    // This is a simplified implementation
+    let server_handle = RUNTIME.block_on(async {
+        match protocol {
+            "tcp" => {
+                networking::create_tcp_server(
+                    host,
+                    port,
+                    on_connect,
+                    on_disconnect,
+                    on_message,
+                ).await
+            }
+            "udp" => {
+                networking::create_udp_server(
+                    host,
+                    port,
+                    on_message,
+                ).await
+            }
+            _ => Err(BuiltinError::InvalidArgument(
+                format!("create_server: unsupported protocol '{}'", protocol)
+            )),
+        }
+    }).map_err(|e| TBError::runtime_error(&format!("create_server failed: {}", e)))?;
 
-    Ok(Value::String(Arc::new(server_id)))
+    // Store server handle
+    networking::NETWORK_SERVERS.insert(server_id_clone.clone(), server_handle);
+
+    Ok(Value::String(Arc::new(server_id_clone)))
+}
+
+/// stop_server(server_id) -> bool
+pub fn builtin_stop_server(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("stop_server requires 1 argument: server_id"));
+    }
+
+    let server_id = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(TBError::runtime_error("stop_server: server_id must be a string")),
+    };
+
+    // Remove server from registry and send shutdown signal
+    if let Some((_, server_handle)) = networking::NETWORK_SERVERS.remove(server_id) {
+        // Send shutdown signal (non-blocking)
+        RUNTIME.block_on(async {
+            let _ = server_handle.shutdown_tx.send(()).await;
+        });
+        Ok(Value::Bool(true))
+    } else {
+        Ok(Value::Bool(false))
+    }
 }
 
 /// connect_to(on_connect, on_disconnect, on_msg, host, port, type) -> connection_id
@@ -713,9 +853,15 @@ pub fn builtin_http_request(args: Vec<Value>) -> Result<Value, TBError> {
 
     let data = if args.len() > 3 {
         match &args[3] {
-            Value::Dict(_) | Value::String(_) => {
-                Some(serde_json::to_value(&args[3])
-                    .map_err(|e| TBError::runtime_error(format!("Failed to serialize data: {}", e)))?)
+            Value::Dict(_) => {
+                // Convert TB Dict to JSON using helper function
+                Some(convert_tb_to_json(&args[3]))
+            }
+            Value::String(s) => {
+                // Try to parse string as JSON
+                serde_json::from_str::<serde_json::Value>(s)
+                    .ok()
+                    .or_else(|| Some(serde_json::Value::String(s.to_string())))
             }
             Value::None => None,
             _ => return Err(TBError::runtime_error("http_request() data must be a dict, string, or None")),
@@ -960,14 +1106,431 @@ pub fn builtin_time(args: Vec<Value>) -> Result<Value, TBError> {
     };
 
     let time_info = utils::get_time(timezone)?;
-    let time_map = time_info.to_hashmap();
 
-    // Convert to TB Dict
+    // Convert to TB Dict with proper types
     use im::HashMap as ImHashMap;
     let mut tb_map = ImHashMap::new();
-    for (k, v) in time_map {
-        tb_map.insert(Arc::new(k), Value::String(Arc::new(v)));
-    }
+    tb_map.insert(Arc::new("year".to_string()), Value::Int(time_info.year as i64));
+    tb_map.insert(Arc::new("month".to_string()), Value::Int(time_info.month as i64));
+    tb_map.insert(Arc::new("day".to_string()), Value::Int(time_info.day as i64));
+    tb_map.insert(Arc::new("hour".to_string()), Value::Int(time_info.hour as i64));
+    tb_map.insert(Arc::new("minute".to_string()), Value::Int(time_info.minute as i64));
+    tb_map.insert(Arc::new("second".to_string()), Value::Int(time_info.second as i64));
+    tb_map.insert(Arc::new("microsecond".to_string()), Value::Int(time_info.microsecond as i64));
+    tb_map.insert(Arc::new("weekday".to_string()), Value::Int(time_info.weekday as i64));
+    tb_map.insert(Arc::new("timezone".to_string()), Value::String(Arc::new(time_info.timezone)));
+    tb_map.insert(Arc::new("offset".to_string()), Value::Int(time_info.offset as i64));
+    tb_map.insert(Arc::new("timestamp".to_string()), Value::Int(time_info.timestamp));
+    tb_map.insert(Arc::new("iso8601".to_string()), Value::String(Arc::new(time_info.iso8601)));
 
     Ok(Value::Dict(Arc::new(tb_map)))
+}
+
+// ============================================================================
+// TYPE CONVERSION BUILT-INS
+// ============================================================================
+
+/// int(value) -> int
+pub fn builtin_int(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("int() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Int(i) => Ok(Value::Int(*i)),
+        Value::Float(f) => Ok(Value::Int(*f as i64)),
+        Value::String(s) => {
+            s.parse::<i64>()
+                .map(Value::Int)
+                .map_err(|_| TBError::runtime_error(format!("Cannot convert '{}' to int", s)))
+        }
+        Value::Bool(b) => Ok(Value::Int(if *b { 1 } else { 0 })),
+        _ => Err(TBError::runtime_error(format!("Cannot convert {} to int", args[0].type_name()))),
+    }
+}
+
+/// str(value) -> str
+pub fn builtin_str(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("str() takes exactly 1 argument"));
+    }
+
+    Ok(Value::String(Arc::new(args[0].to_string())))
+}
+
+/// float(value) -> float
+pub fn builtin_float(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("float() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Float(f) => Ok(Value::Float(*f)),
+        Value::Int(i) => Ok(Value::Float(*i as f64)),
+        Value::String(s) => {
+            s.parse::<f64>()
+                .map(Value::Float)
+                .map_err(|_| TBError::runtime_error(format!("Cannot convert '{}' to float", s)))
+        }
+        _ => Err(TBError::runtime_error(format!("Cannot convert {} to float", args[0].type_name()))),
+    }
+}
+
+/// dict(value) -> dict
+/// Converts JSON string or creates empty dict
+pub fn builtin_dict(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() {
+        // Create empty dict
+        return Ok(Value::Dict(Arc::new(ImHashMap::new())));
+    }
+
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("dict() takes 0 or 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Dict(d) => Ok(Value::Dict(Arc::clone(d))),
+        Value::String(s) => {
+            // Try to parse as JSON
+            let json_value: serde_json::Value = serde_json::from_str(s)
+                .map_err(|e| TBError::runtime_error(format!("Cannot parse JSON: {}", e)))?;
+
+            // Convert JSON object to TB Dict
+            if let serde_json::Value::Object(obj) = json_value {
+                let mut map = ImHashMap::new();
+                for (k, v) in obj {
+                    map.insert(Arc::new(k), json_to_tb_value(v));
+                }
+                Ok(Value::Dict(Arc::new(map)))
+            } else {
+                Err(TBError::runtime_error("JSON value is not an object"))
+            }
+        }
+        _ => Err(TBError::runtime_error(format!("Cannot convert {} to dict", args[0].type_name()))),
+    }
+}
+
+/// list(value) -> list
+/// Converts JSON array string or creates empty list
+pub fn builtin_list(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.is_empty() {
+        // Create empty list
+        return Ok(Value::List(Arc::new(vec![])));
+    }
+
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("list() takes 0 or 1 argument"));
+    }
+
+    match &args[0] {
+        Value::List(l) => Ok(Value::List(Arc::clone(l))),
+        Value::String(s) => {
+            // Try to parse as JSON array
+            let json_value: serde_json::Value = serde_json::from_str(s)
+                .map_err(|e| TBError::runtime_error(format!("Cannot parse JSON: {}", e)))?;
+
+            // Convert JSON array to TB List
+            if let serde_json::Value::Array(arr) = json_value {
+                let items: Vec<Value> = arr.into_iter().map(json_to_tb_value).collect();
+                Ok(Value::List(Arc::new(items)))
+            } else {
+                Err(TBError::runtime_error("JSON value is not an array"))
+            }
+        }
+        _ => Err(TBError::runtime_error(format!("Cannot convert {} to list", args[0].type_name()))),
+    }
+}
+
+/// Helper function to convert serde_json::Value to TB Value
+fn json_to_tb_value(val: serde_json::Value) -> Value {
+    match val {
+        serde_json::Value::Null => Value::None,
+        serde_json::Value::Bool(b) => Value::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::Float(f)
+            } else {
+                Value::None
+            }
+        }
+        serde_json::Value::String(s) => Value::String(Arc::new(s)),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<Value> = arr.into_iter().map(json_to_tb_value).collect();
+            Value::List(Arc::new(items))
+        }
+        serde_json::Value::Object(obj) => {
+            let mut map = ImHashMap::new();
+            for (k, v) in obj {
+                map.insert(Arc::new(k), json_to_tb_value(v));
+            }
+            Value::Dict(Arc::new(map))
+        }
+    }
+}
+
+// ============================================================================
+// BASIC COLLECTION BUILT-INS
+// ============================================================================
+
+/// len(collection) -> int
+pub fn builtin_len(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("len() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::String(s) => Ok(Value::Int(s.len() as i64)),
+        Value::List(l) => Ok(Value::Int(l.len() as i64)),
+        Value::Dict(d) => Ok(Value::Int(d.len() as i64)),
+        _ => Err(TBError::runtime_error(format!("len() not supported for {}", args[0].type_name()))),
+    }
+}
+
+/// push(list, item) -> list
+pub fn builtin_push(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("push() takes exactly 2 arguments"));
+    }
+
+    match &args[0] {
+        Value::List(items) => {
+            let mut new_items = (**items).clone();
+            new_items.push(args[1].clone());
+            Ok(Value::List(Arc::new(new_items)))
+        }
+        _ => Err(TBError::runtime_error("push() requires a list")),
+    }
+}
+
+/// pop(list) -> list
+pub fn builtin_pop(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("pop() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::List(items) => {
+            if items.is_empty() {
+                return Err(TBError::runtime_error("Cannot pop from empty list"));
+            }
+            let mut new_items = (**items).clone();
+            new_items.pop();
+            Ok(Value::List(Arc::new(new_items)))
+        }
+        _ => Err(TBError::runtime_error("pop() requires a list")),
+    }
+}
+
+/// keys(dict) -> list[str]
+pub fn builtin_keys(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("keys() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Dict(map) => {
+            let keys: Vec<Value> = map.keys()
+                .map(|k| Value::String(Arc::clone(k)))
+                .collect();
+            Ok(Value::List(Arc::new(keys)))
+        }
+        _ => Err(TBError::runtime_error("keys() requires a dict")),
+    }
+}
+
+/// values(dict) -> list
+pub fn builtin_values(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("values() takes exactly 1 argument"));
+    }
+
+    match &args[0] {
+        Value::Dict(map) => {
+            let values: Vec<Value> = map.values().cloned().collect();
+            Ok(Value::List(Arc::new(values)))
+        }
+        _ => Err(TBError::runtime_error("values() requires a dict")),
+    }
+}
+
+/// range(start, end) or range(end) -> list[int]
+pub fn builtin_range(args: Vec<Value>) -> Result<Value, TBError> {
+    let (start, end) = match args.len() {
+        1 => {
+            match &args[0] {
+                Value::Int(e) => (0, *e),
+                _ => return Err(TBError::runtime_error("range() requires integer arguments")),
+            }
+        }
+        2 => {
+            match (&args[0], &args[1]) {
+                (Value::Int(s), Value::Int(e)) => (*s, *e),
+                _ => return Err(TBError::runtime_error("range() requires integer arguments")),
+            }
+        }
+        _ => return Err(TBError::runtime_error("range() takes 1 or 2 arguments")),
+    };
+
+    let values: Vec<Value> = (start..end).map(Value::Int).collect();
+    Ok(Value::List(Arc::new(values)))
+}
+
+/// print(...) -> None
+pub fn builtin_print(args: Vec<Value>) -> Result<Value, TBError> {
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            print!(" ");
+        }
+        print!("{}", arg);
+    }
+    println!();
+    Ok(Value::None)
+}
+
+// ============================================================================
+// MODULE IMPORT BUILT-IN
+// ============================================================================
+
+/// import(path) -> dict
+/// Loads and executes a TB module, returning its exported values as a dict
+///
+/// NOTE: This is a placeholder implementation. The actual import functionality
+/// should be implemented at the JIT/Compiler level to avoid circular dependencies.
+/// For now, this returns an error directing users to use the @import directive.
+pub fn builtin_import(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error("import() takes exactly 1 argument"));
+    }
+
+    let _path_str = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err(TBError::runtime_error("import() requires a string path")),
+    };
+
+    // TODO: Implement proper module loading
+    // This requires access to the parser and executor, which creates circular dependencies
+    // The proper solution is to implement this at the JIT executor level
+    Err(TBError::runtime_error(
+        "import() builtin is not yet implemented. Please use the @import directive instead:\n\
+         @import { path: \"module.tb\" }"
+    ))
+}
+
+// ============================================================================
+// HIGHER-ORDER FUNCTIONS
+// ============================================================================
+
+/// map(fn, list) -> list
+/// Applies a function to each element of a list and returns a new list
+pub fn builtin_map(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("map() takes exactly 2 arguments: function, list"));
+    }
+
+    let func = match &args[0] {
+        Value::Function(f) => f.clone(),
+        Value::NativeFunction(_) => return Err(TBError::runtime_error("map() does not support native functions yet")),
+        _ => return Err(TBError::runtime_error("map() first argument must be a function")),
+    };
+
+    let list = match &args[1] {
+        Value::List(l) => l.clone(),
+        _ => return Err(TBError::runtime_error("map() second argument must be a list")),
+    };
+
+    let mut result = Vec::new();
+    for item in list.iter() {
+        let mapped = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
+            .execute_function(&func, vec![item.clone()])?;
+        result.push(mapped);
+    }
+
+    Ok(Value::List(Arc::new(result)))
+}
+
+/// filter(fn, list) -> list
+/// Filters a list based on a predicate function
+pub fn builtin_filter(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("filter() takes exactly 2 arguments: function, list"));
+    }
+
+    let func = match &args[0] {
+        Value::Function(f) => f.clone(),
+        Value::NativeFunction(_) => return Err(TBError::runtime_error("filter() does not support native functions yet")),
+        _ => return Err(TBError::runtime_error("filter() first argument must be a function")),
+    };
+
+    let list = match &args[1] {
+        Value::List(l) => l.clone(),
+        _ => return Err(TBError::runtime_error("filter() second argument must be a list")),
+    };
+
+    let mut result = Vec::new();
+    for item in list.iter() {
+        let keep = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
+            .execute_function(&func, vec![item.clone()])?;
+
+        if keep.is_truthy() {
+            result.push(item.clone());
+        }
+    }
+
+    Ok(Value::List(Arc::new(result)))
+}
+
+/// reduce(fn, list, initial) -> value
+/// Reduces a list to a single value using an accumulator function
+pub fn builtin_reduce(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 3 {
+        return Err(TBError::runtime_error("reduce() takes exactly 3 arguments: function, list, initial"));
+    }
+
+    let func = match &args[0] {
+        Value::Function(f) => f.clone(),
+        Value::NativeFunction(_) => return Err(TBError::runtime_error("reduce() does not support native functions yet")),
+        _ => return Err(TBError::runtime_error("reduce() first argument must be a function")),
+    };
+
+    let list = match &args[1] {
+        Value::List(l) => l.clone(),
+        _ => return Err(TBError::runtime_error("reduce() second argument must be a list")),
+    };
+
+    let mut accumulator = args[2].clone();
+
+    for item in list.iter() {
+        accumulator = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
+            .execute_function(&func, vec![accumulator, item.clone()])?;
+    }
+
+    Ok(accumulator)
+}
+
+/// forEach(fn, list) -> None
+/// Executes a function for each element in a list (side effects only)
+pub fn builtin_forEach(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 2 {
+        return Err(TBError::runtime_error("forEach() takes exactly 2 arguments: function, list"));
+    }
+
+    let func = match &args[0] {
+        Value::Function(f) => f.clone(),
+        Value::NativeFunction(_) => return Err(TBError::runtime_error("forEach() does not support native functions yet")),
+        _ => return Err(TBError::runtime_error("forEach() first argument must be a function")),
+    };
+
+    let list = match &args[1] {
+        Value::List(l) => l.clone(),
+        _ => return Err(TBError::runtime_error("forEach() second argument must be a list")),
+    };
+
+    for item in list.iter() {
+        let _ = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
+            .execute_function(&func, vec![item.clone()])?;
+    }
+
+    Ok(Value::None)
 }

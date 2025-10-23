@@ -852,6 +852,9 @@ def cli_tbx_main():
     # Test examples command
     p_test = Copysubparsers.add_parser('test', help='TB language testing and examples')
     p_test.add_argument('test_args', nargs='*', help='Arguments for testing')
+    p_test.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    p_test.add_argument('--filter', help='Filter tests by name')
+    p_test.add_argument('--failed', '-f', action='store_true', help='Run only failed tests')
     args = Copyparser.parse_args()
 
     # Execute command

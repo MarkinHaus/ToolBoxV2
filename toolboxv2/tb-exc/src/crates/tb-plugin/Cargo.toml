@@ -8,6 +8,7 @@ tb-core = { path = "../tb-core" }
 libloading = "0.8"
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 dashmap.workspace = true
 parking_lot = "0.12"
 dirs = "5.0"

@@ -679,7 +679,112 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expression> {
+        self.parse_lambda_or_expression()
+    }
+
+    fn parse_lambda_or_expression(&mut self) -> Result<Expression> {
+        // Try to parse arrow function: x => expr or (x, y) => expr
+        let checkpoint = self.pos;
+
+        // Check for single parameter arrow function: x => expr
+        if let TokenKind::Ident(_) = &self.current().kind {
+            let next_pos = self.pos + 1;
+            if next_pos < self.tokens.len() {
+                if matches!(self.tokens[next_pos].kind, TokenKind::FatArrow) {
+                    // This is a single-parameter arrow function
+                    return self.parse_arrow_function();
+                }
+            }
+        }
+
+        // Check for multi-parameter arrow function: (x, y) => expr
+        if matches!(self.current().kind, TokenKind::LParen) {
+            // Look ahead to see if this is an arrow function
+            let mut paren_depth = 0;
+            let mut lookahead = self.pos;
+            let mut found_arrow = false;
+
+            while lookahead < self.tokens.len() {
+                match &self.tokens[lookahead].kind {
+                    TokenKind::LParen => paren_depth += 1,
+                    TokenKind::RParen => {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            // Check if next token is =>
+                            if lookahead + 1 < self.tokens.len() {
+                                if matches!(self.tokens[lookahead + 1].kind, TokenKind::FatArrow) {
+                                    found_arrow = true;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                lookahead += 1;
+            }
+
+            if found_arrow {
+                return self.parse_arrow_function();
+            }
+        }
+
+        // Not an arrow function, parse normal expression
         self.parse_or()
+    }
+
+    fn parse_arrow_function(&mut self) -> Result<Expression> {
+        let start_span = self.current().span;
+        let mut params = Vec::new();
+
+        // Parse parameters
+        if matches!(self.current().kind, TokenKind::LParen) {
+            // Multi-parameter: (x, y) => expr
+            self.advance(); // consume (
+
+            while !self.check(&TokenKind::RParen) && !self.is_at_end() {
+                let param_name = self.expect_ident()?;
+                params.push(Parameter {
+                    name: param_name,
+                    type_annotation: None,
+                });
+
+                if !self.check(&TokenKind::RParen) {
+                    self.expect(TokenKind::Comma)?;
+                }
+            }
+
+            self.expect(TokenKind::RParen)?;
+        } else {
+            // Single parameter: x => expr
+            let param_name = self.expect_ident()?;
+            params.push(Parameter {
+                name: param_name,
+                type_annotation: None,
+            });
+        }
+
+        // Expect =>
+        self.expect(TokenKind::FatArrow)?;
+
+        // Parse body: either { expr } or expr
+        // IMPORTANT: Use parse_lambda_or_expression() to support nested arrow functions
+        // This allows: x => y => x + y
+        let body = if self.check(&TokenKind::LBrace) {
+            self.advance();
+            let expr = self.parse_lambda_or_expression()?;
+            self.expect(TokenKind::RBrace)?;
+            Box::new(expr)
+        } else {
+            Box::new(self.parse_lambda_or_expression()?)
+        };
+
+        let end_span = *body.span();
+        Ok(Expression::Lambda {
+            params,
+            body,
+            span: start_span.merge(&end_span),
+        })
     }
 
     fn parse_or(&mut self) -> Result<Expression> {

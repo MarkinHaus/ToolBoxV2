@@ -5,6 +5,12 @@ use tb_core::*;
 use tb_plugin::PluginLoader;
 use tb_builtins; // ADDED
 
+/// Maximum recursion depth to prevent stack overflow
+const MAX_RECURSION_DEPTH: usize = 1000;
+
+/// Maximum list/dict size to prevent memory exhaustion
+const MAX_COLLECTION_SIZE: usize = 10_000_000;
+
 /// JIT executor using tree-walking interpreter with persistent data structures
 pub struct JitExecutor {
     env: ImHashMap<Arc<String>, Value>,
@@ -13,11 +19,18 @@ pub struct JitExecutor {
     should_continue: bool,
     plugin_loader: Arc<PluginLoader>,
     source_context: Option<SourceContext>,
+    recursion_depth: usize, // Track recursion depth for safety
 }
 
 impl JitExecutor {
     pub fn new() -> Self {
         let mut env = ImHashMap::new();
+
+        // Register built-in constants
+        env.insert(Arc::new("None".to_string()), Value::None);
+        env.insert(Arc::new("true".to_string()), Value::Bool(true));
+        env.insert(Arc::new("false".to_string()), Value::Bool(false));
+
         // Centralized built-in registration
         for (name, func) in tb_builtins::register_all_builtins() {
             let native_func = Value::NativeFunction(Arc::new(NativeFunction {
@@ -27,6 +40,12 @@ impl JitExecutor {
             env.insert(Arc::new(name.to_string()), native_func);
         }
 
+        // Initialize the global task environment with built-ins
+        {
+            let mut task_env = tb_builtins::TASK_ENVIRONMENT.write();
+            *task_env = env.clone();
+        }
+
         Self {
             env,
             return_value: None,
@@ -34,6 +53,7 @@ impl JitExecutor {
             should_continue: false,
             plugin_loader: Arc::new(PluginLoader::new()),
             source_context: None,
+            recursion_depth: 0,
         }
     }
 
@@ -65,6 +85,31 @@ impl JitExecutor {
         Ok(last)
     }
 
+    /// Execute a single statement (used by import builtin)
+    pub fn execute_statement(&mut self, stmt: &Statement) -> Result<Value> {
+        self.eval_statement(stmt)
+    }
+
+    /// Get the current environment (used by import builtin)
+    pub fn get_environment(&self) -> &ImHashMap<Arc<String>, Value> {
+        &self.env
+    }
+
+    /// Clone the current environment (used by spawn builtin)
+    pub fn clone_environment(&self) -> ImHashMap<Arc<String>, Value> {
+        self.env.clone()
+    }
+
+    /// Set a variable in the environment (used by task executor)
+    pub fn set_variable(&mut self, name: Arc<String>, value: Value) {
+        self.env.insert(name, value);
+    }
+
+    /// Take the return value (used by task executor)
+    pub fn take_return_value(&mut self) -> Option<Value> {
+        self.return_value.take()
+    }
+
     fn eval_statement(&mut self, stmt: &Statement) -> Result<Value> {
         match stmt {
             Statement::Let { name, value, .. } => {
@@ -89,6 +134,7 @@ impl JitExecutor {
                     params: params.iter().map(|p| Arc::clone(&p.name)).collect(),
                     body: body.clone(),
                     return_type: return_type.clone(),
+                    closure_env: None, // Regular functions don't need closure environment
                 }));
 
                 self.env.insert(Arc::clone(name), func);
@@ -284,14 +330,30 @@ impl JitExecutor {
                 self.call_function(func, arg_values, *span)
             }
 
-            Expression::List { elements, .. } => {
+            Expression::List { elements, span } => {
+                // ✅ SECURITY: Check collection size to prevent memory exhaustion
+                if elements.len() > MAX_COLLECTION_SIZE {
+                    return Err(self.runtime_error_with_context(
+                        format!("List size ({}) exceeds maximum allowed ({})", elements.len(), MAX_COLLECTION_SIZE),
+                        Some(*span)
+                    ));
+                }
+
                 let values: Result<Vec<_>> = elements.iter()
                     .map(|elem| self.eval_expression(elem))
                     .collect();
                 Ok(Value::List(Arc::new(values?)))
             }
 
-            Expression::Dict { entries, .. } => {
+            Expression::Dict { entries, span } => {
+                // ✅ SECURITY: Check collection size to prevent memory exhaustion
+                if entries.len() > MAX_COLLECTION_SIZE {
+                    return Err(self.runtime_error_with_context(
+                        format!("Dict size ({}) exceeds maximum allowed ({})", entries.len(), MAX_COLLECTION_SIZE),
+                        Some(*span)
+                    ));
+                }
+
                 let mut map = ImHashMap::new();
                 for (key, value_expr) in entries {
                     let value = self.eval_expression(value_expr)?;
@@ -348,11 +410,15 @@ impl JitExecutor {
                     span: *span,
                 };
 
+                // ✅ CLOSURE FIX: Capture current environment for nested arrow functions
+                let closure_env = Some(self.env.clone());
+
                 Ok(Value::Function(Arc::new(Function {
                     name: Arc::new("<lambda>".to_string()),
                     params: param_names,
                     body: vec![body_stmt],
                     return_type: None,
+                    closure_env,
                 })))
             }
 
@@ -535,6 +601,14 @@ impl JitExecutor {
     fn call_function(&mut self, func: Value, args: Vec<Value>, span: Span) -> Result<Value> {
         match func {
             Value::Function(f) => {
+                // ✅ SECURITY: Check recursion depth to prevent stack overflow
+                if self.recursion_depth >= MAX_RECURSION_DEPTH {
+                    return Err(self.runtime_error_with_context(
+                        format!("Maximum recursion depth ({}) exceeded", MAX_RECURSION_DEPTH),
+                        Some(span)
+                    ));
+                }
+
                 // Check argument count
                 if args.len() != f.params.len() {
                     return Err(self.runtime_error_with_context(
@@ -543,14 +617,22 @@ impl JitExecutor {
                     ));
                 }
 
+                // ✅ CLOSURE FIX: Use closure environment if available, otherwise use current environment
+                let base_env = if let Some(ref closure_env) = f.closure_env {
+                    closure_env.clone()
+                } else {
+                    self.env.clone()
+                };
+
                 // Create new environment with O(1) clone
                 let mut new_executor = JitExecutor {
-                    env: self.env.clone(), // O(1) structural sharing!
+                    env: base_env, // Use closure environment for closures!
                     return_value: None,
                     should_break: false,
                     should_continue: false,
                     plugin_loader: Arc::clone(&self.plugin_loader),
                     source_context: self.source_context.clone(),
+                    recursion_depth: self.recursion_depth + 1, // ✅ SECURITY: Track recursion
                 };
 
                 // Bind parameters
@@ -559,12 +641,20 @@ impl JitExecutor {
                 }
 
                 // Execute function body
-                new_executor.eval_block(&f.body)?;
+                let last_value = new_executor.eval_block(&f.body)?;
 
-                Ok(new_executor.return_value.unwrap_or(Value::None))
+                // Return explicit return value if present, otherwise return last expression value
+                Ok(new_executor.return_value.unwrap_or(last_value))
             }
 
             Value::NativeFunction(f) => {
+                // Update the global task environment before calling native functions
+                // This allows spawn() to access the current environment
+                {
+                    let mut env_lock = tb_builtins::TASK_ENVIRONMENT.write();
+                    *env_lock = self.env.clone();
+                }
+
                 (f.func)(args)
             }
 
@@ -661,6 +751,20 @@ impl JitExecutor {
         let function_names = self.extract_function_names(language, &source_code)?;
 
         tb_debug_plugin!("Extracted {} functions: {:?}", function_names.len(), function_names);
+
+        // Store plugin metadata
+        let plugin_name = canonical_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let metadata = tb_plugin::PluginMetadata {
+            path: canonical_path.to_string_lossy().to_string(),
+            language: format!("{:?}", language),
+            functions: function_names.clone(),
+        };
+
+        self.plugin_loader.store_metadata(plugin_name, metadata);
 
         let mut module_dict = ImHashMap::new();
 

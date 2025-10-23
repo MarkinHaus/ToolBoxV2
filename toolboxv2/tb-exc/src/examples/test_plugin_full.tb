@@ -1,0 +1,17 @@
+@plugin {
+    python "math_helpers" {
+        mode: "jit",
+
+        def square(x: int) -> int:
+            return x * x
+
+
+        def cube(x: int) -> int:
+            return x * x * x
+
+    }
+}
+
+print(math_helpers.square(5))
+print(math_helpers.cube(3))
+

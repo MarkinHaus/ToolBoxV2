@@ -32,23 +32,34 @@ impl TypeChecker {
     }
 
     fn register_builtins(env: &mut TypeEnvironment) {
+        // Built-in constants
+        env.define(Arc::new("None".to_string()), Type::None);
+        env.define(Arc::new("true".to_string()), Type::Bool);
+        env.define(Arc::new("false".to_string()), Type::Bool);
+
         // Built-in functions with Type::Any for polymorphism
         let builtins = vec![
             ("print", Type::Function {
                 params: vec![Type::Any],
                 return_type: Box::new(Type::None),
             }),
+            // len: accepts List<T>, Dict<K,V>, or String
             ("len", Type::Function {
-                params: vec![Type::Any],
+                params: vec![Type::Generic(Arc::new("T".to_string()))],
                 return_type: Box::new(Type::Int),
             }),
+            // push: List<T> + T -> List<T>
             ("push", Type::Function {
-                params: vec![Type::Any, Type::Any],
-                return_type: Box::new(Type::Any),
+                params: vec![
+                    Type::List(Box::new(Type::Generic(Arc::new("T".to_string())))),
+                    Type::Generic(Arc::new("T".to_string()))
+                ],
+                return_type: Box::new(Type::List(Box::new(Type::Generic(Arc::new("T".to_string()))))),
             }),
+            // pop: List<T> -> T
             ("pop", Type::Function {
-                params: vec![Type::Any],
-                return_type: Box::new(Type::Any),
+                params: vec![Type::List(Box::new(Type::Generic(Arc::new("T".to_string()))))],
+                return_type: Box::new(Type::Generic(Arc::new("T".to_string()))),
             }),
             ("keys", Type::Function {
                 params: vec![Type::Any],
@@ -73,6 +84,18 @@ impl TypeChecker {
             ("float", Type::Function {
                 params: vec![Type::Any],
                 return_type: Box::new(Type::Float),
+            }),
+            ("dict", Type::Function {
+                params: vec![Type::Any],  // Accepts 0 or 1 arg
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            ("list", Type::Function {
+                params: vec![Type::Any],  // Accepts 0 or 1 arg
+                return_type: Box::new(Type::List(Box::new(Type::Any))),
+            }),
+            ("import", Type::Function {
+                params: vec![Type::String],
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
             }),
             // File I/O functions
             ("file_exists", Type::Function {
@@ -115,6 +138,86 @@ impl TypeChecker {
             ("time", Type::Function {
                 params: vec![Type::Any],  // timezone (optional)
                 return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            // Async task management
+            // spawn: (T -> U, List<T>) -> String (task ID)
+            ("spawn", Type::Function {
+                params: vec![
+                    Type::Function {
+                        params: vec![Type::Generic(Arc::new("T".to_string()))],
+                        return_type: Box::new(Type::Generic(Arc::new("U".to_string()))),
+                    },
+                    Type::List(Box::new(Type::Generic(Arc::new("T".to_string())))),
+                ],
+                return_type: Box::new(Type::String),  // task ID
+            }),
+            // await_task: String -> T (generic result)
+            ("await_task", Type::Function {
+                params: vec![Type::String],  // task ID
+                return_type: Box::new(Type::Generic(Arc::new("T".to_string()))),  // task result
+            }),
+            ("cancel_task", Type::Function {
+                params: vec![Type::String],  // task ID
+                return_type: Box::new(Type::Bool),  // success
+            }),
+            // Network functions
+            ("create_server", Type::Function {
+                params: vec![Type::String, Type::String, Type::Any],  // protocol, address, callback
+                return_type: Box::new(Type::String),  // server ID
+            }),
+            ("stop_server", Type::Function {
+                params: vec![Type::String],  // server ID
+                return_type: Box::new(Type::Bool),  // success
+            }),
+            ("send_message", Type::Function {
+                params: vec![Type::String, Type::String],  // connection ID, message
+                return_type: Box::new(Type::Bool),  // success
+            }),
+            ("connect_to", Type::Function {
+                params: vec![Type::Any, Type::Any, Type::Any, Type::String, Type::Int, Type::String],  // on_connect, on_disconnect, on_msg, host, port, type
+                return_type: Box::new(Type::String),  // connection ID
+            }),
+            ("send_to", Type::Function {
+                params: vec![Type::String, Type::Any],  // connection ID, message
+                return_type: Box::new(Type::None),
+            }),
+            ("http_session", Type::Function {
+                params: vec![Type::String, Type::Any, Type::Any],  // base_url, headers, cookies_file
+                return_type: Box::new(Type::String),  // session ID
+            }),
+            ("http_request", Type::Function {
+                params: vec![Type::String, Type::String, Type::String, Type::Any],  // session_id, url, method, data
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),  // response dict
+            }),
+            // Plugin functions
+            ("load_plugin", Type::Function {
+                params: vec![Type::String, Type::String],  // path, language
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            ("plugin_info", Type::Function {
+                params: vec![Type::String],  // plugin name
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            // Higher-order functions (use Any for flexibility)
+            // map: (fn, list) -> list
+            ("map", Type::Function {
+                params: vec![Type::Any, Type::Any],
+                return_type: Box::new(Type::Any),
+            }),
+            // filter: (fn, list) -> list
+            ("filter", Type::Function {
+                params: vec![Type::Any, Type::Any],
+                return_type: Box::new(Type::Any),
+            }),
+            // reduce: (fn, list, initial) -> value
+            ("reduce", Type::Function {
+                params: vec![Type::Any, Type::Any, Type::Any],
+                return_type: Box::new(Type::Any),
+            }),
+            // forEach: (fn, list) -> None
+            ("forEach", Type::Function {
+                params: vec![Type::Any, Type::Any],
+                return_type: Box::new(Type::None),
             }),
         ];
 
@@ -259,14 +362,12 @@ impl TypeChecker {
             }
 
             Statement::If { condition, then_block, else_block, span } => {
-                let cond_type = self.check_expression(condition)?;
-                // Allow Type::Any for dynamic conditions (e.g., from dict lookups)
-                if cond_type != Type::Bool && cond_type != Type::Any {
-                    return Err(self.type_error_with_context(
-                        format!("If condition must be bool, got {:?}", cond_type),
-                        Some(*span)
-                    ));
-                }
+                let _cond_type = self.check_expression(condition)?;
+                // Accept any type for conditions - the runtime will use is_truthy()
+                // This matches Python-like truthiness rules:
+                // - None, 0, 0.0, "", [], {} are falsy
+                // - Everything else is truthy
+                // No type checking needed here since all types have defined truthiness
 
                 // Check branches in child scopes
                 let old_env = self.env.clone();
@@ -321,13 +422,10 @@ impl TypeChecker {
             }
 
             Statement::While { condition, body, span } => {
-                let cond_type = self.check_expression(condition)?;
-                if cond_type != Type::Bool {
-                    return Err(self.type_error_with_context(
-                        format!("While condition must be bool, got {:?}", cond_type),
-                        Some(*span)
-                    ));
-                }
+                let _cond_type = self.check_expression(condition)?;
+                // Accept any type for conditions - the runtime will use is_truthy()
+                // This matches Python-like truthiness rules
+                // No type checking needed here since all types have defined truthiness
 
                 let old_env = self.env.clone();
                 for stmt in body {
@@ -518,30 +616,21 @@ impl TypeChecker {
                     ));
                 }
 
-                // Allow heterogeneous dictionaries
+                // Collect all value types
                 let mut value_types = Vec::new();
                 for (_, value) in entries {
                     let value_type = self.check_expression(value)?;
                     value_types.push(value_type);
                 }
 
-                // Check if all types are the same
-                let first_type = &value_types[0];
-                let all_same = value_types.iter().all(|t| t == first_type);
+                // Find the Least Upper Bound (LUB) of all value types
+                // This allows Int+Float -> Float instead of falling back to Any
+                let lub_type = TypeInference::least_upper_bound(&value_types);
 
-                if all_same {
-                    // Homogeneous dict
-                    Ok(Type::Dict(
-                        Box::new(Type::String),
-                        Box::new(first_type.clone()),
-                    ))
-                } else {
-                    // Heterogeneous dict - use Any
-                    Ok(Type::Dict(
-                        Box::new(Type::String),
-                        Box::new(Type::Any),
-                    ))
-                }
+                Ok(Type::Dict(
+                    Box::new(Type::String),
+                    Box::new(lub_type),
+                ))
             }
 
             Expression::Index { object, index, span } => {
@@ -637,6 +726,33 @@ impl TypeChecker {
                 }
             }
 
+            Expression::Lambda { params, body, .. } => {
+                // Create a child environment for lambda parameters
+                let old_env = self.env.clone();
+                self.env = self.env.child();
+
+                // Add parameters to the environment with generic types
+                for param in params {
+                    self.env.define(
+                        Arc::clone(&param.name),
+                        Type::Generic(Arc::new("T".to_string())),
+                    );
+                }
+
+                // Check the body
+                let return_type = self.check_expression(body)?;
+
+                // Restore the old environment
+                self.env = old_env;
+
+                // Return a function type with generic parameters
+                let param_types = vec![Type::Generic(Arc::new("T".to_string())); params.len()];
+                Ok(Type::Function {
+                    params: param_types,
+                    return_type: Box::new(return_type),
+                })
+            }
+
             _ => Ok(Type::Generic(Arc::new("Unknown".to_string()))),
         }
     }
@@ -677,15 +793,37 @@ impl TypeChecker {
             return true;
         }
 
+        // Generic types are always assignable
+        if matches!(to, Type::Generic(_)) || matches!(from, Type::Generic(_)) {
+            return true;
+        }
+
         // Dict compatibility with Any values
         match (from, to) {
             (Type::Dict(k1, v1), Type::Dict(k2, v2)) => {
-                let keys_match = k1 == k2 || matches!(k1.as_ref(), Type::Any) || matches!(k2.as_ref(), Type::Any);
-                let values_match = v1 == v2 || matches!(v1.as_ref(), Type::Any) || matches!(v2.as_ref(), Type::Any);
+                let keys_match = k1 == k2 || matches!(k1.as_ref(), Type::Any) || matches!(k2.as_ref(), Type::Any) || matches!(k1.as_ref(), Type::Generic(_)) || matches!(k2.as_ref(), Type::Generic(_));
+                let values_match = v1 == v2 || matches!(v1.as_ref(), Type::Any) || matches!(v2.as_ref(), Type::Any) || matches!(v1.as_ref(), Type::Generic(_)) || matches!(v2.as_ref(), Type::Generic(_));
                 return keys_match && values_match;
             }
             (Type::List(t1), Type::List(t2)) => {
-                return t1 == t2 || matches!(t1.as_ref(), Type::Any) || matches!(t2.as_ref(), Type::Any);
+                return t1 == t2 || matches!(t1.as_ref(), Type::Any) || matches!(t2.as_ref(), Type::Any) || matches!(t1.as_ref(), Type::Generic(_)) || matches!(t2.as_ref(), Type::Generic(_));
+            }
+            // Function type compatibility with generics
+            (Type::Function { params: p1, return_type: r1 }, Type::Function { params: p2, return_type: r2 }) => {
+                // Check if parameter counts match
+                if p1.len() != p2.len() {
+                    return false;
+                }
+
+                // Check if all parameters are assignable (with generic support)
+                for (param1, param2) in p1.iter().zip(p2.iter()) {
+                    if !self.is_assignable(param1, param2) {
+                        return false;
+                    }
+                }
+
+                // Check if return types are assignable
+                return self.is_assignable(r1, r2);
             }
             _ => {}
         }

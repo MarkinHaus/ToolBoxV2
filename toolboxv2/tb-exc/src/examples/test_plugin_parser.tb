@@ -1,0 +1,11 @@
+@plugin {
+    python "math_helpers" {
+        mode: "jit",
+
+        def square(x):
+            return x * x
+    }
+}
+
+print("test")
+

@@ -1,0 +1,18 @@
+@plugin {
+    javascript "array_ops" {
+        mode: "jit",
+
+        function sum(arr) {
+            return arr.reduce((a, b) => a + b, 0);
+        }
+
+        function product(arr) {
+            return arr.reduce((a, b) => a * b, 1);
+        }
+    }
+}
+
+let numbers = [1, 2, 3, 4, 5]
+print(array_ops.sum(numbers))
+print(array_ops.product(numbers))
+

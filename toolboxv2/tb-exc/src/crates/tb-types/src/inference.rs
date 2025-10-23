@@ -135,5 +135,67 @@ impl TypeInference {
             other => other.clone(),
         }
     }
+
+    /// Find the Least Upper Bound (LUB) of multiple types
+    /// This is the most general type that all input types can be converted to
+    ///
+    /// Examples:
+    /// - LUB(Int, Int) = Int
+    /// - LUB(Int, Float) = Float (Int can be promoted to Float)
+    /// - LUB(Int, String) = Any (no common supertype)
+    /// - LUB(Int, Float, Int) = Float
+    pub fn least_upper_bound(types: &[Type]) -> Type {
+        if types.is_empty() {
+            return Type::Any;
+        }
+
+        if types.len() == 1 {
+            return types[0].clone();
+        }
+
+        // Start with the first type
+        let mut result = types[0].clone();
+
+        // Try to unify with each subsequent type
+        for ty in &types[1..] {
+            result = match Self::try_lub_pair(&result, ty) {
+                Some(lub) => lub,
+                None => return Type::Any, // No common supertype, fall back to Any
+            };
+        }
+
+        result
+    }
+
+    /// Try to find the LUB of two types, return None if no common supertype exists
+    fn try_lub_pair(a: &Type, b: &Type) -> Option<Type> {
+        // Same types
+        if a == b {
+            return Some(a.clone());
+        }
+
+        match (a, b) {
+            // Int/Float promotion: Int can be promoted to Float
+            (Type::Int, Type::Float) | (Type::Float, Type::Int) => Some(Type::Float),
+
+            // Any is the top type
+            (Type::Any, _) | (_, Type::Any) => Some(Type::Any),
+
+            // List types: LUB of element types
+            (Type::List(elem_a), Type::List(elem_b)) => {
+                Self::try_lub_pair(elem_a, elem_b).map(|elem_lub| Type::List(Box::new(elem_lub)))
+            }
+
+            // Dict types: LUB of key and value types
+            (Type::Dict(key_a, val_a), Type::Dict(key_b, val_b)) => {
+                let key_lub = Self::try_lub_pair(key_a, key_b)?;
+                let val_lub = Self::try_lub_pair(val_a, val_b)?;
+                Some(Type::Dict(Box::new(key_lub), Box::new(val_lub)))
+            }
+
+            // No common supertype
+            _ => None,
+        }
+    }
 }
 
