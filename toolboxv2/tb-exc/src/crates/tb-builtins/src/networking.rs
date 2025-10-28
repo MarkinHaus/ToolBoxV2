@@ -37,15 +37,13 @@ pub static UDP_CLIENTS: Lazy<DashMap<String, Arc<UdpClient>>> = Lazy::new(DashMa
 pub struct HttpSession {
     base_url: String,
     client: reqwest::Client,
-    headers: HashMap<String, String>,
-    cookies_file: Option<String>,
 }
 
 impl HttpSession {
     pub fn new(
         base_url: String,
         headers: HashMap<String, String>,
-        cookies_file: Option<String>,
+        _cookies_file: Option<String>,
     ) -> BuiltinResult<Self> {
         let mut client_builder = reqwest::Client::builder()
             .cookie_store(true)
@@ -69,8 +67,6 @@ impl HttpSession {
         Ok(Self {
             base_url,
             client,
-            headers,
-            cookies_file,
         })
     }
 
@@ -334,18 +330,15 @@ pub async fn create_udp_server(
 #[derive(Debug)]
 pub struct TcpClient {
     stream: Arc<tokio::sync::Mutex<TcpStream>>,
-    remote_addr: String,
 }
 
 impl TcpClient {
     pub async fn connect(host: String, port: u16) -> BuiltinResult<Self> {
         let addr = format!("{}:{}", host, port);
         let stream = TcpStream::connect(&addr).await?;
-        let remote_addr = stream.peer_addr()?.to_string();
 
         Ok(Self {
             stream: Arc::new(tokio::sync::Mutex::new(stream)),
-            remote_addr,
         })
     }
 
@@ -377,7 +370,6 @@ impl TcpClient {
 #[derive(Debug)]
 pub struct UdpClient {
     socket: Arc<UdpSocket>,
-    remote_addr: String,
 }
 
 impl UdpClient {
@@ -388,7 +380,6 @@ impl UdpClient {
 
         Ok(Self {
             socket: Arc::new(socket),
-            remote_addr,
         })
     }
 

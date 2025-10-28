@@ -281,6 +281,7 @@ impl TBError {
         output
     }
 
+    #[cfg(debug_assertions)]
     fn error_type(&self) -> &str {
         match self {
             TBError::SyntaxError { .. } => "Syntax Error",
@@ -298,6 +299,7 @@ impl TBError {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn main_message(&self) -> String {
         match self {
             TBError::SyntaxError { message, .. } => message.clone(),
@@ -317,6 +319,7 @@ impl TBError {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn get_span_and_context(&self) -> Option<(Span, SourceContext)> {
         match self {
             TBError::SyntaxError { span: Some(s), source_context: Some(ctx), .. } => Some((*s, ctx.clone())),
@@ -330,6 +333,7 @@ impl TBError {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn get_hint(&self) -> Option<String> {
         match self {
             TBError::UndefinedVariable { name, .. } => {

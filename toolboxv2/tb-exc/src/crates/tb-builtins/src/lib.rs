@@ -15,7 +15,7 @@ pub mod builtins_impl;
 pub mod task_runtime;
 
 use std::sync::Arc;
-use tb_core::{Value, TBError, Program};
+use tb_core::{Value, TBError};
 
 use tb_cache::CacheManager;
 use tb_plugin::PluginLoader;
@@ -24,8 +24,6 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
 pub use error::{BuiltinError, BuiltinResult};
-
-use crate::builtins_impl::*;
 
 // Import all built-in functions
 use crate::builtins_impl::*;
@@ -145,7 +143,7 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("map", builtins_impl::builtin_map as BuiltinFn));
     builtins.push(("filter", builtins_impl::builtin_filter as BuiltinFn));
     builtins.push(("reduce", builtins_impl::builtin_reduce as BuiltinFn));
-    builtins.push(("forEach", builtins_impl::builtin_forEach as BuiltinFn));
+    builtins.push(("forEach", builtins_impl::builtin_for_each as BuiltinFn));
 
     builtins
 }

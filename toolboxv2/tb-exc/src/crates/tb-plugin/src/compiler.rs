@@ -115,7 +115,7 @@ impl PluginCompiler {
         }
     }
 
-    fn install_python_deps(&self, requires: &[String]) -> Result<()> {
+    pub fn install_python_deps(&self, requires: &[String]) -> Result<()> {
         for dep in requires {
             println!("Installing Python dependency: {}", dep);
 

@@ -13,6 +13,7 @@ dashmap.workspace = true
 parking_lot = "0.12"
 dirs = "5.0"
 im.workspace = true
+tempfile = "3.8"
 
 # Optional FFI dependencies
 pyo3 = { version = "0.20", features = ["auto-initialize"], optional = true }

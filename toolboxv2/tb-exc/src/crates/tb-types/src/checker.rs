@@ -98,6 +98,10 @@ impl TypeChecker {
                 return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
             }),
             // File I/O functions
+            ("open", Type::Function {
+                params: vec![Type::String, Type::Any, Type::Any, Type::Any],  // path, mode, key, encoding
+                return_type: Box::new(Type::String),  // file handle
+            }),
             ("file_exists", Type::Function {
                 params: vec![Type::String, Type::Any],  // path, blob=false
                 return_type: Box::new(Type::Bool),
@@ -117,6 +121,40 @@ impl TypeChecker {
             ("delete_file", Type::Function {
                 params: vec![Type::String, Type::Any],  // path, blob=false
                 return_type: Box::new(Type::None),
+            }),
+            ("list_dir", Type::Function {
+                params: vec![Type::String],  // path
+                return_type: Box::new(Type::List(Box::new(Type::String))),
+            }),
+            ("create_dir", Type::Function {
+                params: vec![Type::String],  // path
+                return_type: Box::new(Type::None),
+            }),
+            // System functions
+            ("execute", Type::Function {
+                params: vec![Type::String, Type::Any],  // command, args
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            ("get_env", Type::Function {
+                params: vec![Type::String],  // var name
+                return_type: Box::new(Type::String),
+            }),
+            ("sleep", Type::Function {
+                params: vec![Type::Any],  // duration (int or float)
+                return_type: Box::new(Type::None),
+            }),
+            // Introspection functions
+            ("type_of", Type::Function {
+                params: vec![Type::Any],
+                return_type: Box::new(Type::String),
+            }),
+            ("dir", Type::Function {
+                params: vec![Type::Any],
+                return_type: Box::new(Type::List(Box::new(Type::String))),
+            }),
+            ("has_attr", Type::Function {
+                params: vec![Type::Any, Type::String],  // object, attribute name
+                return_type: Box::new(Type::Bool),
             }),
             // Utility functions
             ("json_parse", Type::Function {
@@ -189,6 +227,19 @@ impl TypeChecker {
                 params: vec![Type::String, Type::String, Type::String, Type::Any],  // session_id, url, method, data
                 return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),  // response dict
             }),
+            // Cache Management
+            ("cache_stats", Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            ("cache_clear", Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::None),
+            }),
+            ("cache_invalidate", Type::Function {
+                params: vec![Type::String],  // key
+                return_type: Box::new(Type::Bool),
+            }),
             // Plugin functions
             ("load_plugin", Type::Function {
                 params: vec![Type::String, Type::String],  // path, language
@@ -197,6 +248,31 @@ impl TypeChecker {
             ("plugin_info", Type::Function {
                 params: vec![Type::String],  // plugin name
                 return_type: Box::new(Type::Dict(Box::new(Type::String), Box::new(Type::Any))),
+            }),
+            ("list_plugins", Type::Function {
+                params: vec![],
+                return_type: Box::new(Type::List(Box::new(Type::String))),
+            }),
+            ("reload_plugin", Type::Function {
+                params: vec![Type::String],  // plugin name
+                return_type: Box::new(Type::Bool),
+            }),
+            ("unload_plugin", Type::Function {
+                params: vec![Type::String],  // plugin name
+                return_type: Box::new(Type::Bool),
+            }),
+            // Serialization & Hashing
+            ("bincode_serialize", Type::Function {
+                params: vec![Type::Any],
+                return_type: Box::new(Type::String),  // base64 encoded
+            }),
+            ("bincode_deserialize", Type::Function {
+                params: vec![Type::String],  // base64 encoded
+                return_type: Box::new(Type::Any),
+            }),
+            ("hash", Type::Function {
+                params: vec![Type::Any],
+                return_type: Box::new(Type::String),  // SHA-256 hash
             }),
             // Higher-order functions (use Any for flexibility)
             // map: (fn, list) -> list

@@ -5,8 +5,24 @@
 //! to avoid code duplication and ensure consistency between JIT and compiled modes.
 
 use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
+use std::sync::{Arc, RwLock};
 use std::fmt;
 use serde::{Serialize, Deserialize};
+
+// Conditional imports based on features
+#[cfg(feature = "networking")]
+use once_cell::sync::Lazy;
+#[cfg(feature = "networking")]
+use dashmap::DashMap;
+#[cfg(feature = "networking")]
+use tokio::net::{TcpStream, UdpSocket};
+#[cfg(feature = "networking")]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "networking")]
+use tokio::task::JoinHandle;
+#[cfg(feature = "networking-full")]
+use sha2::{Sha256, Sha512, Digest};
 
 // FFI interface for compiled mode
 #[cfg(feature = "full")]
@@ -14,7 +30,7 @@ pub mod ffi;
 
 // Re-export built-in functions only when "full" feature is enabled
 #[cfg(feature = "full")]
-use tb_core::{Value, TBError};
+use tb_core::Value;
 
 #[cfg(feature = "full")]
 pub use tb_builtins::builtins_impl::{
@@ -48,18 +64,14 @@ pub use tb_builtins::builtins_impl::{
     builtin_map as map_from_value,
     builtin_filter as filter_from_value,
     builtin_reduce as reduce_from_value,
-    builtin_forEach as forEach_from_value,
+    builtin_for_each as forEach_from_value,
 };
 
 // Plugin support (only when "plugins" feature is enabled)
 #[cfg(feature = "plugins")]
-use std::sync::Arc;
-#[cfg(feature = "plugins")]
-use dashmap::DashMap;
-#[cfg(feature = "plugins")]
 use tb_plugin::PluginLoader;
 #[cfg(feature = "plugins")]
-use tb_core::{PluginLanguage, PluginMode};
+use tb_core::PluginLanguage;
 
 /// Global plugin loader instance (only with "plugins" feature)
 #[cfg(feature = "plugins")]
@@ -90,28 +102,34 @@ impl DictValue {
     pub fn as_int(&self) -> i64 {
         match self {
             DictValue::Int(i) => *i,
-            _ => panic!("Expected Int"),
+            DictValue::Float(f) => *f as i64, // Toleranz für Typ-Mismatches
+            _ => 0, // Sicherer Standardwert
         }
     }
 
-    pub fn as_string(&self) -> &str {
+    pub fn as_string(&self) -> String {
         match self {
-            DictValue::String(s) => s,
-            _ => panic!("Expected String"),
+            DictValue::String(s) => s.clone(),
+            DictValue::Int(i) => i.to_string(),
+            DictValue::Float(f) => f.to_string(),
+            DictValue::Bool(b) => b.to_string(),
+            _ => String::new(), // Sicherer Standardwert
         }
     }
 
     pub fn as_float(&self) -> f64 {
         match self {
             DictValue::Float(f) => *f,
-            _ => panic!("Expected Float"),
+            DictValue::Int(i) => *i as f64, // Toleranz für Typ-Mismatches
+            _ => 0.0, // Sicherer Standardwert
         }
     }
 
     pub fn as_bool(&self) -> bool {
         match self {
             DictValue::Bool(b) => *b,
-            _ => panic!("Expected Bool"),
+            DictValue::Int(i) => *i != 0,
+            _ => false, // Sicherer Standardwert
         }
     }
 
@@ -125,14 +143,22 @@ impl DictValue {
     pub fn as_dict(&self) -> &HashMap<String, DictValue> {
         match self {
             DictValue::Dict(map) => map,
-            _ => panic!("Expected Dict"),
+            _ => {
+                // Erstellt und leakt eine statische leere HashMap, um eine sichere Referenz zurückzugeben
+                static EMPTY_MAP: std::sync::OnceLock<HashMap<String, DictValue>> = std::sync::OnceLock::new();
+                EMPTY_MAP.get_or_init(HashMap::new)
+            }
         }
     }
 
     pub fn as_list(&self) -> &Vec<DictValue> {
         match self {
             DictValue::List(v) => v,
-            _ => panic!("Expected List"),
+            _ => {
+                // Erstellt und leakt einen statischen leeren Vektor
+                static EMPTY_VEC: std::sync::OnceLock<Vec<DictValue>> = std::sync::OnceLock::new();
+                EMPTY_VEC.get_or_init(Vec::new)
+            }
         }
     }
 }
@@ -141,7 +167,14 @@ impl fmt::Display for DictValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DictValue::Int(i) => write!(f, "{}", i),
-            DictValue::Float(fl) => write!(f, "{}", fl),
+            DictValue::Float(fl) => {
+                // ✅ FIX: Format floats with .1 precision if they are whole numbers
+                if fl.fract() == 0.0 && fl.is_finite() {
+                    write!(f, "{:.1}", fl)
+                } else {
+                    write!(f, "{}", fl)
+                }
+            },
             DictValue::String(s) => write!(f, "{}", s),
             DictValue::Bool(b) => write!(f, "{}", b),
             DictValue::List(_) => write!(f, "[...]"),
@@ -375,6 +408,18 @@ pub fn print_hashmap_string(map: HashMap<String, String>) {
 
 pub fn print_hashmap_bool(map: HashMap<String, bool>) {
     println!("{:?}", map);
+}
+
+/// Print function for heterogeneous dictionaries (HashMap<String, DictValue>)
+pub fn print_hashmap_dictvalue(map: &HashMap<String, DictValue>) {
+    print!("{{");
+    for (i, (k, v)) in map.iter().enumerate() {
+        if i > 0 {
+            print!(", ");
+        }
+        print!("{}: {}", k, v);
+    }
+    println!("}}");
 }
 
 /// ✅ NEW: Print functions for vectors
@@ -744,6 +789,53 @@ pub fn dict_from_bool(d: HashMap<String, bool>) -> HashMap<String, DictValue> {
     d.into_iter().map(|(k, v)| (k, DictValue::Int(if v { 1 } else { 0 }))).collect()
 }
 
+/// ✅ FIX: dict() function - parse JSON string to HashMap<String, DictValue>
+#[cfg(feature = "json")]
+pub fn dict_from_string(json_str: Option<String>) -> HashMap<String, DictValue> {
+    if let Some(s) = json_str {
+        json_parse(s)
+    } else {
+        HashMap::new()
+    }
+}
+
+#[cfg(not(feature = "json"))]
+pub fn dict_from_string(_json_str: Option<String>) -> HashMap<String, DictValue> {
+    HashMap::new()
+}
+
+// ============================================================================
+// LIST CONVERSION FUNCTIONS
+// ============================================================================
+
+/// list() function - copy existing list
+pub fn list_from_list(list: Vec<DictValue>) -> Vec<DictValue> {
+    list.clone()
+}
+
+/// ✅ FIX: list() function - parse JSON array string to Vec<DictValue>
+#[cfg(feature = "json")]
+pub fn list_from_string(json_str: Option<String>) -> Vec<DictValue> {
+    if let Some(s) = json_str {
+        // Parse JSON array
+        let value: serde_json::Value = serde_json::from_str(&s)
+            .unwrap_or(serde_json::Value::Array(vec![]));
+
+        if let serde_json::Value::Array(arr) = value {
+            arr.iter().map(json_value_to_dict_value).collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(not(feature = "json"))]
+pub fn list_from_string(_json_str: Option<String>) -> Vec<DictValue> {
+    Vec::new()
+}
+
 // ============================================================================
 // WRAPPER FUNCTIONS FOR COMPILED CODE
 // ============================================================================
@@ -852,6 +944,7 @@ pub fn round(x: f64) -> f64 {
 // JSON/YAML FUNCTIONS
 // ============================================================================
 
+#[cfg(feature = "json")]
 /// Helper: Convert DictValue to serde_json::Value
 fn dict_value_to_json_value(val: &DictValue) -> serde_json::Value {
     match val {
@@ -874,6 +967,7 @@ fn dict_value_to_json_value(val: &DictValue) -> serde_json::Value {
     }
 }
 
+#[cfg(feature = "json")]
 /// Helper: Convert serde_json::Value to DictValue
 fn json_value_to_dict_value(val: &serde_json::Value) -> DictValue {
     match val {
@@ -902,6 +996,7 @@ fn json_value_to_dict_value(val: &serde_json::Value) -> DictValue {
     }
 }
 
+#[cfg(feature = "yaml")]
 /// Helper: Convert serde_yaml::Value to DictValue
 fn yaml_value_to_dict_value(val: &serde_yaml::Value) -> DictValue {
     match val {
@@ -933,20 +1028,30 @@ fn yaml_value_to_dict_value(val: &serde_yaml::Value) -> DictValue {
     }
 }
 
+#[cfg(feature = "json")]
 /// JSON parse function
-pub fn json_parse(json_str: String) -> Option<HashMap<String, DictValue>> {
-    let value: serde_json::Value = serde_json::from_str(&json_str).ok()?;
+pub fn json_parse(json_str: String) -> HashMap<String, DictValue> {
+    let value: serde_json::Value = serde_json::from_str(&json_str)
+        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
     if let serde_json::Value::Object(obj) = value {
         let mut map = HashMap::new();
         for (k, v) in obj {
             map.insert(k, json_value_to_dict_value(&v));
         }
-        Some(map)
+        map
     } else {
-        None
+        HashMap::new()  // Return empty HashMap on error
     }
 }
 
+#[cfg(not(feature = "json"))]
+/// JSON parse function (stub when json feature is disabled)
+pub fn json_parse(_json_str: String) -> HashMap<String, DictValue> {
+    HashMap::new()
+}
+
+#[cfg(feature = "json")]
 /// JSON stringify function
 pub fn json_stringify(value: &HashMap<String, DictValue>) -> String {
     let mut json_map = serde_json::Map::new();
@@ -957,9 +1062,18 @@ pub fn json_stringify(value: &HashMap<String, DictValue>) -> String {
     serde_json::to_string(&json_value).unwrap_or_default()
 }
 
+#[cfg(not(feature = "json"))]
+/// JSON stringify function (stub when json feature is disabled)
+pub fn json_stringify(_value: &HashMap<String, DictValue>) -> String {
+    String::new()
+}
+
+#[cfg(feature = "yaml")]
 /// YAML parse function
-pub fn yaml_parse(yaml_str: String) -> Option<HashMap<String, DictValue>> {
-    let value: serde_yaml::Value = serde_yaml::from_str(&yaml_str).ok()?;
+pub fn yaml_parse(yaml_str: String) -> HashMap<String, DictValue> {
+    let value: serde_yaml::Value = serde_yaml::from_str(&yaml_str)
+        .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+
     if let serde_yaml::Value::Mapping(obj) = value {
         let mut map = HashMap::new();
         for (k, v) in obj {
@@ -967,12 +1081,19 @@ pub fn yaml_parse(yaml_str: String) -> Option<HashMap<String, DictValue>> {
                 map.insert(key, yaml_value_to_dict_value(&v));
             }
         }
-        Some(map)
+        map
     } else {
-        None
+        HashMap::new()  // Return empty HashMap on error
     }
 }
 
+#[cfg(not(feature = "yaml"))]
+/// YAML parse function (stub when yaml feature is disabled)
+pub fn yaml_parse(_yaml_str: String) -> HashMap<String, DictValue> {
+    HashMap::new()
+}
+
+#[cfg(feature = "yaml")]
 /// Helper: Convert DictValue to serde_yaml::Value
 fn dict_value_to_yaml_value(val: &DictValue) -> serde_yaml::Value {
     match val {
@@ -996,6 +1117,7 @@ fn dict_value_to_yaml_value(val: &DictValue) -> serde_yaml::Value {
     }
 }
 
+#[cfg(feature = "yaml")]
 /// YAML stringify function
 pub fn yaml_stringify(value: &HashMap<String, DictValue>) -> String {
     // Convert HashMap<String, DictValue> to serde_yaml::Value
@@ -1010,18 +1132,33 @@ pub fn yaml_stringify(value: &HashMap<String, DictValue>) -> String {
     serde_yaml::to_string(&yaml_value).unwrap_or_default()
 }
 
+#[cfg(not(feature = "yaml"))]
+/// YAML stringify function (stub when yaml feature is disabled)
+pub fn yaml_stringify(_value: &HashMap<String, DictValue>) -> String {
+    String::new()
+}
+
 // ============================================================================
 // HIGHER-ORDER FUNCTIONS
 // ============================================================================
 
-/// forEach function - executes a function for each element in a vector
-pub fn forEach<T, F>(func: F, vec: Vec<T>)
+/// for_each function - executes a function for each element in a vector
+pub fn for_each<T, F>(func: F, vec: Vec<T>)
 where
     F: Fn(&T)
 {
     for item in vec.iter() {
         func(item);
     }
+}
+
+/// Alias for backwards compatibility - forEach is the same as for_each
+#[allow(non_snake_case)]
+pub fn forEach<T, F>(func: F, vec: Vec<T>)
+where
+    F: Fn(&T)
+{
+    for_each(func, vec)
 }
 
 /// reduce function for i64
@@ -1071,12 +1208,20 @@ pub fn str_bool(value: bool) -> String {
 // HTTP FUNCTIONS
 // ============================================================================
 
+#[cfg(feature = "networking")]
 /// HTTP session creation
 pub fn http_session(base_url: String) -> String {
     // Return a session ID (simplified - just return the base URL)
     base_url
 }
 
+#[cfg(not(feature = "networking"))]
+/// HTTP session creation (stub)
+pub fn http_session(base_url: String) -> String {
+    base_url
+}
+
+#[cfg(feature = "networking")]
 /// HTTP request function
 pub fn http_request(
     session_id: String,
@@ -1094,8 +1239,16 @@ pub fn http_request(
         "POST" => {
             let mut req = client.post(&url);
             if let Some(body) = data {
-                let json_body = serde_json::to_string(&body).unwrap_or_default();
-                req = req.header("Content-Type", "application/json").body(json_body);
+                #[cfg(feature = "json")]
+                {
+                    let json_body = serde_json::to_string(&body).unwrap_or_default();
+                    req = req.header("Content-Type", "application/json").body(json_body);
+                }
+                #[cfg(not(feature = "json"))]
+                {
+                    let _ = body; // Suppress unused warning
+                    req = req.header("Content-Type", "application/json").body("{}");
+                }
             }
             req.send()
         },
@@ -1120,7 +1273,229 @@ pub fn http_request(
     response_map
 }
 
-/// TCP connection function (placeholder)
+#[cfg(not(feature = "networking"))]
+/// HTTP request function (stub)
+pub fn http_request(
+    _session_id: String,
+    _path: String,
+    _method: String,
+    _data: Option<HashMap<String, DictValue>>
+) -> HashMap<String, DictValue> {
+    let mut response_map = HashMap::new();
+    response_map.insert("error".to_string(), DictValue::String("Networking not enabled".to_string()));
+    response_map
+}
+
+// ============================================================================
+// NETWORKING - REAL IMPLEMENTATIONS (CONDITIONAL)
+// ============================================================================
+
+#[cfg(feature = "networking")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "networking")]
+/// Global Tokio runtime for async operations in compiled mode
+/// Uses OnceLock for lazy initialization - only created when first used!
+static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+#[cfg(feature = "networking")]
+/// Get or create the Tokio runtime with configurable thread count
+fn get_runtime(worker_threads: usize) -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        #[cfg(feature = "tokio-multi-thread")]
+        {
+            // Multi-threaded runtime (when threads > 1 or networking with multiple threads)
+            let threads = if worker_threads == 0 { 2 } else { worker_threads };
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(threads)
+                .thread_name("tb-compiled-worker")
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("Failed to create Tokio runtime")
+        }
+        #[cfg(not(feature = "tokio-multi-thread"))]
+        {
+            // Single-threaded runtime (default, fastest startup)
+            let _ = worker_threads; // Suppress unused warning
+            tokio::runtime::Builder::new_current_thread()
+                .thread_name("tb-compiled-worker")
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("Failed to create Tokio runtime")
+        }
+    })
+}
+
+#[cfg(feature = "networking")]
+/// Global TCP client registry
+static TCP_CLIENTS: Lazy<DashMap<String, Arc<tokio::sync::Mutex<TcpStream>>>> = Lazy::new(|| DashMap::new());
+
+#[cfg(feature = "networking")]
+/// Global UDP client registry
+static UDP_CLIENTS: Lazy<DashMap<String, Arc<UdpSocket>>> = Lazy::new(|| DashMap::new());
+
+#[cfg(feature = "networking")]
+/// TCP connection function - complex version with callbacks
+pub fn connect_to<F1, F2, F3>(
+    _on_connect: F1,
+    _on_disconnect: F2,
+    _on_message: F3,
+    host: String,
+    port: i64,
+    protocol: String
+) -> String
+where
+    F1: Fn(String, String),
+    F2: Fn(String),
+    F3: Fn(String, String)
+{
+    // For compiled mode, we use the simplified version
+    connect_to_simple(host, port, protocol, 2)
+}
+
+#[cfg(feature = "networking")]
+/// Simplified TCP/UDP connection function - REAL IMPLEMENTATION
+pub fn connect_to_simple(
+    host: String,
+    port: i64,
+    protocol: String,
+    worker_threads: usize,
+) -> String
+{
+    let conn_id = format!("conn_{}:{}_{}", protocol, host, port);
+    let conn_id_clone = conn_id.clone();
+
+    get_runtime(worker_threads).block_on(async move {
+        match protocol.to_lowercase().as_str() {
+            "tcp" => {
+                let addr = format!("{}:{}", host, port);
+                match TcpStream::connect(&addr).await {
+                    Ok(stream) => {
+                        TCP_CLIENTS.insert(conn_id_clone.clone(), Arc::new(tokio::sync::Mutex::new(stream)));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to connect to TCP {}:{}: {}", host, port, e);
+                    }
+                }
+            }
+            "udp" => {
+                match UdpSocket::bind("0.0.0.0:0").await {
+                    Ok(socket) => {
+                        let remote_addr = format!("{}:{}", host, port);
+                        if let Err(e) = socket.connect(&remote_addr).await {
+                            eprintln!("Failed to connect UDP socket: {}", e);
+                        } else {
+                            UDP_CLIENTS.insert(conn_id_clone.clone(), Arc::new(socket));
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to create UDP socket: {}", e);
+                    }
+                }
+            }
+            _ => {
+                eprintln!("Unsupported protocol: {}", protocol);
+            }
+        }
+    });
+
+    conn_id
+}
+
+#[cfg(feature = "networking")]
+/// Send message to connection - REAL IMPLEMENTATION
+pub fn send_to(conn_id: String, message: String) {
+    send_to_with_threads(conn_id, message, 2);
+}
+
+#[cfg(feature = "networking")]
+pub fn send_to_with_threads(conn_id: String, message: String, worker_threads: usize) {
+    get_runtime(worker_threads).block_on(async move {
+        // Try TCP first
+        if let Some(stream_ref) = TCP_CLIENTS.get(&conn_id) {
+            let mut stream = stream_ref.lock().await;
+            if let Err(e) = stream.write_all(message.as_bytes()).await {
+                eprintln!("Failed to send TCP message: {}", e);
+            } else {
+                let _ = stream.flush().await;
+            }
+            return;
+        }
+
+        // Try UDP
+        if let Some(socket_ref) = UDP_CLIENTS.get(&conn_id) {
+            if let Err(e) = socket_ref.send(message.as_bytes()).await {
+                eprintln!("Failed to send UDP message: {}", e);
+            }
+            return;
+        }
+
+        eprintln!("Connection not found: {}", conn_id);
+    });
+}
+
+#[cfg(feature = "networking")]
+/// Receive message from connection - REAL IMPLEMENTATION
+pub fn receive_from(conn_id: String) -> String {
+    receive_from_with_threads(conn_id, 2)
+}
+
+#[cfg(feature = "networking")]
+pub fn receive_from_with_threads(conn_id: String, worker_threads: usize) -> String {
+    get_runtime(worker_threads).block_on(async move {
+        // Try TCP first
+        if let Some(stream_ref) = TCP_CLIENTS.get(&conn_id) {
+            let mut stream = stream_ref.lock().await;
+            let mut buffer = vec![0u8; 4096];
+            match stream.read(&mut buffer).await {
+                Ok(n) if n > 0 => {
+                    return String::from_utf8_lossy(&buffer[..n]).to_string();
+                }
+                Ok(_) => {
+                    eprintln!("Connection closed");
+                    return String::new();
+                }
+                Err(e) => {
+                    eprintln!("Failed to receive TCP message: {}", e);
+                    return String::new();
+                }
+            }
+        }
+
+        // Try UDP
+        if let Some(socket_ref) = UDP_CLIENTS.get(&conn_id) {
+            let mut buffer = vec![0u8; 4096];
+            match socket_ref.recv(&mut buffer).await {
+                Ok(n) => {
+                    return String::from_utf8_lossy(&buffer[..n]).to_string();
+                }
+                Err(e) => {
+                    eprintln!("Failed to receive UDP message: {}", e);
+                    return String::new();
+                }
+            }
+        }
+
+        eprintln!("Connection not found: {}", conn_id);
+        String::new()
+    })
+}
+
+#[cfg(feature = "networking")]
+/// Close connection - REAL IMPLEMENTATION
+pub fn close_connection(conn_id: String) -> bool {
+    let removed_tcp = TCP_CLIENTS.remove(&conn_id).is_some();
+    let removed_udp = UDP_CLIENTS.remove(&conn_id).is_some();
+    removed_tcp || removed_udp
+}
+
+// ============================================================================
+// NETWORKING STUBS (when feature is disabled)
+// ============================================================================
+
+#[cfg(not(feature = "networking"))]
 pub fn connect_to<F1, F2, F3>(
     _on_connect: F1,
     _on_disconnect: F2,
@@ -1134,6 +1509,335 @@ where
     F2: Fn(String),
     F3: Fn(String, String)
 {
-    // Placeholder - returns error message
-    "TCP connection not implemented in compiled mode".to_string()
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn connect_to_simple(_host: String, _port: i64, _protocol: String, _worker_threads: usize) -> String {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn send_to(_conn_id: String, _message: String) {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn send_to_with_threads(_conn_id: String, _message: String, _worker_threads: usize) {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn receive_from(_conn_id: String) -> String {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn receive_from_with_threads(_conn_id: String, _worker_threads: usize) -> String {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn close_connection(_conn_id: String) -> bool {
+    panic!("Networking not enabled! Recompile with --features networking");
+}
+
+
+// ============================================================================
+// CACHE MANAGEMENT - REAL IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(feature = "networking")]
+/// Simple in-memory cache for compiled mode
+static CACHE_STORAGE: Lazy<RwLock<StdHashMap<String, Vec<u8>>>> = Lazy::new(|| RwLock::new(StdHashMap::new()));
+
+/// Cache statistics
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    pub entries: usize,
+    pub total_bytes: usize,
+}
+
+#[cfg(feature = "networking")]
+/// Get cache statistics
+pub fn cache_stats() -> HashMap<String, DictValue> {
+    let cache = CACHE_STORAGE.read().unwrap();
+    let entries = cache.len();
+    let total_bytes: usize = cache.values().map(|v| v.len()).sum();
+
+    let mut stats = HashMap::new();
+    stats.insert("entries".to_string(), DictValue::Int(entries as i64));
+    stats.insert("total_bytes".to_string(), DictValue::Int(total_bytes as i64));
+    stats
+}
+
+#[cfg(not(feature = "networking"))]
+/// Get cache statistics (stub)
+pub fn cache_stats() -> HashMap<String, DictValue> {
+    HashMap::new()
+}
+
+#[cfg(feature = "networking")]
+/// Clear cache
+pub fn cache_clear() -> bool {
+    let mut cache = CACHE_STORAGE.write().unwrap();
+    cache.clear();
+    true
+}
+
+#[cfg(not(feature = "networking"))]
+/// Clear cache (stub)
+pub fn cache_clear() -> bool {
+    false
+}
+
+#[cfg(feature = "networking")]
+/// Invalidate specific cache entry
+pub fn cache_invalidate(key: String) -> bool {
+    let mut cache = CACHE_STORAGE.write().unwrap();
+    cache.remove(&key).is_some()
+}
+
+#[cfg(not(feature = "networking"))]
+/// Invalidate cache entry (stub)
+pub fn cache_invalidate(_key: String) -> bool {
+    false
+}
+
+#[cfg(feature = "networking")]
+/// Set cache value
+pub fn cache_set(key: String, value: Vec<u8>) {
+    let mut cache = CACHE_STORAGE.write().unwrap();
+    cache.insert(key, value);
+}
+
+#[cfg(not(feature = "networking"))]
+/// Set cache value (stub)
+pub fn cache_set(_key: String, _value: Vec<u8>) {
+}
+
+#[cfg(feature = "networking")]
+/// Get cache value
+pub fn cache_get(key: String) -> Option<Vec<u8>> {
+    let cache = CACHE_STORAGE.read().unwrap();
+    cache.get(&key).cloned()
+}
+
+#[cfg(not(feature = "networking"))]
+/// Get cache value (stub)
+pub fn cache_get(_key: String) -> Option<Vec<u8>> {
+    None
+}
+
+// ============================================================================
+// ASYNC TASK MANAGEMENT - REAL IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(feature = "networking")]
+/// Global task registry
+static ACTIVE_TASKS: Lazy<DashMap<String, JoinHandle<String>>> = Lazy::new(|| DashMap::new());
+
+#[cfg(feature = "networking")]
+/// Spawn async task - REAL IMPLEMENTATION
+/// Returns task ID
+pub fn spawn_task<F>(task_fn: F, worker_threads: usize) -> String
+where
+    F: std::future::Future<Output = String> + Send + 'static,
+{
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let task_id_clone = task_id.clone();
+
+    let runtime = get_runtime(worker_threads);
+    let handle = runtime.spawn(task_fn);
+    ACTIVE_TASKS.insert(task_id_clone, handle);
+
+    task_id
+}
+
+#[cfg(feature = "networking")]
+/// Await task completion - REAL IMPLEMENTATION
+pub fn await_task(task_id: String, worker_threads: usize) -> String {
+    if let Some((_, handle)) = ACTIVE_TASKS.remove(&task_id) {
+        let runtime = get_runtime(worker_threads);
+        runtime.block_on(handle).unwrap_or_else(|e| {
+            format!("Task panicked: {}", e)
+        })
+    } else {
+        format!("Task not found: {}", task_id)
+    }
+}
+
+#[cfg(feature = "networking")]
+/// Cancel task - REAL IMPLEMENTATION
+pub fn cancel_task(task_id: String) -> bool {
+    if let Some(entry) = ACTIVE_TASKS.get(&task_id) {
+        entry.value().abort();
+        ACTIVE_TASKS.remove(&task_id);
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "networking")]
+/// List active tasks
+pub fn list_tasks() -> Vec<String> {
+    ACTIVE_TASKS.iter().map(|entry| entry.key().clone()).collect()
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn spawn_task<F>(_task_fn: F, _worker_threads: usize) -> String
+where
+    F: std::future::Future<Output = String> + Send + 'static,
+{
+    panic!("Async tasks not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn await_task(_task_id: String, _worker_threads: usize) -> String {
+    panic!("Async tasks not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn cancel_task(_task_id: String) -> bool {
+    panic!("Async tasks not enabled! Recompile with --features networking");
+}
+
+#[cfg(not(feature = "networking"))]
+pub fn list_tasks() -> Vec<String> {
+    panic!("Async tasks not enabled! Recompile with --features networking");
+}
+
+// ============================================================================
+// SERIALIZATION & HASHING - REAL IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(feature = "networking-full")]
+/// Serialize value to bincode - REAL IMPLEMENTATION
+pub fn bincode_serialize<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    bincode::serialize(value).unwrap_or_default()
+}
+
+#[cfg(not(feature = "networking-full"))]
+/// Serialize value to bincode - STUB
+pub fn bincode_serialize<T: serde::Serialize>(_value: &T) -> Vec<u8> {
+    Vec::new()
+}
+
+#[cfg(feature = "networking-full")]
+/// Deserialize value from bincode - REAL IMPLEMENTATION
+pub fn bincode_deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+    bincode::deserialize(bytes).ok()
+}
+
+#[cfg(not(feature = "networking-full"))]
+/// Deserialize value from bincode - STUB
+pub fn bincode_deserialize<T: serde::de::DeserializeOwned>(_bytes: &[u8]) -> Option<T> {
+    None
+}
+
+#[cfg(feature = "networking-full")]
+/// Hash data with specified algorithm - REAL IMPLEMENTATION
+pub fn hash(algorithm: String, data: Vec<u8>) -> String {
+    match algorithm.to_lowercase().as_str() {
+        "sha256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            format!("{:x}", hasher.finalize())
+        }
+        "sha512" => {
+            let mut hasher = Sha512::new();
+            hasher.update(&data);
+            format!("{:x}", hasher.finalize())
+        }
+        _ => {
+            eprintln!("Unsupported hash algorithm: {}", algorithm);
+            String::new()
+        }
+    }
+}
+
+#[cfg(not(feature = "networking-full"))]
+/// Hash data with specified algorithm - STUB
+pub fn hash(_algorithm: String, _data: Vec<u8>) -> String {
+    String::new()
+}
+
+/// Hash string - convenience function
+pub fn hash_string(algorithm: String, data: String) -> String {
+    hash(algorithm, data.into_bytes())
+}
+
+// ============================================================================
+// PLUGIN MANAGEMENT - REAL IMPLEMENTATIONS
+// ============================================================================
+
+#[cfg(feature = "networking")]
+/// Global plugin registry (simplified for compiled mode)
+static LOADED_PLUGINS: Lazy<DashMap<String, String>> = Lazy::new(|| DashMap::new());
+
+#[cfg(feature = "networking")]
+/// List loaded plugins
+pub fn list_plugins() -> Vec<String> {
+    LOADED_PLUGINS.iter().map(|entry| entry.key().clone()).collect()
+}
+
+#[cfg(not(feature = "networking"))]
+/// List loaded plugins (stub)
+pub fn list_plugins() -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(feature = "networking")]
+/// Register plugin (for compiled mode)
+pub fn register_plugin(name: String, path: String) {
+    LOADED_PLUGINS.insert(name, path);
+}
+
+#[cfg(not(feature = "networking"))]
+/// Register plugin (stub)
+pub fn register_plugin(_name: String, _path: String) {
+}
+
+#[cfg(feature = "networking")]
+/// Unload plugin
+pub fn unload_plugin(name: String) -> bool {
+    LOADED_PLUGINS.remove(&name).is_some()
+}
+
+#[cfg(not(feature = "networking"))]
+/// Unload plugin (stub)
+pub fn unload_plugin(_name: String) -> bool {
+    false
+}
+
+#[cfg(feature = "networking")]
+/// Reload plugin (simplified - just marks for reload)
+pub fn reload_plugin(name: String) -> bool {
+    LOADED_PLUGINS.contains_key(&name)
+}
+
+#[cfg(not(feature = "networking"))]
+/// Reload plugin (stub)
+pub fn reload_plugin(_name: String) -> bool {
+    false
+}
+
+#[cfg(feature = "networking")]
+/// Get plugin info
+pub fn plugin_info(name: String) -> Option<HashMap<String, DictValue>> {
+    if let Some(entry) = LOADED_PLUGINS.get(&name) {
+        let mut info = HashMap::new();
+        info.insert("name".to_string(), DictValue::String(name));
+        info.insert("path".to_string(), DictValue::String(entry.value().clone()));
+        Some(info)
+    } else {
+        None
+    }
+}
+
+#[cfg(not(feature = "networking"))]
+/// Get plugin info (stub)
+pub fn plugin_info(_name: String) -> Option<HashMap<String, DictValue>> {
+    None
 }

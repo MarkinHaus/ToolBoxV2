@@ -1126,49 +1126,6 @@ if file_exists("blob_id/settings.json", true) {
 
 ---
 
-### Blob Storage Functions
-
-#### blob_init
-Initialize distributed blob storage
-```tb
-// Initialize with server list
-let storage = blob_init(["http://server1:8080", "http://server2:8080"])
-
-// With custom cache directory
-let storage = blob_init(["http://localhost:8080"], "./.cache/blobs")
-```
-
-#### blob_create
-Create a new blob (content-addressable)
-```tb
-// Auto-generate blob ID from content hash
-let blob_id = blob_create(storage, "Hello, Blob!")
-
-// Specify custom blob ID
-let custom_id = blob_create(storage, "Data", "my-blob-id")
-```
-
-#### blob_read
-Read blob content
-```tb
-let content = blob_read(storage, blob_id)
-print(content)  // "Hello, Blob!"
-```
-
-#### blob_update
-Update existing blob
-```tb
-blob_update(storage, blob_id, "Updated content")
-```
-
-#### blob_delete
-Delete a blob
-```tb
-blob_delete(storage, blob_id)
-```
-
----
-
 ### Networking Functions
 
 #### create_server

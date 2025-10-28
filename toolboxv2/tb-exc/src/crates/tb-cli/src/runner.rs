@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::env;
 use tb_cache::CacheManager;
 use tb_codegen::RustCodeGenerator;
-use tb_core::{Result, StringInterner, Value, Statement, Program, ImportItem};
+use tb_core::{Result, StringInterner, Value, Statement, Program, ImportItem, Expression};
 use tb_jit::JitExecutor;
 use tb_optimizer::{Optimizer, OptimizerConfig};
 use tb_parser::{Lexer, Parser};
@@ -129,11 +129,48 @@ pub fn compile_file(
     let mut optimizer = Optimizer::new(optimizer_config);
     optimizer.optimize(&mut program)?;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PARSE CONFIG BLOCK
+    // ═══════════════════════════════════════════════════════════════════════════
+    let config_threads = parse_config_threads(&source);
+    let config_networking = parse_config_networking(&source);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-DETECT NETWORKING USAGE
+    // ═══════════════════════════════════════════════════════════════════════════
+    let uses_networking = detect_networking_usage(&program.statements) || config_networking;
+
+    // Determine runtime configuration
+    let (runtime_config, worker_threads, use_multi_thread) = if uses_networking {
+        eprintln!("[TB Compiler] ✓ Auto-detected networking usage - enabling networking features");
+        let threads = if config_threads > 1 { config_threads } else { 2 };
+        (TokioRuntimeConfig::Minimal { worker_threads: threads }, threads, true)
+    } else if config_threads > 1 {
+        eprintln!("[TB Compiler] ✓ Multi-threaded runtime requested ({} threads)", config_threads);
+        (TokioRuntimeConfig::Minimal { worker_threads: config_threads }, config_threads, true)
+    } else {
+        eprintln!("[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime");
+        (TokioRuntimeConfig::None, 1, false)
+    };
+
     let mut codegen = RustCodeGenerator::new();
-    let rust_code = codegen.generate(&program)?;
+    let mut rust_code = codegen.generate(&program)?;
 
     // Get required crates from code generator
-    let required_crates = codegen.get_required_crates();
+    let mut required_crates = codegen.get_required_crates().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // Add networking features if needed
+    if uses_networking || use_multi_thread {
+        if !required_crates.contains(&"tb_runtime".to_string()) {
+            required_crates.push("tb_runtime".to_string());
+        }
+
+        // Add TOKIO_WORKER_THREADS constant to generated code
+        let const_def = format!("\n// Tokio runtime configuration\nconst TOKIO_WORKER_THREADS: usize = {};\n\n", worker_threads);
+        if let Some(pos) = rust_code.find("fn main()") {
+            rust_code.insert_str(pos, &const_def);
+        }
+    }
 
     // DEBUG: Save generated code for inspection
     if std::env::var("TB_DEBUG_CODEGEN").is_ok() {
@@ -151,7 +188,8 @@ pub fn compile_file(
     let use_fast_compile = std::env::var("TB_USE_CARGO").is_err();
 
     if use_fast_compile {
-        return compile_with_rustc(file, output, &rust_code, &required_crates);
+        let required_crates_refs: Vec<&str> = required_crates.iter().map(|s| s.as_str()).collect();
+        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread);
     }
 
     // FALLBACK: Old Cargo-based compilation (slow but more compatible)
@@ -176,7 +214,11 @@ pub fn compile_file(
         // PRIORITY 1: Relative to binary (most reliable)
         if let Some(exe) = exe_path {
             if let Some(parent) = exe.parent() {
-                // From target/release/tb.exe -> ../../crates/tb-runtime
+                // ✅ FIX: Added correct path for ToolBoxV2 structure
+                // From target/release/tb.exe -> ../../../toolboxv2/tb-exc/src/crates/tb-runtime
+                candidates.push(parent.join("../../../toolboxv2/tb-exc/src/crates/tb-runtime"));
+                candidates.push(parent.join("../../toolboxv2/tb-exc/src/crates/tb-runtime"));
+                // Legacy paths (for backward compatibility)
                 candidates.push(parent.join("../../crates/tb-runtime"));
                 candidates.push(parent.join("../../../crates/tb-runtime"));
                 candidates.push(parent.join("../crates/tb-runtime"));
@@ -185,8 +227,9 @@ pub fn compile_file(
 
         // PRIORITY 2: Relative to current directory
         if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(cwd.join("tb-exc/src/crates/tb-runtime"));
+            // ✅ FIX: Prioritize correct ToolBoxV2 structure
             candidates.push(cwd.join("toolboxv2/tb-exc/src/crates/tb-runtime"));
+            candidates.push(cwd.join("tb-exc/src/crates/tb-runtime"));
             candidates.push(cwd.join("crates/tb-runtime"));
         }
 
@@ -208,18 +251,40 @@ pub fn compile_file(
         tb_runtime_path_str = tb_runtime_path_str[4..].to_string();
     }
 
-    dependencies.push_str(&format!("tb-runtime = {{ path = \"{}\" }}\n", tb_runtime_path_str));
+    // Add tb-runtime with appropriate features
+    let mut tb_runtime_features = Vec::new();
+    if uses_networking {
+        tb_runtime_features.push("networking");
+    }
+    if required_crates.contains(&"serde_json".to_string()) {
+        tb_runtime_features.push("json");
+    }
+    if required_crates.contains(&"serde_yaml".to_string()) {
+        tb_runtime_features.push("yaml");
+    }
+
+    if tb_runtime_features.is_empty() {
+        dependencies.push_str(&format!("tb-runtime = {{ path = \"{}\" }}\n", tb_runtime_path_str));
+    } else {
+        let features_str = tb_runtime_features.iter()
+            .map(|f| format!("\"{}\"", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        dependencies.push_str(&format!("tb-runtime = {{ path = \"{}\", features = [{}] }}\n",
+            tb_runtime_path_str, features_str));
+    }
 
     // If serde_json or serde_yaml is needed, add serde first
-    if required_crates.contains(&"serde_json") || required_crates.contains(&"serde_yaml") {
+    if required_crates.contains(&"serde_json".to_string()) || required_crates.contains(&"serde_yaml".to_string()) {
         dependencies.push_str("serde = { version = \"1.0\", features = [\"derive\"] }\n");
     }
 
     for crate_name in &required_crates {
-        let version = match *crate_name {
+        let version = match crate_name.as_str() {
             "serde_json" => "1.0",
             "serde_yaml" => "0.9",
             "chrono" => "0.4",
+            "tb_runtime" => continue, // Already added above
             _ => continue,
         };
         dependencies.push_str(&format!("{} = \"{}\"\n", crate_name, version));
@@ -380,15 +445,38 @@ fn compile_with_rustc(
     _file: &Path,
     output: &Path,
     rust_code: &str,
-    _required_crates: &[&str],
+    required_crates: &[&str],
+    uses_networking: bool,
+    use_multi_thread: bool,
 ) -> Result<()> {
-    use std::io::Write;
 
-    // Find workspace root
+    // Find workspace root (going up from exe location)
     let exe_path = env::current_exe()?;
-    let workspace_root = exe_path
+    let exe_dir = exe_path
         .parent()
-        .and_then(|p| p.parent())
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
+
+    // ✅ FIX: Calculate correct path to tb-runtime
+    // exe is at: toolboxv2/tb-exc/src/target/release/tb.exe
+    // tb-runtime is at: toolboxv2/tb-exc/src/crates/tb-runtime
+    // So from exe_dir (target/release), go up 2 levels to src, then to crates/tb-runtime
+    let tb_runtime_path = exe_dir
+        .parent()  // target
+        .and_then(|p| p.parent())  // src
+        .map(|p| p.join("crates/tb-runtime"))
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot calculate tb-runtime path"))?;
+
+    // Verify tb-runtime exists
+    if !tb_runtime_path.join("Cargo.toml").exists() {
+        return Err(tb_core::TBError::runtime_error(format!(
+            "tb-runtime not found at: {}. Expected Cargo.toml to exist.",
+            tb_runtime_path.display()
+        )));
+    }
+
+    // Calculate workspace root for compile cache (3 levels up from exe)
+    let workspace_root = exe_dir
+        .parent()
         .and_then(|p| p.parent())
         .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find workspace root"))?;
 
@@ -396,10 +484,33 @@ fn compile_with_rustc(
     let compile_cache = workspace_root.join("target").join("tb-compile-cache");
     fs::create_dir_all(&compile_cache)?;
 
-    // Create Cargo.toml if it doesn't exist
+    // Create Cargo.toml with appropriate features
     let cargo_toml = compile_cache.join("Cargo.toml");
-    if !cargo_toml.exists() {
-        let toml_content = format!(
+
+    // Build features list based on usage
+    let mut features = Vec::new();
+    if uses_networking {
+        features.push("networking");
+    }
+    // Add multi-thread feature if needed (threads > 1 OR networking)
+    if use_multi_thread {
+        features.push("tokio-multi-thread");
+    }
+    // ✅ FIX: Add json/yaml features if used
+    if required_crates.contains(&"serde_json") {
+        features.push("json");
+    }
+    if required_crates.contains(&"serde_yaml") {
+        features.push("yaml");
+    }
+
+    let features_str = if features.is_empty() {
+        String::new()
+    } else {
+        format!(", features = [{}]", features.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    };
+
+    let toml_content = format!(
 r#"[package]
 name = "tb-compiled"
 version = "0.1.0"
@@ -408,7 +519,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-tb-runtime = {{ path = "{}/crates/tb-runtime", features = ["full"] }}
+tb-runtime = {{ path = "{}"{} }}
 serde = {{ version = "1.0", features = ["derive"] }}
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -418,10 +529,10 @@ opt-level = 3
 lto = false
 codegen-units = 16
 "#,
-            workspace_root.display().to_string().replace("\\", "/")
-        );
-        fs::write(&cargo_toml, toml_content)?;
-    }
+        tb_runtime_path.display().to_string().replace("\\", "/"),
+        features_str
+    );
+    fs::write(&cargo_toml, toml_content)?;
 
     // Create src directory
     let src_dir = compile_cache.join("src");
@@ -472,3 +583,150 @@ codegen-units = 16
     Ok(())
 }
 
+
+
+// ============================================================================
+// CONFIG PARSING
+// ============================================================================
+
+/// Parse thread count from @config block
+fn parse_config_threads(source: &str) -> usize {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "threads" {
+                            let value = value.trim().trim_end_matches(',');
+                            if let Ok(n) = value.parse::<usize>() {
+                                return n;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    1 // Default: single-threaded
+}
+
+/// Parse networking flag from @config block
+fn parse_config_networking(source: &str) -> bool {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "networking" {
+                            let value = value.trim().trim_end_matches(',').trim_matches('"');
+                            return value == "true";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false // Default: no networking
+}
+
+// ============================================================================
+// AUTO-DETECTION: Networking Usage Analysis
+// ============================================================================
+
+/// Runtime configuration for Tokio
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokioRuntimeConfig {
+    None,
+    Minimal { worker_threads: usize },
+}
+
+/// Auto-detect networking usage from statements
+fn detect_networking_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if statement_uses_networking(stmt) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a statement uses networking functions
+fn statement_uses_networking(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Let { value, .. } | Statement::Assign { value, .. } => {
+            expr_uses_networking(value)
+        }
+        Statement::Expression { expr, .. } => expr_uses_networking(expr),
+        Statement::If { condition, then_block, else_block, .. } => {
+            expr_uses_networking(condition)
+                || then_block.iter().any(statement_uses_networking)
+                || else_block.as_ref().map_or(false, |b| b.iter().any(statement_uses_networking))
+        }
+        Statement::While { condition, body, .. } => {
+            expr_uses_networking(condition)
+                || body.iter().any(statement_uses_networking)
+        }
+        Statement::For { iterable, body, .. } => {
+            expr_uses_networking(iterable)
+                || body.iter().any(statement_uses_networking)
+        }
+        Statement::Function { body, .. } => {
+            body.iter().any(statement_uses_networking)
+        }
+        Statement::Return { value, .. } => {
+            value.as_ref().map_or(false, |v| expr_uses_networking(v))
+        }
+        _ => false,
+    }
+}
+
+/// Check if an expression uses networking functions
+fn expr_uses_networking(expr: &Expression) -> bool {
+    match expr {
+        Expression::Call { callee, args, .. } => {
+            // Check if function name is a networking function
+            if let Expression::Ident(name, _) = &**callee {
+                let name_str = name.as_ref();
+                if name_str == "connect_to"
+                    || name_str == "http_get"
+                    || name_str == "http_post"
+                    || name_str == "http_put"
+                    || name_str == "http_delete"
+                    || name_str == "http_session"
+                    || name_str == "http_request"
+                    || name_str.starts_with("tcp_")
+                    || name_str.starts_with("udp_")
+                    || name_str == "send_message"
+                    || name_str == "receive_message"
+                    || name_str == "spawn_task"
+                    || name_str == "await_task" {
+                    return true;
+                }
+            }
+            // Check arguments recursively
+            args.iter().any(expr_uses_networking)
+        }
+        Expression::Binary { left, right, .. } => {
+            expr_uses_networking(left) || expr_uses_networking(right)
+        }
+        Expression::Unary { operand, .. } => expr_uses_networking(operand),
+        Expression::List { elements, .. } => {
+            elements.iter().any(expr_uses_networking)
+        }
+        Expression::Dict { entries, .. } => {
+            entries.iter().any(|(_, v)| expr_uses_networking(v))
+        }
+        Expression::Index { object, index, .. } => {
+            expr_uses_networking(object) || expr_uses_networking(index)
+        }
+        Expression::Member { object, .. } => expr_uses_networking(object),
+        Expression::Lambda { body, .. } => expr_uses_networking(body),
+        _ => false,
+    }
+}

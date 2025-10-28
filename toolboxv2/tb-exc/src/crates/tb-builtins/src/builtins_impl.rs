@@ -3,11 +3,11 @@
 use crate::*;
 use crate::error::BuiltinError;
 use std::sync::Arc;
-use tb_core::{Value, TBError, Program};
+use tb_core::{Value, TBError};
 use std::collections::HashMap;
 use im::HashMap as ImHashMap;
 use tokio::process::Command;
-use sha2::{Sha256, Sha512, Sha224, Sha384, Digest};
+use sha2::{Sha256, Digest};
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -64,8 +64,8 @@ pub fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
         "r".to_string()
     };
 
-    let key = if args.len() > 3 {
-        match &args[3] {
+    let key = if args.len() > 2 { // Korrigiert: 3 -> 2
+        match &args[2] { // Korrigiert: 3 -> 2
             Value::String(s) => Some(s.to_string()),
             Value::None => None,
             _ => return Err(TBError::runtime_error("open() key must be a string or None")),
@@ -74,8 +74,8 @@ pub fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
         None
     };
 
-    let encoding = if args.len() > 4 {
-        match &args[4] {
+    let encoding = if args.len() > 3 { // Korrigiert: 4 -> 3
+        match &args[3] { // Korrigiert: 4 -> 3
             Value::String(s) => s.to_string(),
             _ => "utf-8".to_string(),
         }
@@ -1516,7 +1516,7 @@ pub fn builtin_reduce(args: Vec<Value>) -> Result<Value, TBError> {
 
 /// forEach(fn, list) -> None
 /// Executes a function for each element in a list (side effects only)
-pub fn builtin_forEach(args: Vec<Value>) -> Result<Value, TBError> {
+pub fn builtin_for_each(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 2 {
         return Err(TBError::runtime_error("forEach() takes exactly 2 arguments: function, list"));
     }

@@ -191,7 +191,7 @@ def find_tb_binary() -> str:
     paths = [os.environ.get("TB_EXE"), os.environ.get("TB_BINARY")]+paths
     # Add .exe for Windows
     if os.name == 'nt':
-        paths = [Path(str(p) + ".exe") for p in paths]
+        paths = [Path(str(p) + ".exe") for p in paths if p is not None]
 
     for path in paths:
         if path is None:
@@ -199,7 +199,6 @@ def find_tb_binary() -> str:
         if shutil.which(str(path)) or os.path.exists(path):
             return str(path)
 
-    print(f"{Colors.RED}✗ TB binary not found!{Colors.RESET}")
     print(f"{Colors.YELLOW}Tried paths:{Colors.RESET}")
     for path in paths:
         print(f"  • {path}")
@@ -416,6 +415,49 @@ def assert_error(code: str, mode: str = "jit"):
 
     if success:
         raise AssertionError(f"Expected failure but succeeded:\n{stdout}")
+
+
+import socket
+import threading
+
+def assert_output_with_tcp_server(code: str, expected: str, mode: str = "jit",
+                                  host: str = "localhost", port: int = 8085):
+    """
+    Run code while a temporary TCP server is alive.
+    The server accepts a single connection, reads once, then closes.
+    """
+    received = []
+
+    def _server():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((host, port))
+            s.listen(1)
+            conn, addr = s.accept()
+            with conn:
+                data = conn.recv(4096)
+                if data:
+                    received.append(data)
+
+    t = threading.Thread(target=_server, daemon=True)
+    t.start()
+
+    # run TB code
+    success, stdout, stderr, compile_time, exec_time = run_tb(code, mode)
+
+    if not success:
+        raise AssertionError(f"Execution failed:\n{stderr}")
+
+    actual = stdout.strip()
+    expected = expected.strip()
+    if actual != expected:
+        raise AssertionError(
+            f"Output mismatch:\nExpected: {repr(expected)}\nGot: {repr(actual)}"
+        )
+
+    # optionally validate something was actually received
+    if not received:
+        raise AssertionError("TCP server received no data")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3177,14 +3219,15 @@ if response["status"] == 200 {
 
 @test("Networking: TCP connection", "Built-in Functions - Networking")
 def test_tcp_connection(mode):
-    assert_output("""
+    assert_output_with_tcp_server("""
 let on_connect = fn(addr, msg) { print("Connected") }
 let on_disconnect = fn(addr) { print("Disconnected") }
 let on_message = fn(addr, msg) { print(msg) }
 
-let conn = connect_to(on_connect, on_disconnect, on_message, "localhost", 8080, "tcp")
+let conn = connect_to(on_connect, on_disconnect, on_message, "localhost", 8085, "tcp")
 print("Connection initiated")
-""", "Connection initiated", mode)
+send_to(conn, "Hello, Server!")
+""", "Connection initiated", mode, host="localhost", port=8085)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -3444,14 +3487,15 @@ def function_runner(args):
 
     TB_BINARY = find_tb_binary()
     VERBOSE = "verbose" in args or "-v" in args
-    print(f"{VERBOSE=}")
 
     # Check for -f flag (run failed tests) - handled in main() now
     FILTER = None
     for i, arg in enumerate(args):
         if arg == "filter" and i + 1 < len(args):
             FILTER = args[i + 1]
-
+    if TB_BINARY is None:
+        print(f"{Colors.RED}✗ TB binary not found!{Colors.RESET}")
+        return False
     return main()
 
 

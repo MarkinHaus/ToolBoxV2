@@ -4,7 +4,7 @@
 
 use crate::error::{BuiltinError, BuiltinResult};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use std::path::Path;
 
 /// File handle for tracking open files
@@ -29,7 +29,7 @@ pub struct FileHandle {
 pub async fn open_file(
     path: String,
     mode: String,
-    key: Option<String>,
+    _key: Option<String>,
     encoding: String,
 ) -> BuiltinResult<String> {
     // Validate mode

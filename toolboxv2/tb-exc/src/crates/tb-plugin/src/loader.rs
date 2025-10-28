@@ -1,10 +1,11 @@
 use crate::ffi::{FFIValue, PluginFn};
+use crate::compiler::PluginCompiler;
 use dashmap::DashMap;
 use libloading::{Library, Symbol};
 use std::path::Path;
 use std::sync::Arc;
+use std::fs;
 use tb_core::{Result, TBError, Value, tb_debug_plugin};
-use std::collections::HashMap;
 
 /// Plugin metadata
 #[derive(Debug, Clone)]
@@ -40,6 +41,33 @@ impl PluginLoader {
         self.plugin_metadata.insert(plugin_name, metadata);
     }
 
+    /// Ensure dependencies are installed for plugin execution
+    fn ensure_dependencies(
+        &self,
+        language: &tb_core::PluginLanguage,
+        requires: &[String],
+    ) -> Result<()> {
+        if requires.is_empty() {
+            return Ok(());
+        }
+
+        tb_debug_plugin!("Ensuring dependencies for {:?}: {:?}", language, requires);
+
+        match language {
+            tb_core::PluginLanguage::Python => {
+                let temp_dir = tempfile::tempdir().map_err(|e| TBError::plugin_error(e.to_string()))?;
+                let output_dir = temp_dir.path().join("out");
+                fs::create_dir_all(&output_dir).map_err(|e| TBError::plugin_error(e.to_string()))?;
+
+                let compiler = PluginCompiler::new(temp_dir.path().to_path_buf(), output_dir)?;
+                compiler.install_python_deps(requires)?;
+            }
+            // Implementierung für andere Sprachen hier hinzufügen
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Load plugin library (lazy, cached)
     pub fn load_library(&self, path: &Path) -> Result<Arc<Library>> {
         let path_str = path.to_string_lossy().to_string();
@@ -53,8 +81,8 @@ impl PluginLoader {
         }
 
         // Get file size for debugging
-        if let Ok(metadata) = std::fs::metadata(path) {
-            tb_debug_plugin!("load_library: File exists, size: {} bytes", metadata.len());
+        if let Ok(_metadata) = std::fs::metadata(path) {
+            tb_debug_plugin!("load_library: File exists, size: {} bytes", _metadata.len());
         }
 
         // Check cache first
@@ -787,8 +815,6 @@ rayon = "1.8"
 
     #[cfg(feature = "javascript")]
     fn js_to_value(&self, js_val: boa_engine::JsValue) -> Result<Value> {
-        use std::collections::HashMap;
-
         if js_val.is_null() || js_val.is_undefined() {
             Ok(Value::None)
         } else if let Some(b) = js_val.as_boolean() {
