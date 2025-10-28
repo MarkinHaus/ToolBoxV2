@@ -257,6 +257,13 @@ impl TaskExecutor {
                     Ok(Value::Int(l / r))
                 }
             }
+            (Value::Int(l), Mod, Value::Int(r)) => {
+                if *r == 0 {
+                    Err(TBError::runtime_error("Modulo by zero"))
+                } else {
+                    Ok(Value::Int(l % r))
+                }
+            }
             (Value::Int(l), Eq, Value::Int(r)) => Ok(Value::Bool(l == r)),
             (Value::Int(l), NotEq, Value::Int(r)) => Ok(Value::Bool(l != r)),
             (Value::Int(l), Lt, Value::Int(r)) => Ok(Value::Bool(l < r)),

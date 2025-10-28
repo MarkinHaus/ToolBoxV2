@@ -486,7 +486,8 @@ print(a + b)
 print(a - b)
 print(a * b)
 print(a / b)
-""", "13.0\n8.0\n26.25\n4.2", mode)
+print(a % b)
+""", "13.0\n8.0\n26.25\n4.2\n0.5", mode)
 
 
 @test("Mixed int/float arithmetic (type promotion)", "Basic")
@@ -3401,6 +3402,1992 @@ for i in range(10) {
 print(len(results))
 """, "10", mode)
 
+
+
+@test("Literals and Basic Types", "Fundamentals")
+def test_literals_and_types(mode):
+    # Testet alle grundlegenden Literale und die type_of Funktion
+    assert_contains("""
+        print(type_of(42))          // Integer
+        print(type_of(3.14))        // Float
+        print(type_of("Hello"))     // String
+        print(type_of(true))        // Bool
+        print(type_of(false))       // Bool
+        print(type_of(None))        // None
+        print(type_of([1, 2]))      // List
+        print(type_of({a: 1}))      // Dict
+    """, "int\nfloat\nstring\nbool\nbool\nnone\nlist\ndict", mode)
+
+    # Testet explizite Typ-Annotationen
+    assert_success("""
+        let a: int = 100
+        let b: float = 99.9
+        let c: string = "typed"
+        let d: bool = true
+        let e: list = [1]
+        let f: dict = {key: "value"}
+    """, mode)
+
+    # Testet einen Typen-Fehler bei der Zuweisung
+    assert_error("""
+        let x: int = "ein String ist kein Integer"
+    """, mode)
+
+@test("Variable Declaration and Scope", "Fundamentals")
+def test_variables_and_scope(mode):
+    # Testet Deklaration und Neuzuweisung
+    assert_contains("""
+        let a = 10
+        a = 20
+        print(a)
+    """, "20", mode)
+
+    # Testet Block-Gültigkeitsbereich
+    assert_contains("""
+        let x = 1
+        if true {
+            let x = 2 // Shadowing
+            print(x)
+        }
+        print(x)
+    """, "2\n1", mode)
+
+    # Stellt sicher, dass auf Variablen aus einem inneren Scope nicht außerhalb zugegriffen werden kann
+    assert_error("""
+        if true {
+            let inner = "nur hier sichtbar"
+        }
+        print(inner)
+    """, mode)
+
+@test("Operators and Precedence", "Operators")
+def test_operators_bundle(mode):
+    # Bundle 1: Arithmetische Operatoren
+    assert_contains('print(10 + 5)', "15", mode)
+    assert_contains('print(10 - 5)', "5", mode)
+    assert_contains('print(10 * 5)', "50", mode)
+    assert_contains('print(10 / 4)', "2.5", mode) # Int / Int -> Float
+    assert_contains('print(10 % 3)', "1", mode)
+
+    # Bundle 2: Vergleichsoperatoren
+    assert_contains('print(10 == 10)', "true", mode)
+    assert_contains('print(10 != 5)', "true", mode)
+    assert_contains('print(10 < 20)', "true", mode)
+    assert_contains('print(10 > 5)', "true", mode)
+    assert_contains('print(10 <= 10)', "true", mode)
+    assert_contains('print(10 >= 10)', "true", mode)
+
+    # Bundle 3: Logische Operatoren und Wahrheitsgehalt
+    assert_contains('print(true and true)', "true", mode)
+    assert_contains('print(true or false)', "true", mode)
+    assert_contains('print(not false)', "true", mode)
+    assert_contains('print(0 or "non-empty")', "non-empty", mode) # Testet Truthiness
+
+    # Bundle 4: 'in'-Operator
+    assert_contains('print(3 in [1, 2, 3])', "true", mode)
+    assert_contains('print("a" in "abc")', "true", mode)
+    assert_contains('print("key" in {key: "value"})', "true", mode)
+
+    # Bundle 5: Operator-Rangfolge
+    # Erwartetes Ergebnis: 5 + (10 * 2) = 25
+    assert_contains('print(5 + 10 * 2)', "25", mode)
+    # Erwartetes Ergebnis: (5 + 10) * 2 = 30
+    assert_contains('print((5 + 10) * 2)', "30", mode)
+    # Erwartetes Ergebnis: (true and false) or true = true
+    assert_contains('print(true and false or true)', "true", mode)
+
+
+@test("Control Flow", "Control")
+def test_control_flow_bundle(mode):
+    # if/else als Ausdruck
+    assert_contains('let x = if 1 > 0 { "größer" } else { "kleiner" }; print(x)', "größer", mode)
+
+    # for-Schleife mit range, break und continue
+    assert_contains("""
+        for i in range(5) {
+            if i == 1 { continue }
+            if i == 3 { break }
+            print(i)
+        }
+    """, "0\n2", mode)
+
+    # while-Schleife
+    assert_contains("""
+        let i = 0
+        while i < 3 {
+            print(i)
+            i = i + 1
+        }
+    """, "0\n1\n2", mode)
+
+    # match-Ausdruck mit verschiedenen Mustern
+    assert_contains("""
+        for i in [1, 5, 100] {
+            let result = match i {
+                1 => "eins",
+                2..=10 => "klein",
+                x => "etwas anderes: " + str(x)
+            }
+            print(result)
+        }
+    """, "eins\nklein\netwas anderes: 100", mode)
+
+@test("Functions and Closures", "Functions")
+def test_functions_bundle(mode):
+    # Grundlegende Funktion und typisierte Funktion
+    assert_contains("""
+        fn add(a: int, b: int) -> int {
+            return a + b
+        }
+        print(add(5, 3))
+    """, "8", mode)
+
+    # Lambda-Funktionen
+    assert_contains('let square = x => x * x; print(square(4))', "16", mode)
+
+    # Closures (Funktionen, die ihre Umgebung "einfangen")
+    assert_contains("""
+        fn make_adder(n) {
+            return x => x + n
+        }
+        let add5 = make_adder(5)
+        print(add5(10))
+    """, "15", mode)
+
+@test("Collections", "Collections")
+def test_collections_bundle(mode):
+    # Listen-Operationen
+    assert_contains("""
+        let l = [1, 2]
+        push(l, 3)
+        print(l[2])
+        print(len(l))
+    """, "3\n3", mode)
+
+    # Dictionary-Operationen
+    assert_contains("""
+        let d = {name: "TB", version: 1}
+        print(d.name)
+        print(d["version"])
+        print("name" in keys(d))
+    """, "TB\n1\ntrue", mode)
+
+    # Fehler bei nicht-string Keys im Dictionary
+    assert_error('let d = {123: "val"}', mode)
+
+@test("Built-in Functions", "Built-ins")
+def test_builtins_bundle(mode):
+    # Typumwandlung
+    assert_contains('print(int("123") + 1)', "124", mode)
+    assert_contains('print(str(3.14))', "3.14", mode)
+
+    # Funktionale Helfer: map, filter, reduce
+    assert_contains("""
+        let nums = [1, 2, 3, 4]
+        let evens = filter(x => x % 2 == 0, nums)
+        let doubled = map(x => x * 2, evens)
+        let sum = reduce((acc, x) => acc + x, doubled, 0)
+        print(sum) // filter -> [2, 4], map -> [4, 8], reduce -> 12
+    """, "12", mode)
+
+@test("String Operations", "Strings")
+def test_string_operations(mode):
+    assert_contains('print("Hello" + " " + "World")', "Hello World", mode)
+    assert_contains('print("sub" in "substring")', "true", mode)
+    assert_contains("""
+        let multi = "zeile1
+zeile2"
+        print(multi)
+    """, "zeile1\nzeile2", mode)
+
+@test("Error Handling", "Errors")
+def test_error_handling_bundle(mode):
+    assert_error('print(1 / 0)', mode) # Division durch null
+    assert_error('let l = [1]; print(l[99])', mode) # Index außerhalb des Bereichs
+    assert_error('let d = {}; print(d.missing_key)', mode) # Fehlender Schlüssel
+    assert_error('print(1 + "text")', mode) # Typenkonflikt
+
+
+@test("File I/O", "IO")
+def test_file_io(mode):
+    content = "Hallo aus der TB-Testsuite!"
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f:
+        path = f.name
+
+    escaped_path = escape_path_for_tb(path)
+
+    try:
+        # Schreiben, Existenz prüfen und lesen
+        assert_success(f'write_file("{escaped_path}", "{content}")', mode)
+        assert_contains(f'print(file_exists("{escaped_path}"))', "true", mode)
+        assert_contains(f'print(read_file("{escaped_path}"))', content, mode)
+    finally:
+        os.unlink(path)
+
+    # Fehler beim Lesen einer nicht existierenden Datei
+    assert_error(f'read_file("some/non/existent/file.txt")', mode)
+
+@test("JSON and YAML Operations", "Serialization")
+def test_json_yaml_bundle(mode):
+    # JSON Stringify und Parse
+    assert_contains("""
+        let data = {name: "test", values: [1, 2]}
+        let json_str = json_stringify(data)
+        let parsed = json_parse(json_str)
+        print(parsed.name)
+    """, "test", mode)
+
+    # YAML Stringify und Parse
+    assert_contains("""
+        let yaml_str = "key: value\\n"
+        let parsed = yaml_parse(yaml_str)
+        print(parsed.key)
+    """, "value", mode)
+
+    # Fehler bei ungültigem JSON
+    assert_error('json_parse("{invalid json:}")', mode)
+
+@test("Imports", "Modules")
+def test_imports_bundle(mode):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f:
+        f.write('fn get_secret() -> int { return 123 }')
+        module_path = f.name
+
+    escaped_path = escape_path_for_tb(module_path)
+
+    try:
+        # Einfacher Import und Import mit Alias
+        assert_success(f'@import {{ "{escaped_path}" as mymod }}', mode)
+        assert_contains(f"""
+            @import {{ "{escaped_path}" as mymod }}
+            print(mymod.get_secret())
+        """, "123", mode)
+    finally:
+        os.unlink(module_path)
+
+    # Fehler bei Import einer nicht existierenden Datei
+    assert_error('@import { "non_existent_module.tb" }', mode)
+
+
+import tempfile
+import os
+
+
+def escape_path_for_tb(path):
+    """Escape path for TB string literals."""
+    return path.replace('\\', '\\\\')
+
+
+# ============================================================================
+# 1. LITERALS & BASIC TYPES
+# ============================================================================
+
+@test("Integer literal", "Literals")
+def test_int_literal(mode):
+    assert_contains("print(42)", "42", mode)
+
+
+@test("Negative integer", "Literals")
+def test_negative_int(mode):
+    assert_contains("print(-123)", "-123", mode)
+
+
+@test("Float literal", "Literals")
+def test_float_literal(mode):
+    assert_contains("print(3.14)", "3.14", mode)
+
+
+@test("String literal - double quotes", "Literals")
+def test_string_double(mode):
+    assert_contains('print("hello")', "hello", mode)
+
+
+@test("Boolean true", "Literals")
+def test_bool_true(mode):
+    assert_contains("print(true)", "true", mode)
+
+
+@test("Boolean false", "Literals")
+def test_bool_false(mode):
+    assert_contains("print(false)", "false", mode)
+
+
+@test("Empty list literal", "Literals")
+def test_empty_list(mode):
+    assert_contains("print([])", "[]", mode)
+
+
+@test("List with integers", "Literals")
+def test_list_ints(mode):
+    assert_contains("print([1, 2, 3])", "[1, 2, 3]", mode)
+
+
+@test("Empty dict literal", "Literals")
+def test_empty_dict(mode):
+    assert_contains("print({})", "{}", mode)
+
+
+@test("Dict with string keys", "Literals")
+def test_dict_basic(mode):
+    assert_contains('print({name: "Alice"})', "Alice", mode)
+
+
+@test("None literal", "Literals")
+def test_none_literal(mode):
+    assert_contains("print(None)", "None", mode)
+
+
+# ============================================================================
+# 2. VARIABLES & ASSIGNMENT
+# ============================================================================
+
+@test("Variable declaration with let", "Variables")
+def test_var_declaration(mode):
+    assert_contains("""
+let x = 10
+print(x)
+""", "10", mode)
+
+
+@test("Variable reassignment", "Variables")
+def test_var_reassignment(mode):
+    assert_contains("""
+let x = 5
+x = 10
+print(x)
+""", "10", mode)
+
+
+@test("Multiple variable declarations", "Variables")
+def test_multiple_vars(mode):
+    assert_contains("""
+let a = 1
+let b = 2
+let c = 3
+print(a + b + c)
+""", "6", mode)
+
+
+@test("Type annotation - int", "Variables")
+def test_type_annotation_int(mode):
+    assert_contains("""
+let x: int = 42
+print(x)
+""", "42", mode)
+
+
+@test("Type annotation - string", "Variables")
+def test_type_annotation_string(mode):
+    assert_contains("""
+let name: string = "Bob"
+print(name)
+""", "Bob", mode)
+
+
+@test("Variable shadowing in scope", "Variables")
+def test_var_shadowing(mode):
+    assert_contains("""
+let x = 1
+if true {
+    let x = 2
+    print(x)
+}
+print(x)
+""", "2\n1", mode)
+
+
+# ============================================================================
+# 3. ARITHMETIC OPERATORS
+# ============================================================================
+
+@test("Addition - integers", "Arithmetic")
+def test_add_ints(mode):
+    assert_contains("print(5 + 3)", "8", mode)
+
+
+@test("Subtraction", "Arithmetic")
+def test_subtract(mode):
+    assert_contains("print(10 - 4)", "6", mode)
+
+
+@test("Multiplication", "Arithmetic")
+def test_multiply(mode):
+    assert_contains("print(6 * 7)", "42", mode)
+
+
+@test("Division", "Arithmetic")
+def test_divide(mode):
+    assert_contains("print(20 / 4)", "5", mode)
+
+
+@test("Modulo operator", "Arithmetic")
+def test_modulo(mode):
+    assert_contains("print(17 % 5)", "2", mode)
+
+
+@test("Negative unary operator", "Arithmetic")
+def test_unary_negative(mode):
+    assert_contains("print(-42)", "-42", mode)
+
+
+@test("Float addition", "Arithmetic")
+def test_float_add(mode):
+    assert_contains("print(1.5 + 2.5)", "4", mode)
+
+
+@test("Int + Float coercion", "Arithmetic")
+def test_int_float_coercion(mode):
+    assert_contains("print(5 + 2.5)", "7.5", mode)
+
+
+@test("Complex arithmetic expression", "Arithmetic")
+def test_complex_arithmetic(mode):
+    assert_contains("print(2 + 3 * 4 - 5)", "9", mode)
+
+
+@test("Parentheses in arithmetic", "Arithmetic")
+def test_arithmetic_parens(mode):
+    assert_contains("print((2 + 3) * 4)", "20", mode)
+
+
+# ============================================================================
+# 4. COMPARISON & LOGICAL OPERATORS
+# ============================================================================
+
+@test("Equality operator ==", "Comparison")
+def test_equality(mode):
+    assert_contains("print(5 == 5)", "true", mode)
+
+
+@test("Inequality operator !=", "Comparison")
+def test_inequality(mode):
+    assert_contains("print(5 != 3)", "true", mode)
+
+
+@test("Less than <", "Comparison")
+def test_less_than(mode):
+    assert_contains("print(3 < 5)", "true", mode)
+
+
+@test("Greater than >", "Comparison")
+def test_greater_than(mode):
+    assert_contains("print(7 > 4)", "true", mode)
+
+
+@test("Less or equal <=", "Comparison")
+def test_less_equal(mode):
+    assert_contains("print(5 <= 5)", "true", mode)
+
+
+@test("Greater or equal >=", "Comparison")
+def test_greater_equal(mode):
+    assert_contains("print(6 >= 6)", "true", mode)
+
+
+@test("Logical AND operator", "Comparison")
+def test_logical_and(mode):
+    assert_contains("print(true and true)", "true", mode)
+
+
+@test("Logical OR operator", "Comparison")
+def test_logical_or(mode):
+    assert_contains("print(false or true)", "true", mode)
+
+
+@test("Logical NOT operator", "Comparison")
+def test_logical_not(mode):
+    assert_contains("print(not false)", "true", mode)
+
+
+@test("Complex logical expression", "Comparison")
+def test_complex_logical(mode):
+    assert_contains("print((5 > 3) and (2 < 4))", "true", mode)
+
+
+@test("String equality", "Comparison")
+def test_string_equality(mode):
+    assert_contains('print("hello" == "hello")', "true", mode)
+
+
+@test("IN operator with string", "Comparison")
+def test_in_operator_string(mode):
+    assert_contains('print("sub" in "substring")', "true", mode)
+
+
+@test("IN operator with list", "Comparison")
+def test_in_operator_list(mode):
+    assert_contains("print(2 in [1, 2, 3])", "true", mode)
+
+
+# ============================================================================
+# 5. CONTROL FLOW - IF/ELSE
+# ============================================================================
+
+@test("Simple if statement", "ControlFlow")
+def test_if_simple(mode):
+    assert_contains("""
+if true {
+    print("yes")
+}
+""", "yes", mode)
+
+
+@test("If-else statement", "ControlFlow")
+def test_if_else(mode):
+    assert_contains("""
+if false {
+    print("no")
+} else {
+    print("yes")
+}
+""", "yes", mode)
+
+
+@test("If with comparison", "ControlFlow")
+def test_if_comparison(mode):
+    assert_contains("""
+let x = 10
+if x > 5 {
+    print("big")
+}
+""", "big", mode)
+
+
+@test("Nested if statements", "ControlFlow")
+def test_nested_if(mode):
+    assert_contains("""
+let x = 15
+if x > 10 {
+    if x < 20 {
+        print("medium")
+    }
+}
+""", "medium", mode)
+
+
+@test("If-else chain", "ControlFlow")
+def test_if_else_chain(mode):
+    assert_contains("""
+let x = 5
+if x < 3 {
+    print("small")
+} else {
+    if x < 7 {
+        print("medium")
+    } else {
+        print("large")
+    }
+}
+""", "medium", mode)
+
+
+@test("If as expression", "ControlFlow")
+def test_if_expression(mode):
+    assert_contains("""
+let x = if true { 42 } else { 0 }
+print(x)
+""", "42", mode)
+
+
+# ============================================================================
+# 6. LOOPS - FOR & WHILE
+# ============================================================================
+
+@test("For loop with range", "Loops")
+def test_for_range(mode):
+    assert_contains("""
+for i in range(3) {
+    print(i)
+}
+""", "0\n1\n2", mode)
+
+
+@test("For loop with list", "Loops")
+def test_for_list(mode):
+    assert_contains("""
+for item in [10, 20, 30] {
+    print(item)
+}
+""", "10\n20\n30", mode)
+
+
+@test("While loop", "Loops")
+def test_while_loop(mode):
+    assert_contains("""
+let i = 0
+while i < 3 {
+    print(i)
+    i = i + 1
+}
+""", "0\n1\n2", mode)
+
+
+@test("Break statement in loop", "Loops")
+def test_break(mode):
+    assert_contains("""
+for i in range(10) {
+    if i == 3 {
+        break
+    }
+    print(i)
+}
+""", "0\n1\n2", mode)
+
+
+@test("Continue statement in loop", "Loops")
+def test_continue(mode):
+    assert_contains("""
+for i in range(5) {
+    if i == 2 {
+        continue
+    }
+    print(i)
+}
+""", "0\n1\n3\n4", mode)
+
+
+@test("Nested loops", "Loops")
+def test_nested_loops(mode):
+    assert_contains("""
+for i in range(2) {
+    for j in range(2) {
+        print(i * 10 + j)
+    }
+}
+""", "0\n1\n10\n11", mode)
+
+
+@test("Range with start and end", "Loops")
+def test_range_start_end(mode):
+    assert_contains("""
+for i in range(5, 8) {
+    print(i)
+}
+""", "5\n6\n7", mode)
+
+
+# ============================================================================
+# 7. FUNCTIONS
+# ============================================================================
+
+@test("Function definition and call", "Functions")
+def test_function_basic(mode):
+    assert_contains("""
+fn greet() {
+    print("Hello")
+}
+greet()
+""", "Hello", mode)
+
+
+@test("Function with parameters", "Functions")
+def test_function_params(mode):
+    assert_contains("""
+fn add(a, b) {
+    return a + b
+}
+print(add(3, 4))
+""", "7", mode)
+
+
+@test("Function with return type annotation", "Functions")
+def test_function_return_type(mode):
+    assert_contains("""
+fn square(x: int) -> int {
+    return x * x
+}
+print(square(5))
+""", "25", mode)
+
+
+@test("Function implicit return", "Functions")
+def test_function_implicit_return(mode):
+    assert_contains("""
+fn double(x) {
+    x * 2
+}
+print(double(7))
+""", "14", mode)
+
+
+@test("Recursive function - factorial", "Functions")
+def test_recursive_factorial(mode):
+    assert_contains("""
+fn factorial(n) {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+print(factorial(5))
+""", "120", mode)
+
+
+@test("Lambda expression - single param", "Functions")
+def test_lambda_single(mode):
+    assert_contains("""
+let double = x => x * 2
+print(double(5))
+""", "10", mode)
+
+
+@test("Lambda expression - multi param", "Functions")
+def test_lambda_multi(mode):
+    assert_contains("""
+let add = (x, y) => x + y
+print(add(3, 7))
+""", "10", mode)
+
+
+@test("Lambda traditional syntax", "Functions")
+def test_lambda_traditional(mode):
+    assert_contains("""
+let triple = fn(x) { x * 3 }
+print(triple(4))
+""", "12", mode)
+
+
+@test("Closure capturing variable", "Functions")
+def test_closure(mode):
+    assert_contains("""
+fn make_adder(n) {
+    return x => x + n
+}
+let add5 = make_adder(5)
+print(add5(10))
+""", "15", mode)
+
+
+@test("Function returning None", "Functions")
+def test_function_none_return(mode):
+    assert_contains("""
+fn do_nothing() {
+}
+print(do_nothing())
+""", "None", mode)
+
+
+# ============================================================================
+# 8. COLLECTIONS - LISTS
+# ============================================================================
+
+@test("List indexing", "Lists")
+def test_list_index(mode):
+    assert_contains("""
+let lst = [10, 20, 30]
+print(lst[1])
+""", "20", mode)
+
+
+@test("List length", "Lists")
+def test_list_len(mode):
+    assert_contains("""
+let lst = [1, 2, 3, 4, 5]
+print(len(lst))
+""", "5", mode)
+
+
+@test("Push to list", "Lists")
+def test_list_push(mode):
+    assert_contains("""
+let lst = [1, 2]
+push(lst, 3)
+print(lst)
+""", "[1, 2, 3]", mode)
+
+
+@test("Pop from list", "Lists")
+def test_list_pop(mode):
+    assert_contains("""
+let lst = [1, 2, 3]
+let val = pop(lst)
+print(val)
+print(lst)
+""", "3\n[1, 2]", mode)
+
+
+@test("List with mixed types", "Lists")
+def test_list_mixed(mode):
+    assert_contains("""
+let lst = [1, "two", 3.0, true]
+print(len(lst))
+""", "4", mode)
+
+
+@test("Nested lists", "Lists")
+def test_nested_lists(mode):
+    assert_contains("""
+let matrix = [[1, 2], [3, 4]]
+print(matrix[1][0])
+""", "3", mode)
+
+
+@test("List iteration with modification", "Lists")
+def test_list_iteration(mode):
+    assert_contains("""
+let lst = [1, 2, 3]
+for item in lst {
+    print(item * 2)
+}
+""", "2\n4\n6", mode)
+
+
+# ============================================================================
+# 9. COLLECTIONS - DICTIONARIES
+# ============================================================================
+
+@test("Dict member access", "Dictionaries")
+def test_dict_member(mode):
+    assert_contains("""
+let person = {name: "Alice", age: 30}
+print(person.name)
+""", "Alice", mode)
+
+
+@test("Dict bracket access", "Dictionaries")
+def test_dict_bracket(mode):
+    assert_contains("""
+let person = {name: "Bob"}
+print(person["name"])
+""", "Bob", mode)
+
+
+@test("Dict keys function", "Dictionaries")
+def test_dict_keys(mode):
+    assert_contains("""
+let d = {a: 1, b: 2}
+let k = keys(d)
+print(len(k))
+""", "2", mode)
+
+
+@test("Dict values function", "Dictionaries")
+def test_dict_values(mode):
+    assert_contains("""
+let d = {x: 10, y: 20}
+let v = values(d)
+print(len(v))
+""", "2", mode)
+
+
+@test("Dict modification", "Dictionaries")
+def test_dict_modify(mode):
+    assert_contains("""
+let d = {count: 0}
+d.count = 5
+print(d.count)
+""", "5", mode)
+
+
+@test("Nested dictionaries", "Dictionaries")
+def test_nested_dict(mode):
+    assert_contains("""
+let data = {user: {name: "Charlie", id: 123}}
+print(data.user.name)
+""", "Charlie", mode)
+
+
+@test("Dict iteration over keys", "Dictionaries")
+def test_dict_iteration(mode):
+    assert_contains("""
+let d = {a: 1, b: 2}
+for key in keys(d) {
+    print(key)
+}
+""", "a\nb", mode)
+
+
+# ============================================================================
+# 10. PATTERN MATCHING
+# ============================================================================
+
+@test("Match with literal", "PatternMatching")
+def test_match_literal(mode):
+    assert_contains("""
+let x = 2
+let result = match x {
+    1 => "one",
+    2 => "two",
+    _ => "other"
+}
+print(result)
+""", "two", mode)
+
+
+@test("Match with wildcard", "PatternMatching")
+def test_match_wildcard(mode):
+    assert_contains("""
+let x = 99
+let result = match x {
+    1 => "one",
+    _ => "default"
+}
+print(result)
+""", "default", mode)
+
+
+@test("Match with exclusive range", "PatternMatching")
+def test_match_range_exclusive(mode):
+    assert_contains("""
+let x = 5
+let result = match x {
+    1..10 => "single digit",
+    _ => "other"
+}
+print(result)
+""", "single digit", mode)
+
+
+@test("Match with inclusive range", "PatternMatching")
+def test_match_range_inclusive(mode):
+    assert_contains("""
+let x = 10
+let result = match x {
+    1..=10 => "in range",
+    _ => "out"
+}
+print(result)
+""", "in range", mode)
+
+
+@test("Match with binding", "PatternMatching")
+def test_match_binding(mode):
+    assert_contains("""
+let val = 42
+let result = match val {
+    0 => "zero",
+    _ => x => x * 2
+}
+print(result)
+""", "84", mode)
+
+
+@test("Match with multiple ranges", "PatternMatching")
+def test_match_multiple_ranges(mode):
+    assert_contains("""
+let score = 85
+let grade = match score {
+    0..60 => "F",
+    60..70 => "D",
+    70..80 => "C",
+    80..90 => "B",
+    _ => "A"
+}
+print(grade)
+""", "B", mode)
+
+
+# ============================================================================
+# 11. STRING OPERATIONS
+# ============================================================================
+
+@test("String concatenation", "Strings")
+def test_string_concat(mode):
+    assert_contains("""
+let a = "Hello"
+let b = " "
+let c = "World"
+print(a + b + c)
+""", "Hello World", mode)
+
+
+@test("String contains check", "Strings")
+def test_string_contains(mode):
+    assert_contains("""
+print("world" in "Hello world")
+""", "true", mode)
+
+
+@test("String to int conversion", "Strings")
+def test_str_to_int(mode):
+    assert_contains("""
+let s = "42"
+print(int(s))
+""", "42", mode)
+
+
+@test("Int to string conversion", "Strings")
+def test_int_to_str(mode):
+    assert_contains("""
+let n = 123
+print(str(n))
+""", "123", mode)
+
+
+@test("String with escape sequences", "Strings")
+def test_string_escapes(mode):
+    assert_contains(r"""
+print("line1\nline2")
+""", "line1\nline2", mode)
+
+
+@test("Empty string", "Strings")
+def test_empty_string(mode):
+    assert_contains("""
+let s = ""
+print(len(s))
+""", "0", mode)
+
+
+# ============================================================================
+# 12. HIGHER-ORDER FUNCTIONS
+# ============================================================================
+
+@test("Map function", "HigherOrder")
+def test_map_function(mode):
+    assert_contains("""
+let nums = [1, 2, 3, 4]
+let doubled = map(x => x * 2, nums)
+print(doubled)
+""", "[2, 4, 6, 8]", mode)
+
+
+@test("Filter function", "HigherOrder")
+def test_filter_function(mode):
+    assert_contains("""
+let nums = [1, 2, 3, 4, 5, 6]
+let evens = filter(x => x % 2 == 0, nums)
+print(evens)
+""", "[2, 4, 6]", mode)
+
+
+@test("Reduce function - sum", "HigherOrder")
+def test_reduce_sum(mode):
+    assert_contains("""
+let nums = [1, 2, 3, 4, 5]
+let sum = reduce((a, x) => a + x, nums, 0)
+print(sum)
+""", "15", mode)
+
+
+@test("ForEach function", "HigherOrder")
+def test_foreach_function(mode):
+    assert_contains("""
+let nums = [1, 2, 3]
+forEach(x => print(x * 2), nums)
+""", "2\n4\n6", mode)
+
+
+@test("Chained higher-order functions", "HigherOrder")
+def test_chained_higher_order(mode):
+    assert_contains("""
+let nums = [1, 2, 3, 4, 5]
+let result = reduce((a, x) => a + x, filter(x => x % 2 == 0, map(x => x * 2, nums)), 0)
+print(result)
+""", "24", mode)
+
+
+@test("Map with custom function", "HigherOrder")
+def test_map_custom_function(mode):
+    assert_contains("""
+fn square(x) { return x * x }
+let nums = [2, 3, 4]
+let squared = map(square, nums)
+print(squared)
+""", "[4, 9, 16]", mode)
+
+
+# ============================================================================
+# 13. TYPE SYSTEM & CONVERSION
+# ============================================================================
+
+@test("type_of function - int", "Types")
+def test_typeof_int(mode):
+    assert_contains("""
+print(type_of(42))
+""", "int", mode)
+
+
+@test("type_of function - string", "Types")
+def test_typeof_string(mode):
+    assert_contains("""
+print(type_of("hello"))
+""", "string", mode)
+
+
+@test("type_of function - list", "Types")
+def test_typeof_list(mode):
+    assert_contains("""
+print(type_of([1, 2, 3]))
+""", "list", mode)
+
+
+@test("Float conversion", "Types")
+def test_float_conversion(mode):
+    assert_contains("""
+print(float(42))
+""", "42", mode)
+
+
+@test("Int conversion from float", "Types")
+def test_int_from_float(mode):
+    assert_contains("""
+print(int(3.7))
+""", "3", mode)
+
+
+@test("String conversion from bool", "Types")
+def test_str_from_bool(mode):
+    assert_contains("""
+print(str(true))
+""", "true", mode)
+
+
+@test("Dict constructor", "Types")
+def test_dict_constructor(mode):
+    assert_contains("""
+let d = dict()
+print(type_of(d))
+""", "dict", mode)
+
+
+@test("List constructor", "Types")
+def test_list_constructor(mode):
+    assert_contains("""
+let lst = list()
+print(type_of(lst))
+""", "list", mode)
+
+
+# ============================================================================
+# 14. TRUTHINESS & BOOLEAN LOGIC
+# ============================================================================
+
+@test("Truthiness - None is falsy", "Truthiness")
+def test_truthiness_none(mode):
+    assert_contains("""
+if None {
+    print("yes")
+} else {
+    print("no")
+}
+""", "no", mode)
+
+
+@test("Truthiness - zero is falsy", "Truthiness")
+def test_truthiness_zero(mode):
+    assert_contains("""
+if 0 {
+    print("yes")
+} else {
+    print("no")
+}
+""", "no", mode)
+
+
+@test("Truthiness - empty string is falsy", "Truthiness")
+def test_truthiness_empty_string(mode):
+    assert_contains("""
+if "" {
+    print("yes")
+} else {
+    print("no")
+}
+""", "no", mode)
+
+
+@test("Truthiness - empty list is falsy", "Truthiness")
+def test_truthiness_empty_list(mode):
+    assert_contains("""
+if [] {
+    print("yes")
+} else {
+    print("no")
+}
+""", "no", mode)
+
+
+@test("Truthiness - empty dict is falsy", "Truthiness")
+def test_truthiness_empty_dict(mode):
+    assert_contains("""
+if {} {
+    print("yes")
+} else {
+    print("no")
+}
+""", "no", mode)
+
+
+@test("Truthiness - non-zero is truthy", "Truthiness")
+def test_truthiness_nonzero(mode):
+    assert_contains("""
+if 1 {
+    print("yes")
+}
+""", "yes", mode)
+
+
+@test("Truthiness - non-empty string is truthy", "Truthiness")
+def test_truthiness_string(mode):
+    assert_contains("""
+if "x" {
+    print("yes")
+}
+""", "yes", mode)
+
+
+@test("Short-circuit AND evaluation", "Truthiness")
+def test_short_circuit_and(mode):
+    assert_contains("""
+fn should_not_call() {
+    print("called")
+    return true
+}
+let result = false and should_not_call()
+print("done")
+""", "done", mode)
+
+
+@test("Short-circuit OR evaluation", "Truthiness")
+def test_short_circuit_or(mode):
+    assert_contains("""
+fn should_not_call() {
+    print("called")
+    return false
+}
+let result = true or should_not_call()
+print("done")
+""", "done", mode)
+
+
+# ============================================================================
+# 15. IMPORTS & MODULES
+# ============================================================================
+
+@test("Import basic module", "Imports")
+def test_import_basic(mode):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f:
+        f.write("""
+fn helper() {
+    return 42
+}
+""")
+        module_path = f.name
+
+    try:
+        escaped_path = escape_path_for_tb(module_path)
+        code = f"""
+@import {{
+    "{escaped_path}"
+}}
+print("imported")
+"""
+        assert_contains(code, "imported", mode)
+    finally:
+        try:
+            os.unlink(module_path)
+        except:
+            pass
+
+
+@test("Import and use function", "Imports")
+def test_import_use_function(mode):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f:
+        f.write("""
+fn multiply(a, b) {
+    return a * b
+}
+""")
+        module_path = f.name
+
+    try:
+        escaped_path = escape_path_for_tb(module_path)
+        code = f"""
+@import {{
+    "{escaped_path}"
+}}
+print(multiply(6, 7))
+"""
+        assert_contains(code, "42", mode)
+    finally:
+        try:
+            os.unlink(module_path)
+        except:
+            pass
+
+
+@test("Import with alias", "Imports")
+def test_import_alias(mode):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f:
+        f.write("""
+fn get_value() {
+    return 100
+}
+""")
+        module_path = f.name
+
+    try:
+        escaped_path = escape_path_for_tb(module_path)
+        code = f"""
+@import {{
+    "{escaped_path}" as mymod
+}}
+print(mymod.get_value())
+"""
+        assert_contains(code, "100", mode)
+    finally:
+        try:
+            os.unlink(module_path)
+        except:
+            pass
+
+
+@test("Multiple imports", "Imports")
+def test_multiple_imports(mode):
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f1:
+        f1.write('fn func1() { return 1 }')
+        mod1_path = f1.name
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f2:
+        f2.write('fn func2() { return 2 }')
+        mod2_path = f2.name
+
+    try:
+        escaped_path1 = escape_path_for_tb(mod1_path)
+        escaped_path2 = escape_path_for_tb(mod2_path)
+        code = f"""
+@import {{
+    "{escaped_path1}"
+    "{escaped_path2}"
+}}
+print(func1() + func2())
+"""
+        assert_contains(code, "3", mode)
+    finally:
+        try:
+            os.unlink(mod1_path)
+            os.unlink(mod2_path)
+        except:
+            pass
+
+
+# ============================================================================
+# BONUS: COMPLEX INTEGRATION TESTS
+# ============================================================================
+
+@test("Complex program - fibonacci", "Integration")
+def test_complex_fibonacci(mode):
+    assert_contains("""
+fn fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+let result = fib(10)
+print(result)
+""", "55", mode)
+
+
+@test("Complex program - list processing", "Integration")
+def test_complex_list_processing(mode):
+    assert_contains("""
+let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+let evens = filter(x => x % 2 == 0, numbers)
+let squared = map(x => x * x, evens)
+let sum = reduce((acc, x) => acc + x, squared, 0)
+
+print(sum)
+""", "220", mode)
+
+
+@test("Complex program - nested data structures", "Integration")
+def test_complex_nested_data(mode):
+    assert_contains("""
+let users = [
+    {name: "Alice", age: 30, scores: [85, 90, 88]},
+    {name: "Bob", age: 25, scores: [78, 82, 80]},
+    {name: "Charlie", age: 35, scores: [92, 95, 93]}
+]
+
+for user in users {
+    let avg = reduce((a, x) => a + x, user.scores, 0) / len(user.scores)
+    if avg > 85 {
+        print(user.name)
+    }
+}
+""", "Alice\nCharlie", mode)
+
+
+@test("Complex program - string manipulation", "Integration")
+def test_complex_string_manipulation(mode):
+    assert_contains("""
+let words = ["hello", "world", "test"]
+let lengths = map(x => len(x), words)
+let total = reduce((a, x) => a + x, lengths, 0)
+print(total)
+""", "14", mode)
+
+
+@test("Complex program - closure with state", "Integration")
+def test_complex_closure_state(mode):
+    assert_contains("""
+fn make_counter() {
+    let count = 0
+    return fn() {
+        count = count + 1
+        return count
+    }
+}
+
+let counter = make_counter()
+print(counter())
+print(counter())
+print(counter())
+""", "1\n2\n3", mode)
+
+
+@test("Complex program - match with ranges", "Integration")
+def test_complex_match_ranges(mode):
+    assert_contains("""
+fn classify(n) {
+    return match n {
+        0 => "zero",
+        1..=10 => "small",
+        11..=50 => "medium",
+        51..=100 => "large",
+        _ => "huge"
+    }
+}
+
+print(classify(0))
+print(classify(5))
+print(classify(25))
+print(classify(75))
+print(classify(150))
+""", "zero\nsmall\nmedium\nlarge\nhuge", mode)
+
+
+@test("Complex program - recursive list sum", "Integration")
+def test_complex_recursive_list(mode):
+    assert_contains("""
+fn sum_list(lst) {
+    if len(lst) == 0 {
+        return 0
+    }
+    return lst[0] + sum_list([lst[i] for i in range(1, len(lst))])
+}
+
+print(sum_list([1, 2, 3, 4, 5]))
+""", "15", mode)
+
+
+# ============================================================================
+# ERROR HANDLING TESTS
+# ============================================================================
+
+@test("Error - division by zero", "Errors")
+def test_error_division_zero(mode):
+    assert_error("""
+print(10 / 0)
+""", mode)
+
+
+@test("Error - undefined variable", "Errors")
+def test_error_undefined_var(mode):
+    assert_error("""
+print(undefined_variable)
+""", mode)
+
+
+@test("Error - list index out of bounds", "Errors")
+def test_error_list_index(mode):
+    assert_error("""
+let lst = [1, 2, 3]
+print(lst[10])
+""", mode)
+
+
+@test("Error - type mismatch in operation", "Errors")
+def test_error_type_mismatch(mode):
+    assert_error("""
+print("string" * "string")
+""", mode)
+
+
+@test("Error - calling non-function", "Errors")
+def test_error_call_non_function(mode):
+    assert_error("""
+let x = 42
+x()
+""", mode)
+
+
+@test("Error - wrong number of arguments", "Errors")
+def test_error_wrong_args(mode):
+    assert_error("""
+fn test(a, b) { return a + b }
+print(test(1))
+""", mode)
+
+
+# ============================================================================
+# OPERATOR PRECEDENCE TESTS
+# ============================================================================
+
+@test("Precedence - multiplication before addition", "Precedence")
+def test_precedence_mult_add(mode):
+    assert_contains("print(2 + 3 * 4)", "14", mode)
+
+
+@test("Precedence - parentheses override", "Precedence")
+def test_precedence_parens(mode):
+    assert_contains("print((2 + 3) * 4)", "20", mode)
+
+
+@test("Precedence - division before subtraction", "Precedence")
+def test_precedence_div_sub(mode):
+    assert_contains("print(10 - 6 / 2)", "7", mode)
+
+
+@test("Precedence - modulo with multiplication", "Precedence")
+def test_precedence_mod_mult(mode):
+    assert_contains("print(5 * 4 % 3)", "2", mode)
+
+
+@test("Precedence - comparison before logical AND", "Precedence")
+def test_precedence_compare_and(mode):
+    assert_contains("print(5 > 3 and 2 < 4)", "true", mode)
+
+
+@test("Precedence - logical AND before OR", "Precedence")
+def test_precedence_and_or(mode):
+    assert_contains("print(false or true and false)", "false", mode)
+
+
+@test("Precedence - NOT before AND", "Precedence")
+def test_precedence_not_and(mode):
+    assert_contains("print(not false and true)", "true", mode)
+
+
+@test("Precedence - unary minus", "Precedence")
+def test_precedence_unary_minus(mode):
+    assert_contains("print(-2 * 3)", "-6", mode)
+
+
+@test("Precedence - member access highest", "Precedence")
+def test_precedence_member_access(mode):
+    assert_contains("""
+let obj = {val: 10}
+print(obj.val + 5)
+""", "15", mode)
+
+
+@test("Precedence - complex expression", "Precedence")
+def test_precedence_complex(mode):
+    assert_contains("print(2 + 3 * 4 - 1 == 13)", "true", mode)
+
+
+# ============================================================================
+# RANGE TESTS
+# ============================================================================
+
+@test("Range - exclusive end", "Ranges")
+def test_range_exclusive(mode):
+    assert_contains("""
+for i in 1..5 {
+    print(i)
+}
+""", "1\n2\n3\n4", mode)
+
+
+@test("Range - inclusive end", "Ranges")
+def test_range_inclusive(mode):
+    assert_contains("""
+for i in 1..=5 {
+    print(i)
+}
+""", "1\n2\n3\n4\n5", mode)
+
+
+@test("Range - in match exclusive", "Ranges")
+def test_range_match_exclusive(mode):
+    assert_contains("""
+let x = 5
+let result = match x {
+    1..5 => "before",
+    5..10 => "in",
+    _ => "after"
+}
+print(result)
+""", "in", mode)
+
+
+@test("Range - in match inclusive", "Ranges")
+def test_range_match_inclusive(mode):
+    assert_contains("""
+let x = 5
+let result = match x {
+    1..=5 => "in",
+    _ => "out"
+}
+print(result)
+""", "in", mode)
+
+
+# ============================================================================
+# SCOPE AND SHADOWING TESTS
+# ============================================================================
+
+@test("Scope - function parameter scope", "Scope")
+def test_scope_function_param(mode):
+    assert_contains("""
+let x = 10
+fn test(x) {
+    print(x)
+}
+test(20)
+print(x)
+""", "20\n10", mode)
+
+
+@test("Scope - nested blocks", "Scope")
+def test_scope_nested_blocks(mode):
+    assert_contains("""
+let x = 1
+if true {
+    let x = 2
+    if true {
+        let x = 3
+        print(x)
+    }
+    print(x)
+}
+print(x)
+""", "3\n2\n1", mode)
+
+
+@test("Scope - loop variable scope", "Scope")
+def test_scope_loop_var(mode):
+    assert_contains("""
+for i in range(3) {
+    let x = i * 10
+    print(x)
+}
+""", "0\n10\n20", mode)
+
+
+@test("Scope - closure captures outer scope", "Scope")
+def test_scope_closure_capture(mode):
+    assert_contains("""
+let outer = 100
+fn make_func() {
+    return fn() {
+        return outer
+    }
+}
+let f = make_func()
+print(f())
+""", "100", mode)
+
+
+# ============================================================================
+# ADVANCED LAMBDA & FUNCTION TESTS
+# ============================================================================
+
+@test("Lambda - nested lambdas", "AdvancedFunctions")
+def test_nested_lambdas(mode):
+    assert_contains("""
+let add = x => y => x + y
+let add5 = add(5)
+print(add5(10))
+""", "15", mode)
+
+
+@test("Lambda - as function argument", "AdvancedFunctions")
+def test_lambda_as_arg(mode):
+    assert_contains("""
+fn apply(f, x) {
+    return f(x)
+}
+print(apply(x => x * 2, 21))
+""", "42", mode)
+
+
+@test("Function - returning function", "AdvancedFunctions")
+def test_function_return_function(mode):
+    assert_contains("""
+fn multiplier(factor) {
+    return fn(x) {
+        return x * factor
+    }
+}
+let times3 = multiplier(3)
+print(times3(7))
+""", "21", mode)
+
+
+@test("Function - multiple returns", "AdvancedFunctions")
+def test_multiple_returns(mode):
+    assert_contains("""
+fn classify(n) {
+    if n < 0 {
+        return "negative"
+    }
+    if n == 0 {
+        return "zero"
+    }
+    return "positive"
+}
+print(classify(-5))
+print(classify(0))
+print(classify(5))
+""", "negative\nzero\npositive", mode)
+
+
+# ============================================================================
+# EDGE CASES & CORNER CASES
+# ============================================================================
+
+@test("Edge case - empty function body", "EdgeCases")
+def test_edge_empty_function(mode):
+    assert_contains("""
+fn empty() {
+}
+print(empty())
+""", "None", mode)
+
+
+@test("Edge case - single element list", "EdgeCases")
+def test_edge_single_element_list(mode):
+    assert_contains("""
+let lst = [42]
+print(lst[0])
+""", "42", mode)
+
+
+@test("Edge case - deeply nested parentheses", "EdgeCases")
+def test_edge_nested_parens(mode):
+    assert_contains("print(((((5)))))", "5", mode)
+
+
+@test("Edge case - zero iterations loop", "EdgeCases")
+def test_edge_zero_iterations(mode):
+    assert_contains("""
+for i in range(0) {
+    print("never")
+}
+print("done")
+""", "done", mode)
+
+
+@test("Edge case - boolean arithmetic", "EdgeCases")
+def test_edge_bool_arithmetic(mode):
+    assert_contains("""
+print(true and true)
+print(false or false)
+print(not true)
+""", "true\nfalse\nfalse", mode)
+
+
+@test("Edge case - nested match", "EdgeCases")
+def test_edge_nested_match(mode):
+    assert_contains("""
+let x = 5
+let y = 15
+let result = match x {
+    1..10 => match y {
+        1..10 => "both small",
+        _ => "x small"
+    },
+    _ => "x large"
+}
+print(result)
+""", "x small", mode)
+
+# ============================================================================
+# MIXED TYPE OPERATIONS
+# ============================================================================
+
+@test("Mixed types - dict with mixed values", "MixedTypes")
+def test_mixed_dict_values(mode):
+    assert_contains("""
+let data = {
+    num: 42,
+    text: "hello",
+    flag: true,
+    items: [1, 2, 3]
+}
+print(data.num)
+print(data.text)
+print(len(data.items))
+""", "42\nhello\n3", mode)
+
+
+# ============================================================================
+# RECURSION TESTS
+# ============================================================================
+
+@test("Recursion - countdown", "Recursion")
+def test_recursion_countdown(mode):
+    assert_contains("""
+fn countdown(n) {
+    if n <= 0 {
+        print("done")
+        return
+    }
+    print(n)
+    countdown(n - 1)
+}
+countdown(3)
+""", "3\n2\n1\ndone", mode)
+
+
+@test("Recursion - sum of list", "Recursion")
+def test_recursion_list_sum(mode):
+    assert_contains("""
+fn sum_recursive(lst, idx) {
+    if idx >= len(lst) {
+        return 0
+    }
+    return lst[idx] + sum_recursive(lst, idx + 1)
+}
+print(sum_recursive([1, 2, 3, 4, 5], 0))
+""", "15", mode)
+
+
+@test("Recursion - power function", "Recursion")
+def test_recursion_power(mode):
+    assert_contains("""
+fn power(base, exp) {
+    if exp == 0 {
+        return 1
+    }
+    return base * power(base, exp - 1)
+}
+print(power(2, 10))
+""", "1024", mode)
+
+
+# ============================================================================
+# BUILT-IN FUNCTIONS COMPREHENSIVE TESTS
+# ============================================================================
+
+@test("Builtin - type_of for all types", "Builtins")
+def test_builtin_typeof_all(mode):
+    assert_contains("""
+print(type_of(42))
+print(type_of(3.14))
+print(type_of("text"))
+print(type_of(true))
+print(type_of([]))
+print(type_of({}))
+print(type_of(None))
+""", "int\nfloat\nstring\nbool\nlist\ndict\nNone", mode)
+
+
+@test("Builtin - range with three args", "Builtins")
+def test_builtin_range_step(mode):
+    assert_contains("""
+for i in range(0, 10, 2) {
+    print(i)
+}
+""", "0\n2\n4\n6\n8", mode)
+
+
+@test("Builtin - len on string", "Builtins")
+def test_builtin_len_string(mode):
+    assert_contains("""
+print(len("hello world"))
+""", "11", mode)
+
+
+# ============================================================================
+# EXPRESSION AS STATEMENT TESTS
+# ============================================================================
+
+@test("Expression - if returns value", "Expressions")
+def test_expr_if_value(mode):
+    assert_contains("""
+let x = if 5 > 3 { 100 } else { 200 }
+print(x)
+""", "100", mode)
+
+
+@test("Expression - match returns value", "Expressions")
+def test_expr_match_value(mode):
+    assert_contains("""
+let result = match 2 + 2 {
+    4 => "correct",
+    _ => "wrong"
+}
+print(result)
+""", "correct", mode)
+
+
+@test("Expression - block returns last value", "Expressions")
+def test_expr_block_value(mode):
+    assert_contains("""
+let x = {
+    let a = 10
+    let b = 20
+    a + b
+}
+print(x)
+""", "30", mode)
+
+
+# ============================================================================
+# COMPLETE INTEGRATION TEST - REALISTIC PROGRAM
+# ============================================================================
+
+@test("Real program - grade calculator", "RealWorld")
+def test_real_grade_calculator(mode):
+    assert_contains("""
+fn calculate_grade(scores) {
+    let sum = reduce((a, x) => a + x, scores, 0)
+    let avg = sum / len(scores)
+
+    return match avg {
+        90..=100 => "A",
+        80..=89 => "B",
+        70..=79 => "C",
+        60..=69 => "D",
+        _ => "F"
+    }
+}
+
+let students = [
+    {name: "Alice", scores: [95, 92, 88]},
+    {name: "Bob", scores: [78, 82, 80]},
+    {name: "Charlie", scores: [65, 70, 68]}
+]
+
+for student in students {
+    let grade = calculate_grade(student.scores)
+    print(student.name + ": " + grade)
+}
+""", "Alice: A\nBob: B\nCharlie: D", mode)
+
+
+@test("Real program - data analysis", "RealWorld")
+def test_real_data_analysis(mode):
+    assert_contains("""
+let data = [12, 15, 18, 22, 25, 28, 30, 35, 40, 45]
+
+let filtered = filter(x => x >= 20, data)
+let doubled = map(x => x * 2, filtered)
+let sum = reduce((a, x) => a + x, doubled, 0)
+
+print("Count: " + str(len(filtered)))
+print("Sum: " + str(sum))
+""", "Count: 7\nSum: 450", mode)
+
+
+@test("Real program - text processing", "RealWorld")
+def test_real_text_processing(mode):
+    assert_contains("""
+let words = ["hello", "world", "test", "program"]
+
+let long_words = filter(w => len(w) > 4, words)
+let uppercase_first = map(w => str(w), long_words)
+let count = len(uppercase_first)
+
+print("Long words: " + str(count))
+forEach(w => print(w), long_words)
+""", "Long words: 3\nhello\nworld\nprogram", mode)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN EXECUTION
