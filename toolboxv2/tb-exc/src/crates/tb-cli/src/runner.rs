@@ -134,6 +134,7 @@ pub fn compile_file(
     // ═══════════════════════════════════════════════════════════════════════════
     let config_threads = parse_config_threads(&source);
     let config_networking = parse_config_networking(&source);
+    let config_optimize = parse_config_optimize(&source);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // AUTO-DETECT NETWORKING USAGE
@@ -189,7 +190,7 @@ pub fn compile_file(
 
     if use_fast_compile {
         let required_crates_refs: Vec<&str> = required_crates.iter().map(|s| s.as_str()).collect();
-        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread);
+        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, config_optimize);
     }
 
     // FALLBACK: Old Cargo-based compilation (slow but more compatible)
@@ -448,6 +449,7 @@ fn compile_with_rustc(
     required_crates: &[&str],
     uses_networking: bool,
     use_multi_thread: bool,
+    optimize: bool,
 ) -> Result<()> {
 
     // Find workspace root (going up from exe location)
@@ -510,6 +512,15 @@ fn compile_with_rustc(
         format!(", features = [{}]", features.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
     };
 
+    // Choose optimization settings based on config
+    let (lto_setting, codegen_units, strip_setting, panic_setting) = if optimize {
+        // Optimized: slow compile, fast execution
+        ("\"fat\"", "1", "true", "\"abort\"")
+    } else {
+        // Fast compile: fast compile, slower execution (default)
+        ("false", "16", "false", "\"unwind\"")
+    };
+
     let toml_content = format!(
 r#"[package]
 name = "tb-compiled"
@@ -526,11 +537,17 @@ serde_yaml = "0.9"
 
 [profile.release]
 opt-level = 3
-lto = false
-codegen-units = 16
+lto = {}
+codegen-units = {}
+strip = {}
+panic = {}
 "#,
         tb_runtime_path.display().to_string().replace("\\", "/"),
-        features_str
+        features_str,
+        lto_setting,
+        codegen_units,
+        strip_setting,
+        panic_setting
     );
     fs::write(&cargo_toml, toml_content)?;
 
@@ -611,6 +628,30 @@ fn parse_config_threads(source: &str) -> usize {
         }
     }
     1 // Default: single-threaded
+}
+
+/// Parse optimize flag from @config block
+/// Default: false (fast compile, slower execution)
+/// Set to true for: slow compile, fast execution
+fn parse_config_optimize(source: &str) -> bool {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "optimize" {
+                            let value = value.trim().trim_end_matches(',');
+                            return value == "true";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false // Default: fast compile, slower execution
 }
 
 /// Parse networking flag from @config block
