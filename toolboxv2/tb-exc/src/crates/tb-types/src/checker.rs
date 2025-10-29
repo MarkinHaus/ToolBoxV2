@@ -361,41 +361,64 @@ impl TypeChecker {
                     .map(|p| p.type_annotation.clone().unwrap_or(Type::Generic(Arc::clone(&p.name))))
                     .collect();
 
-                let func_type = Type::Function {
-                    params: param_types.clone(),
-                    return_type: Box::new(return_type.clone().unwrap_or(Type::None)),
+                // ✅ FIX: Infer return type from function body if not explicitly specified
+                // First, we need to check the body to infer the return type
+                // But we do this WITHOUT modifying self.env to avoid side effects
+
+                // Create a temporary checker with a child environment for type inference
+                let mut temp_env = self.env.child();
+                for (param, ty) in params.iter().zip(param_types.iter()) {
+                    temp_env.define(Arc::clone(&param.name), ty.clone());
+                }
+
+                // Create a temporary type checker to infer the return type
+                let mut temp_checker = TypeChecker {
+                    env: temp_env,
+                    errors: Vec::new(),
+                    source_context: self.source_context.clone(),
                 };
 
-                // Register function in environment
+                let mut inferred_return_type = Type::None;
+                for stmt in body {
+                    if let Ok(stmt_type) = temp_checker.check_statement(stmt) {
+                        if matches!(stmt, Statement::Return { .. }) {
+                            inferred_return_type = stmt_type;
+                            break;
+                        }
+                    }
+                }
+
+                // Use explicit return type if provided, otherwise use inferred type
+                let final_return_type = return_type.clone().unwrap_or(inferred_return_type);
+
+                let func_type = Type::Function {
+                    params: param_types.clone(),
+                    return_type: Box::new(final_return_type),
+                };
+
+                // Register function in environment FIRST
                 self.env.define(Arc::clone(name), func_type);
 
-                // Check function body in new scope
+                // Now check the function body in a proper child scope for validation
                 let mut body_env = self.env.child();
-
-                // Bind parameters
                 for (param, ty) in params.iter().zip(param_types.iter()) {
                     body_env.define(Arc::clone(&param.name), ty.clone());
                 }
 
-                // Temporarily swap environment
                 let old_env = std::mem::replace(&mut self.env, body_env);
 
                 let mut body_type = Type::None;
                 let mut has_return = false;
-
                 for stmt in body {
                     let stmt_type = self.check_statement(stmt)?;
-                    // If we find a return statement, use its type
                     if matches!(stmt, Statement::Return { .. }) {
                         body_type = stmt_type;
                         has_return = true;
                     } else if !has_return {
-                        // Only update body_type if we haven't seen a return yet
                         body_type = stmt_type;
                     }
                 }
 
-                // Restore environment
                 self.env = old_env;
 
                 // Validate return type if specified

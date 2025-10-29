@@ -205,6 +205,12 @@ pub enum Expression {
         inclusive: bool,
         span: Span,
     },
+    If {
+        condition: Box<Expression>,
+        then_branch: Box<Expression>,
+        else_branch: Box<Expression>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -274,6 +280,7 @@ impl Expression {
             Expression::Lambda { span, .. } => span,
             Expression::Match { span, .. } => span,
             Expression::Range { span, .. } => span,
+            Expression::If { span, .. } => span,
         }
     }
 }

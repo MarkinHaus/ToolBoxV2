@@ -1584,6 +1584,17 @@ impl RustCodeGenerator {
                 write!(self.buffer, ").collect::<Vec<i64>>()")?;
             }
 
+            Expression::If { condition, then_branch, else_branch, .. } => {
+                // Generate if expression: if condition { then_expr } else { else_expr }
+                write!(self.buffer, "if ")?;
+                self.generate_expression(condition)?;
+                write!(self.buffer, " {{ ")?;
+                self.generate_expression(then_branch)?;
+                write!(self.buffer, " }} else {{ ")?;
+                self.generate_expression(else_branch)?;
+                write!(self.buffer, " }}")?;
+            }
+
             _ => {
                 write!(self.buffer, "/* unsupported expression */")?;
             }
@@ -2049,6 +2060,12 @@ impl RustCodeGenerator {
             Expression::Range { .. } => {
                 // Range expressions always produce Vec<i64>
                 Ok(Type::List(Box::new(Type::Int)))
+            }
+            Expression::If { then_branch, else_branch, .. } => {
+                // If expression type is the least upper bound of both branches
+                let then_type = self.infer_expr_type(then_branch)?;
+                let else_type = self.infer_expr_type(else_branch)?;
+                Ok(TypeInference::least_upper_bound(&[then_type, else_type]))
             }
             _ => Ok(Type::Any),
         }

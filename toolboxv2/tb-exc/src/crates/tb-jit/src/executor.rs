@@ -465,6 +465,15 @@ impl JitExecutor {
                 Err(TBError::invalid_operation("No matching pattern in match expression".to_string()))
             }
 
+            Expression::If { condition, then_branch, else_branch, .. } => {
+                let cond_val = self.eval_expression(condition)?;
+                if cond_val.is_truthy() {
+                    self.eval_expression(then_branch)
+                } else {
+                    self.eval_expression(else_branch)
+                }
+            }
+
             Expression::Lambda { params, body, span } => {
                 // Create anonymous function
                 let param_names: Vec<Arc<String>> = params.iter()

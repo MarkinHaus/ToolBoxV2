@@ -57,6 +57,12 @@ impl FunctionInlining {
                         // Simple inlining: replace with body if single return statement
                         if body.len() == 1 {
                             if let Statement::Return { value: Some(return_expr), .. } = &body[0] {
+                                // ✅ FIX: Don't inline functions that return lambdas
+                                // Lambdas need to capture their environment at runtime, not compile time
+                                if matches!(return_expr, Expression::Lambda { .. }) {
+                                    return false;
+                                }
+
                                 // Substitute parameters with arguments
                                 let mut inlined = return_expr.clone();
                                 self.substitute_params(&mut inlined, &params, args);

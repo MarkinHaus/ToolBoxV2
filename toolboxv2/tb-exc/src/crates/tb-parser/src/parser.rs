@@ -1165,6 +1165,28 @@ impl Parser {
                 })
             }
 
+            TokenKind::If => {
+                // If expression: if condition { then_expr } else { else_expr }
+                self.advance();
+                let condition = self.parse_expression()?;
+
+                self.expect(TokenKind::LBrace)?;
+                let then_branch = self.parse_expression()?;
+                self.expect(TokenKind::RBrace)?;
+
+                self.expect(TokenKind::Else)?;
+                self.expect(TokenKind::LBrace)?;
+                let else_branch = self.parse_expression()?;
+                let end_span = self.expect(TokenKind::RBrace)?;
+
+                Ok(Expression::If {
+                    condition: Box::new(condition),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(else_branch),
+                    span: span.merge(&end_span),
+                })
+            }
+
             _ => {
                 let span = self.current().span;
                 Err(TBError::SyntaxError {

@@ -1309,7 +1309,9 @@ pub fn builtin_push(args: Vec<Value>) -> Result<Value, TBError> {
     }
 }
 
-/// pop(list) -> list
+/// pop(list) -> [new_list, popped_value]
+/// Returns a list containing the modified list and the popped value
+/// Example: let result = pop([1, 2, 3])  // result = [[1, 2], 3]
 pub fn builtin_pop(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 1 {
         return Err(TBError::runtime_error("pop() takes exactly 1 argument"));
@@ -1321,8 +1323,13 @@ pub fn builtin_pop(args: Vec<Value>) -> Result<Value, TBError> {
                 return Err(TBError::runtime_error("Cannot pop from empty list"));
             }
             let mut new_items = (**items).clone();
-            new_items.pop();
-            Ok(Value::List(Arc::new(new_items)))
+            let popped_value = new_items.pop().unwrap(); // Safe because we checked is_empty
+
+            // Return a list containing [new_list, popped_value]
+            Ok(Value::List(Arc::new(vec![
+                Value::List(Arc::new(new_items)),
+                popped_value,
+            ])))
         }
         _ => Err(TBError::runtime_error("pop() requires a list")),
     }

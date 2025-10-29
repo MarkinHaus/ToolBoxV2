@@ -1,7 +1,7 @@
 # TB Language - LLM Development Guide
 
-**Version:** 3.0
-**Date:** 2025-10-22
+**Version:** 3.2
+**Date:** 2025-10-29
 **Status:** Production Ready (92% Test Coverage)
 
 ---
@@ -9,6 +9,53 @@
 ## 🎯 Purpose
 
 This document provides a complete reference for working on the TB Language compiler project. It covers architecture, workflows, code locations, and best practices for implementing clean, efficient changes.
+
+---
+
+## ⚡ Quick Start - Most Important Information
+
+### Critical Bug Patterns to Avoid
+
+1. **❌ NEVER inline functions that return lambdas** (Optimizer bug)
+   - Closures capture environment at runtime, not compile time
+   - See Section: "Closure Capture Bug (Optimizer Issue)"
+
+2. **❌ NEVER register functions with `Type::None` before analyzing body** (Type checker bug)
+   - Always infer return type from function body first
+   - See Section: "Type Inference for Functions Without Return Type Annotations"
+
+3. **✅ ALWAYS use two-pass type checking for functions:**
+   - Pass 1: Infer return type in temporary environment
+   - Pass 2: Validate body in proper child scope
+
+4. **✅ ALWAYS test both JIT and compiled modes**
+   - Bugs can manifest differently in each mode
+   - Optimizer only runs in compiled mode by default
+
+### Recent Major Fixes (2025-10-29)
+
+- ✅ **Closure capture bug fixed** - Functions returning lambdas now work correctly
+- ✅ **Type inference improved** - Functions without return type annotations now infer correctly
+- ✅ **If expressions added** - `if` can now return values: `let x = if cond { a } else { b }`
+- ✅ **`pop()` function enhanced** - Now returns `[new_list, popped_value]` for context awareness
+
+### Debugging Workflow
+
+```powershell
+# 1. Create minimal test case
+echo 'your test code' > test.tbx
+
+# 2. Test JIT mode
+cargo run --bin tb -- run test.tbx
+
+# 3. If fails, disable optimizer (edit runner.rs)
+# Comment out: optimizer.optimize(&mut program)?
+
+# 4. If works without optimizer → Optimizer bug
+# If still fails → JIT executor or type checker bug
+
+# 5. Use binary search to find the culprit
+```
 
 ---
 
@@ -845,6 +892,394 @@ let compose = f => g => x => f(g(x));  // Function composition
 
 ---
 
+## 🔧 Critical Bug Fixes & Lessons Learned
+
+### 1. Closure Capture Bug (Optimizer Issue)
+
+**Problem:** Functions returning lambdas failed with "Undefined variable: n" error.
+
+**Example that failed:**
+```tb
+fn make_adder(n) {
+    return x => x + n  // ❌ Error: Undefined variable: n
+}
+let add5 = make_adder(5)
+print(add5(10))  // Expected: 15, Got: Error
+```
+
+**Root Cause:** The function inlining optimizer (`tb-optimizer/src/function_inlining.rs`) was too aggressive. When a function body contained only a single return statement with a lambda, the optimizer would inline the function call by substituting parameters. This broke closure capture because:
+
+1. Optimizer detected: `fn make_adder(n) { return x => x + n }` has single return statement
+2. Optimizer inlined: `make_adder(5)` → `x => x + 5` (substituting `n` with `5`)
+3. But lambdas need to capture variables at **runtime**, not compile time
+4. The substituted lambda lost its closure environment
+
+**Solution:** Prevent inlining of functions that return lambdas.
+
+**File:** `toolboxv2/tb-exc/src/crates/tb-optimizer/src/function_inlining.rs` (Lines 52-80)
+
+```rust
+fn try_inline_call(&mut self, expr: &mut Expression) -> bool {
+    match expr {
+        Expression::Call { callee, args, span: _ } => {
+            if let Expression::Ident(func_name, _) = callee.as_ref() {
+                if let Some((params, body)) = self.functions.get(func_name).cloned() {
+                    if body.len() == 1 {
+                        if let Statement::Return { value: Some(return_expr), .. } = &body[0] {
+                            // ✅ FIX: Don't inline functions that return lambdas
+                            // Lambdas need to capture their environment at runtime, not compile time
+                            if matches!(return_expr, Expression::Lambda { .. }) {
+                                return false;  // ← Critical fix!
+                            }
+
+                            // Safe to inline non-lambda returns
+                            let mut inlined = return_expr.clone();
+                            self.substitute_params(&mut inlined, &params, args);
+                            *expr = inlined;
+                            self.changes += 1;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    false
+}
+```
+
+**Key Insight:** Closures are fundamentally runtime constructs. Any compile-time transformation that substitutes captured variables will break closure semantics.
+
+**Testing:** This pattern now works correctly:
+```tb
+fn make_adder(n) {
+    return x => x + n
+}
+let add5 = make_adder(5)
+print(add5(10))  // ✅ Prints: 15
+```
+
+---
+
+### 2. Type Inference for Functions Without Return Type Annotations
+
+**Problem:** Functions without explicit return type annotations were assigned `Type::None` instead of inferring the actual return type from the function body.
+
+**Example that failed:**
+```tb
+fn make_adder(n) {  // No return type annotation
+    return x => x + n
+}
+let add5 = make_adder(5)
+print(add5(10))  // ❌ Error: Cannot call non-function type None
+```
+
+**Root Cause:** The type checker registered functions with `Type::None` return type BEFORE analyzing the function body.
+
+**File:** `toolboxv2/tb-exc/src/crates/tb-types/src/checker.rs` (Lines 357-461)
+
+**Solution:** Infer return type from function body before registering the function.
+
+```rust
+Statement::Function { name, params, return_type, body, span } => {
+    // Create function type
+    let param_types: Vec<Type> = params
+        .iter()
+        .map(|p| p.type_annotation.clone().unwrap_or(Type::Generic(Arc::clone(&p.name))))
+        .collect();
+
+    // ✅ FIX: Infer return type from function body if not explicitly specified
+    // Create a temporary checker with a child environment for type inference
+    let mut temp_env = self.env.child();
+    for (param, ty) in params.iter().zip(param_types.iter()) {
+        temp_env.define(Arc::clone(&param.name), ty.clone());
+    }
+
+    let mut temp_checker = TypeChecker {
+        env: temp_env,
+        errors: Vec::new(),
+        source_context: self.source_context.clone(),
+    };
+
+    let mut inferred_return_type = Type::None;
+    for stmt in body {
+        if let Ok(stmt_type) = temp_checker.check_statement(stmt) {
+            if matches!(stmt, Statement::Return { .. }) {
+                inferred_return_type = stmt_type;
+                break;
+            }
+        }
+    }
+
+    // Use explicit return type if provided, otherwise use inferred type
+    let final_return_type = return_type.clone().unwrap_or(inferred_return_type);
+
+    let func_type = Type::Function {
+        params: param_types.clone(),
+        return_type: Box::new(final_return_type),
+    };
+
+    // Register function in environment FIRST
+    self.env.define(Arc::clone(name), func_type);
+
+    // Now check the function body in a proper child scope for validation
+    let mut body_env = self.env.child();
+    for (param, ty) in params.iter().zip(param_types.iter()) {
+        body_env.define(Arc::clone(&param.name), ty.clone());
+    }
+
+    let old_env = std::mem::replace(&mut self.env, body_env);
+
+    let mut body_type = Type::None;
+    let mut has_return = false;
+    for stmt in body {
+        let stmt_type = self.check_statement(stmt)?;
+        if matches!(stmt, Statement::Return { .. }) {
+            body_type = stmt_type;
+            has_return = true;
+        } else if !has_return {
+            body_type = stmt_type;
+        }
+    }
+
+    self.env = old_env;
+
+    // Validate return type if specified
+    if let Some(expected_return) = return_type {
+        // Type checking logic...
+    }
+
+    Ok(Type::None)
+}
+```
+
+**Key Insight:** Type inference requires TWO passes:
+1. **First pass:** Infer return type in temporary environment (no side effects)
+2. **Second pass:** Validate function body in proper child scope
+
+**Why two passes?**
+- First pass: Get the return type to register the function signature
+- Second pass: Validate the function body with the registered function available (for recursion)
+
+---
+
+### 3. If Expressions (Where `if` Returns a Value)
+
+**Feature:** Support for `if` as an expression that returns a value.
+
+**Example:**
+```tb
+let x = if 5 > 3 { 100 } else { 200 }  // x = 100
+let msg = if false { "yes" } else { "no" }  // msg = "no"
+```
+
+**Implementation:**
+
+**AST:** Added `Expression::If` variant
+```rust
+// tb-core/src/ast.rs
+pub enum Expression {
+    If {
+        condition: Box<Expression>,
+        then_expr: Box<Expression>,
+        else_expr: Box<Expression>,
+        span: Span,
+    },
+    // ...
+}
+```
+
+**Parser:** Parse `if condition { expr } else { expr }` syntax
+```rust
+// tb-parser/src/parser.rs
+fn parse_if_expression(&mut self) -> Result<Expression> {
+    self.expect(TokenKind::If)?;
+    let condition = self.parse_expression()?;
+    self.expect(TokenKind::LBrace)?;
+    let then_expr = self.parse_expression()?;
+    self.expect(TokenKind::RBrace)?;
+    self.expect(TokenKind::Else)?;
+    self.expect(TokenKind::LBrace)?;
+    let else_expr = self.parse_expression()?;
+    self.expect(TokenKind::RBrace)?;
+    Ok(Expression::If { condition, then_expr, else_expr, span })
+}
+```
+
+**Type Checker:** Infer type as least upper bound of both branches
+```rust
+// tb-types/src/checker.rs
+Expression::If { condition, then_expr, else_expr, .. } => {
+    let cond_type = self.check_expression(condition)?;
+    let then_type = self.check_expression(then_expr)?;
+    let else_type = self.check_expression(else_expr)?;
+
+    // Return type is the least upper bound of both branches
+    Ok(self.least_upper_bound(&then_type, &else_type))
+}
+```
+
+**JIT Executor:** Evaluate condition and return appropriate branch
+```rust
+// tb-jit/src/executor.rs
+Expression::If { condition, then_expr, else_expr, .. } => {
+    let cond_value = self.eval_expression(condition)?;
+    if self.is_truthy(&cond_value) {
+        self.eval_expression(then_expr)
+    } else {
+        self.eval_expression(else_expr)
+    }
+}
+```
+
+**Code Generator:** Generate Rust if expression
+```rust
+// tb-codegen/src/rust_codegen.rs
+Expression::If { condition, then_expr, else_expr, .. } => {
+    write!(self.buffer, "if ")?;
+    self.generate_expression(condition)?;
+    write!(self.buffer, " {{ ")?;
+    self.generate_expression(then_expr)?;
+    write!(self.buffer, " }} else {{ ")?;
+    self.generate_expression(else_expr)?;
+    write!(self.buffer, " }}")?;
+}
+```
+
+**Status:** ✅ Fully working in both JIT and compiled modes
+
+---
+
+### 4. Builtin `pop()` Function - Context-Aware Return
+
+**Problem:** `pop()` only returned the modified list, not the popped value.
+
+**Old behavior:**
+```tb
+let result = pop([1, 2, 3])  // result = [1, 2]  ❌ Lost the popped value!
+```
+
+**New behavior:**
+```tb
+let result = pop([1, 2, 3])  // result = [[1, 2], 3]  ✅ Both values!
+let new_list = result[0]     // [1, 2]
+let popped = result[1]       // 3
+```
+
+**File:** `toolboxv2/tb-exc/src/crates/tb-builtins/src/builtins_impl.rs` (Lines 1312-1336)
+
+```rust
+/// pop(list) -> [new_list, popped_value]
+/// Returns a list containing the modified list and the popped value
+/// Example: let result = pop([1, 2, 3])  // result = [[1, 2], 3]
+pub fn builtin_pop(args: Vec<Value>) -> Result<Value, TBError> {
+    if args.len() != 1 {
+        return Err(TBError::runtime_error(
+            format!("pop() expects 1 argument, got {}", args.len()),
+            None, None
+        ));
+    }
+
+    match &args[0] {
+        Value::List(items) => {
+            if items.is_empty() {
+                return Err(TBError::runtime_error(
+                    "Cannot pop from empty list".to_string(),
+                    None, None
+                ));
+            }
+
+            let mut new_items = (**items).clone();
+            let popped_value = new_items.pop().unwrap();
+
+            // ✅ Return BOTH the new list AND the popped value
+            Ok(Value::List(Arc::new(vec![
+                Value::List(Arc::new(new_items)),
+                popped_value,
+            ])))
+        }
+        _ => Err(TBError::runtime_error(
+            format!("pop() expects a list, got {}", args[0].type_name()),
+            None, None
+        ))
+    }
+}
+```
+
+**Key Insight:** Functional programming principle - operations should be **precise and context-aware**, returning all relevant information.
+
+---
+
+## 🎓 Debugging Methodology
+
+### Systematic Debugging Process
+
+When encountering a bug, follow this process:
+
+1. **Isolate the problem:**
+   - Create minimal test case
+   - Test in both JIT and compiled modes
+   - Identify which mode fails
+
+2. **Identify the layer:**
+   - Parser error? → Check AST construction
+   - Type error? → Check type checker
+   - Runtime error? → Check JIT executor or codegen
+   - Compilation error? → Check code generator
+
+3. **Use binary search:**
+   - Disable optimizer → Still fails? Not optimizer issue
+   - Disable type checker → Still fails? Not type checker issue
+   - Add debug statements → Trace execution flow
+
+4. **Check for side effects:**
+   - Does adding a dummy statement fix it? → Optimizer issue
+   - Does disabling a specific optimization pass fix it? → That pass is the culprit
+
+5. **Verify the fix:**
+   - Test original failing case
+   - Test edge cases
+   - Run full test suite
+   - Test both JIT and compiled modes
+
+### Example: Closure Bug Debugging
+
+```powershell
+# 1. Minimal test case
+echo 'fn make_adder(n) { return x => x + n }
+let add5 = make_adder(5)
+print(add5(10))' > test.tbx
+
+# 2. Test JIT mode
+cargo run --bin tb -- run test.tbx
+# Result: Error: Undefined variable: n
+
+# 3. Disable optimizer
+# Edit runner.rs: Comment out optimizer.optimize(&mut program)?
+cargo build
+cargo run --bin tb -- run test.tbx
+# Result: Works! Prints 15
+
+# 4. Conclusion: Optimizer is the culprit
+
+# 5. Identify which optimization pass
+# Edit optimizer.rs: Disable each pass one by one
+# Result: Function inlining pass causes the issue
+
+# 6. Fix and verify
+# Add check: if matches!(return_expr, Expression::Lambda { .. }) { return false; }
+cargo build
+cargo run --bin tb -- run test.tbx
+# Result: Works! Prints 15
+
+# 7. Run full test suite
+python -m pytest toolboxv2/utils/tbx/test/test_tb_lang2.py::test_closure -v
+# Result: PASSED ✅
+```
+
+---
+
 ## ✅ Implementation Checklist
 
 Before implementing any feature:
@@ -862,11 +1297,17 @@ Before implementing any feature:
 
 ---
 
-**Version:** 3.1
-**Last Updated:** 2025-10-22
+**Version:** 3.2
+**Last Updated:** 2025-10-29
 **Status:** Production Ready (99.9% Stable)
 **Test Coverage:** 92%
 **Security:** Hardened (recursion limits, collection size limits, division by zero protection)
+
+**Recent Updates:**
+- Fixed critical closure capture bug in optimizer (functions returning lambdas)
+- Improved type inference for functions without return type annotations
+- Added if expressions (if as expression returning value)
+- Enhanced `pop()` builtin to return both new list and popped value
 
 ---
 
