@@ -846,7 +846,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expression> {
-        let mut left = self.parse_term()?;
+        let mut left = self.parse_range()?;
 
         while let Some(op) = self.match_binary_op(&[
             TokenKind::Lt,
@@ -856,13 +856,34 @@ impl Parser {
             TokenKind::In,  // "x" in list, "key" in dict, "sub" in string
         ]) {
             self.advance();
-            let right = self.parse_term()?;
+            let right = self.parse_range()?;
             let span = left.span().merge(right.span());
 
             left = Expression::Binary {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(left)
+    }
+
+    fn parse_range(&mut self) -> Result<Expression> {
+        let mut left = self.parse_term()?;
+
+        // Check for range operators: .. or ..=
+        if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotEq) {
+            let inclusive = self.check(&TokenKind::DotDotEq);
+            self.advance();
+            let right = self.parse_term()?;
+            let span = left.span().merge(right.span());
+
+            left = Expression::Range {
+                start: Box::new(left),
+                end: Box::new(right),
+                inclusive,
                 span,
             };
         }

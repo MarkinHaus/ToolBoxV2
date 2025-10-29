@@ -1,1167 +1,625 @@
-Absolut. Die vorherigen Korrekturen waren unvollständig und haben Folgefehler verursacht. Nach einer tiefgehenden Analyse der neuen Fehlerprotokolle habe ich die grundlegenden Ursachen identifiziert. Die Probleme liegen in der Art und Weise, wie der Codegenerator mit dem DictValue-Enum umgeht, was zu Typ-Konflikten und Laufzeit-Panics führt.
+# TB Language Compiler - Fixes und Implementierungsstatus
 
-Hier sind die vollständigen, produktionsreifen Implementierungen zur Behebung aller gemeldeten Fehler.
+**Datum:** 2025-10-28
+**Status:** E2E-Tests: 17/92 bestanden (18.5%)
+**Cargo-Tests:** 46/46 bestanden (100%)
 
-Hauptursache: Unsichere Behandlung von DictValue
+---
 
-Fast alle Fehler stammen von einem zentralen Problem: Der generierte Rust-Code behandelt DictValue – ein Enum, das verschiedene Typen enthalten kann – nicht sicher.
+## Zusammenfassung der aktuellen Situation
 
-Unsicherer Zugriff: Code wie data.get("users").unwrap() stürzt ab, wenn der Schlüssel "users" nicht existiert.
+### ✅ Erfolgreich implementierte Fixes:
 
-Falsche Standardwerte: unwrap_or(DictValue::Int(0)) liefert einen Integer, wo eine Liste oder ein String erwartet wird, was zu mismatched types-Fehlern führt.
+1. **Short-circuit Evaluation für AND/OR** (`tb-jit/src/executor.rs` Zeilen 325-353)
+   - AND: Rechter Operand wird nicht evaluiert, wenn linker `false` ist
+   - OR: Rechter Operand wird nicht evaluiert, wenn linker `true` ist
+   - **Problem:** Tests schlagen trotzdem fehl wegen Typ-Fehler (siehe unten)
 
-Fehlende Typ-Entpackung: Operationen wie sum() oder + werden direkt auf DictValue versucht, anstatt auf dem darin enthaltenen i64 oder f64.
+2. **Empty Return Detection** (`tb-codegen/src/rust_codegen.rs` Zeilen 1696-1770)
+   - `has_empty_return()` erkennt `return;` ohne Wert in Funktionen
+   - Setzt Rückgabetyp auf `Type::None` wenn gefunden
+   - **Problem:** Codegen generiert trotzdem falschen Code (siehe unten)
 
-Die folgenden Korrekturen beheben diese Probleme an der Wurzel.
+3. **Scoping für Blöcke** (`tb-jit/src/executor.rs`)
+   - If-Blöcke (Zeilen 144-155): `eval_block_with_scope()`
+   - For-Loops (Zeilen 157-194): Environment save/restore
+   - While-Loops (Zeilen 196-226): Environment save/restore
+   - **Problem:** Falsch implementiert - löscht ALLE Variablen statt nur neue (siehe unten)
 
-Fehler 1: Abstürze und falsche Ausgaben durch unsichere Dictionary-Zugriffe
+### ❌ Kritische Probleme (nach Priorität):
 
-Problem: Code stürzt ab (panicked at 'Expected Dict') oder gibt falsche Werte (0 statt Alice) zurück, weil unwrap_or einen falschen Typ liefert und as_...-Methoden paniken.
+---
 
-Ursache: Die as_...-Methoden in tb-runtime sind unsicher. Der Codegenerator erzeugt Code, der diese unsicheren Methoden aufruft.
+## 1. KRITISCH: Scoping-Bug (Variable Shadowing)
 
-Lösung: Wir machen die as_...-Methoden in tb-runtime sicher, indem sie Standardwerte zurückgeben, anstatt zu paniken. Zusätzlich korrigieren wir den Codegenerator, damit er korrekte Standardwerte verwendet.
+### Problem:
+Die aktuelle Implementierung löscht **alle Variablen** im Block, nicht nur die **neuen Variablen**.
 
-Korrektur 1.1: DictValue-Zugriffsmethoden sicher machen
-
-Datei: tb-runtime/src/lib.rs
-
-Finden Sie (ca. Zeile 98): Den Block mit den as_...-Methoden.
-
-Ersetzen Sie den gesamten Block durch diese sicheren Implementierungen:
-
-code
-Rust
-download
-content_copy
-expand_less
-impl DictValue {
-    pub fn as_int(&self) -> i64 {
-        match self {
-            DictValue::Int(i) => *i,
-            DictValue::Float(f) => *f as i64, // Toleranz für Typ-Mismatches
-            _ => 0, // Sicherer Standardwert
-        }
-    }
-
-    pub fn as_string(&self) -> String {
-        match self {
-            DictValue::String(s) => s.clone(),
-            DictValue::Int(i) => i.to_string(),
-            DictValue::Float(f) => f.to_string(),
-            DictValue::Bool(b) => b.to_string(),
-            _ => String::new(), // Sicherer Standardwert
-        }
-    }
-
-    pub fn as_float(&self) -> f64 {
-        match self {
-            DictValue::Float(f) => *f,
-            DictValue::Int(i) => *i as f64, // Toleranz für Typ-Mismatches
-            _ => 0.0, // Sicherer Standardwert
-        }
-    }
-
-    pub fn as_bool(&self) -> bool {
-        match self {
-            DictValue::Bool(b) => *b,
-            DictValue::Int(i) => *i != 0,
-            _ => false, // Sicherer Standardwert
-        }
-    }
-
-    pub fn get(&self, key: &str) -> Option<&DictValue> {
-        match self {
-            DictValue::Dict(map) => map.get(key),
-            _ => None,
-        }
-    }
-
-    pub fn as_dict(&self) -> &HashMap<String, DictValue> {
-        match self {
-            DictValue::Dict(map) => map,
-            _ => {
-                // Erstellt und leakt eine statische leere HashMap, um eine sichere Referenz zurückzugeben
-                static EMPTY_MAP: std::sync::OnceLock<HashMap<String, DictValue>> = std::sync::OnceLock::new();
-                EMPTY_MAP.get_or_init(HashMap::new)
-            }
-        }
-    }
-
-    pub fn as_list(&self) -> &Vec<DictValue> {
-        match self {
-            DictValue::List(v) => v,
-            _ => {
-                // Erstellt und leakt einen statischen leeren Vektor
-                static EMPTY_VEC: std::sync::OnceLock<Vec<DictValue>> = std::sync::OnceLock::new();
-                EMPTY_VEC.get_or_init(Vec::new)
-            }
-        }
-    }
+### Erwartetes Verhalten:
+```tb
+let x = 1
+if true {
+    let x = 2  // Neues x im if-Block (shadowing)
+    print(x)   // Sollte 2 ausgeben
 }
-Korrektur 1.2: Codegenerator für intelligente Standardwerte anpassen
+print(x)       // Sollte 1 ausgeben (äußeres x wiederhergestellt)
+```
 
-Datei: tb-codegen/src/rust_codegen.rs
+### Aktuelles Verhalten:
+```
+2
+2  // ❌ Falsch! Sollte 1 sein
+```
 
-Finden Sie (ca. Zeile 904, in Expression::Index):
+### Ursache:
+```rust
+// tb-jit/src/executor.rs, Zeilen 454-466
+fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
+    let saved_env = self.env.clone();  // Speichert ALLE Variablen
+    let result = self.eval_block(stmts);
+    self.env = saved_env;  // ❌ Stellt ALLE Variablen wieder her
+    result
+}
+```
 
-code
-Rust
-download
-content_copy
-expand_less
-write!(self.buffer, ").unwrap().clone()")?;
+Das Problem: Wenn `let x = 2` im Block ausgeführt wird, überschreibt es das äußere `x` in `self.env`. Beim Wiederherstellen wird das äußere `x` wiederhergestellt, aber das ist **zufällig korrekt** nur wenn keine Änderungen am äußeren `x` gemacht wurden.
 
-Ersetzen Sie durch:
+### Korrekte Lösung:
 
-code
-Rust
-download
-content_copy
-expand_less
-// Intelligenter Standardwert basierend auf dem Kontext
-write!(self.buffer, ").cloned().unwrap_or_else(|| match obj_type {{
-    Type::List(_) => DictValue::List(Vec::new()),
-    Type::Dict(_, _) => DictValue::Dict(HashMap::new()),
-    _ => DictValue::Int(0),
-}}))")?;
+**Option A: Scope-Stack (empfohlen)**
+```rust
+// In Executor struct
+scopes: Vec<ImHashMap<Arc<String>, Value>>,  // Stack von Scopes
 
-Hinweis: Fügen Sie let obj_type = self.infer_expr_type(object)?; am Anfang des Expression::Index-Blocks hinzu.
-
-Finden Sie (ca. Zeile 1162, in Expression::Member):
-
-code
-Rust
-download
-content_copy
-expand_less
-write!(self.buffer, ".get(\"{}\").unwrap().clone()", member)?;
-
-Ersetzen Sie durch:
-
-code
-Rust
-download
-content_copy
-expand_less
-write!(self.buffer, ".get(\"{}\").cloned().unwrap_or(DictValue::Int(0))", member)?;
-Fehler 2: Kompilierungsfehler bei Plugins (mismatched types, Trait-Fehler)
-
-Problem: Der generierte Code für Plugins ist fehlerhaft. Er versucht, Operationen auf DictValue ohne Entpacken durchzuführen und leitet falsche Return-Typen ab.
-
-Ursache: Unzureichende Heuristiken im Codegenerator.
-
-Lösung: Implementieren Sie produktionsreife Rust-Logik für die Plugin-Funktionen und korrigieren Sie die Typinferenz.
-
-Korrektur 2.1: Implementierung für Plugin-Funktionen verbessern
-
-Datei: tb-codegen/src/rust_codegen.rs
-
-Finden Sie (ca. Zeile 2577): Die Funktion analyze_and_generate_plugin_impl_with_types.
-
-Ersetzen Sie die Logik für sum, normalize und chunk_array durch diese robusten Implementierungen:
-
-code
-Rust
-download
-content_copy
-expand_less
-// ... innerhalb von analyze_and_generate_plugin_impl_with_types ...
-
-// Array-Summe (für Vec<DictValue>)
-if func_name.contains("sum") || func_name.contains("Sum") {
-    return "    arg0.iter().map(|v| v.as_int()).sum()".to_string();
+// Bei Block-Eintritt
+fn enter_scope(&mut self) {
+    self.scopes.push(self.env.clone());
 }
 
-// Array-Normalisierung (Vec<DictValue> -> Vec<f64>)
-if func_name.contains("normalize") {
-    return r#"    let numbers: Vec<f64> = arg0.iter().map(|v| v.as_float()).collect();
-    if numbers.is_empty() { return vec![]; }
-    let max_val = numbers.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-    if max_val == 0.0 { return numbers; }
-    numbers.into_iter().map(|x| x / max_val).collect::<Vec<f64>>()"#.to_string();
+// Bei Block-Austritt
+fn exit_scope(&mut self) {
+    if let Some(parent_scope) = self.scopes.pop() {
+        self.env = parent_scope;
+    }
 }
 
-// Array-Chunking (Vec<i64>, i64 -> Vec<Vec<i64>>)
-if func_name.contains("chunk_array") {
-    return "    arg0.chunks(arg1 as usize).map(|chunk| chunk.to_vec()).collect::<Vec<Vec<i64>>>()".to_string();
+// Bei Variable-Lookup
+fn get_variable(&self, name: &Arc<String>) -> Option<&Value> {
+    // Suche von innen nach außen
+    self.env.get(name)
+        .or_else(|| {
+            self.scopes.iter().rev()
+                .find_map(|scope| scope.get(name))
+        })
 }
-Korrektur 2.2: Return-Typ-Inferenz für Plugins korrigieren
+```
 
-Datei: tb-codegen/src/rust_codegen.rs
+**Option B: Tracking von neuen Variablen**
+```rust
+fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
+    let keys_before: HashSet<_> = self.env.keys().cloned().collect();
+    let result = self.eval_block(stmts);
 
-Finden Sie (ca. Zeile 2380): Die Funktion infer_plugin_return_type.
+    // Nur neue Variablen löschen
+    let keys_after: HashSet<_> = self.env.keys().cloned().collect();
+    for new_key in keys_after.difference(&keys_before) {
+        self.env.remove(new_key);
+    }
 
-Aktualisieren Sie die Heuristiken, um Listen korrekt zu erkennen:
+    result
+}
+```
 
-code
-Rust
-download
-content_copy
-expand_less
-// ... innerhalb von infer_plugin_return_type ...
+### Betroffene Tests:
+- `Variable shadowing in scope` (jit + compiled)
+- `Variable Declaration and Scope` (jit + compiled)
+- `Scope - nested blocks` (jit + compiled)
 
-// Heuristik für Listen von Listen (z.B. chunk_array)
-if func_name.contains("chunk") {
-    return "Vec<Vec<i64>>".to_string();
+---
+
+## 2. KRITISCH: Short-Circuit Evaluation Typ-Fehler
+
+### Problem:
+Short-circuit ist implementiert, aber Tests schlagen fehl mit:
+```
+Type error: Logical operations require bool, got Bool and None
+```
+
+### Ursache:
+Der Typ-Checker in `tb-types/src/checker.rs` prüft den Typ des rechten Operanden, **bevor** die Short-Circuit-Logik greift.
+
+### Beispiel-Test:
+```tb
+fn should_not_be_called() {
+    print("ERROR: Function was called!")
+    return false
 }
 
-// Heuristik für Listen von Strings (z.B. extract_names)
-if func_name.contains("extract_names") {
-    return "Vec<String>".to_string();
+let result = false && should_not_be_called()
+```
+
+### Erwartetes Verhalten:
+- `false &&` → Short-circuit, Funktion wird nicht aufgerufen
+- Ausgabe: (nichts)
+
+### Aktuelles Verhalten:
+- Typ-Checker prüft `should_not_be_called()` → Rückgabetyp `None` (weil `return false` nicht erkannt wird)
+- Fehler: `Logical operations require bool, got Bool and None`
+
+### Lösung:
+1. **Typ-Checker anpassen** (`tb-types/src/checker.rs`):
+   - Bei AND/OR: Rechten Operanden nur prüfen wenn nötig
+   - Oder: Typ-Fehler nur als Warning, nicht als Error
+
+2. **Return-Type-Inference fixen** (`tb-codegen/src/rust_codegen.rs`):
+   - `has_empty_return()` ist implementiert, aber wird nicht korrekt verwendet
+   - Funktionen mit `return false` sollten Typ `Bool` haben, nicht `None`
+
+### Betroffene Tests:
+- `Short-circuit AND evaluation` (jit + compiled)
+- `Short-circuit OR evaluation` (jit + compiled)
+
+---
+
+## 3. KRITISCH: Closure Capturing
+
+### Problem:
+Lambdas erfassen keine äußeren Variablen.
+
+### Beispiel:
+```tb
+let outer = 100
+let f = || {
+    return outer  // ❌ `outer` ist nicht verfügbar
 }
+print(f())  // Fehler: Undefined variable: outer
+```
 
-// Heuristik für Listen von Floats (z.B. normalize)
-if func_name.contains("normalize") {
-    return "Vec<f64>".to_string();
-}
+### Ursache:
+Die `Function`-Struktur hat ein `closure_env`-Feld, aber:
+1. Es wird beim Erstellen von Lambdas nicht gesetzt
+2. Es wird beim Aufrufen nicht verwendet
 
-// Heuristik für i64 (z.B. dict_keys_count)
-if func_name.contains("count") || func_name.contains("length") {
-    return "i64".to_string();
-}```
-
-#### **Korrektur 2.3: Automatische Konvertierung von Literalen zu `DictValue`**
-
-Der Codegenerator muss `vec![1, 2, 3]` automatisch in `vec![DictValue::Int(1), ...]` umwandeln, wenn es an eine Funktion übergeben wird, die `Vec<DictValue>` erwartet.
-
-**Datei:** `tb-codegen/src/rust_codegen.rs`
-
-*   **Finden Sie (ca. Zeile 835):** Den `Expression::Call`-Block.
-*   **Fügen Sie vor der Zeile `self.generate_expression(arg)?;` eine Konvertierungslogik ein:**
+### Lösung:
+**In `tb-jit/src/executor.rs`:**
 
 ```rust
-// ... innerhalb von Expression::Call ...
-for (i, arg) in args.iter().enumerate() {
-    if i > 0 {
-        write!(self.buffer, ", ")?;
-    }
-    // NEU: Automatische Konvertierung zu DictValue
-    let is_plugin_call = self.is_plugin_call(callee);
-    if is_plugin_call && self.is_literal_list(arg) {
-        self.generate_dict_value_list_from_literal_list(arg)?;
-    } else {
-        self.generate_expression(arg)?;
-    }
-}
-// ...
-
-Fügen Sie die folgenden Hilfsfunktionen zur RustCodeGenerator-Implementierung hinzu:
-
-code
-Rust
-download
-content_copy
-expand_less
-/// NEU: Prüft, ob ein Ausdruck ein literal-Array ist (z.B. [1, 2, 3])
-fn is_literal_list(&self, expr: &Expression) -> bool {
-    if let Expression::List { elements, .. } = expr {
-        !elements.is_empty() && elements.iter().all(|e| matches!(e, Expression::Literal(_, _)))
-    } else {
-        false
-    }
+// Bei Lambda-Erstellung (Expression::Lambda)
+Expression::Lambda { params, body, .. } => {
+    Ok(Value::Function(Function {
+        name: Arc::new("<lambda>".to_string()),
+        params: params.clone(),
+        body: body.clone(),
+        closure_env: Some(self.env.clone()),  // ✅ Erfasse aktuelle Umgebung
+    }))
 }
 
-/// NEU: Prüft, ob es sich um einen Plugin-Aufruf handelt
-fn is_plugin_call(&self, callee: &Expression) -> bool {
-    if let Expression::Member { object, .. } = callee {
-        if let Expression::Ident(module_name, _) = &**object {
-            return self.plugin_modules.contains_key(module_name);
+// Bei Funktionsaufruf (call_function)
+fn call_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value> {
+    // Speichere aktuelle Umgebung
+    let saved_env = self.env.clone();
+
+    // Verwende Closure-Umgebung als Basis, falls vorhanden
+    if let Some(closure_env) = &func.closure_env {
+        self.env = closure_env.clone();  // ✅ Starte mit Closure-Umgebung
+    } else {
+        self.env = ImHashMap::new();  // Leere Umgebung für normale Funktionen
+    }
+
+    // Füge Parameter hinzu
+    for (param, arg) in func.params.iter().zip(args.iter()) {
+        self.env.insert(param.name.clone(), arg.clone());
+    }
+
+    // Führe Funktion aus
+    let result = self.eval_block(&func.body);
+
+    // Stelle Umgebung wieder her
+    self.env = saved_env;
+
+    result
+}
+```
+
+### Betroffene Tests:
+- `Closure capturing variable` (jit + compiled)
+- `Function - returning function` (jit + compiled)
+- `Functions and Closures` (jit + compiled)
+- `Scope - closure captures outer scope` (jit + compiled)
+- `Complex program - closure with state` (jit + compiled)
+
+---
+
+## Detaillierte Fehleranalyse und Lösungsvorschläge
+
+Hier sind die priorisierten Korrekturvorschläge, geordnet nach den von Ihnen genannten Schwerpunkten.
+
+#### 1. Typen und deren Laufzeit-Repräsentation
+
+##### Problem 1.1: Typinferenz von `None` im kompilierten Code
+
+*   **Fehler:** `Builtin - type_of for all types [compiled]` schlägt fehl mit `error[E0282]: type annotations needed` bei `type_of(&None)`.
+*   **Hypothese:** Der Rust-Compiler kann den generischen Typ `T` in `Option<T>` für einen literalen `None`-Wert nicht ohne Kontext ableiten. Der Codegenerator erzeugt `type_of(&None)`, was zu diesem Kompilierungsfehler führt.
+*   **Vorgeschlagene Lösung:** Passen Sie den Codegenerator in `tb-codegen/src/rust_codegen.rs` an, um für `None`-Literale einen expliziten Typ zu deklarieren, der für den Kontext irrelevant ist, aber die Kompilierung ermöglicht.
+    ```rust
+    // Generierter Code für type_of(None) sollte so aussehen:
+    type_of(&Option::<()>::None) // Option mit dem leeren Typ ()
+    ```
+    Alternativ kann die `type_of`-Funktion in `tb-runtime` so überladen werden, dass sie `Option` speziell behandelt.
+
+##### Problem 1.2: Falsche Typ-Darstellung bei `type_of`
+
+*   **Fehler:** `List constructor [compiled]` gibt den internen Rust-Typ `alloc::vec::Vec<tb_runtime::DictValue>` anstelle des erwarteten Strings `"list"` aus.
+*   **Hypothese:** Die `type_of`-Funktion im `tb-runtime` verwendet `std::any::type_name::<T>()`, was für die Fehlersuche nützlich ist, aber nicht die vom Benutzer erwarteten Typnamen der TB-Sprache liefert.
+*   **Vorgeschlagene Lösung:** Implementieren Sie eine robustere `type_of`-Funktion in `tb-runtime/src/lib.rs`, die den Wert zur Laufzeit prüft und die korrekten TB-Typnamen zurückgibt.
+    ```rust
+    // In tb-runtime/src/lib.rs
+    pub fn type_of(value: &DictValue) -> String {
+        match value {
+            DictValue::Int(_) => "int".to_string(),
+            DictValue::Float(_) => "float".to_string(),
+            DictValue::String(_) => "string".to_string(),
+            DictValue::Bool(_) => "bool".to_string(),
+            DictValue::List(_) => "list".to_string(),
+            DictValue::Dict(_) => "dict".to_string(),
         }
     }
-    false
-}
+    ```
+    Der Codegenerator muss sicherstellen, dass diese Funktion für `type_of`-Aufrufe verwendet wird.
 
-/// NEU: Generiert Code zur Konvertierung eines literal-Arrays in ein Vec<DictValue>
-fn generate_dict_value_list_from_literal_list(&mut self, expr: &Expression) -> Result<()> {
-    if let Expression::List { elements, .. } = expr {
-        write!(self.buffer, "vec![")?;
-        for (i, elem) in elements.iter().enumerate() {
-            if i > 0 {
-                write!(self.buffer, ", ")?;
-            }
-            self.generate_dict_value_wrapped(elem)?;
+---
+
+#### 2. Funktionen und Lambdas
+
+##### Problem 2.1: Fehlerhafte Closure-Umgebung (Capturing)
+
+*   **Fehler:** `Closure capturing variable [jit]` und `Function - returning function [jit]` schlagen fehl mit `Type error: Cannot call non-function type None`.
+*   **Hypothese:** Dies ist ein kritisches Problem mit dem lexikalischen Gültigkeitsbereich (lexical scoping). Wenn eine Lambda-Funktion erstellt wird, erfasst (`capturing`) sie nicht die Umgebung (die zu diesem Zeitpunkt sichtbaren Variablen), in der sie definiert wurde. Wenn sie später außerhalb dieses Bereichs aufgerufen wird, sind die Variablen "verloren".
+*   **Vorgeschlagene Lösung:**
+    1.  **AST-Anpassung:** Erweitern Sie die `Function`-Struktur in `tb-core/src/ast.rs` um ein optionales Feld für die Closure-Umgebung: `closure_env: Option<ImHashMap<Arc<String>, Value>>`.
+    2.  **JIT-Executor anpassen (`tb-jit/src/executor.rs`):**
+        *   Beim Auswerten eines `Expression::Lambda`-Knotens, klonen Sie die *aktuelle Umgebung* (`self.env.clone()`) und speichern Sie sie im `closure_env`-Feld des neuen `Value::Function`.
+        *   In der `call_function`-Methode: Wenn die aufgerufene Funktion ein `closure_env` besitzt, verwenden Sie **diese Umgebung** als Basis für den neuen Ausführungskontext, anstatt der Umgebung des Aufrufers.
+
+##### Problem 2.2: Falscher Rückgabetyp für `None`
+
+*   **Fehler:** `Function returning None [compiled]` schlägt fehl mit `mismatched types: expected 'String', found 'Option<_>'`.
+*   **Hypothese:** Der Codegenerator leitet fälschlicherweise den Rückgabetyp `String` für eine Funktion ab, die `None` zurückgibt. Ein `None` in TB sollte in Rust zu `()` (dem "unit type") oder einem `Option`-Typ führen, aber nicht zu `String`.
+*   **Vorgeschlagene Lösung:** Korrigieren Sie die Typherleitung für Rückgabewerte in `tb-codegen/src/rust_codegen.rs`. Der Codegenerator muss erkennen, wenn eine Funktion implizit oder explizit `None` zurückgibt, und den Rust-Funktions-Rückgabetyp korrekt als `()` oder einen passenden `Option`-Typ deklarieren.
+
+---
+
+## 4. HOCH: Range-Syntax in For-Loops
+
+### Problem:
+Parser unterstützt `for i in 1..5` und `for i in 1..=5` nicht.
+
+### Beispiel:
+```tb
+for i in 1..5 {  // ❌ Syntax error: Expected LBrace, found DotDot
+    print(i)
+}
+```
+
+### Ursache:
+Der Lexer tokenisiert `..` als `DotDot` und `..=` als `DotDotEq`, aber der Parser erwartet in `parse_for` einen allgemeinen Ausdruck, nicht speziell eine Range.
+
+### Lösung:
+
+**Option A: Range-Expression im AST**
+```rust
+// In tb-core/src/ast.rs, Expression enum
+Range {
+    start: Box<Expression>,
+    end: Box<Expression>,
+    inclusive: bool,
+    span: Span,
+}
+```
+
+**Option B: Desugaring zu range()-Funktion**
+```rust
+// In tb-parser/src/parser.rs, parse_for
+fn parse_for(&mut self) -> Result<Statement> {
+    // ...
+    let iterable = if self.peek_token() == Some(&Token::DotDot)
+                   || self.peek_token() == Some(&Token::DotDotEq) {
+        // Parse range syntax: start..end oder start..=end
+        let start = self.parse_expression()?;
+        let inclusive = self.consume_token() == Token::DotDotEq;
+        let end = self.parse_expression()?;
+
+        // Desugar zu range(start, end) oder range(start, end, 1)
+        Expression::Call {
+            function: Box::new(Expression::Ident(Arc::new("range".to_string()), span)),
+            args: vec![start, end],
+            span,
         }
-        write!(self.buffer, "]")?;
+    } else {
+        self.parse_expression()?
+    };
+    // ...
+}
+```
+
+### Betroffene Tests:
+- `Range - exclusive end` (jit + compiled)
+- `Range - inclusive end` (jit + compiled)
+
+---
+
+## 5. HOCH: Codegen Type Inference Probleme
+
+### Problem 5.1: `type_of(&None)` Kompilierungsfehler
+
+**Fehler:**
+```rust
+error[E0282]: type annotations needed
+  --> src\main.rs:19:21
+   |
+19 |     print(&type_of(&None));
+   |                     ^^^^ cannot infer type of the type parameter `T`
+```
+
+**Lösung:**
+```rust
+// In tb-codegen/src/rust_codegen.rs, generate_expression
+Expression::Literal(Literal::None, _) => {
+    // Wenn in type_of()-Kontext, generiere Option::<()>::None
+    if self.in_type_of_context {
+        write!(self.buffer, "Option::<()>::None")?;
+    } else {
+        write!(self.buffer, "None")?;
     }
-    Ok(())
+}
+```
+
+### Problem 5.2: `type_of` gibt Rust-Typen zurück statt TB-Typen
+
+**Fehler:**
+```
+Expected: "list"
+Actual: "alloc::vec::Vec<tb_runtime::DictValue>"
+```
+
+**Lösung:**
+```rust
+// In tb-runtime/src/lib.rs
+pub fn type_of_int(_: &i64) -> String { "int".to_string() }
+pub fn type_of_float(_: &f64) -> String { "float".to_string() }
+pub fn type_of_string(_: &String) -> String { "string".to_string() }
+pub fn type_of_bool(_: &bool) -> String { "bool".to_string() }
+pub fn type_of_list<T>(_: &Vec<T>) -> String { "list".to_string() }
+pub fn type_of_dict<K, V>(_: &HashMap<K, V>) -> String { "dict".to_string() }
+pub fn type_of_none<T>(_: &Option<T>) -> String { "none".to_string() }
+pub fn type_of_unit(_: &()) -> String { "none".to_string() }
+```
+
+**Codegen muss typ-spezifische Funktionen verwenden:**
+```rust
+// Statt: type_of(&value)
+// Generiere: type_of_int(&value) oder type_of_list(&value) etc.
+```
+
+### Problem 5.3: Funktionen mit `return;` generieren falschen Code
+
+**Fehler:**
+```rust
+error[E0069]: `return;` in a function whose return type is not `()`
+  --> src\main.rs:16:13
+   |
+13 |     fn countdown(n: i64) -> String {
+   |                             ------ expected `String` because of this return type
+...
+16 |             return;
+   |             ^^^^^^ return type is not `()`
+```
+
+**Ursache:**
+`has_empty_return()` ist implementiert, aber die Funktion hat trotzdem einen Rückgabetyp `String` (vom letzten Statement inferiert).
+
+**Lösung:**
+```rust
+// In tb-codegen/src/rust_codegen.rs, generate_statement für Function
+let ret_ty = if let Some(ty) = return_type {
+    // Expliziter Rückgabetyp
+    ty.clone()
+} else {
+    // ✅ FIX: Prüfe auf empty return ZUERST
+    if self.has_empty_return(body) {
+        Type::None  // Funktion gibt nichts zurück
+    } else {
+        self.infer_return_type(body)?  // Inferiere von letztem Statement
+    }
+};
+```
+
+### Betroffene Tests:
+- `Builtin - type_of for all types` (compiled)
+- `List constructor` (compiled)
+- `Recursion - countdown` (compiled)
+- `Function returning None` (compiled)
+
+---
+
+## 6. MITTEL: Parser-Erweiterungen
+
+### Problem 6.1: `if` als Expression
+
+**Fehler:**
+```
+Syntax error at 2:9: Unexpected token: If
+```
+
+**Beispiel:**
+```tb
+let x = if true { 1 } else { 2 }  // ❌ Parser erkennt if nicht als Expression
+```
+
+**Lösung:**
+```rust
+// In tb-core/src/ast.rs, Expression enum
+IfElse {
+    condition: Box<Expression>,
+    then_branch: Box<Expression>,
+    else_branch: Box<Expression>,  // MUSS vorhanden sein!
+    span: Span,
 }
 
-Diese produktionsreifen Korrekturen sollten die gemeldeten Kompilierungs- und Laufzeitfehler beheben, die Ausgaben korrigieren und die Robustheit des gesamten Systems erheblich verbessern.
-
-
- - Integration: Complex data manipulation (compiled)
-    Execution failed:
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-    --> src\main.rs:17:59
-     |
-  17 |     let count = len(&data.get("users").cloned().unwrap_or(DictValue::Int(0)));
-     |                                                 --------- ^^^^^^^^^^^^^^^^^ expected `Vec<HashMap<String, DictValue>>`, found `DictValue`
-     |                                                 |
-     |                                                 arguments to this method are incorrect
-     |
-     = note: expected struct `Vec<HashMap<std::string::String, tb_runtime::DictValue>>`
-                  found enum `tb_runtime::DictValue`
-help: the return type of this call is `tb_runtime::DictValue` due to the type of the argument passed
-    --> src\main.rs:17:22
-     |
-  17 |     let count = len(&data.get("users").cloned().unwrap_or(DictValue::Int(0)));
-     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------^
-     |                                                           |
-     |                                                           this argument influences the return type of `unwrap_or`
-note: method defined here
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1031:18
-     |
-1031 |     pub const fn unwrap_or(self, default: T) -> T
-     |                  ^^^^^^^^^
-
-error[E0308]: mismatched types
-    --> src\main.rs:19:54
-     |
-  19 |     for user in data.get("users").cloned().unwrap_or(DictValue::Int(0)) {
-     |                                            --------- ^^^^^^^^^^^^^^^^^ expected `Vec<HashMap<String, DictValue>>`, found `DictValue`
-     |                                            |
-     |                                            arguments to this method are incorrect
-     |
-     = note: expected struct `Vec<HashMap<std::string::String, tb_runtime::DictValue>>`
-                  found enum `tb_runtime::DictValue`
-help: the return type of this call is `tb_runtime::DictValue` due to the type of the argument passed
-    --> src\main.rs:19:17
-     |
-  19 |     for user in data.get("users").cloned().unwrap_or(DictValue::Int(0)) {
-     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------^
-     |                                                      |
-     |                                                      this argument influences the return type of `unwrap_or`
-note: method defined here
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1031:18
-     |
-1031 |     pub const fn unwrap_or(self, default: T) -> T
-     |                  ^^^^^^^^^
-
-For more information about this error, try `rustc --explain E0308`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 2 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Integration: File I/O with JSON (compiled)
-    Output mismatch:
-Expected: '3\n3'
-Got: '0\n0'
-  - Integration: Time and JSON (compiled)
-    Output mismatch:
-Expected: 'Local'
-Got: '0'
-  - Utils: JSON parse nested object (compiled)
-    Execution failed:
-
-thread 'main' panicked at C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:140:18:
-Expected Dict
-stack backtrace:
-   0:     0x7ff7f27c9e82 - <unknown>
-   1:     0x7ff7f27d8aab - <unknown>
-   2:     0x7ff7f27c8317 - <unknown>
-   3:     0x7ff7f27c9cc5 - <unknown>
-   4:     0x7ff7f27cb2be - <unknown>
-   5:     0x7ff7f27cb034 - <unknown>
-   6:     0x7ff7f27cbd7b - <unknown>
-   7:     0x7ff7f27cbbd2 - <unknown>
-   8:     0x7ff7f27ca56f - <unknown>
-   9:     0x7ff7f27cb81e - <unknown>
-  10:     0x7ff7f27de401 - <unknown>
-  11:     0x7ff7f27c388c - <unknown>
-  12:     0x7ff7f27c1d00 - <unknown>
-  13:     0x7ff7f27c37b6 - <unknown>
-  14:     0x7ff7f27c377c - <unknown>
-  15:     0x7ff7f27c5865 - <unknown>
-  16:     0x7ff7f27c284c - <unknown>
-  17:     0x7ff7f27dcd60 - <unknown>
-  18:     0x7ff9d37fe8d7 - BaseThreadInitThunk
-  19:     0x7ff9d3f8c53c - RtlUserThreadStart
-
-  - Utils: JSON parse simple object (compiled)
-    Output mismatch:
-Expected: 'Alice\n25'
-Got: '0\n0'
-  - Utils: JSON round-trip (compiled)
-    Output mismatch:
-Expected: 'value\n42'
-Got: '0\n0'
-  - Performance: Dictionary operations (compiled)
-    Execution failed:
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-    --> src\main.rs:19:56
-     |
-  19 |         sum = (sum + data.get(&key).cloned().unwrap_or(DictValue::Int(0)));
-     |                                              --------- ^^^^^^^^^^^^^^^^^ expected integer, found `DictValue`
-     |                                              |
-     |                                              arguments to this method are incorrect
-     |
-help: the return type of this call is `tb_runtime::DictValue` due to the type of the argument passed
-    --> src\main.rs:19:22
-     |
-  19 |         sum = (sum + data.get(&key).cloned().unwrap_or(DictValue::Int(0)));
-     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------^
-     |                                                        |
-     |                                                        this argument influences the return type of `unwrap_or`
-note: method defined here
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\option.rs:1031:18
-     |
-1031 |     pub const fn unwrap_or(self, default: T) -> T
-     |                  ^^^^^^^^^
-
-For more information about this error, try `rustc --explain E0308`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: Cross-language data passing (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "preprocessor", mode: Jit, requires: [], source: Inline("def normalize(data: list) -> list:\n    max_val = max(data)\n    return [x / max_val for x in data]\n") })
-[TB DEBUG] Parsing plugin definition, current token: Ident("javascript")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: JavaScript, name: "processor", mode: Jit, requires: [], source: Inline("function sum(data) {\n    return data.reduce((a, b) => a + b, 0);\n}\n") })
-[TB DEBUG] Plugin block parsed with 2 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'preprocessor' extracted 1 functions: ["normalize"]
-[CODEGEN DEBUG] Plugin 'processor' extracted 1 functions: ["sum"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0277]: a value of type `i64` cannot be made by summing an iterator over elements of type `&tb_runtime::DictValue`
-    --> src\main.rs:18:35
-     |
-  18 |     let mean = (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64);
-     |                             ---   ^^^ value of type `i64` cannot be made by summing a `std::iter::Iterator<Item=&tb_runtime::DictValue>`
-     |                             |
-     |                             required by a bound introduced by this call
-     |
-     = help: the trait `Sum<&tb_runtime::DictValue>` is not implemented for `i64`
-     = help: the following other types implement trait `Sum<A>`:
-               `i64` implements `Sum<&i64>`
-               `i64` implements `Sum`
-note: the method call chain might not have had the expected associated types
-    --> src\main.rs:18:22
-     |
-  18 |     let mean = (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64);
-     |                 ---- ^^^^^^ `Iterator::Item` is `&DictValue` here
-     |                 |
-     |                 this expression has type `Vec<DictValue>`
-note: required by a bound in `std::iter::Iterator::sum`
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:3578:12
-     |
-3575 |     fn sum<S>(self) -> S
-     |        --- required by a bound in this associated function
-...
-3578 |         S: Sum<Self::Item>,
-     |            ^^^^^^^^^^^^^^^ required by this bound in `Iterator::sum`
-
-error[E0308]: mismatched types
-  --> src\main.rs:26:5
-   |
-17 | fn preprocessor_normalize(arg0: Vec<DictValue>) -> Vec<i64> {
-   |                                                    -------- expected `Vec<i64>` because of return type
-...
-26 |     arg0.iter().map(|x| ((*x as f64) - mean) / std).collect::<Vec<f64>>()
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Vec<i64>`, found `Vec<f64>`
-   |
-   = note: expected struct `Vec<i64>`
-              found struct `Vec<f64>`
-
-error[E0605]: non-primitive cast: `tb_runtime::DictValue` as `f64`
-  --> src\main.rs:21:24
-   |
-21 |             let diff = (*x as f64) - mean;
-   |                        ^^^^^^^^^^^ an `as` expression can be used to convert enum types to numeric types only if the enum type is unit-only or field-less
-   |
-   = note: see https://doc.rust-lang.org/reference/items/enumerations.html#casting for more information
-
-error[E0605]: non-primitive cast: `tb_runtime::DictValue` as `f64`
-  --> src\main.rs:26:26
-   |
-26 |     arg0.iter().map(|x| ((*x as f64) - mean) / std).collect::<Vec<f64>>()
-   |                          ^^^^^^^^^^^ an `as` expression can be used to convert enum types to numeric types only if the enum type is unit-only or field-less
-   |
-   = note: see https://doc.rust-lang.org/reference/items/enumerations.html#casting for more information
-
-error[E0308]: mismatched types
-  --> src\main.rs:37:45
-   |
-37 |     let normalized = preprocessor_normalize(raw_data.clone());
-   |                      ---------------------- ^^^^^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |                      |
-   |                      arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:17:4
-   |
-17 | fn preprocessor_normalize(arg0: Vec<DictValue>) -> Vec<i64> {
-   |    ^^^^^^^^^^^^^^^^^^^^^^ --------------------
-
-Some errors have detailed explanations: E0277, E0308, E0605.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 5 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: JavaScript with array arguments (compiled)
-    Output mismatch:
-Expected: '15\n5\n2'
-Got: '15\n5\n5'
-  - Plugin: JavaScript array utilities (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("javascript")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: JavaScript, name: "array_utils", mode: Jit, requires: [], source: Inline("function chunk_array(arr, size) {\n    const result = [];\n    for (let i = 0; i < arr.length; i += size) {\n        result.push(arr.slice(i, i + size));\n    }\n    return result;\n}\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'array_utils' extracted 1 functions: ["chunk_array"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-    --> src\main.rs:18:10
-     |
-  18 |     vec![0; (arg0.len() as i64 / arg1) as usize]
-     |     -----^--------------------------------------
-     |     |    |
-     |     |    expected `Vec<i64>`, found integer
-     |     arguments to this function are incorrect
-     |
-     = note: expected struct `Vec<i64>`
-                  found type `{integer}`
-help: the return type of this call is `{integer}` due to the type of the argument passed
-    --> src\main.rs:18:5
-     |
-  18 |     vec![0; (arg0.len() as i64 / arg1) as usize]
-     |     ^^^^^-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |          |
-     |          this argument influences the return type of `from_elem`
-note: function defined here
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\vec\mod.rs:3414:8
-     |
-3414 | pub fn from_elem<T: Clone>(elem: T, n: usize) -> Vec<T> {
-     |        ^^^^^^^^^
-     = note: this error originates in the macro `vec` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-For more information about this error, try `rustc --explain E0308`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: JavaScript JSON manipulation (compiled)
-    Output mismatch:
-Expected: 'Alice'
-Got: 'not found'
-  - Plugin: Python with dict arguments (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "dict_ops", mode: Jit, requires: [], source: Inline("def get_value(data: dict, key: str) -> str:\n    return str(data.get(key, \"not found\"))\n\ndef dict_keys_count(data: dict) -> int:\n    return len(data.keys())\n\ndef merge_dicts(d1: dict, d2: dict) -> dict:\n    result = d1.copy()\n    result.update(d2)\n    return result\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'dict_ops' extracted 3 functions: ["get_value", "dict_keys_count", "merge_dicts"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-  --> src\main.rs:23:5
-   |
-22 | fn dict_ops_dict_keys_count(arg0: HashMap<String, DictValue>) -> HashMap<String, DictValue> {
-   |                                                                  -------------------------- expected `HashMap<std::string::String, tb_runtime::DictValue>` because of return type
-23 |     arg0.len() as i64
-   |     ^^^^^^^^^^^^^^^^^ expected `HashMap<String, DictValue>`, found `i64`
-   |
-   = note: expected struct `HashMap<std::string::String, tb_runtime::DictValue>`
-                found type `i64`
-
-error[E0277]: `HashMap<std::string::String, tb_runtime::DictValue>` doesn't implement `std::fmt::Display`
-   --> src\main.rs:39:11
-    |
- 39 |     print(&dict_ops_dict_keys_count(person.clone()));
-    |     ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `HashMap<std::string::String, tb_runtime::DictValue>`
-    |     |
-    |     required by a bound introduced by this call
-    |
-note: required by a bound in `tb_runtime::print`
-   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:372:17
-    |
-372 | pub fn print<T: fmt::Display>(value: &T) {
-    |                 ^^^^^^^^^^^^ required by this bound in `print`
-
-Some errors have detailed explanations: E0277, E0308.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 2 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: Python with list arguments (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "list_ops", mode: Jit, requires: [], source: Inline("def sum_list(numbers: list) -> int:\n    return sum(numbers)\n\ndef filter_positive(numbers: list) -> list:\n    return [x for x in numbers if x > 0]\n\ndef list_length(items: list) -> int:\n    return len(items)\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'list_ops' extracted 3 functions: ["sum_list", "filter_positive", "list_length"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-  --> src\main.rs:23:33
-   |
-23 |     arg0.iter().filter(|&x| x > 0).cloned().collect()
-   |                                 ^ expected `&_`, found integer
-   |
-   = note: expected reference `&_`
-                   found type `{integer}`
-help: consider dereferencing the borrow
-   |
-23 |     arg0.iter().filter(|&x| *x > 0).cloned().collect()
-   |                             +
-
-error[E0277]: a value of type `i64` cannot be built from an iterator over elements of type `tb_runtime::DictValue`
-    --> src\main.rs:23:45
-     |
-  23 |     arg0.iter().filter(|&x| x > 0).cloned().collect()
-     |                                             ^^^^^^^ value of type `i64` cannot be built from `std::iter::Iterator<Item=tb_runtime::DictValue>`
-     |
-     = help: the trait `FromIterator<tb_runtime::DictValue>` is not implemented for `i64`
-note: the method call chain might not have had the expected associated types
-    --> src\main.rs:23:36
-     |
-  23 |     arg0.iter().filter(|&x| x > 0).cloned().collect()
-     |     ---- ------ ------------------ ^^^^^^^^ `Iterator::Item` changed to `DictValue` here
-     |     |    |      |
-     |     |    |      `Iterator::Item` remains `&DictValue` here
-     |     |    `Iterator::Item` is `&DictValue` here
-     |     this expression has type `Vec<DictValue>`
-note: required by a bound in `collect`
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:2014:19
-     |
-2014 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
-     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
-
-error[E0308]: mismatched types
-  --> src\main.rs:34:30
-   |
-34 |     print(&list_ops_sum_list(nums.clone()));
-   |            ----------------- ^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |            |
-   |            arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:17:4
-   |
-17 | fn list_ops_sum_list(arg0: Vec<DictValue>) -> i64 {
-   |    ^^^^^^^^^^^^^^^^^ --------------------
-
-error[E0308]: mismatched types
-  --> src\main.rs:35:33
-   |
-35 |     print(&list_ops_list_length(nums.clone()));
-   |            -------------------- ^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |            |
-   |            arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:27:4
-   |
-27 | fn list_ops_list_length(arg0: Vec<DictValue>) -> i64 {
-   |    ^^^^^^^^^^^^^^^^^^^^ --------------------
-
-error[E0308]: mismatched types
-  --> src\main.rs:37:45
-   |
-37 |     let positive = list_ops_filter_positive(mixed.clone());
-   |                    ------------------------ ^^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |                    |
-   |                    arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:22:4
-   |
-22 | fn list_ops_filter_positive(arg0: Vec<DictValue>) -> i64 {
-   |    ^^^^^^^^^^^^^^^^^^^^^^^^ --------------------
-
-error[E0277]: the trait bound `i64: Len` is not satisfied
-   --> src\main.rs:38:16
-    |
- 38 |     print(&len(&positive));
-    |            --- ^^^^^^^^^ the trait `Len` is not implemented for `i64`
-    |            |
-    |            required by a bound introduced by this call
-    |
-    = help: the following other types implement trait `Len`:
-              &[T]
-              &str
-              &tb_runtime::DictValue
-              HashMap<K, V>
-              Vec<T>
-              std::string::String
-              tb_runtime::DictValue
-note: required by a bound in `tb_runtime::len`
-   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:514:15
-    |
-514 | pub fn len<T: Len>(collection: &T) -> i64 {
-    |               ^^^ required by this bound in `len`
-
-Some errors have detailed explanations: E0277, E0308.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 6 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: Python with nested structures (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "nested_ops", mode: Jit, requires: [], source: Inline("def extract_names(users: list) -> list:\n    return [user.get(\"name\", \"\") for user in users]\n\ndef count_items(data: dict) -> int:\n    total = 0\n    for key, value in data.items():\n        if isinstance(value, list):\n            total += len(value)\n    return total\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'nested_ops' extracted 2 functions: ["extract_names", "count_items"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0308]: mismatched types
-  --> src\main.rs:18:5
-   |
-17 |   fn nested_ops_extract_names(arg0: Vec<DictValue>) -> i64 {
-   |                                                        --- expected `i64` because of return type
-18 | /     arg0.iter().filter_map(|item| {
-19 | |         if let DictValue::Dict(d) = item {
-20 | |             d.get("name").and_then(|v| match v {
-21 | |                 DictValue::String(s) => Some(s.clone()),
-...  |
-24 | |         } else { None }
-25 | |     }).collect::<Vec<String>>()
-   | |_______________________________^ expected `i64`, found `Vec<String>`
-   |
-   = note: expected type `i64`
-            found struct `Vec<std::string::String>`
-
-error[E0308]: mismatched types
-  --> src\main.rs:42:42
-   |
-42 |     let names = nested_ops_extract_names(users.clone());
-   |                 ------------------------ ^^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<HashMap<String, DictValue>>`
-   |                 |
-   |                 arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<HashMap<std::string::String, tb_runtime::DictValue>>`
-note: function defined here
-  --> src\main.rs:17:4
-   |
-17 | fn nested_ops_extract_names(arg0: Vec<DictValue>) -> i64 {
-   |    ^^^^^^^^^^^^^^^^^^^^^^^^ --------------------
-
-error[E0277]: the trait bound `i64: Len` is not satisfied
-   --> src\main.rs:43:16
-    |
- 43 |     print(&len(&names));
-    |            --- ^^^^^^ the trait `Len` is not implemented for `i64`
-    |            |
-    |            required by a bound introduced by this call
-    |
-    = help: the following other types implement trait `Len`:
-              &[T]
-              &str
-              &tb_runtime::DictValue
-              HashMap<K, V>
-              Vec<T>
-              std::string::String
-              tb_runtime::DictValue
-note: required by a bound in `tb_runtime::len`
-   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:514:15
-    |
-514 | pub fn len<T: Len>(collection: &T) -> i64 {
-    |               ^^^ required by this bound in `len`
-
-Some errors have detailed explanations: E0277, E0308.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: Python with numpy (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "data_analysis", mode: Jit, requires: ["numpy"], source: Inline("def mean(data: list) -> float:\n    import numpy as np\n    return float(np.mean(data))\n\n\ndef std(data: list) -> float:\n    import numpy as np\n    return float(np.std(data))\n\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'data_analysis' extracted 2 functions: ["mean", "std"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0277]: a value of type `i64` cannot be made by summing an iterator over elements of type `&tb_runtime::DictValue`
-    --> src\main.rs:18:24
-     |
-  18 |     (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64)
-     |                  ---   ^^^ value of type `i64` cannot be made by summing a `std::iter::Iterator<Item=&tb_runtime::DictValue>`
-     |                  |
-     |                  required by a bound introduced by this call
-     |
-     = help: the trait `Sum<&tb_runtime::DictValue>` is not implemented for `i64`
-     = help: the following other types implement trait `Sum<A>`:
-               `i64` implements `Sum<&i64>`
-               `i64` implements `Sum`
-note: the method call chain might not have had the expected associated types
-    --> src\main.rs:18:11
-     |
-  18 |     (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64)
-     |      ---- ^^^^^^ `Iterator::Item` is `&DictValue` here
-     |      |
-     |      this expression has type `Vec<DictValue>`
-note: required by a bound in `std::iter::Iterator::sum`
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:3578:12
-     |
-3575 |     fn sum<S>(self) -> S
-     |        --- required by a bound in this associated function
-...
-3578 |         S: Sum<Self::Item>,
-     |            ^^^^^^^^^^^^^^^ required by this bound in `Iterator::sum`
-
-error[E0277]: a value of type `i64` cannot be made by summing an iterator over elements of type `&tb_runtime::DictValue`
-    --> src\main.rs:23:35
-     |
-  23 |     let mean = (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64);
-     |                             ---   ^^^ value of type `i64` cannot be made by summing a `std::iter::Iterator<Item=&tb_runtime::DictValue>`
-     |                             |
-     |                             required by a bound introduced by this call
-     |
-     = help: the trait `Sum<&tb_runtime::DictValue>` is not implemented for `i64`
-     = help: the following other types implement trait `Sum<A>`:
-               `i64` implements `Sum<&i64>`
-               `i64` implements `Sum`
-note: the method call chain might not have had the expected associated types
-    --> src\main.rs:23:22
-     |
-  23 |     let mean = (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64);
-     |                 ---- ^^^^^^ `Iterator::Item` is `&DictValue` here
-     |                 |
-     |                 this expression has type `Vec<DictValue>`
-note: required by a bound in `std::iter::Iterator::sum`
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:3578:12
-     |
-3575 |     fn sum<S>(self) -> S
-     |        --- required by a bound in this associated function
-...
-3578 |         S: Sum<Self::Item>,
-     |            ^^^^^^^^^^^^^^^ required by this bound in `Iterator::sum`
-
-error[E0605]: non-primitive cast: `tb_runtime::DictValue` as `f64`
-  --> src\main.rs:25:20
-   |
-25 |         let diff = (*x as f64) - mean;
-   |                    ^^^^^^^^^^^ an `as` expression can be used to convert enum types to numeric types only if the enum type is unit-only or field-less
-   |
-   = note: see https://doc.rust-lang.org/reference/items/enumerations.html#casting for more information
-
-error[E0308]: mismatched types
-  --> src\main.rs:34:46
-   |
-34 |     print_float_formatted(data_analysis_mean(numbers.clone()));
-   |                           ------------------ ^^^^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |                           |
-   |                           arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:17:4
-   |
-17 | fn data_analysis_mean(arg0: Vec<DictValue>) -> f64 {
-   |    ^^^^^^^^^^^^^^^^^^ --------------------
-
-Some errors have detailed explanations: E0277, E0308, E0605.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 4 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Plugin: Python with numpy2 (compiled)
-    Execution failed:
-[TB DEBUG] Parsing plugin block
-[TB DEBUG] Parsing plugin definition, current token: Ident("python")
-[TB DEBUG] Parsed plugin definition: Some(PluginDefinition { language: Python, name: "dataframe_ops", mode: Jit, requires: ["numpy"], source: Inline("def create_series(values: list) -> dict:\n    import numpy as np\n    return {\n        \"sum\": np.sum(values),\n        \"mean\": np.mean(values)\n    }\n\n") })
-[TB DEBUG] Plugin block parsed with 1 definitions
-[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
-[CODEGEN DEBUG] Plugin 'dataframe_ops' extracted 1 functions: ["create_series"]
-
-════════════════════════════════════════════════════════════════════════════════
-ERROR
-════════════════════════════════════════════════════════════════════════════════
-
-Runtime Error: Cargo compilation failed:
-warning: unused import: `std::collections::HashMap as StdHashMap`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
-  |
-8 | use std::collections::HashMap as StdHashMap;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` on by default
-
-warning: unused imports: `Arc` and `RwLock`
- --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
-  |
-9 | use std::sync::{Arc, RwLock};
-  |                 ^^^  ^^^^^^
-
-warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
-   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
-error[E0277]: a value of type `i64` cannot be made by summing an iterator over elements of type `&tb_runtime::DictValue`
-    --> src\main.rs:18:24
-     |
-  18 |     (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64)
-     |                  ---   ^^^ value of type `i64` cannot be made by summing a `std::iter::Iterator<Item=&tb_runtime::DictValue>`
-     |                  |
-     |                  required by a bound introduced by this call
-     |
-     = help: the trait `Sum<&tb_runtime::DictValue>` is not implemented for `i64`
-     = help: the following other types implement trait `Sum<A>`:
-               `i64` implements `Sum<&i64>`
-               `i64` implements `Sum`
-note: the method call chain might not have had the expected associated types
-    --> src\main.rs:18:11
-     |
-  18 |     (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64)
-     |      ---- ^^^^^^ `Iterator::Item` is `&DictValue` here
-     |      |
-     |      this expression has type `Vec<DictValue>`
-note: required by a bound in `std::iter::Iterator::sum`
-    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:3578:12
-     |
-3575 |     fn sum<S>(self) -> S
-     |        --- required by a bound in this associated function
-...
-3578 |         S: Sum<Self::Item>,
-     |            ^^^^^^^^^^^^^^^ required by this bound in `Iterator::sum`
-
-error[E0308]: mismatched types
-  --> src\main.rs:18:5
-   |
-17 | fn dataframe_ops_create_series(arg0: Vec<DictValue>) -> HashMap<String, DictValue> {
-   |                                                         -------------------------- expected `HashMap<std::string::String, tb_runtime::DictValue>` because of return type
-18 |     (arg0.iter().sum::<i64>() as f64) / (arg0.len() as f64)
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `HashMap<String, DictValue>`, found `f64`
-   |
-   = note: expected struct `HashMap<std::string::String, tb_runtime::DictValue>`
-                found type `f64`
-
-error[E0308]: mismatched types
-  --> src\main.rs:24:45
-   |
-24 |     let stats = dataframe_ops_create_series(data.clone());
-   |                 --------------------------- ^^^^^^^^^^^^ expected `Vec<DictValue>`, found `Vec<{integer}>`
-   |                 |
-   |                 arguments to this function are incorrect
-   |
-   = note: expected struct `Vec<tb_runtime::DictValue>`
-              found struct `Vec<{integer}>`
-note: function defined here
-  --> src\main.rs:17:4
-   |
-17 | fn dataframe_ops_create_series(arg0: Vec<DictValue>) -> HashMap<String, DictValue> {
-   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^ --------------------
-
-Some errors have detailed explanations: E0277, E0308.
-For more information about an error, try `rustc --explain E0277`.
-error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
-
-
-════════════════════════════════════════════════════════════════════════════════
-
-
-  - Utils: YAML parse (compiled)
-    Output mismatch:
-Expected: 'Alice\n25'
-Got: '0\n0'
-  - Utils: YAML round-trip (compiled)
-    Output mismatch:
-Expected: 'api\n2'
-Got: '0\n0'
+// In tb-parser/src/parser.rs, parse_primary
+fn parse_primary(&mut self) -> Result<Expression> {
+    match self.current_token() {
+        Token::If => self.parse_if_expression(),
+        // ...
+    }
+}
+
+fn parse_if_expression(&mut self) -> Result<Expression> {
+    self.consume(Token::If)?;
+    let condition = self.parse_expression()?;
+    let then_branch = self.parse_block_expression()?;
+    self.consume(Token::Else)?;  // else ist PFLICHT für if-expression
+    let else_branch = self.parse_block_expression()?;
+
+    Ok(Expression::IfElse { condition, then_branch, else_branch, span })
+}
+```
+
+### Problem 6.2: Dict-Mutation
+
+**Fehler:**
+```
+Syntax error at 3:9: Unexpected token: Eq
+```
+
+**Beispiel:**
+```tb
+let d = {"a": 1}
+d["a"] = 2  // ❌ Parser erkennt Index-Assignment nicht
+```
+
+**Lösung:**
+Erfordert neue Statement-Variante:
+```rust
+// In tb-core/src/ast.rs, Statement enum
+IndexAssignment {
+    object: Expression,
+    index: Expression,
+    value: Expression,
+    span: Span,
+}
+```
+
+### Betroffene Tests:
+- `Expression - if returns value` (jit + compiled)
+- `Control Flow` (jit + compiled)
+- `Dict modification` (jit + compiled)
+
+---
+
+## 7. MITTEL: Listenoperationen (push/pop)
+
+### Problem:
+`push` und `pop` sind pure Funktionen (geben neue Liste zurück), aber Tests erwarten In-Place-Mutation.
+
+### Beispiel:
+```tb
+let my_list = [1, 2]
+push(my_list, 3)
+print(my_list)  // Erwartet: [1, 2, 3], Aktuell: [1, 2]
+```
+
+### Lösung:
+
+**Option A: Tests anpassen (empfohlen)**
+```tb
+let my_list = [1, 2]
+my_list = push(my_list, 3)  // ✅ Ergebnis zuweisen
+print(my_list)  // [1, 2, 3]
+```
+
+**Option B: In-Place-Mutation implementieren**
+- Erfordert mutable References in TB
+- Komplexe Änderung am Typ-System
+
+### Betroffene Tests:
+- `Push to list` (jit + compiled)
+- `Pop from list` (jit + compiled)
+
+---
+
+## 8. NIEDRIG: Weitere Probleme
+
+### 8.1: Float Modulo
+**Fehler:** `Runtime error: Invalid modulo operation`
+**Lösung:** Implementiere Modulo für Float-Typen
+
+### 8.2: Import-System
+**Fehler:** `Undefined variable: mymod`
+**Lösung:** Import-System ist nicht implementiert
+
+### 8.3: Pattern Matching
+**Fehler:** `Type error: Pattern type Int doesn't match value type Generic("n")`
+**Lösung:** Pattern-Matching-Typ-Inferenz verbessern
+
+---
+
+## Implementierungsplan (Priorität)
+
+### Phase 1: Kritische Fixes (1-2 Tage)
+1. ✅ Short-circuit Evaluation (implementiert, aber Typ-Fehler)
+2. ❌ Scoping-Bug fixen (Option A: Scope-Stack)
+3. ❌ Closure Capturing implementieren
+4. ❌ Short-circuit Typ-Fehler fixen
+
+### Phase 2: Codegen-Fixes (1 Tag)
+5. ❌ `type_of(&None)` fixen
+6. ❌ `type_of` TB-Typen zurückgeben
+7. ❌ `return;` in Funktionen fixen
+
+### Phase 3: Parser-Erweiterungen (2-3 Tage)
+8. ❌ Range-Syntax in for-loops
+9. ❌ `if` als Expression
+10. ❌ Dict-Mutation
+
+### Phase 4: Weitere Fixes (1-2 Tage)
+11. ❌ Float Modulo
+12. ❌ Import-System
+13. ❌ Pattern Matching
+
+---
+
+## Test-Statistiken
+
+### Aktuelle E2E-Test-Ergebnisse (17/92 bestanden):
+
+**Bestanden (17):**
+- Builtin - type_of for all types (jit)
+- Complex program - nested data structures (jit)
+- Complex program - string manipulation (jit)
+- Edge case - empty function body (jit)
+- Empty list literal (jit)
+- File I/O (jit)
+- Float arithmetic (compiled)
+- Function returning None (jit)
+- List constructor (jit)
+- Literals and Basic Types (jit)
+- Nested lists (jit)
+- None literal (jit)
+- Real program - grade calculator (jit)
+- Real program - text processing (jit)
+- Recursion - countdown (jit)
+- Truthiness - None is falsy (jit)
+
+**Fehlgeschlagen (75):**
+- Alle Closure/Lambda-Tests (Capturing nicht implementiert)
+- Alle Scoping-Tests (Scoping-Bug)
+- Alle Short-circuit-Tests (Typ-Fehler)
+- Alle Range-Tests (Parser unterstützt nicht)
+- Alle if-as-expression-Tests (Parser unterstützt nicht)
+- Alle Dict-Mutation-Tests (Parser unterstützt nicht)
+- Viele Codegen-Tests (Typ-Inferenz-Probleme)
+
+---
+
+## Alte Analyse (Referenz)

@@ -330,8 +330,21 @@ impl RustCodeGenerator {
                 writeln!(self.buffer, " {{")?;
                 self.indent_level += 1;
 
-                for stmt in body {
-                    self.generate_statement(stmt)?;
+                // ✅ FIX: Handle implicit returns - last expression should not have semicolon
+                for (i, stmt) in body.iter().enumerate() {
+                    let is_last = i == body.len() - 1;
+
+                    // Check if this is the last statement and it's an expression (implicit return)
+                    if is_last && matches!(stmt, Statement::Expression { .. }) && !matches!(ret_ty, Type::None) {
+                        // Generate expression without semicolon for implicit return
+                        if let Statement::Expression { expr, .. } = stmt {
+                            write!(self.buffer, "{}", self.indent())?;
+                            self.generate_expression(expr)?;
+                            writeln!(self.buffer)?;
+                        }
+                    } else {
+                        self.generate_statement(stmt)?;
+                    }
                 }
 
                 self.indent_level -= 1;
@@ -489,10 +502,20 @@ impl RustCodeGenerator {
                 if matches!(op, BinaryOp::In) {
                     match &right_type {
                         Type::String => {
-                            // String in String (substring check)
+                            // ✅ FIX: String in String (substring check)
+                            // .contains() needs &str, so we need to pass reference
                             self.generate_expression(right)?;
                             write!(self.buffer, ".contains(")?;
-                            self.generate_expression(left)?;
+                            // Check if left is a string literal or variable
+                            if matches!(left.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                                // For string literals, use .as_str()
+                                self.generate_expression(left)?;
+                                write!(self.buffer, ".as_str()")?;
+                            } else {
+                                // For variables, use .as_str()
+                                self.generate_expression(left)?;
+                                write!(self.buffer, ".as_str()")?;
+                            }
                             write!(self.buffer, ")")?;
                         }
                         Type::List(_) => {
@@ -533,6 +556,16 @@ impl RustCodeGenerator {
                     write!(self.buffer, ", ")?;
                     self.generate_expression(right)?;
                     write!(self.buffer, ")")?;
+                    return Ok(());
+                }
+
+                // Special handling for division: Int / Int -> Float
+                if matches!(op, BinaryOp::Div) && matches!(left_type, Type::Int) && matches!(right_type, Type::Int) {
+                    write!(self.buffer, "((")?;
+                    self.generate_expression(left)?;
+                    write!(self.buffer, " as f64) / (")?;
+                    self.generate_expression(right)?;
+                    write!(self.buffer, " as f64))")?;
                     return Ok(());
                 }
 
@@ -800,17 +833,26 @@ impl RustCodeGenerator {
                         write!(self.buffer, ")")?;
                         return Ok(());
                     } else if name.as_str() == "range" {
+                        // ✅ FIX: Support range(start, end, step)
                         write!(self.buffer, "range(")?;
                         if args.len() == 1 {
-                            // range(end) -> range(0, Some(end))
+                            // range(end) -> range(0, Some(end), None)
                             write!(self.buffer, "0, Some(")?;
                             self.generate_expression(&args[0])?;
-                            write!(self.buffer, ")")?;
+                            write!(self.buffer, "), None")?;
                         } else if args.len() == 2 {
-                            // range(start, end) -> range(start, Some(end))
+                            // range(start, end) -> range(start, Some(end), None)
                             self.generate_expression(&args[0])?;
                             write!(self.buffer, ", Some(")?;
                             self.generate_expression(&args[1])?;
+                            write!(self.buffer, "), None")?;
+                        } else if args.len() == 3 {
+                            // range(start, end, step) -> range(start, Some(end), Some(step))
+                            self.generate_expression(&args[0])?;
+                            write!(self.buffer, ", Some(")?;
+                            self.generate_expression(&args[1])?;
+                            write!(self.buffer, "), Some(")?;
+                            self.generate_expression(&args[2])?;
                             write!(self.buffer, ")")?;
                         }
                         write!(self.buffer, ")")?;
@@ -986,6 +1028,61 @@ impl RustCodeGenerator {
                             write!(self.buffer, "len(&")?;
                             self.generate_expression(&args[0])?;
                             write!(self.buffer, ")")?;
+                        }
+                        return Ok(());
+                    }
+                    // ✅ FIX: type_of() function
+                    else if name.as_str() == "type_of" && args.len() == 1 {
+                        // Infer the type of the argument and call appropriate type_of function
+                        let arg_type = self.infer_expr_type(&args[0])?;
+                        match arg_type {
+                            Type::Int => {
+                                write!(self.buffer, "type_of_i64(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::Float => {
+                                write!(self.buffer, "type_of_f64(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::String => {
+                                write!(self.buffer, "type_of_string(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::Bool => {
+                                write!(self.buffer, "type_of_bool(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::List(elem_type) => {
+                                match *elem_type {
+                                    Type::Int => write!(self.buffer, "type_of_vec_i64(&")?,
+                                    Type::Float => write!(self.buffer, "type_of_vec_f64(&")?,
+                                    Type::String => write!(self.buffer, "type_of_vec_string(&")?,
+                                    Type::Bool => write!(self.buffer, "type_of_vec_bool(&")?,
+                                    _ => write!(self.buffer, "type_of(&")?,
+                                }
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::Dict(_, _) => {
+                                write!(self.buffer, "type_of_hashmap(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            Type::None => {
+                                write!(self.buffer, "type_of_unit(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
+                            _ => {
+                                // Generic fallback
+                                write!(self.buffer, "type_of(&")?;
+                                self.generate_expression(&args[0])?;
+                                write!(self.buffer, ")")?;
+                            }
                         }
                         return Ok(());
                     }
@@ -1474,6 +1571,19 @@ impl RustCodeGenerator {
                 }
             }
 
+            Expression::Range { start, end, inclusive, .. } => {
+                // Generate range as Vec<i64>
+                write!(self.buffer, "(")?;
+                self.generate_expression(start)?;
+                if *inclusive {
+                    write!(self.buffer, "..=")?;
+                } else {
+                    write!(self.buffer, "..")?;
+                }
+                self.generate_expression(end)?;
+                write!(self.buffer, ").collect::<Vec<i64>>()")?;
+            }
+
             _ => {
                 write!(self.buffer, "/* unsupported expression */")?;
             }
@@ -1496,8 +1606,15 @@ impl RustCodeGenerator {
                 }
             }
             Literal::String(s) => {
-                // ✅ FIX: Generate String instead of &str to avoid type mismatches
-                write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                // ✅ FIX: Use raw strings for Windows paths to avoid escape issues
+                // Check if string contains backslashes (likely a Windows path)
+                if s.contains('\\') {
+                    // Use raw string literal r"..." to avoid escape interpretation
+                    write!(self.buffer, "r\"{}\".to_string()", s.replace('"', "\\\""))?;
+                } else {
+                    // Regular string with proper escaping
+                    write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                }
             }
         }
         Ok(())
@@ -1601,6 +1718,12 @@ impl RustCodeGenerator {
 
     // ✅ PHASE 3: Enhanced return type inference
     fn infer_return_type(&self, body: &[Statement]) -> Result<Type> {
+        // ✅ FIX: Check for empty return statements (return;) anywhere in the function
+        // If found, the function returns () not the inferred type
+        if self.has_empty_return(body) {
+            return Ok(Type::None);
+        }
+
         // Look for explicit return statements first
         for stmt in body {
             if let Statement::Return { value, .. } = stmt {
@@ -1643,6 +1766,32 @@ impl RustCodeGenerator {
         Ok(Type::None)
     }
 
+    /// Check if function body contains an empty return statement (return;)
+    fn has_empty_return(&self, body: &[Statement]) -> bool {
+        for stmt in body {
+            match stmt {
+                Statement::Return { value, .. } if value.is_none() => return true,
+                Statement::If { then_block, else_block, .. } => {
+                    if self.has_empty_return(then_block) {
+                        return true;
+                    }
+                    if let Some(else_stmts) = else_block {
+                        if self.has_empty_return(else_stmts) {
+                            return true;
+                        }
+                    }
+                }
+                Statement::For { body, .. } | Statement::While { body, .. } => {
+                    if self.has_empty_return(body) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     // Infer expression type (simple version)
     fn infer_expr_type(&self, expr: &Expression) -> Result<Type> {
         match expr {
@@ -1671,7 +1820,11 @@ impl RustCodeGenerator {
                             Ok(Type::Int)
                         }
                     }
-                    BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    BinaryOp::Div => {
+                        // Division always returns Float (Python-like behavior)
+                        Ok(Type::Float)
+                    }
+                    BinaryOp::Sub | BinaryOp::Mul => {
                         // Return Float if either side is Float
                         if matches!(left_ty, Type::Float) || matches!(right_ty, Type::Float) {
                             Ok(Type::Float)
@@ -1741,6 +1894,7 @@ impl RustCodeGenerator {
                         "len" => Ok(Type::Int),
                         "range" => Ok(Type::List(Box::new(Type::Int))),
                         "print" => Ok(Type::None),
+                        "type_of" => Ok(Type::String),
 
                         // Time
                         "time" => Ok(Type::Dict(
@@ -1891,6 +2045,10 @@ impl RustCodeGenerator {
                     params: param_types,
                     return_type,
                 })
+            }
+            Expression::Range { .. } => {
+                // Range expressions always produce Vec<i64>
+                Ok(Type::List(Box::new(Type::Int)))
             }
             _ => Ok(Type::Any),
         }

@@ -199,6 +199,12 @@ pub enum Expression {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    Range {
+        start: Box<Expression>,
+        end: Box<Expression>,
+        inclusive: bool,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -267,6 +273,7 @@ impl Expression {
             Expression::Dict { span, .. } => span,
             Expression::Lambda { span, .. } => span,
             Expression::Match { span, .. } => span,
+            Expression::Range { span, .. } => span,
         }
     }
 }

@@ -18,7 +18,7 @@ impl TypeInference {
     /// Infer binary operation result type with automatic promotion
     pub fn infer_binary_op(op: &BinaryOp, left: &Type, right: &Type) -> Result<Type> {
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Mod => {
                 // Arithmetic operations with type promotion
                 match (left, right) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
@@ -33,6 +33,19 @@ impl TypeInference {
                     // String concatenation
                     (Type::String, Type::String) if matches!(op, BinaryOp::Add) => Ok(Type::String),
 
+                    _ => Err(TBError::type_error(format!(
+                        "Cannot apply {:?} to types {:?} and {:?}",
+                        op, left, right
+                    ))),
+                }
+            }
+            BinaryOp::Div => {
+                // Division always returns Float (Python-like behavior)
+                match (left, right) {
+                    (Type::Int, Type::Int) => Ok(Type::Float),
+                    (Type::Float, Type::Float) => Ok(Type::Float),
+                    (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
+                    (Type::Any, _) | (_, Type::Any) => Ok(Type::Any),
                     _ => Err(TBError::type_error(format!(
                         "Cannot apply {:?} to types {:?} and {:?}",
                         op, left, right

@@ -236,6 +236,26 @@ impl TaskExecutor {
                 }
             }
 
+            Expression::Range { start, end, inclusive, .. } => {
+                let start_val = self.eval_expression(start)?;
+                let end_val = self.eval_expression(end)?;
+
+                match (start_val, end_val) {
+                    (Value::Int(s), Value::Int(e)) => {
+                        let range_end = if *inclusive { e + 1 } else { e };
+                        let values: Vec<Value> = if s <= range_end {
+                            (s..range_end).map(Value::Int).collect()
+                        } else {
+                            (range_end..s).rev().map(Value::Int).collect()
+                        };
+                        Ok(Value::List(Arc::new(values)))
+                    }
+                    _ => Err(TBError::runtime_error(
+                        "Range expressions require integer start and end values"
+                    )),
+                }
+            }
+
             _ => {
                 // For other expression types, return None
                 Ok(Value::None)

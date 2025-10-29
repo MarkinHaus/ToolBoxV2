@@ -471,6 +471,24 @@ pub fn print_vec_bool(vec: Vec<bool>) {
     println!("]");
 }
 
+/// Print function for Option types
+pub fn print_option<T: fmt::Display>(opt: &Option<T>) {
+    match opt {
+        Some(v) => println!("{}", v),
+        None => println!("None"),
+    }
+}
+
+/// Print function for unit type ()
+pub fn print_unit(_value: &()) {
+    println!("None");
+}
+
+/// Generic print_debug for types that don't implement Display
+pub fn print_debug<T: fmt::Debug>(value: &T) {
+    println!("{:?}", value);
+}
+
 // ============================================================================
 // POLYMORPHIC TRAITS
 // ============================================================================
@@ -596,6 +614,12 @@ impl IsTruthy for DictValue {
     }
 }
 
+impl<T> IsTruthy for Option<T> {
+    fn is_truthy(&self) -> bool {
+        self.is_some()
+    }
+}
+
 pub fn is_truthy<T: IsTruthy>(value: &T) -> bool {
     value.is_truthy()
 }
@@ -678,13 +702,98 @@ pub fn str_from<T: fmt::Display>(value: T) -> String {
 }
 
 // ============================================================================
+// TYPE INTROSPECTION
+// ============================================================================
+
+/// type_of() function - returns the type name of a value
+pub fn type_of_i64(_value: &i64) -> String {
+    "int".to_string()
+}
+
+pub fn type_of_f64(_value: &f64) -> String {
+    "float".to_string()
+}
+
+pub fn type_of_string(_value: &String) -> String {
+    "string".to_string()
+}
+
+pub fn type_of_bool(_value: &bool) -> String {
+    "bool".to_string()
+}
+
+pub fn type_of_vec_i64(_value: &Vec<i64>) -> String {
+    "list".to_string()
+}
+
+pub fn type_of_vec_f64(_value: &Vec<f64>) -> String {
+    "list".to_string()
+}
+
+pub fn type_of_vec_string(_value: &Vec<String>) -> String {
+    "list".to_string()
+}
+
+pub fn type_of_vec_bool(_value: &Vec<bool>) -> String {
+    "list".to_string()
+}
+
+pub fn type_of_hashmap<K, V>(_value: &HashMap<K, V>) -> String {
+    "dict".to_string()
+}
+
+pub fn type_of_option<T>(_value: &Option<T>) -> String {
+    "none".to_string()
+}
+
+pub fn type_of_unit(_value: &()) -> String {
+    "none".to_string()
+}
+
+// Generic type_of for any type
+pub fn type_of<T>(_value: &T) -> String {
+    std::any::type_name::<T>().to_string()
+}
+
+// type_of for DictValue
+pub fn type_of_dict_value(value: &DictValue) -> String {
+    match value {
+        DictValue::Int(_) => "int".to_string(),
+        DictValue::Float(_) => "float".to_string(),
+        DictValue::String(_) => "string".to_string(),
+        DictValue::Bool(_) => "bool".to_string(),
+        DictValue::List(_) => "list".to_string(),
+        DictValue::Dict(_) => "dict".to_string(),
+    }
+}
+
+// ============================================================================
 // COLLECTION FUNCTIONS
 // ============================================================================
 
-/// Range function
-pub fn range(start: i64, end: Option<i64>) -> Vec<i64> {
+/// Range function with optional step
+pub fn range(start: i64, end: Option<i64>, step: Option<i64>) -> Vec<i64> {
+    let step_val = step.unwrap_or(1);
+
+    if step_val == 0 {
+        panic!("range() step cannot be zero");
+    }
+
     match end {
-        Some(e) => (start..e).collect(),
+        Some(e) => {
+            if step_val > 0 {
+                (start..e).step_by(step_val as usize).collect()
+            } else {
+                // Negative step: count down
+                let mut result = Vec::new();
+                let mut current = start;
+                while current > e {
+                    result.push(current);
+                    current += step_val; // step_val is negative
+                }
+                result
+            }
+        }
         None => (0..start).collect(),
     }
 }

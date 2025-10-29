@@ -74,6 +74,10 @@ impl JitExecutor {
             tb_debug_jit!("Statement {}: {} | {}", i + 1, debug_info.location, debug_info.source_line);
 
             last = self.eval_statement(stmt)?;
+            // Log result for debugging
+            if last != Value::None {
+                tb_debug_jit!("Statement {} result: {:?}", i, last);
+            }
 
             if self.return_value.is_some() {
                 tb_debug_jit!("Early return with value: {:?}", self.return_value);
@@ -144,10 +148,11 @@ impl JitExecutor {
             Statement::If { condition, then_block, else_block, .. } => {
                 let cond = self.eval_expression(condition)?;
 
+                // ✅ FIX: Create new scope for if blocks to prevent variable leaking
                 if cond.is_truthy() {
-                    self.eval_block(then_block)
+                    self.eval_block_with_scope(then_block)
                 } else if let Some(else_stmts) = else_block {
-                    self.eval_block(else_stmts)
+                    self.eval_block_with_scope(else_stmts)
                 } else {
                     Ok(Value::None)
                 }
@@ -158,10 +163,19 @@ impl JitExecutor {
 
                 match iter_value {
                     Value::List(items) => {
+                        use std::collections::HashSet;
+
+                        // Track variables before loop (for proper scoping)
+                        let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+
+                        // Save the loop variable if it existed before (for restoration)
+                        let saved_loop_var = self.env.get(variable).cloned();
+
                         for item in items.iter() {
                             self.env.insert(Arc::clone(variable), item.clone());
 
-                            self.eval_block(body)?;
+                            // Execute loop body with its own scope
+                            self.eval_block_with_scope(body)?;
 
                             if self.should_break {
                                 self.should_break = false;
@@ -177,6 +191,22 @@ impl JitExecutor {
                                 break;
                             }
                         }
+
+                        // Restore or remove loop variable
+                        if let Some(original_value) = saved_loop_var {
+                            self.env.insert(Arc::clone(variable), original_value);
+                        } else {
+                            self.env.remove(variable);
+                        }
+
+                        // Remove any other new variables created in the loop
+                        let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+                        for new_key in keys_after.difference(&keys_before) {
+                            if new_key != variable {
+                                self.env.remove(new_key);
+                            }
+                        }
+
                         Ok(Value::None)
                     }
                     _ => Err(self.runtime_error_with_context(
@@ -187,13 +217,19 @@ impl JitExecutor {
             }
 
             Statement::While { condition, body, .. } => {
+                use std::collections::HashSet;
+
+                // Track variables before loop (for proper scoping)
+                let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+
                 loop {
                     let cond = self.eval_expression(condition)?;
                     if !cond.is_truthy() {
                         break;
                     }
 
-                    self.eval_block(body)?;
+                    // Execute loop body with its own scope
+                    self.eval_block_with_scope(body)?;
 
                     if self.should_break {
                         self.should_break = false;
@@ -209,6 +245,13 @@ impl JitExecutor {
                         break;
                     }
                 }
+
+                // Remove any new variables created in the loop
+                let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+                for new_key in keys_after.difference(&keys_before) {
+                    self.env.remove(new_key);
+                }
+
                 Ok(Value::None)
             }
 
@@ -310,9 +353,33 @@ impl JitExecutor {
             }
 
             Expression::Binary { op, left, right, span } => {
-                let left_val = self.eval_expression(left)?;
-                let right_val = self.eval_expression(right)?;
-                self.eval_binary_op(*op, left_val, right_val, *span)
+                // ✅ FIX: Short-circuit evaluation for AND/OR
+                match op {
+                    BinaryOp::And => {
+                        let left_val = self.eval_expression(left)?;
+                        if !left_val.is_truthy() {
+                            // Short-circuit: left is false, don't evaluate right
+                            return Ok(Value::Bool(false));
+                        }
+                        let right_val = self.eval_expression(right)?;
+                        Ok(Value::Bool(right_val.is_truthy()))
+                    }
+                    BinaryOp::Or => {
+                        let left_val = self.eval_expression(left)?;
+                        if left_val.is_truthy() {
+                            // Short-circuit: left is true, don't evaluate right
+                            return Ok(Value::Bool(true));
+                        }
+                        let right_val = self.eval_expression(right)?;
+                        Ok(Value::Bool(right_val.is_truthy()))
+                    }
+                    _ => {
+                        // Normal evaluation for other operators
+                        let left_val = self.eval_expression(left)?;
+                        let right_val = self.eval_expression(right)?;
+                        self.eval_binary_op(*op, left_val, right_val, *span)
+                    }
+                }
             }
 
             Expression::Unary { op, operand, .. } => {
@@ -422,8 +489,108 @@ impl JitExecutor {
                 })))
             }
 
+            Expression::Range { start, end, inclusive, span } => {
+                let start_val = self.eval_expression(start)?;
+                let end_val = self.eval_expression(end)?;
+
+                match (start_val, end_val) {
+                    (Value::Int(s), Value::Int(e)) => {
+                        // Generate list of integers from start to end
+                        let range_end = if *inclusive { e + 1 } else { e };
+
+                        // ✅ SECURITY: Check range size to prevent memory exhaustion
+                        let range_size = (range_end - s).abs() as usize;
+                        if range_size > MAX_COLLECTION_SIZE {
+                            return Err(self.runtime_error_with_context(
+                                format!("Range size ({}) exceeds maximum allowed ({})", range_size, MAX_COLLECTION_SIZE),
+                                Some(*span)
+                            ));
+                        }
+
+                        let values: Vec<Value> = if s <= range_end {
+                            (s..range_end).map(Value::Int).collect()
+                        } else {
+                            (range_end..s).rev().map(Value::Int).collect()
+                        };
+
+                        Ok(Value::List(Arc::new(values)))
+                    }
+                    _ => Err(self.runtime_error_with_context(
+                        "Range expressions require integer start and end values".to_string(),
+                        Some(*span)
+                    )),
+                }
+            }
+
             _ => Ok(Value::None),
         }
+    }
+
+    /// Evaluate a block with a new scope (for if/while blocks)
+    /// Variables defined in the block don't leak to outer scope
+    ///
+    /// IMPORTANT: This implementation tracks which variables existed BEFORE the block
+    /// and only removes NEW variables after the block. This allows:
+    /// 1. Variable shadowing (let x = 2 inside block when x = 1 exists outside)
+    /// 2. Modifications to existing variables persist
+    /// 3. New variables are cleaned up
+    fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
+        use std::collections::HashSet;
+
+        // ✅ FIX (Priority 1): Proper variable scoping for if/for/while blocks
+        //
+        // The key insight: We need to distinguish between:
+        // 1. SHADOWING: `let x = 2` where x already exists → restore old value after block
+        // 2. MUTATION: `x = 2` (Statement::Assign) → keep new value after block
+        // 3. NEW VARIABLE: `let y = 3` where y didn't exist → remove after block
+        //
+        // Strategy: Track which variables are SHADOWED (declared with `let` when they already exist)
+
+        let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+
+        // Track which variables were shadowed (declared with `let` when they already existed)
+        let mut shadowed_vars: HashSet<Arc<String>> = HashSet::new();
+
+        // Save original values of ALL existing variables (we'll only restore shadowed ones)
+        let mut saved_values: ImHashMap<Arc<String>, Value> = ImHashMap::new();
+        for key in &keys_before {
+            if let Some(value) = self.env.get(key) {
+                saved_values.insert(key.clone(), value.clone());
+            }
+        }
+
+        // Execute block and track shadowed variables
+        let mut result = Value::None;
+        for stmt in stmts {
+            // Track if this is a `let` statement that shadows an existing variable
+            if let Statement::Let { name, .. } = stmt {
+                if keys_before.contains(name) {
+                    // This is shadowing! Mark it for restoration
+                    shadowed_vars.insert(name.clone());
+                }
+            }
+
+            result = self.eval_statement(stmt)?;
+        }
+
+        // After block execution:
+        // 1. Restore ONLY shadowed variables (not mutated ones!)
+        for var_name in &shadowed_vars {
+            if let Some(original_value) = saved_values.get(var_name) {
+                self.env.insert(var_name.clone(), original_value.clone());
+            }
+        }
+
+        // 2. Remove NEW variables (those that didn't exist before and weren't shadowing)
+        let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+        for new_key in keys_after.difference(&keys_before) {
+            // Only remove if it's not a shadowed variable (those were already restored)
+            if !shadowed_vars.contains(new_key) {
+                self.env.remove(new_key);
+            }
+        }
+
+        Ok(result)
     }
 
     fn pattern_matches(&self, pattern: &Pattern, value: &Value) -> Result<bool> {
@@ -490,7 +657,8 @@ impl JitExecutor {
             },
 
             BinaryOp::Div => match (left, right) {
-                (Value::Int(a), Value::Int(b)) if b != 0 => Ok(Value::Int(a / b)),
+                // Division always returns Float (Python-like behavior)
+                (Value::Int(a), Value::Int(b)) if b != 0 => Ok(Value::Float(a as f64 / b as f64)),
                 (Value::Float(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a / b)),
                 (Value::Int(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a as f64 / b)),
                 (Value::Float(a), Value::Int(b)) if b != 0 => Ok(Value::Float(a / b as f64)),
@@ -533,6 +701,8 @@ impl JitExecutor {
                 _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
             },
 
+            // ✅ NOTE: AND/OR are now handled with short-circuit evaluation in eval_expression
+            // These cases should never be reached, but kept for safety
             BinaryOp::And => Ok(Value::Bool(left.is_truthy() && right.is_truthy())),
             BinaryOp::Or => Ok(Value::Bool(left.is_truthy() || right.is_truthy())),
 

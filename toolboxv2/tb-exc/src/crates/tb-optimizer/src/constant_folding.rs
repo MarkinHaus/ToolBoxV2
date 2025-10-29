@@ -79,7 +79,8 @@ impl ConstantFolding {
             (BinaryOp::Add, Literal::Int(a), Literal::Int(b)) => Literal::Int(a + b),
             (BinaryOp::Sub, Literal::Int(a), Literal::Int(b)) => Literal::Int(a - b),
             (BinaryOp::Mul, Literal::Int(a), Literal::Int(b)) => Literal::Int(a * b),
-            (BinaryOp::Div, Literal::Int(a), Literal::Int(b)) if *b != 0 => Literal::Int(a / b),
+            // Division always returns Float (Python-like behavior)
+            (BinaryOp::Div, Literal::Int(a), Literal::Int(b)) if *b != 0 => Literal::Float(*a as f64 / *b as f64),
             (BinaryOp::Mod, Literal::Int(a), Literal::Int(b)) if *b != 0 => Literal::Int(a % b),
 
             // Float arithmetic
@@ -91,6 +92,8 @@ impl ConstantFolding {
             // Mixed int/float arithmetic
             (BinaryOp::Add, Literal::Int(a), Literal::Float(b)) => Literal::Float(*a as f64 + b),
             (BinaryOp::Add, Literal::Float(a), Literal::Int(b)) => Literal::Float(a + *b as f64),
+            (BinaryOp::Div, Literal::Int(a), Literal::Float(b)) if *b != 0.0 => Literal::Float(*a as f64 / b),
+            (BinaryOp::Div, Literal::Float(a), Literal::Int(b)) if *b != 0 => Literal::Float(a / *b as f64),
 
             // String concatenation
             (BinaryOp::Add, Literal::String(a), Literal::String(b)) => {

@@ -1360,25 +1360,47 @@ pub fn builtin_values(args: Vec<Value>) -> Result<Value, TBError> {
     }
 }
 
-/// range(start, end) or range(end) -> list[int]
+/// range(start, end, step) or range(start, end) or range(end) -> list[int]
 pub fn builtin_range(args: Vec<Value>) -> Result<Value, TBError> {
-    let (start, end) = match args.len() {
+    let (start, end, step) = match args.len() {
         1 => {
             match &args[0] {
-                Value::Int(e) => (0, *e),
+                Value::Int(e) => (0, *e, 1),
                 _ => return Err(TBError::runtime_error("range() requires integer arguments")),
             }
         }
         2 => {
             match (&args[0], &args[1]) {
-                (Value::Int(s), Value::Int(e)) => (*s, *e),
+                (Value::Int(s), Value::Int(e)) => (*s, *e, 1),
                 _ => return Err(TBError::runtime_error("range() requires integer arguments")),
             }
         }
-        _ => return Err(TBError::runtime_error("range() takes 1 or 2 arguments")),
+        3 => {
+            match (&args[0], &args[1], &args[2]) {
+                (Value::Int(s), Value::Int(e), Value::Int(st)) => (*s, *e, *st),
+                _ => return Err(TBError::runtime_error("range() requires integer arguments")),
+            }
+        }
+        _ => return Err(TBError::runtime_error("range() takes 1 to 3 arguments")),
     };
 
-    let values: Vec<Value> = (start..end).map(Value::Int).collect();
+    if step == 0 {
+        return Err(TBError::runtime_error("range() step cannot be zero"));
+    }
+
+    let values: Vec<Value> = if step > 0 {
+        (start..end).step_by(step as usize).map(Value::Int).collect()
+    } else {
+        // Negative step: count down
+        let mut result = Vec::new();
+        let mut current = start;
+        while current > end {
+            result.push(Value::Int(current));
+            current += step; // step is negative, so this decreases current
+        }
+        result
+    };
+
     Ok(Value::List(Arc::new(values)))
 }
 

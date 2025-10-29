@@ -582,16 +582,33 @@ impl TypeChecker {
             }
 
             Expression::Binary { op, left, right, .. } => {
-                let left_type = self.check_expression(left)?;
-                let right_type = self.check_expression(right)?;
+                use tb_core::BinaryOp;
 
-                // Handle generic types gracefully
-                match (&left_type, &right_type) {
-                    (Type::Generic(_), _) | (_, Type::Generic(_)) => {
-                        // For generic types, assume operation is valid and return Any
-                        Ok(Type::Any)
+                let left_type = self.check_expression(left)?;
+
+                // ✅ FIX (Priority 2): Short-circuit evaluation for AND/OR
+                // For AND/OR operators, we don't check the right operand's type
+                // because it might not be evaluated at runtime due to short-circuiting.
+                // This allows expressions like: false && undefined_function()
+                match op {
+                    BinaryOp::And | BinaryOp::Or => {
+                        // For short-circuit operators, only check left operand
+                        // Right operand might not be evaluated, so we don't type-check it
+                        return Ok(Type::Bool);
                     }
-                    _ => TypeInference::infer_binary_op(op, &left_type, &right_type),
+                    _ => {
+                        // For all other operators, check both operands
+                        let right_type = self.check_expression(right)?;
+
+                        // Handle generic types gracefully
+                        match (&left_type, &right_type) {
+                            (Type::Generic(_), _) | (_, Type::Generic(_)) => {
+                                // For generic types, assume operation is valid and return Any
+                                Ok(Type::Any)
+                            }
+                            _ => TypeInference::infer_binary_op(op, &left_type, &right_type),
+                        }
+                    }
                 }
             }
 
@@ -715,7 +732,7 @@ impl TypeChecker {
 
                 match obj_type {
                     Type::List(elem_type) => {
-                        if idx_type != Type::Int && !matches!(idx_type, Type::Any) {
+                        if idx_type != Type::Int && !matches!(idx_type, Type::Any) && !matches!(idx_type, Type::Generic(_)) {
                             return Err(self.type_error_with_context(
                                 "List index must be int".to_string(),
                                 Some(*span)
@@ -734,17 +751,9 @@ impl TypeChecker {
                     }
                     // Allow indexing on Type::Any - runtime will check
                     Type::Any => Ok(Type::Any),
-                    // Allow indexing on Generic types (like "list", "dict")
-                    Type::Generic(ref name) => {
-                        if name.as_str() == "list" || name.as_str() == "dict" {
-                            Ok(Type::Any)
-                        } else {
-                            Err(self.type_error_with_context(
-                                format!("Cannot index type Generic({})", name),
-                                Some(*span)
-                            ))
-                        }
-                    }
+                    // Allow indexing on ALL Generic types - runtime will check
+                    // This is important for function parameters with generic types
+                    Type::Generic(_) => Ok(Type::Any),
                     ref other => Err(self.type_error_with_context(
                         format!("Cannot index type {:?}", other),
                         Some(*span)

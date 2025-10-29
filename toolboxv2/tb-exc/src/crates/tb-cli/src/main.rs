@@ -90,37 +90,13 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Run { file, mode, opt_level } => {
-            let start = std::time::Instant::now();
-
-            let result = runner::run_file(
+            runner::run_file(
                 &file,
                 &mode,
                 opt_level,
                 Arc::clone(&interner),
                 Arc::clone(&cache_manager),
-            );
-
-            // Handle errors with detailed messages
-            if let Err(e) = result {
-                eprintln!("{}", e.detailed_message());
-                std::process::exit(1);
-            }
-
-            let _elapsed = start.elapsed();
-
-            // Only print result value, no debug info
-            // (Debug info commented out for test compatibility)
-            // println!("{}", "─".repeat(50).bright_black());
-            // println!("{} {}", "Result:".bright_green().bold(), result);
-            // println!("{} {:?}", "Time:".bright_blue(), elapsed);
-            // let stats = interner.stats();
-            // println!(
-            //     "{} {:.1}% ({}/{})",
-            //     "String cache hit rate:".bright_blue(),
-            //     stats.hit_rate * 100.0,
-            //     stats.hits,
-            //     stats.hits + stats.misses
-            // );
+            )?;
         }
 
         Commands::Compile { file, output, opt_level } => {

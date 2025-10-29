@@ -73,19 +73,24 @@ impl DeadCodeElimination {
         let mut i = 0;
         while i < statements.len() {
             match &statements[i] {
-                Statement::If { condition, then_block, else_block, .. } => {
-                    if let Expression::Literal(Literal::Bool(value), _) = condition {
-                        let replacement = if *value {
-                            then_block.clone()
-                        } else {
-                            else_block.clone().unwrap_or_default()
-                        };
-
-                        statements.splice(i..=i, replacement);
-                        removed += 1;
-                        continue; // Don't increment i, check new statements
-                    }
-                }
+                // ❌ DISABLED: This optimization breaks scoping semantics in JIT mode!
+                // If we replace `if true { let x = 2 }` with `let x = 2`, the variable
+                // leaks to the outer scope instead of being scoped to the if-block.
+                // This optimization is only safe for compiled mode where Rust handles scopes.
+                //
+                // Statement::If { condition, then_block, else_block, .. } => {
+                //     if let Expression::Literal(Literal::Bool(value), _) = condition {
+                //         let replacement = if *value {
+                //             then_block.clone()
+                //         } else {
+                //             else_block.clone().unwrap_or_default()
+                //         };
+                //
+                //         statements.splice(i..=i, replacement);
+                //         removed += 1;
+                //         continue; // Don't increment i, check new statements
+                //     }
+                // }
                 Statement::While { condition, .. } => {
                     if let Expression::Literal(Literal::Bool(false), _) = condition {
                         // while false { ... } - remove entirely
