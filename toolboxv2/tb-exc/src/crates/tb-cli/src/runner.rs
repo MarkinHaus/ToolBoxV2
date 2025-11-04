@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::collections::HashSet;
+use std::env;
 use tb_cache::CacheManager;
 use tb_codegen::RustCodeGenerator;
-use tb_core::{Result, StringInterner, Value, Statement, Program, ImportItem};
+use tb_core::{Result, StringInterner, Value, Statement, Program, ImportItem, Expression};
 use tb_jit::JitExecutor;
 use tb_optimizer::{Optimizer, OptimizerConfig};
 use tb_parser::{Lexer, Parser};
@@ -33,8 +34,8 @@ pub fn run_file(
     let mut lexer = Lexer::new(&source, Arc::clone(&interner));
     let tokens = lexer.tokenize();
 
-    // Parse (with source for plugin extraction)
-    let mut parser = Parser::new_with_source(tokens, source.clone());
+    // Parse (with source and file path for better error messages)
+    let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
     // Load imports before type checking
@@ -42,8 +43,8 @@ pub fn run_file(
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
 
-    // Type check
-    let mut type_checker = TypeChecker::new();
+    // Type check (with source context for better error messages)
+    let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
     type_checker.check_program(&program)?;
 
     // Optimize
@@ -54,8 +55,8 @@ pub fn run_file(
 
     match mode {
         "jit" => {
-            // JIT execution
-            let mut executor = JitExecutor::new();
+            // JIT execution (with source context for better error messages)
+            let mut executor = JitExecutor::new_with_source(source.clone(), Some(file.to_path_buf()));
             executor.execute(&program)
         }
         "compile" => {
@@ -70,17 +71,19 @@ pub fn run_file(
 
             // Compile with rustc
             let output = temp_dir.path().join("program");
-            let status = Command::new("rustc")
+            let compile_output = Command::new("rustc")
                 .args(&[
                     "-C", "opt-level=3",
                     "-o", output.to_str().unwrap(),
                     rust_file.to_str().unwrap(),
                 ])
-                .status()?;
+                .output()?;
 
-            if !status.success() {
+            if !compile_output.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_output.stderr);
                 return Err(tb_core::TBError::CompilationError {
                     message: "Rust compilation failed".to_string(),
+                    compiler_output: Some(stderr.to_string()),
                 });
             }
 
@@ -93,9 +96,7 @@ pub fn run_file(
 
             Ok(Value::None)
         }
-        _ => Err(tb_core::TBError::RuntimeError {
-            message: format!("Unknown mode: {}", mode),
-        }),
+        _ => Err(tb_core::TBError::runtime_error(format!("Unknown mode: {}", mode))),
     }
 }
 
@@ -111,7 +112,7 @@ pub fn compile_file(
     let mut lexer = Lexer::new(&source, Arc::clone(&interner));
     let tokens = lexer.tokenize();
 
-    let mut parser = Parser::new_with_source(tokens, source.clone());
+    let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
     // ✅ FIX: Load imports before type checking (same as run_file)
@@ -119,7 +120,8 @@ pub fn compile_file(
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
 
-    let mut type_checker = TypeChecker::new();
+    // Type check (with source context for better error messages)
+    let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
     type_checker.check_program(&program)?;
 
     let mut optimizer_config = OptimizerConfig::default();
@@ -127,11 +129,49 @@ pub fn compile_file(
     let mut optimizer = Optimizer::new(optimizer_config);
     optimizer.optimize(&mut program)?;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PARSE CONFIG BLOCK
+    // ═══════════════════════════════════════════════════════════════════════════
+    let config_threads = parse_config_threads(&source);
+    let config_networking = parse_config_networking(&source);
+    let config_optimize = parse_config_optimize(&source);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-DETECT NETWORKING USAGE
+    // ═══════════════════════════════════════════════════════════════════════════
+    let uses_networking = detect_networking_usage(&program.statements) || config_networking;
+
+    // Determine runtime configuration
+    let (runtime_config, worker_threads, use_multi_thread) = if uses_networking {
+        eprintln!("[TB Compiler] ✓ Auto-detected networking usage - enabling networking features");
+        let threads = if config_threads > 1 { config_threads } else { 2 };
+        (TokioRuntimeConfig::Minimal { worker_threads: threads }, threads, true)
+    } else if config_threads > 1 {
+        eprintln!("[TB Compiler] ✓ Multi-threaded runtime requested ({} threads)", config_threads);
+        (TokioRuntimeConfig::Minimal { worker_threads: config_threads }, config_threads, true)
+    } else {
+        eprintln!("[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime");
+        (TokioRuntimeConfig::None, 1, false)
+    };
+
     let mut codegen = RustCodeGenerator::new();
-    let rust_code = codegen.generate(&program)?;
+    let mut rust_code = codegen.generate(&program)?;
 
     // Get required crates from code generator
-    let required_crates = codegen.get_required_crates();
+    let mut required_crates = codegen.get_required_crates().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // Add networking features if needed
+    if uses_networking || use_multi_thread {
+        if !required_crates.contains(&"tb_runtime".to_string()) {
+            required_crates.push("tb_runtime".to_string());
+        }
+
+        // Add TOKIO_WORKER_THREADS constant to generated code
+        let const_def = format!("\n// Tokio runtime configuration\nconst TOKIO_WORKER_THREADS: usize = {};\n\n", worker_threads);
+        if let Some(pos) = rust_code.find("fn main()") {
+            rust_code.insert_str(pos, &const_def);
+        }
+    }
 
     // DEBUG: Save generated code for inspection
     if std::env::var("TB_DEBUG_CODEGEN").is_ok() {
@@ -141,17 +181,111 @@ pub fn compile_file(
         eprintln!("Required crates: {:?}", required_crates);
     }
 
-    // Create a temporary Cargo project with dependencies
+    // ═══════════════════════════════════════════════════════════════════════════
+    // NEW FAST COMPILATION STRATEGY: Use rustc directly instead of Cargo
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Check if we should use the fast rustc path (default: yes)
+    let use_fast_compile = std::env::var("TB_USE_CARGO").is_err();
+
+    if use_fast_compile {
+        let required_crates_refs: Vec<&str> = required_crates.iter().map(|s| s.as_str()).collect();
+        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, config_optimize);
+    }
+
+    // FALLBACK: Old Cargo-based compilation (slow but more compatible)
     let temp_dir = tempfile::tempdir()?;
     let project_dir = temp_dir.path();
 
     // Build dependencies section dynamically based on required crates
     let mut dependencies = String::new();
+
+    // ALWAYS add tb_runtime as it contains DictValue and built-in functions
+    // Use path dependency to the local tb-runtime crate
+
+    // First, try environment variable TB_RUNTIME_PATH
+    let tb_runtime_path = if let Ok(env_path) = std::env::var("TB_RUNTIME_PATH") {
+        std::path::PathBuf::from(env_path)
+    } else {
+        // Try to find tb-runtime relative to the binary
+        let exe_path = std::env::current_exe().ok();
+
+        let mut candidates = Vec::new();
+
+        // PRIORITY 1: Relative to binary (most reliable)
+        if let Some(exe) = exe_path {
+            if let Some(parent) = exe.parent() {
+                // ✅ FIX: Added correct path for ToolBoxV2 structure
+                // From target/release/tb.exe -> ../../../toolboxv2/tb-exc/src/crates/tb-runtime
+                candidates.push(parent.join("../../../toolboxv2/tb-exc/src/crates/tb-runtime"));
+                candidates.push(parent.join("../../toolboxv2/tb-exc/src/crates/tb-runtime"));
+                // Legacy paths (for backward compatibility)
+                candidates.push(parent.join("../../crates/tb-runtime"));
+                candidates.push(parent.join("../../../crates/tb-runtime"));
+                candidates.push(parent.join("../crates/tb-runtime"));
+            }
+        }
+
+        // PRIORITY 2: Relative to current directory
+        if let Ok(cwd) = std::env::current_dir() {
+            // ✅ FIX: Prioritize correct ToolBoxV2 structure
+            candidates.push(cwd.join("toolboxv2/tb-exc/src/crates/tb-runtime"));
+            candidates.push(cwd.join("tb-exc/src/crates/tb-runtime"));
+            candidates.push(cwd.join("crates/tb-runtime"));
+        }
+
+        // Find first existing path and canonicalize it
+        candidates.into_iter()
+            .find(|path| path.exists())
+            .and_then(|p| p.canonicalize().ok())
+            .unwrap_or_else(|| {
+                // Last resort: use a default path
+                std::path::PathBuf::from("crates/tb-runtime")
+            })
+    };
+
+    // Convert Windows backslashes to forward slashes for TOML compatibility
+    let mut tb_runtime_path_str = tb_runtime_path.display().to_string().replace('\\', "/");
+
+    // ✅ FIX: Remove Windows UNC prefix //?/ which breaks Cargo.toml
+    if tb_runtime_path_str.starts_with("//?/") {
+        tb_runtime_path_str = tb_runtime_path_str[4..].to_string();
+    }
+
+    // Add tb-runtime with appropriate features
+    let mut tb_runtime_features = Vec::new();
+    if uses_networking {
+        tb_runtime_features.push("networking");
+    }
+    if required_crates.contains(&"serde_json".to_string()) {
+        tb_runtime_features.push("json");
+    }
+    if required_crates.contains(&"serde_yaml".to_string()) {
+        tb_runtime_features.push("yaml");
+    }
+
+    if tb_runtime_features.is_empty() {
+        dependencies.push_str(&format!("tb-runtime = {{ path = \"{}\" }}\n", tb_runtime_path_str));
+    } else {
+        let features_str = tb_runtime_features.iter()
+            .map(|f| format!("\"{}\"", f))
+            .collect::<Vec<_>>()
+            .join(", ");
+        dependencies.push_str(&format!("tb-runtime = {{ path = \"{}\", features = [{}] }}\n",
+            tb_runtime_path_str, features_str));
+    }
+
+    // If serde_json or serde_yaml is needed, add serde first
+    if required_crates.contains(&"serde_json".to_string()) || required_crates.contains(&"serde_yaml".to_string()) {
+        dependencies.push_str("serde = { version = \"1.0\", features = [\"derive\"] }\n");
+    }
+
     for crate_name in &required_crates {
-        let version = match *crate_name {
+        let version = match crate_name.as_str() {
             "serde_json" => "1.0",
             "serde_yaml" => "0.9",
             "chrono" => "0.4",
+            "tb_runtime" => continue, // Already added above
             _ => continue,
         };
         dependencies.push_str(&format!("{} = \"{}\"\n", crate_name, version));
@@ -181,14 +315,16 @@ codegen-units = 1
     fs::write(src_dir.join("main.rs"), rust_code)?;
 
     // Compile with cargo
-    let status = Command::new("cargo")
-        .args(&["build", "--release", "--quiet"])
+    let compile_output = Command::new("cargo")
+        .args(&["build", "--release"])
         .current_dir(project_dir)
-        .status()?;
+        .output()?;
 
-    if !status.success() {
+    if !compile_output.status.success() {
+        let stderr = String::from_utf8_lossy(&compile_output.stderr);
         return Err(tb_core::TBError::CompilationError {
             message: "Rust compilation failed".to_string(),
+            compiler_output: Some(stderr.to_string()),
         });
     }
 
@@ -199,7 +335,18 @@ codegen-units = 1
     let binary_name = "tb_compiled";
 
     let compiled_binary = project_dir.join("target").join("release").join(binary_name);
-    fs::copy(&compiled_binary, output)?;
+
+    // ✅ FIX: Ensure output has .exe extension on Windows
+    #[cfg(target_os = "windows")]
+    let final_output = if output.extension().and_then(|s| s.to_str()) != Some("exe") {
+        output.with_extension("exe")
+    } else {
+        output.to_path_buf()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let final_output = output.to_path_buf();
+
+    fs::copy(&compiled_binary, &final_output)?;
 
     Ok(())
 }
@@ -252,26 +399,22 @@ fn load_imports(
             // On Windows, provide more detailed error with proper path formatting
             #[cfg(target_os = "windows")]
             {
-                tb_core::TBError::RuntimeError {
-                    message: format!(
+                tb_core::TBError::runtime_error(format!(
                         "Failed to load import '{}': {} (normalized: {})",
                         canonical_path.display(),
                         e,
                         canonical_path.to_string_lossy().replace("\\\\?\\", "")
-                    ),
-                }
+                    ))
             }
             #[cfg(not(target_os = "windows"))]
             {
-                tb_core::TBError::RuntimeError {
-                    message: format!("Failed to load import '{}': {}", canonical_path.display(), e),
-                }
+                tb_core::TBError::runtime_error(format!("Failed to load import '{}': {}", canonical_path.display(), e))
             }
         })?;
 
         let mut lexer = Lexer::new(&source, Arc::clone(&interner));
         let tokens = lexer.tokenize();
-        let mut parser = Parser::new_with_source(tokens, source.clone());
+        let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), canonical_path.clone());
         let mut import_program = parser.parse()?;
 
         // Mark as loaded - use canonical path
@@ -297,3 +440,334 @@ fn load_imports(
     Ok(())
 }
 
+/// Fast compilation using persistent Cargo project (2-5s instead of 25-33s)
+/// Uses workspace dependencies that are already compiled
+fn compile_with_rustc(
+    _file: &Path,
+    output: &Path,
+    rust_code: &str,
+    required_crates: &[&str],
+    uses_networking: bool,
+    use_multi_thread: bool,
+    optimize: bool,
+) -> Result<()> {
+
+    // Find workspace root (going up from exe location)
+    let exe_path = env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
+
+    // ✅ FIX: Calculate correct path to tb-runtime
+    // exe is at: toolboxv2/tb-exc/src/target/release/tb.exe
+    // tb-runtime is at: toolboxv2/tb-exc/src/crates/tb-runtime
+    // So from exe_dir (target/release), go up 2 levels to src, then to crates/tb-runtime
+    let tb_runtime_path = exe_dir
+        .parent()  // target
+        .and_then(|p| p.parent())  // src
+        .map(|p| p.join("crates/tb-runtime"))
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot calculate tb-runtime path"))?;
+
+    // Verify tb-runtime exists
+    if !tb_runtime_path.join("Cargo.toml").exists() {
+        return Err(tb_core::TBError::runtime_error(format!(
+            "tb-runtime not found at: {}. Expected Cargo.toml to exist.",
+            tb_runtime_path.display()
+        )));
+    }
+
+    // Calculate workspace root for compile cache (3 levels up from exe)
+    let workspace_root = exe_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find workspace root"))?;
+
+    // Create persistent compile cache directory
+    let compile_cache = workspace_root.join("target").join("tb-compile-cache");
+    fs::create_dir_all(&compile_cache)?;
+
+    // Create Cargo.toml with appropriate features
+    let cargo_toml = compile_cache.join("Cargo.toml");
+
+    // Build features list based on usage
+    let mut features = Vec::new();
+    if uses_networking {
+        features.push("networking");
+    }
+    // Add multi-thread feature if needed (threads > 1 OR networking)
+    if use_multi_thread {
+        features.push("tokio-multi-thread");
+    }
+    // ✅ FIX: Add json/yaml features if used
+    if required_crates.contains(&"serde_json") {
+        features.push("json");
+    }
+    if required_crates.contains(&"serde_yaml") {
+        features.push("yaml");
+    }
+
+    let features_str = if features.is_empty() {
+        String::new()
+    } else {
+        format!(", features = [{}]", features.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+    };
+
+    // Choose optimization settings based on config
+    let (lto_setting, codegen_units, strip_setting, panic_setting) = if optimize {
+        // Optimized: slow compile, fast execution
+        ("\"fat\"", "1", "true", "\"abort\"")
+    } else {
+        // Fast compile: fast compile, slower execution (default)
+        ("false", "16", "false", "\"unwind\"")
+    };
+
+    let toml_content = format!(
+r#"[package]
+name = "tb-compiled"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+tb-runtime = {{ path = "{}"{} }}
+serde = {{ version = "1.0", features = ["derive"] }}
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = {}
+codegen-units = {}
+strip = {}
+panic = {}
+"#,
+        tb_runtime_path.display().to_string().replace("\\", "/"),
+        features_str,
+        lto_setting,
+        codegen_units,
+        strip_setting,
+        panic_setting
+    );
+    fs::write(&cargo_toml, toml_content)?;
+
+    // Create src directory
+    let src_dir = compile_cache.join("src");
+    fs::create_dir_all(&src_dir)?;
+
+    // Write main.rs
+    let main_rs = src_dir.join("main.rs");
+    fs::write(&main_rs, rust_code)?;
+
+    // Compile with Cargo (uses cached dependencies)
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build")
+        .arg("--release")
+        .arg("--manifest-path")
+        .arg(&cargo_toml)
+        .env("CARGO_TARGET_DIR", compile_cache.join("target"));
+
+    let output_result = cmd.output()?;
+
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        return Err(tb_core::TBError::runtime_error(format!(
+            "Cargo compilation failed:\n{}",
+            stderr
+        )));
+    }
+
+    // Copy binary to output location
+    #[cfg(target_os = "windows")]
+    let binary_name = "tb-compiled.exe";
+    #[cfg(not(target_os = "windows"))]
+    let binary_name = "tb-compiled";
+
+    let compiled_binary = compile_cache.join("target").join("release").join(binary_name);
+
+    // Ensure output has .exe extension on Windows
+    #[cfg(target_os = "windows")]
+    let final_output = if output.extension().and_then(|s| s.to_str()) != Some("exe") {
+        output.with_extension("exe")
+    } else {
+        output.to_path_buf()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let final_output = output.to_path_buf();
+
+    fs::copy(&compiled_binary, &final_output)?;
+
+    Ok(())
+}
+
+
+
+// ============================================================================
+// CONFIG PARSING
+// ============================================================================
+
+/// Parse thread count from @config block
+fn parse_config_threads(source: &str) -> usize {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "threads" {
+                            let value = value.trim().trim_end_matches(',');
+                            if let Ok(n) = value.parse::<usize>() {
+                                return n;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    1 // Default: single-threaded
+}
+
+/// Parse optimize flag from @config block
+/// Default: false (fast compile, slower execution)
+/// Set to true for: slow compile, fast execution
+fn parse_config_optimize(source: &str) -> bool {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "optimize" {
+                            let value = value.trim().trim_end_matches(',');
+                            return value == "true";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false // Default: fast compile, slower execution
+}
+
+/// Parse networking flag from @config block
+fn parse_config_networking(source: &str) -> bool {
+    if let Some(start) = source.find("@config") {
+        if let Some(block_start) = source[start..].find('{') {
+            if let Some(block_end) = source[start + block_start..].find('}') {
+                let config_text = &source[start + block_start + 1..start + block_start + block_end];
+
+                for line in config_text.lines() {
+                    let line = line.trim();
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.trim() == "networking" {
+                            let value = value.trim().trim_end_matches(',').trim_matches('"');
+                            return value == "true";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false // Default: no networking
+}
+
+// ============================================================================
+// AUTO-DETECTION: Networking Usage Analysis
+// ============================================================================
+
+/// Runtime configuration for Tokio
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokioRuntimeConfig {
+    None,
+    Minimal { worker_threads: usize },
+}
+
+/// Auto-detect networking usage from statements
+fn detect_networking_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if statement_uses_networking(stmt) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a statement uses networking functions
+fn statement_uses_networking(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Let { value, .. } | Statement::Assign { value, .. } => {
+            expr_uses_networking(value)
+        }
+        Statement::Expression { expr, .. } => expr_uses_networking(expr),
+        Statement::If { condition, then_block, else_block, .. } => {
+            expr_uses_networking(condition)
+                || then_block.iter().any(statement_uses_networking)
+                || else_block.as_ref().map_or(false, |b| b.iter().any(statement_uses_networking))
+        }
+        Statement::While { condition, body, .. } => {
+            expr_uses_networking(condition)
+                || body.iter().any(statement_uses_networking)
+        }
+        Statement::For { iterable, body, .. } => {
+            expr_uses_networking(iterable)
+                || body.iter().any(statement_uses_networking)
+        }
+        Statement::Function { body, .. } => {
+            body.iter().any(statement_uses_networking)
+        }
+        Statement::Return { value, .. } => {
+            value.as_ref().map_or(false, |v| expr_uses_networking(v))
+        }
+        _ => false,
+    }
+}
+
+/// Check if an expression uses networking functions
+fn expr_uses_networking(expr: &Expression) -> bool {
+    match expr {
+        Expression::Call { callee, args, .. } => {
+            // Check if function name is a networking function
+            if let Expression::Ident(name, _) = &**callee {
+                let name_str = name.as_ref();
+                if name_str == "connect_to"
+                    || name_str == "http_get"
+                    || name_str == "http_post"
+                    || name_str == "http_put"
+                    || name_str == "http_delete"
+                    || name_str == "http_session"
+                    || name_str == "http_request"
+                    || name_str.starts_with("tcp_")
+                    || name_str.starts_with("udp_")
+                    || name_str == "send_message"
+                    || name_str == "receive_message"
+                    || name_str == "spawn_task"
+                    || name_str == "await_task" {
+                    return true;
+                }
+            }
+            // Check arguments recursively
+            args.iter().any(expr_uses_networking)
+        }
+        Expression::Binary { left, right, .. } => {
+            expr_uses_networking(left) || expr_uses_networking(right)
+        }
+        Expression::Unary { operand, .. } => expr_uses_networking(operand),
+        Expression::List { elements, .. } => {
+            elements.iter().any(expr_uses_networking)
+        }
+        Expression::Dict { entries, .. } => {
+            entries.iter().any(|(_, v)| expr_uses_networking(v))
+        }
+        Expression::Index { object, index, .. } => {
+            expr_uses_networking(object) || expr_uses_networking(index)
+        }
+        Expression::Member { object, .. } => expr_uses_networking(object),
+        Expression::Lambda { body, .. } => expr_uses_networking(body),
+        _ => false,
+    }
+}

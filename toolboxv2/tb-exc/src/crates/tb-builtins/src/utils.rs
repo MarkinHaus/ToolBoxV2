@@ -133,6 +133,7 @@ pub fn get_time(timezone: Option<String>) -> BuiltinResult<TimeInfo> {
         (local.naive_local(), "Local".to_string(), offset)
     };
 
+    let dt_utc = Utc.from_utc_datetime(&dt);
     Ok(TimeInfo {
         year: dt.year(),
         month: dt.month(),
@@ -140,12 +141,12 @@ pub fn get_time(timezone: Option<String>) -> BuiltinResult<TimeInfo> {
         hour: dt.hour(),
         minute: dt.minute(),
         second: dt.second(),
-        microsecond: dt.timestamp_subsec_micros(),
+        microsecond: dt_utc.timestamp_subsec_micros(),
         weekday: dt.weekday().num_days_from_monday(),
         timezone: tz_name,
         offset,
-        timestamp: dt.and_utc().timestamp(),
-        iso8601: dt.and_utc().to_rfc3339(),
+        timestamp: dt_utc.timestamp(),
+        iso8601: dt_utc.to_rfc3339(),
     })
 }
 

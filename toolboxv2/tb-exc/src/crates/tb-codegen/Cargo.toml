@@ -5,5 +5,6 @@ edition.workspace = true
 
 [dependencies]
 tb-core = { path = "../tb-core" }
+tb-types = { path = "../tb-types" }
 thiserror.workspace = true
 

@@ -1,7 +1,7 @@
 //! TB Language Built-in Functions
 //!
 //! High-performance, non-blocking built-in functions for:
-//! - File I/O (real files + blob storage)
+//! - File I/O (real files only)
 //! - Networking (HTTP/HTTPS, TCP, UDP)
 //! - Utilities (JSON/YAML, time)
 //!
@@ -10,16 +10,23 @@
 pub mod file_io;
 pub mod networking;
 pub mod utils;
-pub mod blob;
 pub mod error;
 pub mod builtins_impl;
+pub mod task_runtime;
 
 use std::sync::Arc;
 use tb_core::{Value, TBError};
+
+use tb_cache::CacheManager;
+use tb_plugin::PluginLoader;
+use tokio::task::JoinHandle;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
 pub use error::{BuiltinError, BuiltinResult};
+
+// Import all built-in functions
+use crate::builtins_impl::*;
 
 /// Global runtime for async operations
 pub static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -31,34 +38,74 @@ pub static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .expect("Failed to create Tokio runtime")
 });
 
-/// Global blob storage registry
-pub static BLOB_STORAGES: Lazy<DashMap<String, Arc<blob::BlobStorage>>> = Lazy::new(DashMap::new);
-
-/// Global network server registry
-pub static NETWORK_SERVERS: Lazy<DashMap<String, Arc<networking::ServerHandle>>> = Lazy::new(DashMap::new);
-
 /// Global HTTP session registry
 pub static HTTP_SESSIONS: Lazy<DashMap<String, Arc<networking::HttpSession>>> = Lazy::new(DashMap::new);
+
+// NEUE GLOBALE ZUSTÄNDE HINZUFÜGEN
+pub static CACHE_MANAGER: Lazy<Arc<CacheManager>> = Lazy::new(|| {
+    let cache_dir = dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("tb-lang");
+    Arc::new(CacheManager::new(cache_dir, 100).expect("Failed to create CacheManager"))
+});
+
+pub static PLUGIN_LOADER: Lazy<Arc<PluginLoader>> = Lazy::new(|| {
+    Arc::new(PluginLoader::new())
+});
+
+pub static ACTIVE_TASKS: Lazy<DashMap<String, JoinHandle<Result<Value, TBError>>>> =
+    Lazy::new(DashMap::new);
+
+/// Global environment snapshot for spawned tasks
+/// This is updated by the JIT executor before calling spawn
+pub static TASK_ENVIRONMENT: Lazy<Arc<parking_lot::RwLock<im::HashMap<Arc<String>, Value>>>> =
+    Lazy::new(|| Arc::new(parking_lot::RwLock::new(im::HashMap::new())));
 
 /// Register all built-in functions
 pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     let mut builtins = Vec::new();
+
+    // Type Conversions
+    builtins.push(("int", builtins_impl::builtin_int as BuiltinFn));
+    builtins.push(("str", builtins_impl::builtin_str as BuiltinFn));
+    builtins.push(("float", builtins_impl::builtin_float as BuiltinFn));
+    builtins.push(("dict", builtins_impl::builtin_dict as BuiltinFn));
+    builtins.push(("list", builtins_impl::builtin_list as BuiltinFn));
+
+    // Basic Collections
+    builtins.push(("len", builtins_impl::builtin_len as BuiltinFn));
+    builtins.push(("push", builtins_impl::builtin_push as BuiltinFn));
+    builtins.push(("pop", builtins_impl::builtin_pop as BuiltinFn));
+    builtins.push(("keys", builtins_impl::builtin_keys as BuiltinFn));
+    builtins.push(("values", builtins_impl::builtin_values as BuiltinFn));
+    builtins.push(("range", builtins_impl::builtin_range as BuiltinFn));
+    builtins.push(("print", builtins_impl::builtin_print as BuiltinFn));
+
+    // Module Import
+    builtins.push(("import", builtins_impl::builtin_import as BuiltinFn));
 
     // File I/O
     builtins.push(("open", builtin_open as BuiltinFn));
     builtins.push(("read_file", builtin_read_file as BuiltinFn));
     builtins.push(("write_file", builtin_write_file as BuiltinFn));
     builtins.push(("file_exists", builtin_file_exists as BuiltinFn));
+    builtins.push(("list_dir", builtins_impl::builtin_list_dir as BuiltinFn));
+    builtins.push(("create_dir", builtins_impl::builtin_create_dir as BuiltinFn));
+    builtins.push(("delete_file", builtins_impl::builtin_delete_file as BuiltinFn));
 
-    // Blob storage
-    builtins.push(("blob_init", builtin_blob_init as BuiltinFn));
-    builtins.push(("blob_create", builtin_blob_create as BuiltinFn));
-    builtins.push(("blob_read", builtin_blob_read as BuiltinFn));
-    builtins.push(("blob_update", builtin_blob_update as BuiltinFn));
-    builtins.push(("blob_delete", builtin_blob_delete as BuiltinFn));
+    // System
+    builtins.push(("execute", builtins_impl::builtin_execute as BuiltinFn));
+    builtins.push(("get_env", builtins_impl::builtin_get_env as BuiltinFn));
+    builtins.push(("sleep", builtins_impl::builtin_sleep as BuiltinFn));
+
+    // Introspection
+    builtins.push(("type_of", builtins_impl::builtin_type_of as BuiltinFn));
+    builtins.push(("dir", builtins_impl::builtin_dir as BuiltinFn));
+    builtins.push(("has_attr", builtins_impl::builtin_has_attr as BuiltinFn));
 
     // Networking
     builtins.push(("create_server", builtins_impl::builtin_create_server as BuiltinFn));
+    builtins.push(("stop_server", builtins_impl::builtin_stop_server as BuiltinFn));
     builtins.push(("connect_to", builtins_impl::builtin_connect_to as BuiltinFn));
     builtins.push(("send_to", builtins_impl::builtin_send_to as BuiltinFn));
     builtins.push(("http_session", builtins_impl::builtin_http_session as BuiltinFn));
@@ -71,375 +118,38 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("yaml_stringify", builtins_impl::builtin_yaml_stringify as BuiltinFn));
     builtins.push(("time", builtins_impl::builtin_time as BuiltinFn));
 
+    // Cache Management
+    builtins.push(("cache_stats", builtins_impl::builtin_cache_stats as BuiltinFn));
+    builtins.push(("cache_clear", builtins_impl::builtin_cache_clear as BuiltinFn));
+    builtins.push(("cache_invalidate", builtins_impl::builtin_cache_invalidate as BuiltinFn));
+
+    // Plugin Management
+    builtins.push(("list_plugins", builtins_impl::builtin_list_plugins as BuiltinFn));
+    builtins.push(("reload_plugin", builtins_impl::builtin_reload_plugin as BuiltinFn));
+    builtins.push(("unload_plugin", builtins_impl::builtin_unload_plugin as BuiltinFn));
+    builtins.push(("plugin_info", builtins_impl::builtin_plugin_info as BuiltinFn));
+
+    // Async Task Management
+    builtins.push(("spawn", builtins_impl::builtin_spawn as BuiltinFn));
+    builtins.push(("await_task", builtins_impl::builtin_await_task as BuiltinFn));
+    builtins.push(("cancel_task", builtins_impl::builtin_cancel_task as BuiltinFn));
+
+    // Serialisierung & Hashing
+    builtins.push(("bincode_serialize", builtins_impl::builtin_bincode_serialize as BuiltinFn));
+    builtins.push(("bincode_deserialize", builtins_impl::builtin_bincode_deserialize as BuiltinFn));
+    builtins.push(("hash", builtins_impl::builtin_hash as BuiltinFn));
+
+    // Higher-Order Functions
+    builtins.push(("map", builtins_impl::builtin_map as BuiltinFn));
+    builtins.push(("filter", builtins_impl::builtin_filter as BuiltinFn));
+    builtins.push(("reduce", builtins_impl::builtin_reduce as BuiltinFn));
+    builtins.push(("forEach", builtins_impl::builtin_for_each as BuiltinFn));
+
     builtins
 }
 
 /// Built-in function signature
 pub type BuiltinFn = fn(Vec<Value>) -> Result<Value, TBError>;
 
-// ============================================================================
-// FILE I/O BUILT-INS
-// ============================================================================
 
-/// open(path: str, mode: str, blob: bool = false, key: str = None, encoding: str = "utf-8") -> FileHandle
-fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 5 {
-        return Err(TBError::RuntimeError {
-            message: "open() takes 1-5 arguments: path, mode, blob, key, encoding".to_string(),
-        });
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "open() path must be a string".to_string(),
-        }),
-    };
-
-    let mode = if args.len() > 1 {
-        match &args[1] {
-            Value::String(s) => s.to_string(),
-            _ => "r".to_string(),
-        }
-    } else {
-        "r".to_string()
-    };
-
-    let is_blob = if args.len() > 2 {
-        match &args[2] {
-            Value::Bool(b) => *b,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    let key = if args.len() > 3 {
-        match &args[3] {
-            Value::String(s) => Some(s.to_string()),
-            Value::None => None,
-            _ => return Err(TBError::RuntimeError {
-                message: "open() key must be a string or None".to_string(),
-            }),
-        }
-    } else {
-        None
-    };
-
-    let encoding = if args.len() > 4 {
-        match &args[4] {
-            Value::String(s) => s.to_string(),
-            _ => "utf-8".to_string(),
-        }
-    } else {
-        "utf-8".to_string()
-    };
-
-    let handle = RUNTIME.block_on(async {
-        file_io::open_file(path, mode, is_blob, key, encoding).await
-    })?;
-
-    Ok(Value::String(Arc::new(handle)))
-}
-
-/// read_file(path: str, blob: bool = false) -> str
-fn builtin_read_file(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(TBError::RuntimeError {
-            message: "read_file() takes 1-2 arguments: path, blob".to_string(),
-        });
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "read_file() path must be a string".to_string(),
-        }),
-    };
-
-    let is_blob = if args.len() > 1 {
-        match &args[1] {
-            Value::Bool(b) => *b,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    let content = RUNTIME.block_on(async {
-        file_io::read_file(path, is_blob).await
-    })?;
-
-    Ok(Value::String(Arc::new(content)))
-}
-
-/// write_file(path: str, content: str, blob: bool = false) -> None
-fn builtin_write_file(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() < 2 || args.len() > 3 {
-        return Err(TBError::RuntimeError {
-            message: "write_file() takes 2-3 arguments: path, content, blob".to_string(),
-        });
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "write_file() path must be a string".to_string(),
-        }),
-    };
-
-    let content = match &args[1] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "write_file() content must be a string".to_string(),
-        }),
-    };
-
-    let is_blob = if args.len() > 2 {
-        match &args[2] {
-            Value::Bool(b) => *b,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    RUNTIME.block_on(async {
-        file_io::write_file(path, content, is_blob).await
-    })?;
-
-    Ok(Value::None)
-}
-
-/// file_exists(path: str, blob: bool = false) -> bool
-fn builtin_file_exists(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(TBError::RuntimeError {
-            message: "file_exists() takes 1-2 arguments: path, blob".to_string(),
-        });
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "file_exists() path must be a string".to_string(),
-        }),
-    };
-
-    let is_blob = if args.len() > 1 {
-        match &args[1] {
-            Value::Bool(b) => *b,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    let exists = RUNTIME.block_on(async {
-        file_io::file_exists(path, is_blob).await
-    })?;
-
-    Ok(Value::Bool(exists))
-}
-
-// ============================================================================
-// BLOB STORAGE BUILT-INS
-// ============================================================================
-
-/// blob_init(servers: list[str], storage_dir: str = "./.data/blob_cache") -> str (storage_id)
-fn builtin_blob_init(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(TBError::RuntimeError {
-            message: "blob_init() takes 1-2 arguments: servers, storage_dir".to_string(),
-        });
-    }
-
-    let servers = match &args[0] {
-        Value::List(list) => {
-            list.iter()
-                .map(|v| match v {
-                    Value::String(s) => Ok(s.to_string()),
-                    _ => Err(TBError::RuntimeError {
-                        message: "blob_init() servers must be a list of strings".to_string(),
-                    }),
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        }
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_init() servers must be a list".to_string(),
-        }),
-    };
-
-    let storage_dir = if args.len() > 1 {
-        match &args[1] {
-            Value::String(s) => s.to_string(),
-            _ => "./.data/blob_cache".to_string(),
-        }
-    } else {
-        "./.data/blob_cache".to_string()
-    };
-
-    let storage_id = blob::init_blob_storage(servers, storage_dir)?;
-    Ok(Value::String(Arc::new(storage_id)))
-}
-
-/// blob_create(storage_id: str, data: str, blob_id: str = None) -> str
-fn builtin_blob_create(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() < 2 || args.len() > 3 {
-        return Err(TBError::RuntimeError {
-            message: "blob_create() takes 2-3 arguments: storage_id, data, blob_id".to_string(),
-        });
-    }
-
-    let storage_id = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_create() storage_id must be a string".to_string(),
-        }),
-    };
-
-    let data = match &args[1] {
-        Value::String(s) => s.as_bytes().to_vec(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_create() data must be a string".to_string(),
-        }),
-    };
-
-    let blob_id = if args.len() > 2 {
-        match &args[2] {
-            Value::String(s) => Some(s.to_string()),
-            Value::None => None,
-            _ => return Err(TBError::RuntimeError {
-                message: "blob_create() blob_id must be a string or None".to_string(),
-            }),
-        }
-    } else {
-        None
-    };
-
-    let storage = BLOB_STORAGES.get(&storage_id)
-        .ok_or_else(|| TBError::RuntimeError {
-            message: format!("Blob storage not found: {}", storage_id),
-        })?;
-
-    let result_id = RUNTIME.block_on(async {
-        storage.create_blob(&data, blob_id).await
-    })?;
-
-    Ok(Value::String(Arc::new(result_id)))
-}
-
-/// blob_read(storage_id: str, blob_id: str) -> str
-fn builtin_blob_read(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::RuntimeError {
-            message: "blob_read() takes 2 arguments: storage_id, blob_id".to_string(),
-        });
-    }
-
-    let storage_id = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_read() storage_id must be a string".to_string(),
-        }),
-    };
-
-    let blob_id = match &args[1] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_read() blob_id must be a string".to_string(),
-        }),
-    };
-
-    let storage = BLOB_STORAGES.get(&storage_id)
-        .ok_or_else(|| TBError::RuntimeError {
-            message: format!("Blob storage not found: {}", storage_id),
-        })?;
-
-    let data = RUNTIME.block_on(async {
-        storage.read_blob(&blob_id).await
-    })?;
-
-    let content = String::from_utf8(data)
-        .map_err(|e| TBError::RuntimeError {
-            message: format!("Invalid UTF-8 in blob: {}", e),
-        })?;
-
-    Ok(Value::String(Arc::new(content)))
-}
-
-/// blob_update(storage_id: str, blob_id: str, data: str) -> None
-fn builtin_blob_update(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 3 {
-        return Err(TBError::RuntimeError {
-            message: "blob_update() takes 3 arguments: storage_id, blob_id, data".to_string(),
-        });
-    }
-
-    let storage_id = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_update() storage_id must be a string".to_string(),
-        }),
-    };
-
-    let blob_id = match &args[1] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_update() blob_id must be a string".to_string(),
-        }),
-    };
-
-    let data = match &args[2] {
-        Value::String(s) => s.as_bytes().to_vec(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_update() data must be a string".to_string(),
-        }),
-    };
-
-    let storage = BLOB_STORAGES.get(&storage_id)
-        .ok_or_else(|| TBError::RuntimeError {
-            message: format!("Blob storage not found: {}", storage_id),
-        })?;
-
-    RUNTIME.block_on(async {
-        storage.update_blob(&blob_id, &data).await
-    })?;
-
-    Ok(Value::None)
-}
-
-/// blob_delete(storage_id: str, blob_id: str) -> None
-fn builtin_blob_delete(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::RuntimeError {
-            message: "blob_delete() takes 2 arguments: storage_id, blob_id".to_string(),
-        });
-    }
-
-    let storage_id = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_delete() storage_id must be a string".to_string(),
-        }),
-    };
-
-    let blob_id = match &args[1] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::RuntimeError {
-            message: "blob_delete() blob_id must be a string".to_string(),
-        }),
-    };
-
-    let storage = BLOB_STORAGES.get(&storage_id)
-        .ok_or_else(|| TBError::RuntimeError {
-            message: format!("Blob storage not found: {}", storage_id),
-        })?;
-
-    RUNTIME.block_on(async {
-        storage.delete_blob(&blob_id).await
-    })?;
-
-    Ok(Value::None)
-}
 

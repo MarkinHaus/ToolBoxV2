@@ -1,0 +1,27 @@
+package = true
+dev-dependencies = [
+    "pytest>=8.3.5",
+    "webauthn",
+    "mailjet_rest",
+    "redis",
+    "watchfiles",
+    "SQLAlchemy",
+    "Faker",
+    "playwright",
+    "radon",
+    "setuptools",
+    "mkdocs-material>=9.6.13",
+    "mkdocs>=1.6.1",
+    "mkdocstrings[python]>=0.29.1",
+    "mkdocstrings-python-legacy>=0.2.6",
+    "mkdocs-git-revision-date-plugin>=0.3.2",
+    "mkdocs-jupyter>=0.25.1",
+    "ipykernel>=6.29.5",
+    "ruff>=0.11.9",
+    "bandit>=1.8.3",
+    "safety>=3.2.4",
+    "deptry>=0.23.1",
+]
+
+[workspace]
+members = ["toolboxv2/mods/isaa"]

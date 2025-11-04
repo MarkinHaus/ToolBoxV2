@@ -1,0 +1,13 @@
+@plugin {
+    python "data_analysis" {
+        mode: "jit",
+
+        def mean(data: list) -> float:
+            total = sum(data)
+            return float(total) / float(len(data))
+    }
+}
+
+let numbers = [1, 2, 3, 4, 5]
+print(data_analysis.mean(numbers))
+

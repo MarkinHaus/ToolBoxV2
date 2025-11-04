@@ -669,7 +669,7 @@ class BeastCLI:
 
         # Time
         current_time = datetime.datetime.now().strftime("%H:%M")
-        parts.append(f'<b>🕐 {current_time} E </b>')
+        parts.append(f'<b>🕐 {current_time}  </b>')
 
         return HTML(' │ '.join(parts))
 
@@ -795,29 +795,50 @@ class BeastCLI:
     async def _handle_shell_command(self, command: str):
         """Execute system shell command"""
         print(f"\n🖥️  Executing: {command}")
+        import subprocess
+        import signal
+        import sys
+
+        # Globale Variable für den Prozess
+        current_process = None
+
+        def signal_handler(sig, frame):
+            """Handler für Ctrl+C - stoppt nur den Subprozess"""
+            if current_process:
+                print("\n[Stoppe Subprozess...]")
+                current_process.terminate()
+                try:
+                    current_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    current_process.kill()
+            # Hauptskript läuft weiter!
+
+        # Signal Handler registrieren
+        signal.signal(signal.SIGINT, signal_handler)
 
         try:
-            import subprocess
+            # Prozess starten OHNE capture_output
             a,b = detect_shell()
-            result = subprocess.run(
-                [a,b,command],
+            current_process = subprocess.Popen(
+                [a, b, command],
                 shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30
+                # Keine Umleitung - I/O geht direkt durch
+                stdin=sys.stdin,
+                stdout=sys.stdout,
+                stderr=sys.stderr
             )
 
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(f"\033[91m{result.stderr}\033[0m")
+            # Auf Prozessende warten
+            returncode = current_process.wait()
 
-            print(f"\n✓ Exit code: {result.returncode}")
+            print(f"\nProzess beendet mit Code: {returncode}")
 
         except subprocess.TimeoutExpired:
             print("⏱️  Command timed out")
         except Exception as e:
             print(f"❌ Error: {e}")
+        finally:
+            current_process = None
 
     async def _handle_variable_command(self, command: str):
         """Handle variable operations - unified with macro system"""

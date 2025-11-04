@@ -25,6 +25,9 @@ pub struct Function {
     pub params: Vec<Arc<String>>,
     pub body: Vec<crate::ast::Statement>,
     pub return_type: Option<crate::ast::Type>,
+    /// Captured environment for closures (None for regular functions)
+    #[serde(skip)]
+    pub closure_env: Option<ImHashMap<Arc<String>, Value>>,
 }
 
 #[derive(Clone)]

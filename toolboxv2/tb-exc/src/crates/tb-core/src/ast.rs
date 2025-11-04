@@ -199,6 +199,18 @@ pub enum Expression {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    Range {
+        start: Box<Expression>,
+        end: Box<Expression>,
+        inclusive: bool,
+        span: Span,
+    },
+    If {
+        condition: Box<Expression>,
+        then_branch: Box<Expression>,
+        else_branch: Box<Expression>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,6 +237,7 @@ pub enum BinaryOp {
     GtEq,
     And,
     Or,
+    In,  // Membership test: "x" in list, "key" in dict, "sub" in string
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +279,8 @@ impl Expression {
             Expression::Dict { span, .. } => span,
             Expression::Lambda { span, .. } => span,
             Expression::Match { span, .. } => span,
+            Expression::Range { span, .. } => span,
+            Expression::If { span, .. } => span,
         }
     }
 }

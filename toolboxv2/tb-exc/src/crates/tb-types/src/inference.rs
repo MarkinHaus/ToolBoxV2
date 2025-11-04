@@ -18,7 +18,7 @@ impl TypeInference {
     /// Infer binary operation result type with automatic promotion
     pub fn infer_binary_op(op: &BinaryOp, left: &Type, right: &Type) -> Result<Type> {
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Mod => {
                 // Arithmetic operations with type promotion
                 match (left, right) {
                     (Type::Int, Type::Int) => Ok(Type::Int),
@@ -33,12 +33,23 @@ impl TypeInference {
                     // String concatenation
                     (Type::String, Type::String) if matches!(op, BinaryOp::Add) => Ok(Type::String),
 
-                    _ => Err(TBError::TypeError {
-                        message: format!(
-                            "Cannot apply {:?} to types {:?} and {:?}",
-                            op, left, right
-                        ),
-                    }),
+                    _ => Err(TBError::type_error(format!(
+                        "Cannot apply {:?} to types {:?} and {:?}",
+                        op, left, right
+                    ))),
+                }
+            }
+            BinaryOp::Div => {
+                // Division always returns Float (Python-like behavior)
+                match (left, right) {
+                    (Type::Int, Type::Int) => Ok(Type::Float),
+                    (Type::Float, Type::Float) => Ok(Type::Float),
+                    (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
+                    (Type::Any, _) | (_, Type::Any) => Ok(Type::Any),
+                    _ => Err(TBError::type_error(format!(
+                        "Cannot apply {:?} to types {:?} and {:?}",
+                        op, left, right
+                    ))),
                 }
             }
             BinaryOp::Eq | BinaryOp::NotEq => {
@@ -48,9 +59,7 @@ impl TypeInference {
                    matches!(right, Type::Any) {
                     Ok(Type::Bool)
                 } else {
-                    Err(TBError::TypeError {
-                        message: format!("Cannot compare {:?} and {:?}", left, right),
-                    })
+                    Err(TBError::type_error(format!("Cannot compare {:?} and {:?}", left, right)))
                 }
             }
             BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
@@ -62,9 +71,7 @@ impl TypeInference {
                     | (Type::Float, Type::Int)
                     | (Type::Any, _)
                     | (_, Type::Any) => Ok(Type::Bool),
-                    _ => Err(TBError::TypeError {
-                        message: format!("Cannot compare {:?} and {:?}", left, right),
-                    }),
+                    _ => Err(TBError::type_error(format!("Cannot compare {:?} and {:?}", left, right))),
                 }
             }
             BinaryOp::And | BinaryOp::Or => {
@@ -72,9 +79,20 @@ impl TypeInference {
                 match (left, right) {
                     (Type::Bool, Type::Bool) => Ok(Type::Bool),
                     (Type::Any, _) | (_, Type::Any) => Ok(Type::Bool),
-                    _ => Err(TBError::TypeError {
-                        message: format!("Logical operations require bool, got {:?} and {:?}", left, right),
-                    }),
+                    _ => Err(TBError::type_error(format!(
+                        "Logical operations require bool, got {:?} and {:?}", left, right
+                    ))),
+                }
+            }
+            BinaryOp::In => {
+                // Membership test: left in right
+                // right can be: String, List, Dict
+                // Always returns Bool
+                match right {
+                    Type::String | Type::List(_) | Type::Dict(_, _) | Type::Any => Ok(Type::Bool),
+                    _ => Err(TBError::type_error(format!(
+                        "'in' operator requires String, List, or Dict on right side, got {:?}", right
+                    ))),
                 }
             }
         }
@@ -86,15 +104,11 @@ impl TypeInference {
             UnaryOp::Neg => match operand {
                 Type::Int => Ok(Type::Int),
                 Type::Float => Ok(Type::Float),
-                _ => Err(TBError::TypeError {
-                    message: format!("Cannot negate type {:?}", operand),
-                }),
+                _ => Err(TBError::type_error(format!("Cannot negate type {:?}", operand))),
             },
             UnaryOp::Not => match operand {
                 Type::Bool => Ok(Type::Bool),
-                _ => Err(TBError::TypeError {
-                    message: format!("Cannot apply 'not' to type {:?}", operand),
-                }),
+                _ => Err(TBError::type_error(format!("Cannot apply 'not' to type {:?}", operand))),
             },
         }
     }
@@ -123,9 +137,7 @@ impl TypeInference {
             // Int/Float promotion
             (Type::Int, Type::Float) | (Type::Float, Type::Int) => Ok(Type::Float),
 
-            _ => Err(TBError::TypeError {
-                message: format!("Cannot unify types {:?} and {:?}", a, b),
-            }),
+            _ => Err(TBError::type_error(format!("Cannot unify types {:?} and {:?}", a, b))),
         }
     }
 
@@ -134,6 +146,68 @@ impl TypeInference {
         match ty {
             Type::Int => Type::Float,
             other => other.clone(),
+        }
+    }
+
+    /// Find the Least Upper Bound (LUB) of multiple types
+    /// This is the most general type that all input types can be converted to
+    ///
+    /// Examples:
+    /// - LUB(Int, Int) = Int
+    /// - LUB(Int, Float) = Float (Int can be promoted to Float)
+    /// - LUB(Int, String) = Any (no common supertype)
+    /// - LUB(Int, Float, Int) = Float
+    pub fn least_upper_bound(types: &[Type]) -> Type {
+        if types.is_empty() {
+            return Type::Any;
+        }
+
+        if types.len() == 1 {
+            return types[0].clone();
+        }
+
+        // Start with the first type
+        let mut result = types[0].clone();
+
+        // Try to unify with each subsequent type
+        for ty in &types[1..] {
+            result = match Self::try_lub_pair(&result, ty) {
+                Some(lub) => lub,
+                None => return Type::Any, // No common supertype, fall back to Any
+            };
+        }
+
+        result
+    }
+
+    /// Try to find the LUB of two types, return None if no common supertype exists
+    fn try_lub_pair(a: &Type, b: &Type) -> Option<Type> {
+        // Same types
+        if a == b {
+            return Some(a.clone());
+        }
+
+        match (a, b) {
+            // Int/Float promotion: Int can be promoted to Float
+            (Type::Int, Type::Float) | (Type::Float, Type::Int) => Some(Type::Float),
+
+            // Any is the top type
+            (Type::Any, _) | (_, Type::Any) => Some(Type::Any),
+
+            // List types: LUB of element types
+            (Type::List(elem_a), Type::List(elem_b)) => {
+                Self::try_lub_pair(elem_a, elem_b).map(|elem_lub| Type::List(Box::new(elem_lub)))
+            }
+
+            // Dict types: LUB of key and value types
+            (Type::Dict(key_a, val_a), Type::Dict(key_b, val_b)) => {
+                let key_lub = Self::try_lub_pair(key_a, key_b)?;
+                let val_lub = Self::try_lub_pair(val_a, val_b)?;
+                Some(Type::Dict(Box::new(key_lub), Box::new(val_lub)))
+            }
+
+            // No common supertype
+            _ => None,
         }
     }
 }

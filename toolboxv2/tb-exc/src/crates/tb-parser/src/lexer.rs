@@ -230,40 +230,145 @@ impl Lexer {
         let start_line = self.line;
         let start_column = self.column;
 
-        let mut value = String::new();
+        let mut raw_value = String::new();
         let mut is_float = false;
+        let mut has_comma_separator = false;
+        let mut has_dot_separator = false;
 
+        // Read all digits, dots, commas, and underscores
         while let Some(c) = self.current() {
             if c.is_ascii_digit() {
-                value.push(c);
+                raw_value.push(c);
                 self.advance();
-            } else if c == '.' && !is_float {
+            } else if c == '.' {
+                // Could be decimal point or thousand separator
                 if let Some(next) = self.peek() {
                     if next.is_ascii_digit() {
-                        is_float = true;
-                        value.push(c);
+                        raw_value.push(c);
+                        has_dot_separator = true;
                         self.advance();
                     } else {
-                        break;
+                        break; // End of number (e.g., "3.method()")
                     }
                 } else {
                     break;
                 }
+            } else if c == ',' {
+                // Could be decimal point (German) or thousand separator (English)
+                if let Some(next) = self.peek() {
+                    if next.is_ascii_digit() {
+                        raw_value.push(c);
+                        has_comma_separator = true;
+                        self.advance();
+                    } else {
+                        break; // End of number
+                    }
+                } else {
+                    break;
+                }
+            } else if c == '_' {
+                // Rust-style separator - skip it
+                self.advance();
             } else {
                 break;
             }
         }
 
+        // Normalize the number to standard format
+        let normalized = self.normalize_number(&raw_value, has_dot_separator, has_comma_separator, &mut is_float);
+
         let kind = if is_float {
-            TokenKind::Float(value.parse().unwrap_or(0.0))
+            TokenKind::Float(normalized.parse().unwrap_or(0.0))
         } else {
-            TokenKind::Integer(value.parse().unwrap_or(0))
+            TokenKind::Integer(normalized.parse().unwrap_or(0))
         };
 
         Token::new(
             kind,
             Span::new(start, self.pos, start_line, start_column),
         )
+    }
+
+    /// Normalize number from various formats to standard format
+    /// Supports:
+    /// - English: 3.14, 1,234.56 (comma = thousand, dot = decimal)
+    /// - German: 3,14, 1.234,56 (dot = thousand, comma = decimal)
+    /// - Rust: 3.14_159 (underscore = separator, ignored)
+    fn normalize_number(&self, raw: &str, has_dot: bool, has_comma: bool, is_float: &mut bool) -> String {
+        if !has_dot && !has_comma {
+            // Simple integer
+            *is_float = false;
+            return raw.to_string();
+        }
+
+        // Determine format based on separators
+        if has_dot && has_comma {
+            // Both separators present - determine which is decimal point
+            let last_dot = raw.rfind('.');
+            let last_comma = raw.rfind(',');
+
+            if let (Some(dot_pos), Some(comma_pos)) = (last_dot, last_comma) {
+                if dot_pos > comma_pos {
+                    // English format: 1,234.56 -> dot is decimal
+                    *is_float = true;
+                    raw.replace(',', "")
+                } else {
+                    // German format: 1.234,56 -> comma is decimal
+                    *is_float = true;
+                    raw.replace('.', "").replace(',', ".")
+                }
+            } else {
+                *is_float = false;
+                raw.to_string()
+            }
+        } else if has_comma {
+            // Only comma - could be German decimal or English thousand separator
+            let comma_count = raw.matches(',').count();
+            let parts: Vec<&str> = raw.split(',').collect();
+
+            if comma_count == 1 && parts.len() == 2 {
+                // Single comma - check if it's decimal point (German) or thousand separator
+                let after_comma = parts[1];
+                if after_comma.len() <= 2 || after_comma.len() == 3 && parts[0].len() <= 3 {
+                    // Likely German decimal: 3,14 or 123,45
+                    *is_float = true;
+                    raw.replace(',', ".")
+                } else {
+                    // Likely English thousand: 1,234
+                    *is_float = false;
+                    raw.replace(',', "")
+                }
+            } else {
+                // Multiple commas - thousand separators (English)
+                *is_float = false;
+                raw.replace(',', "")
+            }
+        } else if has_dot {
+            // Only dot - could be English decimal or German thousand separator
+            let dot_count = raw.matches('.').count();
+            let parts: Vec<&str> = raw.split('.').collect();
+
+            if dot_count == 1 && parts.len() == 2 {
+                // Single dot - check if it's decimal point (English) or thousand separator
+                let after_dot = parts[1];
+                if after_dot.len() <= 2 || after_dot.len() == 3 && parts[0].len() <= 3 {
+                    // Likely English decimal: 3.14 or 123.45
+                    *is_float = true;
+                    raw.to_string()
+                } else {
+                    // Likely German thousand: 1.234
+                    *is_float = false;
+                    raw.replace('.', "")
+                }
+            } else {
+                // Multiple dots - thousand separators (German)
+                *is_float = false;
+                raw.replace('.', "")
+            }
+        } else {
+            *is_float = false;
+            raw.to_string()
+        }
     }
 
     fn read_identifier(&mut self) -> Token {

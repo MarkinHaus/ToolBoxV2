@@ -7,36 +7,37 @@ use tb_core::TBError;
 pub enum BuiltinError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("Blob storage error: {0}")]
     BlobStorage(String),
-    
+
     #[error("Encryption error: {0}")]
     Encryption(String),
-    
+
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Runtime error: {0}")]
     Runtime(String),
+
+    #[error("Task error: {0}")]
+    TaskError(String),
 }
 
 pub type BuiltinResult<T> = Result<T, BuiltinError>;
 
 impl From<BuiltinError> for TBError {
     fn from(err: BuiltinError) -> Self {
-        TBError::RuntimeError {
-            message: err.to_string(),
-        }
+        TBError::runtime_error(err.to_string())
     }
 }
 

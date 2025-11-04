@@ -4,17 +4,36 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-# Support for mobile platforms (Android/iOS)
+# Support for mobile platforms (Android/iOS) and FFI for compiled mode
 crate-type = ["cdylib", "staticlib", "rlib"]
+name = "tb_runtime"
 
 [dependencies]
-tb-core = { path = "../tb-core" }
-tb-plugin = { path = "../tb-plugin" }
-thiserror.workspace = true
-im.workspace = true
-libloading.workspace = true
-dashmap.workspace = true
-once_cell = "1.19"
+# Core dependencies for compiled programs (minimal!)
+# No dependencies needed for basic runtime!
+
+# Serialization support (always available for compiled code)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+
+# Networking dependencies (OPTIONAL - only when needed!)
+reqwest = { version = "0.12", features = ["blocking", "json"], optional = true }
+# Tokio with minimal features by default (single-threaded)
+tokio = { version = "1.35", features = ["rt", "net", "io-util", "time"], optional = true }
+uuid = { version = "1.6", features = ["v4"], optional = true }
+bincode = { version = "1.3", optional = true }
+sha2 = { version = "0.10", optional = true }
+dashmap = { version = "5.5", optional = true }
+once_cell = { version = "1.19", optional = true }
+
+# Optional dependencies for full runtime (JIT mode)
+tb-core = { path = "../tb-core", optional = true }
+tb-builtins = { path = "../tb-builtins", optional = true }
+tb-plugin = { path = "../tb-plugin", optional = true }
+thiserror = { workspace = true, optional = true }
+im = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
 
 # Android-specific dependencies
 [target.'cfg(target_os = "android")'.dependencies]
@@ -27,8 +46,30 @@ ndk-context.workspace = true
 # iOS-specific crates can be added here if needed
 
 [features]
+# Default: minimal runtime for compiled programs (no dependencies!)
 default = []
-python = ["tb-plugin/python"]
-javascript = ["tb-plugin/javascript"]
+
+# Serialization features
+json = ["serde_json"]
+yaml = ["serde_yaml"]
+
+# Networking features (single-threaded Tokio runtime by default)
+networking = ["tokio", "reqwest", "uuid", "dashmap", "once_cell"]
+networking-full = ["networking", "bincode", "sha2"]
+
+# Multi-threaded Tokio runtime (only when threads > 1 or explicitly requested)
+tokio-multi-thread = ["tokio/rt-multi-thread"]
+
+# Full runtime with built-ins and plugin support (for JIT mode)
+full = ["tb-core", "tb-builtins", "thiserror", "im", "json", "yaml", "networking-full", "tokio-multi-thread"]
+
+# Plugin support (requires full runtime)
+plugins = ["full", "tb-plugin", "libloading"]
+
+# Language-specific plugin support
+python = ["plugins", "tb-plugin/python"]
+javascript = ["plugins", "tb-plugin/javascript"]
+
+# Mobile support
 mobile = []  # Feature flag for mobile-specific functionality
 

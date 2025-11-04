@@ -1391,6 +1391,13 @@ pub struct Config {
     pub shared: HashMap<Arc<String>, Value>,
 
     pub runtime_mode: RuntimeMode,
+
+    /// Tokio runtime configuration (for compiled mode)
+    pub tokio_runtime: TokioRuntimeConfig,
+
+    /// Enable networking features (auto-detected or manual)
+    pub networking_enabled: bool,
+
     /// Loaded plugins
     pub plugins: Vec<PluginConfig>,
     pub imports: Vec<PathBuf>,
@@ -1409,6 +1416,8 @@ impl Default for Config {
             env: env::vars().map(|(k, v)| (k, Arc::new(v))).collect(),
             shared: HashMap::new(),
             runtime_mode: RuntimeMode::default(),
+            tokio_runtime: TokioRuntimeConfig::Auto,
+            networking_enabled: false,
             plugins: Vec::new(),
             imports: Vec::new(),
         }
@@ -1433,26 +1442,57 @@ impl Config {
                         }
 
                         if let Some((key, value)) = line.split_once(':') {
-                            // Intern config keys
-                            let key = STRING_INTERNER.intern(key.trim());
+                            let key_str = key.trim();
                             let value = value.trim().trim_end_matches(',');
 
-                            let val = if value.starts_with('"') {
-                                //  Intern string values
-                                Value::String(STRING_INTERNER.intern(value.trim_matches('"')))
-                            } else if value == "true" {
-                                Value::Bool(true)
-                            } else if value == "false" {
-                                Value::Bool(false)
-                            } else if let Ok(n) = value.parse::<i64>() {
-                                Value::Int(n)
-                            } else if let Ok(f) = value.parse::<f64>() {
-                                Value::Float(f)
-                            } else {
-                                Value::String(STRING_INTERNER.intern(value))
-                            };
-
-                            config.shared.insert(key, val);
+                            // Handle special config keys
+                            match key_str {
+                                "threads" => {
+                                    if let Ok(n) = value.parse::<usize>() {
+                                        config.tokio_runtime = TokioRuntimeConfig::Minimal { worker_threads: n };
+                                    }
+                                }
+                                "networking" => {
+                                    if value == "true" || value == "\"true\"" {
+                                        config.networking_enabled = true;
+                                        if matches!(config.tokio_runtime, TokioRuntimeConfig::None) {
+                                            config.tokio_runtime = TokioRuntimeConfig::Minimal { worker_threads: 2 };
+                                        }
+                                    } else if value == "false" || value == "\"false\"" {
+                                        config.networking_enabled = false;
+                                    } else if value == "\"auto\"" || value == "auto" {
+                                        // Will be auto-detected later
+                                        config.tokio_runtime = TokioRuntimeConfig::Auto;
+                                    }
+                                }
+                                "runtime" => {
+                                    match value.trim_matches('"') {
+                                        "none" => config.tokio_runtime = TokioRuntimeConfig::None,
+                                        "auto" => config.tokio_runtime = TokioRuntimeConfig::Auto,
+                                        "minimal" => config.tokio_runtime = TokioRuntimeConfig::Minimal { worker_threads: 2 },
+                                        "full" => config.tokio_runtime = TokioRuntimeConfig::Full { worker_threads: 4 },
+                                        _ => {}
+                                    }
+                                }
+                                _ => {
+                                    // Store in shared for other config values
+                                    let key = STRING_INTERNER.intern(key_str);
+                                    let val = if value.starts_with('"') {
+                                        Value::String(STRING_INTERNER.intern(value.trim_matches('"')))
+                                    } else if value == "true" {
+                                        Value::Bool(true)
+                                    } else if value == "false" {
+                                        Value::Bool(false)
+                                    } else if let Ok(n) = value.parse::<i64>() {
+                                        Value::Int(n)
+                                    } else if let Ok(f) = value.parse::<f64>() {
+                                        Value::Float(f)
+                                    } else {
+                                        Value::String(STRING_INTERNER.intern(value))
+                                    };
+                                    config.shared.insert(key, val);
+                                }
+                            }
                         }
                     }
                 }
@@ -1633,6 +1673,8 @@ impl Config {
             }
         }
     }
+
+
 }
 
 /// Execution mode
@@ -1678,6 +1720,32 @@ pub enum RuntimeMode {
 impl Default for RuntimeMode {
     fn default() -> Self {
         RuntimeMode::Sequential
+    }
+}
+
+/// Tokio runtime configuration for compiled mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokioRuntimeConfig {
+    /// No Tokio runtime (minimal, fastest startup)
+    None,
+
+    /// Automatic detection based on code analysis
+    Auto,
+
+    /// Minimal runtime with specified thread count
+    Minimal {
+        worker_threads: usize,
+    },
+
+    /// Full runtime with all features
+    Full {
+        worker_threads: usize,
+    },
+}
+
+impl Default for TokioRuntimeConfig {
+    fn default() -> Self {
+        TokioRuntimeConfig::Auto
     }
 }
 
@@ -10507,7 +10575,8 @@ impl Compiler {
     }
 
     /// Compile statements to native binary with full import support
-    pub fn compile(&self, statements: &[Statement]) -> TBResult<Vec<u8>> {
+    /// NOTE: This method is currently unused. Compilation is handled by runner.rs::compile_file()
+    pub fn compile(&mut self, statements: &[Statement]) -> TBResult<Vec<u8>> {
         debug_log!("Compiler::compile() for target {}", self.target);
 
         // Statements already include imports (loaded by TBCore)
@@ -10516,28 +10585,28 @@ impl Compiler {
             .count();
         debug_log!("✓ Total functions for compilation: {}", function_count);
 
-        // 2. Generate Rust code with runtime support
+        // Generate Rust code with runtime support
         let rust_code = self.generate_rust_code_with_runtime(&statements)?;
         debug_log!("Generated Rust code: {} bytes", rust_code.len());
 
         debug_log!("full code {}", rust_code);
 
-        // 3. Write to temporary directory
+        // Write to temporary directory
         let temp_dir = self.create_temp_project()?;
         let main_rs = temp_dir.join("src").join("main.rs");
         fs::write(&main_rs, &rust_code)?;
 
-        // 4. Create Cargo.toml with runtime dependencies
+        // Create Cargo.toml with runtime dependencies
         self.create_cargo_toml_with_runtime(&temp_dir)?;
 
-        // 5. Compile with cargo
+        // Compile with cargo
         debug_log!("Running cargo build...");
         let binary = self.cargo_build(&temp_dir)?;
 
-        // 6. Read compiled binary
+        // Read compiled binary
         let binary_data = fs::read(&binary)?;
 
-        // 7. Cleanup temp directory
+        // Cleanup temp directory
         fs::remove_dir_all(&temp_dir).ok();
 
         debug_log!("Compilation successful: {} bytes", binary_data.len());
@@ -10785,26 +10854,24 @@ impl Compiler {
     }
 
     fn generate_rust_code_with_runtime(&self, statements: &[Statement]) -> TBResult<String> {
-        // Schritt 1: Analysiere, welche Variablen tatsächlich veränderbar sein müssen.
-        // Diese Logik bleibt erhalten, da sie korrekt und nützlich ist.
+        // NOTE: This method is currently unused. Code generation is handled by runner.rs::compile_file()
+        // which uses RustCodeGenerator directly.
+
+        // Analysiere, welche Variablen tatsächlich veränderbar sein müssen.
         let mutable_vars = self.analyze_mutability(statements);
         debug_log!("Variables requiring mut: {:?}", mutable_vars);
 
-        // Schritt 2: Erstelle eine einzige CodeGenerator-Instanz.
+        // Erstelle eine einzige CodeGenerator-Instanz.
         let mut codegen = CodeGenerator::new(Language::Rust);
 
-        // Schritt 3: Konfiguriere den Generator mit allen notwendigen Kontext-Informationen.
+        // Konfiguriere den Generator mit allen notwendigen Kontext-Informationen.
         codegen.set_compiled_dependencies(&self.compiled_deps);
         codegen.set_mutable_vars(&mutable_vars);
 
-        // Schritt 4: Generiere den gesamten Code in einem einzigen, sauberen Aufruf.
-        // Die `generate`-Methode kümmert sich um alles:
-        // - Korrekte Helferfunktionen für ALLE Sprachen
-        // - Typ-Parser-Helfer
-        // - Alle Funktionsdefinitionen
-        // - Die `main`-Funktion mit dem restlichen Code
-        // Dies stellt sicher, dass JIT- und Compile-Modus exakt denselben Code-Generator verwenden.
-        codegen.generate(statements)
+        // Generiere den gesamten Code
+        let code = codegen.generate(statements)?;
+
+        Ok(code)
     }
 
     fn expr_needs_vec_return(&self, expr: &Expr) -> bool {
@@ -10880,6 +10947,22 @@ impl Compiler {
 
     /// Create Cargo.toml with runtime dependencies for async/parallel
     fn create_cargo_toml_with_runtime(&self, project_dir: &Path) -> TBResult<()> {
+        // Determine which features to enable based on config
+        let mut features = Vec::new();
+
+        // Check if networking is needed
+        if self.config.networking_enabled {
+            features.push("networking");
+        }
+
+        // Build features string
+        let features_str = if features.is_empty() {
+            String::new()
+        } else {
+            format!(r#"tb-runtime = {{ path = "../../../tb-exc/src/crates/tb-runtime", features = [{}] }}"#,
+                features.iter().map(|f| format!("\"{}\"", f)).collect::<Vec<_>>().join(", "))
+        };
+
         let cargo_toml = format!(r#"[package]
 name = "tb_compiled"
 version = "0.1.0"
@@ -10887,6 +10970,7 @@ edition = "2021"
 
 [dependencies]
 rayon = "1.11.0"
+{}
 
 [profile.release]
 opt-level = {}
@@ -10894,7 +10978,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-"#, self.optimization_level);
+"#, features_str, self.optimization_level);
 
         fs::write(project_dir.join("Cargo.toml"), cargo_toml)?;
         Ok(())

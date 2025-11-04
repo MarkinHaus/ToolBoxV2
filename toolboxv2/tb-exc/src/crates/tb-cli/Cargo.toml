@@ -16,7 +16,7 @@ tb-codegen = { path = "../tb-codegen" }
 tb-jit = { path = "../tb-jit" }
 tb-cache = { path = "../tb-cache" }
 tb-plugin = { path = "../tb-plugin", features = ["python", "javascript"] }
-tb-runtime = { path = "../tb-runtime" }
+tb-runtime = { path = "../tb-runtime", features = ["plugins"] }
 
 clap.workspace = true
 rustyline.workspace = true

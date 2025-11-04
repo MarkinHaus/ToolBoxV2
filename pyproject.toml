@@ -55,39 +55,11 @@ dependencies = [
     "psutil>=7.0.0",
     "dill>=0.3.8",
     "icalendar>=6.3.1",
+    "mcp[cli]>=1.13.1",
 ]
 
 [project.scripts]
 tb = "toolboxv2.__main__:main_runner"
-
-[tool.uv]
-package = true
-dev-dependencies = [
-    "pytest>=8.3.5",
-    "webauthn",
-    "mailjet_rest",
-    "redis",
-    "watchfiles",
-    "SQLAlchemy",
-    "Faker",
-    "playwright",
-    "radon",
-    "setuptools",
-    "mkdocs-material>=9.6.13",
-    "mkdocs>=1.6.1",
-    "mkdocstrings[python]>=0.29.1",
-    "mkdocstrings-python-legacy>=0.2.6",
-    "mkdocs-git-revision-date-plugin>=0.3.2",
-    "mkdocs-jupyter>=0.25.1",
-    "ipykernel>=6.29.5",
-    "ruff>=0.11.9",
-    "bandit>=1.8.3",
-    "safety>=3.2.4",
-    "deptry>=0.23.1",
-]
-
-[tool.uv.workspace]
-members = ["toolboxv2/mods/isaa"]
 
 [project.optional-dependencies]
 # Definiert für die Extra-Gruppe "isaa" die Quelldatei

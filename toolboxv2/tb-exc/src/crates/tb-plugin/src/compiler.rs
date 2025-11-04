@@ -2,6 +2,28 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::fs;
 use tb_core::{PluginLanguage, PluginMode, Result, TBError};
+use serde::{Serialize, Deserialize};
+
+/// Plugin metadata for YAML storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMetadataYaml {
+    pub name: String,
+    pub language: String,
+    pub functions: Vec<FunctionMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionMetadata {
+    pub name: String,
+    pub params: Vec<ParamMetadata>,
+    pub return_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParamMetadata {
+    pub name: String,
+    pub param_type: String,
+}
 
 /// Plugin compiler for different languages with dependency management
 pub struct PluginCompiler {
@@ -54,14 +76,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Failed to run rustc: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Failed to run rustc: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Rust compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Rust compilation failed"));
         }
 
         Ok(output_file)
@@ -97,21 +115,17 @@ impl PluginCompiler {
         }
     }
 
-    fn install_python_deps(&self, requires: &[String]) -> Result<()> {
+    pub fn install_python_deps(&self, requires: &[String]) -> Result<()> {
         for dep in requires {
             println!("Installing Python dependency: {}", dep);
 
             let status = Command::new("pip")
                 .args(&["install", "--quiet", dep])
                 .status()
-                .map_err(|e| TBError::PluginError {
-                    message: format!("Failed to install {}: {}", dep, e),
-                })?;
+                .map_err(|e| TBError::plugin_error(format!("Failed to install {}: {}", dep, e)))?;
 
             if !status.success() {
-                return Err(TBError::PluginError {
-                    message: format!("Failed to install dependency: {}", dep),
-                });
+                return Err(TBError::plugin_error(format!("Failed to install dependency: {}", dep)));
             }
         }
         Ok(())
@@ -131,14 +145,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Nuitka compilation failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Nuitka compilation failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Python compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Python compilation failed"));
         }
 
         Ok(output_file)
@@ -204,14 +214,10 @@ impl PluginCompiler {
             .arg("install")
             .current_dir(&self.temp_dir)
             .status()
-            .map_err(|e| TBError::PluginError {
-                message: format!("npm install failed: {}", e),
-            })?;
+            .map_err(|e| TBError::plugin_error(format!("npm install failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::PluginError {
-                message: "npm install failed".to_string(),
-            });
+            return Err(TBError::plugin_error("npm install failed"));
         }
         Ok(())
     }
@@ -228,14 +234,10 @@ impl PluginCompiler {
                 &format!("--outfile={}", output_file.display()),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("esbuild failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("esbuild failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "JavaScript bundling failed".to_string(),
-            });
+            return Err(TBError::compilation_error("JavaScript bundling failed"));
         }
 
         Ok(output_file)
@@ -264,14 +266,10 @@ impl PluginCompiler {
                 source_file.to_str().unwrap(),
             ])
             .status()
-            .map_err(|e| TBError::CompilationError {
-                message: format!("Go compilation failed: {}", e),
-            })?;
+            .map_err(|e| TBError::compilation_error(format!("Go compilation failed: {}", e)))?;
 
         if !status.success() {
-            return Err(TBError::CompilationError {
-                message: "Go compilation failed".to_string(),
-            });
+            return Err(TBError::compilation_error("Go compilation failed"));
         }
 
         Ok(output_file)
@@ -309,6 +307,127 @@ impl PluginCompiler {
 
         #[cfg(target_os = "linux")]
         return format!("lib{}.so", name);
+    }
+
+    /// Generate metadata YAML file for a plugin
+    pub fn generate_metadata(
+        &self,
+        plugin_path: &PathBuf,
+        language: &PluginLanguage,
+    ) -> Result<()> {
+        let source = fs::read_to_string(plugin_path)?;
+        let functions = self.extract_functions(language, &source)?;
+
+        let metadata = PluginMetadataYaml {
+            name: plugin_path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            language: format!("{:?}", language),
+            functions,
+        };
+
+        let yaml_path = plugin_path.with_extension("meta.yaml");
+        let yaml_content = serde_yaml::to_string(&metadata)
+            .map_err(|e| TBError::plugin_error(format!("Failed to serialize metadata: {}", e)))?;
+
+        fs::write(yaml_path, yaml_content)?;
+        Ok(())
+    }
+
+    /// Load metadata from YAML file if it exists
+    pub fn load_metadata(&self, plugin_path: &PathBuf) -> Result<Option<PluginMetadataYaml>> {
+        let yaml_path = plugin_path.with_extension("meta.yaml");
+
+        if !yaml_path.exists() {
+            return Ok(None);
+        }
+
+        let yaml_content = fs::read_to_string(yaml_path)?;
+        let metadata: PluginMetadataYaml = serde_yaml::from_str(&yaml_content)
+            .map_err(|e| TBError::plugin_error(format!("Failed to parse metadata: {}", e)))?;
+
+        Ok(Some(metadata))
+    }
+
+    /// Extract function signatures from source code (heuristic)
+    fn extract_functions(
+        &self,
+        language: &PluginLanguage,
+        source: &str,
+    ) -> Result<Vec<FunctionMetadata>> {
+        let mut functions = Vec::new();
+
+        match language {
+            PluginLanguage::Rust => {
+                // Look for "pub extern "C" fn" or "#[no_mangle]"
+                for line in source.lines() {
+                    if line.contains("pub extern \"C\" fn") || line.contains("#[no_mangle]") {
+                        if let Some(func) = self.parse_rust_function(line) {
+                            functions.push(func);
+                        }
+                    }
+                }
+            }
+            PluginLanguage::Python => {
+                // Look for "def function_name("
+                for line in source.lines() {
+                    if line.trim().starts_with("def ") {
+                        if let Some(func) = self.parse_python_function(line) {
+                            functions.push(func);
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For other languages, return empty for now
+            }
+        }
+
+        Ok(functions)
+    }
+
+    fn parse_rust_function(&self, line: &str) -> Option<FunctionMetadata> {
+        // Simple heuristic: extract function name
+        // Format: "pub extern "C" fn function_name(args) -> ReturnType"
+        let parts: Vec<&str> = line.split("fn ").collect();
+        if parts.len() < 2 {
+            return None;
+        }
+
+        let rest = parts[1];
+        let name_end = rest.find('(')?;
+        let name = rest[..name_end].trim().to_string();
+
+        Some(FunctionMetadata {
+            name,
+            params: vec![ParamMetadata {
+                name: "args".to_string(),
+                param_type: "Any".to_string(),
+            }],
+            return_type: "Any".to_string(),
+        })
+    }
+
+    fn parse_python_function(&self, line: &str) -> Option<FunctionMetadata> {
+        // Format: "def function_name(args):"
+        let parts: Vec<&str> = line.split("def ").collect();
+        if parts.len() < 2 {
+            return None;
+        }
+
+        let rest = parts[1];
+        let name_end = rest.find('(')?;
+        let name = rest[..name_end].trim().to_string();
+
+        Some(FunctionMetadata {
+            name,
+            params: vec![ParamMetadata {
+                name: "args".to_string(),
+                param_type: "Any".to_string(),
+            }],
+            return_type: "Any".to_string(),
+        })
     }
 }
 
