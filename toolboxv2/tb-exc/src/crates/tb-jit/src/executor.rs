@@ -122,14 +122,114 @@ impl JitExecutor {
                 Ok(Value::None)
             }
 
-            Statement::Assign { name, value, span } => {
-                if !self.env.contains_key(name) {
-                    return Err(self.undefined_variable_with_context(name.to_string(), Some(*span)));
-                }
-
+            Statement::Assign { target, value, span } => {
                 let val = self.eval_expression(value)?;
-                self.env.insert(Arc::clone(name), val);
-                Ok(Value::None)
+
+                match target {
+                    Expression::Ident(name, _) => {
+                        // Simple variable assignment
+                        if !self.env.contains_key(name) {
+                            return Err(self.undefined_variable_with_context(name.to_string(), Some(*span)));
+                        }
+                        self.env.insert(Arc::clone(name), val);
+                        Ok(Value::None)
+                    }
+                    Expression::Member { object, member, .. } => {
+                        // Object property assignment: obj.member = value
+                        let obj = self.eval_expression(object)?;
+                        match obj {
+                            Value::Dict(dict) => {
+                                let mut new_dict = dict.as_ref().clone();
+                                new_dict.insert(Arc::clone(member), val);
+
+                                // Update the object in the environment
+                                if let Expression::Ident(obj_name, _) = object.as_ref() {
+                                    self.env.insert(Arc::clone(obj_name), Value::Dict(Arc::new(new_dict)));
+                                }
+                                Ok(Value::None)
+                            }
+                            _ => Err(TBError::RuntimeError {
+                                message: format!("Cannot assign property to non-dict type: {}", obj.type_name()),
+                                span: Some(*span),
+                                source_context: self.source_context.clone(),
+                                call_stack: vec![],
+                            })
+                        }
+                    }
+                    Expression::Index { object, index, .. } => {
+                        // Array/dict index assignment: arr[idx] = value
+                        let obj = self.eval_expression(object)?;
+                        let idx = self.eval_expression(index)?;
+
+                        match obj {
+                            Value::List(list) => {
+                                if let Value::Int(i) = idx {
+                                    let mut new_list = list.as_ref().to_vec();
+                                    let index = if i < 0 {
+                                        (new_list.len() as i64 + i) as usize
+                                    } else {
+                                        i as usize
+                                    };
+
+                                    if index >= new_list.len() {
+                                        return Err(TBError::RuntimeError {
+                                            message: format!("Index {} out of bounds for list of length {}", i, new_list.len()),
+                                            span: Some(*span),
+                                            source_context: self.source_context.clone(),
+                                            call_stack: vec![],
+                                        });
+                                    }
+
+                                    new_list[index] = val;
+
+                                    // Update the object in the environment
+                                    if let Expression::Ident(obj_name, _) = object.as_ref() {
+                                        self.env.insert(Arc::clone(obj_name), Value::List(Arc::new(new_list)));
+                                    }
+                                    Ok(Value::None)
+                                } else {
+                                    Err(TBError::RuntimeError {
+                                        message: format!("List index must be an integer, got {}", idx.type_name()),
+                                        span: Some(*span),
+                                        source_context: self.source_context.clone(),
+                                        call_stack: vec![],
+                                    })
+                                }
+                            }
+                            Value::Dict(dict) => {
+                                if let Value::String(key) = idx {
+                                    let mut new_dict = dict.as_ref().clone();
+                                    new_dict.insert(key, val);
+
+                                    // Update the object in the environment
+                                    if let Expression::Ident(obj_name, _) = object.as_ref() {
+                                        self.env.insert(Arc::clone(obj_name), Value::Dict(Arc::new(new_dict)));
+                                    }
+                                    Ok(Value::None)
+                                } else {
+                                    Err(TBError::RuntimeError {
+                                        message: format!("Dict key must be a string, got {}", idx.type_name()),
+                                        span: Some(*span),
+                                        source_context: self.source_context.clone(),
+                                        call_stack: vec![],
+                                    })
+                                }
+                            }
+                            _ => Err(TBError::RuntimeError {
+                                message: format!("Cannot index into type: {}", obj.type_name()),
+                                span: Some(*span),
+                                source_context: self.source_context.clone(),
+                                call_stack: vec![],
+                            })
+                        }
+                    }
+                    _ => Err(TBError::RuntimeError {
+                        message: "Invalid assignment target".to_string(),
+                        span: Some(*span),
+                        source_context: self.source_context.clone(),
+                        call_stack: vec![],
+                    })
+                }
             }
 
             Statement::Function { name, params, body, return_type, .. } => {
@@ -174,8 +274,10 @@ impl JitExecutor {
                         for item in items.iter() {
                             self.env.insert(Arc::clone(variable), item.clone());
 
-                            // Execute loop body with its own scope
-                            self.eval_block_with_scope(body)?;
+                            // Execute loop body - DON'T use eval_block_with_scope here!
+                            // The loop already handles scoping (lines 268-308)
+                            // eval_block_with_scope would restore env and lose break/continue flags
+                            self.eval_block(body)?;
 
                             if self.should_break {
                                 self.should_break = false;
@@ -228,8 +330,10 @@ impl JitExecutor {
                         break;
                     }
 
-                    // Execute loop body with its own scope
-                    self.eval_block_with_scope(body)?;
+                    // Execute loop body - DON'T use eval_block_with_scope here!
+                    // The loop already handles scoping (lines 324-355)
+                    // eval_block_with_scope would restore env and lose break/continue flags
+                    self.eval_block(body)?;
 
                     if self.should_break {
                         self.should_break = false;
@@ -260,7 +364,22 @@ impl JitExecutor {
 
                 for arm in arms {
                     if self.pattern_matches(&arm.pattern, &match_value)? {
-                        return self.eval_expression(&arm.body);
+                        // ✅ FIX: Bind pattern variables in a new scope
+                        // Save the old environment
+                        let old_env = self.env.clone();
+
+                        // Bind pattern variable if it's an Ident
+                        if let Pattern::Ident(var_name) = &arm.pattern {
+                            self.env.insert(Arc::clone(var_name), match_value.clone());
+                        }
+
+                        // Evaluate the match arm body
+                        let result = self.eval_expression(&arm.body);
+
+                        // Restore the old environment (remove pattern variable)
+                        self.env = old_env;
+
+                        return result;
                     }
                 }
 
@@ -458,7 +577,22 @@ impl JitExecutor {
 
                 for arm in arms {
                     if self.pattern_matches(&arm.pattern, &val)? {
-                        return self.eval_expression(&arm.body);
+                        // ✅ FIX: Bind pattern variables in a new scope
+                        // Save the old environment
+                        let old_env = self.env.clone();
+
+                        // Bind pattern variable if it's an Ident
+                        if let Pattern::Ident(var_name) = &arm.pattern {
+                            self.env.insert(Arc::clone(var_name), val.clone());
+                        }
+
+                        // Evaluate the match arm body
+                        let result = self.eval_expression(&arm.body);
+
+                        // Restore the old environment (remove pattern variable)
+                        self.env = old_env;
+
+                        return result;
                     }
                 }
 
@@ -474,6 +608,12 @@ impl JitExecutor {
                 }
             }
 
+            Expression::Block { statements, .. } => {
+                // Execute block and return the last value
+                // Blocks create a new scope
+                self.eval_block_with_scope(statements)
+            }
+
             Expression::Lambda { params, body, span } => {
                 // Create anonymous function
                 let param_names: Vec<Arc<String>> = params.iter()
@@ -487,7 +627,8 @@ impl JitExecutor {
                 };
 
                 // ✅ CLOSURE FIX: Capture current environment for nested arrow functions
-                let closure_env = Some(self.env.clone());
+                // Use Arc<RwLock<>> to allow mutable closures
+                let closure_env = Some(Arc::new(std::sync::RwLock::new(self.env.clone())));
 
                 Ok(Value::Function(Arc::new(Function {
                     name: Arc::new("<lambda>".to_string()),
@@ -544,62 +685,28 @@ impl JitExecutor {
     /// 2. Modifications to existing variables persist
     /// 3. New variables are cleaned up
     fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
-        use std::collections::HashSet;
-
-        // ✅ FIX (Priority 1): Proper variable scoping for if/for/while blocks
+        // ✅ SIMPLIFIED FIX: Proper scoping using im::HashMap's O(1) clone
         //
-        // The key insight: We need to distinguish between:
-        // 1. SHADOWING: `let x = 2` where x already exists → restore old value after block
-        // 2. MUTATION: `x = 2` (Statement::Assign) → keep new value after block
-        // 3. NEW VARIABLE: `let y = 3` where y didn't exist → remove after block
+        // Since im::HashMap is a persistent data structure, clone() is O(1) and shares structure.
+        // This is the simplest and most correct approach:
+        // 1. Save the current environment
+        // 2. Execute the block (changes affect self.env)
+        // 3. Restore the old environment (discarding all block-local changes)
         //
-        // Strategy: Track which variables are SHADOWED (declared with `let` when they already exist)
+        // This ensures that ALL variables declared or modified in the block
+        // do NOT leak into the outer scope, which is the correct scoping behavior.
 
-        let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+        // Save the old environment (O(1) operation with im::HashMap)
+        let old_env = self.env.clone();
 
-        // Track which variables were shadowed (declared with `let` when they already existed)
-        let mut shadowed_vars: HashSet<Arc<String>> = HashSet::new();
+        // Execute the block (changes affect self.env)
+        let result = self.eval_block(stmts);
 
-        // Save original values of ALL existing variables (we'll only restore shadowed ones)
-        let mut saved_values: ImHashMap<Arc<String>, Value> = ImHashMap::new();
-        for key in &keys_before {
-            if let Some(value) = self.env.get(key) {
-                saved_values.insert(key.clone(), value.clone());
-            }
-        }
+        // Restore the old environment, discarding all block-local changes
+        self.env = old_env;
 
-        // Execute block and track shadowed variables
-        let mut result = Value::None;
-        for stmt in stmts {
-            // Track if this is a `let` statement that shadows an existing variable
-            if let Statement::Let { name, .. } = stmt {
-                if keys_before.contains(name) {
-                    // This is shadowing! Mark it for restoration
-                    shadowed_vars.insert(name.clone());
-                }
-            }
-
-            result = self.eval_statement(stmt)?;
-        }
-
-        // After block execution:
-        // 1. Restore ONLY shadowed variables (not mutated ones!)
-        for var_name in &shadowed_vars {
-            if let Some(original_value) = saved_values.get(var_name) {
-                self.env.insert(var_name.clone(), original_value.clone());
-            }
-        }
-
-        // 2. Remove NEW variables (those that didn't exist before and weren't shadowing)
-        let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
-        for new_key in keys_after.difference(&keys_before) {
-            // Only remove if it's not a shadowed variable (those were already restored)
-            if !shadowed_vars.contains(new_key) {
-                self.env.remove(new_key);
-            }
-        }
-
-        Ok(result)
+        // Return the result of the block
+        result
     }
 
     fn pattern_matches(&self, pattern: &Pattern, value: &Value) -> Result<bool> {
@@ -797,10 +904,17 @@ impl JitExecutor {
                 }
 
                 // ✅ CLOSURE FIX: Use closure environment if available, otherwise use current environment
-                let base_env = if let Some(ref closure_env) = f.closure_env {
-                    closure_env.clone()
+                // For closures with mutable state, we need to:
+                // 1. Read from the shared environment
+                // 2. Execute the function
+                // 3. Write changes back to the shared environment
+
+                let (base_env, closure_env_lock) = if let Some(ref closure_env) = f.closure_env {
+                    // Clone the environment from the RwLock
+                    let env = closure_env.read().unwrap().clone();
+                    (env, Some(Arc::clone(closure_env)))
                 } else {
-                    self.env.clone()
+                    (self.env.clone(), None)
                 };
 
                 // Create new environment with O(1) clone
@@ -821,6 +935,17 @@ impl JitExecutor {
 
                 // Execute function body
                 let last_value = new_executor.eval_block(&f.body)?;
+
+                // ✅ MUTABLE CLOSURE FIX: Write changes back to shared environment
+                if let Some(closure_env) = closure_env_lock {
+                    let mut env_write = closure_env.write().unwrap();
+                    // Update only the captured variables (not parameters)
+                    for (key, value) in new_executor.env.iter() {
+                        if !f.params.contains(key) {
+                            env_write.insert(Arc::clone(key), value.clone());
+                        }
+                    }
+                }
 
                 // Return explicit return value if present, otherwise return last expression value
                 Ok(new_executor.return_value.unwrap_or(last_value))

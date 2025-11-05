@@ -108,6 +108,22 @@ impl FunctionInlining {
                     self.substitute_params(elem, params, args);
                 }
             }
+            Expression::Block { statements, .. } => {
+                for stmt in statements {
+                    match stmt {
+                        Statement::Expression { expr, .. } => {
+                            self.substitute_params(expr, params, args);
+                        }
+                        Statement::Return { value: Some(expr), .. } => {
+                            self.substitute_params(expr, params, args);
+                        }
+                        Statement::Assign { value, .. } => {
+                            self.substitute_params(value, params, args);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -132,6 +148,11 @@ impl FunctionInlining {
             Expression::List { elements, .. } => {
                 for elem in elements {
                     self.inline_in_expression(elem);
+                }
+            }
+            Expression::Block { statements, .. } => {
+                for stmt in statements {
+                    self.inline_in_statement(stmt);
                 }
             }
             _ => {}

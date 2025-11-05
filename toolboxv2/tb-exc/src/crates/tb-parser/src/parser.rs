@@ -72,22 +72,41 @@ impl Parser {
             }
             TokenKind::At => Ok(Some(self.parse_special_block()?)),
 
-            // Check for variable reassignment
-            TokenKind::Ident(_) => {
-                if self.peek_ahead(1).map(|t| &t.kind) == Some(&TokenKind::Eq) {
-                    Ok(Some(self.parse_assignment()?))
+            TokenKind::Eof => Ok(None),
+
+            // Default case: Try to parse as expression, then check for assignment
+            _ => {
+                let expr = self.parse_expression()?;
+
+                // Check if this is an assignment (expr = value)
+                if self.check(&TokenKind::Eq) {
+                    self.advance(); // Consume '='
+                    let value = self.parse_expression()?;
+                    let span = expr.span().merge(value.span());
+
+                    // Validate that the target is a valid l-value
+                    match &expr {
+                        Expression::Ident(_, _) | Expression::Member { .. } | Expression::Index { .. } => {
+                            Ok(Some(Statement::Assign {
+                                target: expr,
+                                value,
+                                span,
+                            }))
+                        }
+                        _ => {
+                            Err(TBError::SyntaxError {
+                                location: format!("{}:{}", expr.span().line, expr.span().column),
+                                message: "Invalid assignment target. Only variables, object properties, and array indices can be assigned to.".to_string(),
+                                span: Some(*expr.span()),
+                                source_context: self.source_context.clone(),
+                            })
+                        }
+                    }
                 } else {
-                    let expr = self.parse_expression()?;
+                    // This is just an expression statement
                     let span = *expr.span();
                     Ok(Some(Statement::Expression { expr, span }))
                 }
-            }
-
-            TokenKind::Eof => Ok(None),
-            _ => {
-                let expr = self.parse_expression()?;
-                let span = *expr.span();
-                Ok(Some(Statement::Expression { expr, span }))
             }
         }
     }
@@ -767,14 +786,18 @@ impl Parser {
         // Expect =>
         self.expect(TokenKind::FatArrow)?;
 
-        // Parse body: either { expr } or expr
+        // Parse body: either { block } or expr
         // IMPORTANT: Use parse_lambda_or_expression() to support nested arrow functions
         // This allows: x => y => x + y
         let body = if self.check(&TokenKind::LBrace) {
             self.advance();
-            let expr = self.parse_lambda_or_expression()?;
-            self.expect(TokenKind::RBrace)?;
-            Box::new(expr)
+            // Parse as block of statements
+            let statements = self.parse_block()?;
+            let end_span = self.expect(TokenKind::RBrace)?;
+            Box::new(Expression::Block {
+                statements,
+                span: start_span.merge(&end_span),
+            })
         } else {
             Box::new(self.parse_lambda_or_expression()?)
         };
@@ -1061,9 +1084,13 @@ impl Parser {
                 // Parse body: either { block } or single expression
                 let body = if self.check(&TokenKind::LBrace) {
                     self.advance();
-                    let expr = self.parse_expression()?;
-                    self.expect(TokenKind::RBrace)?;
-                    Box::new(expr)
+                    // Parse as block of statements
+                    let statements = self.parse_block()?;
+                    let end_span = self.expect(TokenKind::RBrace)?;
+                    Box::new(Expression::Block {
+                        statements,
+                        span: span.merge(&end_span),
+                    })
                 } else {
                     Box::new(self.parse_expression()?)
                 };
@@ -1313,21 +1340,7 @@ impl Parser {
         }
     }
 
-    fn parse_assignment(&mut self) -> Result<Statement> {
-        let name = self.expect_ident()?;
-        let start_span = self.previous().span;
 
-        self.expect(TokenKind::Eq)?;
-        let value = self.parse_expression()?;
-
-        let span = start_span.merge(value.span());
-
-        Ok(Statement::Assign {
-            name,
-            value,
-            span,
-        })
-    }
 
     fn peek_ahead(&self, offset: usize) -> Option<&Token> {
         let pos = self.pos + offset;

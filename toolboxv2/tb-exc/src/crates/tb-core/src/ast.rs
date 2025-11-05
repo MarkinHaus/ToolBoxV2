@@ -34,7 +34,7 @@ pub enum Statement {
         span: Span,
     },
     Assign {
-        name: Arc<String>,
+        target: Expression,  // Can be Ident, Member, or Index
         value: Expression,
         span: Span,
     },
@@ -211,6 +211,10 @@ pub enum Expression {
         else_branch: Box<Expression>,
         span: Span,
     },
+    Block {
+        statements: Vec<Statement>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -281,6 +285,7 @@ impl Expression {
             Expression::Match { span, .. } => span,
             Expression::Range { span, .. } => span,
             Expression::If { span, .. } => span,
+            Expression::Block { span, .. } => span,
         }
     }
 }

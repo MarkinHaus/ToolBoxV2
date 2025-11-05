@@ -51,6 +51,23 @@ impl ConstantFolding {
                 }
             }
 
+            Expression::Block { statements, .. } => {
+                for stmt in statements {
+                    match stmt {
+                        Statement::Expression { expr, .. } => {
+                            changed |= self.fold_expression(expr);
+                        }
+                        Statement::Return { value: Some(expr), .. } => {
+                            changed |= self.fold_expression(expr);
+                        }
+                        Statement::Assign { value, .. } => {
+                            changed |= self.fold_expression(value);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             Expression::Call { args, .. } => {
                 for arg in args {
                     changed |= self.fold_expression(arg);

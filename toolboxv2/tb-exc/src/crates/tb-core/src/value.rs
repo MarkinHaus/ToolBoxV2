@@ -1,7 +1,7 @@
 use im::HashMap as ImHashMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Runtime value representation - optimized for zero-copy
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,15 +19,26 @@ pub enum Value {
     NativeFunction(Arc<NativeFunction>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Function {
     pub name: Arc<String>,
     pub params: Vec<Arc<String>>,
     pub body: Vec<crate::ast::Statement>,
     pub return_type: Option<crate::ast::Type>,
     /// Captured environment for closures (None for regular functions)
+    /// Uses RwLock to allow mutable closures (closures that modify captured variables)
     #[serde(skip)]
-    pub closure_env: Option<ImHashMap<Arc<String>, Value>>,
+    pub closure_env: Option<Arc<RwLock<ImHashMap<Arc<String>, Value>>>>,
+}
+
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare everything except closure_env (RwLock can't be compared)
+        self.name == other.name
+            && self.params == other.params
+            && self.body == other.body
+            && self.return_type == other.return_type
+    }
 }
 
 #[derive(Clone)]
