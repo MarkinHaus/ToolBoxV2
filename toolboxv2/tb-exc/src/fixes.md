@@ -1,625 +1,1863 @@
-# TB Language Compiler - Fixes und Implementierungsstatus
-
-**Datum:** 2025-10-28
-**Status:** E2E-Tests: 17/92 bestanden (18.5%)
-**Cargo-Tests:** 46/46 bestanden (100%)
-
----
-
-## Zusammenfassung der aktuellen Situation
-
-### ✅ Erfolgreich implementierte Fixes:
-
-1. **Short-circuit Evaluation für AND/OR** (`tb-jit/src/executor.rs` Zeilen 325-353)
-   - AND: Rechter Operand wird nicht evaluiert, wenn linker `false` ist
-   - OR: Rechter Operand wird nicht evaluiert, wenn linker `true` ist
-   - **Problem:** Tests schlagen trotzdem fehl wegen Typ-Fehler (siehe unten)
-
-2. **Empty Return Detection** (`tb-codegen/src/rust_codegen.rs` Zeilen 1696-1770)
-   - `has_empty_return()` erkennt `return;` ohne Wert in Funktionen
-   - Setzt Rückgabetyp auf `Type::None` wenn gefunden
-   - **Problem:** Codegen generiert trotzdem falschen Code (siehe unten)
-
-3. **Scoping für Blöcke** (`tb-jit/src/executor.rs`)
-   - If-Blöcke (Zeilen 144-155): `eval_block_with_scope()`
-   - For-Loops (Zeilen 157-194): Environment save/restore
-   - While-Loops (Zeilen 196-226): Environment save/restore
-   - **Problem:** Falsch implementiert - löscht ALLE Variablen statt nur neue (siehe unten)
-
-### ❌ Kritische Probleme (nach Priorität):
-
----
-
-## 1. KRITISCH: Scoping-Bug (Variable Shadowing)
-
-### Problem:
-Die aktuelle Implementierung löscht **alle Variablen** im Block, nicht nur die **neuen Variablen**.
-
-### Erwartetes Verhalten:
-```tb
-let x = 1
-if true {
-    let x = 2  // Neues x im if-Block (shadowing)
-    print(x)   // Sollte 2 ausgeben
-}
-print(x)       // Sollte 1 ausgeben (äußeres x wiederhergestellt)
-```
-
-### Aktuelles Verhalten:
-```
-2
-2  // ❌ Falsch! Sollte 1 sein
-```
-
-### Ursache:
-```rust
-// tb-jit/src/executor.rs, Zeilen 454-466
-fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
-    let saved_env = self.env.clone();  // Speichert ALLE Variablen
-    let result = self.eval_block(stmts);
-    self.env = saved_env;  // ❌ Stellt ALLE Variablen wieder her
-    result
-}
-```
-
-Das Problem: Wenn `let x = 2` im Block ausgeführt wird, überschreibt es das äußere `x` in `self.env`. Beim Wiederherstellen wird das äußere `x` wiederhergestellt, aber das ist **zufällig korrekt** nur wenn keine Änderungen am äußeren `x` gemacht wurden.
-
-### Korrekte Lösung:
-
-**Option A: Scope-Stack (empfohlen)**
-```rust
-// In Executor struct
-scopes: Vec<ImHashMap<Arc<String>, Value>>,  // Stack von Scopes
-
-// Bei Block-Eintritt
-fn enter_scope(&mut self) {
-    self.scopes.push(self.env.clone());
-}
-
-// Bei Block-Austritt
-fn exit_scope(&mut self) {
-    if let Some(parent_scope) = self.scopes.pop() {
-        self.env = parent_scope;
-    }
-}
-
-// Bei Variable-Lookup
-fn get_variable(&self, name: &Arc<String>) -> Option<&Value> {
-    // Suche von innen nach außen
-    self.env.get(name)
-        .or_else(|| {
-            self.scopes.iter().rev()
-                .find_map(|scope| scope.get(name))
-        })
-}
-```
-
-**Option B: Tracking von neuen Variablen**
-```rust
-fn eval_block_with_scope(&mut self, stmts: &[Statement]) -> Result<Value> {
-    let keys_before: HashSet<_> = self.env.keys().cloned().collect();
-    let result = self.eval_block(stmts);
-
-    // Nur neue Variablen löschen
-    let keys_after: HashSet<_> = self.env.keys().cloned().collect();
-    for new_key in keys_after.difference(&keys_before) {
-        self.env.remove(new_key);
-    }
-
-    result
-}
-```
-
-### Betroffene Tests:
-- `Variable shadowing in scope` (jit + compiled)
-- `Variable Declaration and Scope` (jit + compiled)
-- `Scope - nested blocks` (jit + compiled)
-
----
-
-## 2. KRITISCH: Short-Circuit Evaluation Typ-Fehler
-
-### Problem:
-Short-circuit ist implementiert, aber Tests schlagen fehl mit:
-```
-Type error: Logical operations require bool, got Bool and None
-```
-
-### Ursache:
-Der Typ-Checker in `tb-types/src/checker.rs` prüft den Typ des rechten Operanden, **bevor** die Short-Circuit-Logik greift.
-
-### Beispiel-Test:
-```tb
-fn should_not_be_called() {
-    print("ERROR: Function was called!")
-    return false
-}
-
-let result = false && should_not_be_called()
-```
-
-### Erwartetes Verhalten:
-- `false &&` → Short-circuit, Funktion wird nicht aufgerufen
-- Ausgabe: (nichts)
-
-### Aktuelles Verhalten:
-- Typ-Checker prüft `should_not_be_called()` → Rückgabetyp `None` (weil `return false` nicht erkannt wird)
-- Fehler: `Logical operations require bool, got Bool and None`
-
-### Lösung:
-1. **Typ-Checker anpassen** (`tb-types/src/checker.rs`):
-   - Bei AND/OR: Rechten Operanden nur prüfen wenn nötig
-   - Oder: Typ-Fehler nur als Warning, nicht als Error
-
-2. **Return-Type-Inference fixen** (`tb-codegen/src/rust_codegen.rs`):
-   - `has_empty_return()` ist implementiert, aber wird nicht korrekt verwendet
-   - Funktionen mit `return false` sollten Typ `Bool` haben, nicht `None`
-
-### Betroffene Tests:
-- `Short-circuit AND evaluation` (jit + compiled)
-- `Short-circuit OR evaluation` (jit + compiled)
-
----
-
-## 3. KRITISCH: Closure Capturing
-
-### Problem:
-Lambdas erfassen keine äußeren Variablen.
-
-### Beispiel:
-```tb
-let outer = 100
-let f = || {
-    return outer  // ❌ `outer` ist nicht verfügbar
-}
-print(f())  // Fehler: Undefined variable: outer
-```
-
-### Ursache:
-Die `Function`-Struktur hat ein `closure_env`-Feld, aber:
-1. Es wird beim Erstellen von Lambdas nicht gesetzt
-2. Es wird beim Aufrufen nicht verwendet
-
-### Lösung:
-**In `tb-jit/src/executor.rs`:**
-
-```rust
-// Bei Lambda-Erstellung (Expression::Lambda)
-Expression::Lambda { params, body, .. } => {
-    Ok(Value::Function(Function {
-        name: Arc::new("<lambda>".to_string()),
-        params: params.clone(),
-        body: body.clone(),
-        closure_env: Some(self.env.clone()),  // ✅ Erfasse aktuelle Umgebung
-    }))
-}
-
-// Bei Funktionsaufruf (call_function)
-fn call_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value> {
-    // Speichere aktuelle Umgebung
-    let saved_env = self.env.clone();
-
-    // Verwende Closure-Umgebung als Basis, falls vorhanden
-    if let Some(closure_env) = &func.closure_env {
-        self.env = closure_env.clone();  // ✅ Starte mit Closure-Umgebung
-    } else {
-        self.env = ImHashMap::new();  // Leere Umgebung für normale Funktionen
-    }
-
-    // Füge Parameter hinzu
-    for (param, arg) in func.params.iter().zip(args.iter()) {
-        self.env.insert(param.name.clone(), arg.clone());
-    }
-
-    // Führe Funktion aus
-    let result = self.eval_block(&func.body);
-
-    // Stelle Umgebung wieder her
-    self.env = saved_env;
-
-    result
-}
-```
-
-### Betroffene Tests:
-- `Closure capturing variable` (jit + compiled)
-- `Function - returning function` (jit + compiled)
-- `Functions and Closures` (jit + compiled)
-- `Scope - closure captures outer scope` (jit + compiled)
-- `Complex program - closure with state` (jit + compiled)
-
----
-
-## Detaillierte Fehleranalyse und Lösungsvorschläge
-
-Hier sind die priorisierten Korrekturvorschläge, geordnet nach den von Ihnen genannten Schwerpunkten.
-
-#### 1. Typen und deren Laufzeit-Repräsentation
-
-##### Problem 1.1: Typinferenz von `None` im kompilierten Code
-
-*   **Fehler:** `Builtin - type_of for all types [compiled]` schlägt fehl mit `error[E0282]: type annotations needed` bei `type_of(&None)`.
-*   **Hypothese:** Der Rust-Compiler kann den generischen Typ `T` in `Option<T>` für einen literalen `None`-Wert nicht ohne Kontext ableiten. Der Codegenerator erzeugt `type_of(&None)`, was zu diesem Kompilierungsfehler führt.
-*   **Vorgeschlagene Lösung:** Passen Sie den Codegenerator in `tb-codegen/src/rust_codegen.rs` an, um für `None`-Literale einen expliziten Typ zu deklarieren, der für den Kontext irrelevant ist, aber die Kompilierung ermöglicht.
-    ```rust
-    // Generierter Code für type_of(None) sollte so aussehen:
-    type_of(&Option::<()>::None) // Option mit dem leeren Typ ()
-    ```
-    Alternativ kann die `type_of`-Funktion in `tb-runtime` so überladen werden, dass sie `Option` speziell behandelt.
-
-##### Problem 1.2: Falsche Typ-Darstellung bei `type_of`
-
-*   **Fehler:** `List constructor [compiled]` gibt den internen Rust-Typ `alloc::vec::Vec<tb_runtime::DictValue>` anstelle des erwarteten Strings `"list"` aus.
-*   **Hypothese:** Die `type_of`-Funktion im `tb-runtime` verwendet `std::any::type_name::<T>()`, was für die Fehlersuche nützlich ist, aber nicht die vom Benutzer erwarteten Typnamen der TB-Sprache liefert.
-*   **Vorgeschlagene Lösung:** Implementieren Sie eine robustere `type_of`-Funktion in `tb-runtime/src/lib.rs`, die den Wert zur Laufzeit prüft und die korrekten TB-Typnamen zurückgibt.
-    ```rust
-    // In tb-runtime/src/lib.rs
-    pub fn type_of(value: &DictValue) -> String {
-        match value {
-            DictValue::Int(_) => "int".to_string(),
-            DictValue::Float(_) => "float".to_string(),
-            DictValue::String(_) => "string".to_string(),
-            DictValue::Bool(_) => "bool".to_string(),
-            DictValue::List(_) => "list".to_string(),
-            DictValue::Dict(_) => "dict".to_string(),
-        }
-    }
-    ```
-    Der Codegenerator muss sicherstellen, dass diese Funktion für `type_of`-Aufrufe verwendet wird.
-
----
-
-#### 2. Funktionen und Lambdas
-
-##### Problem 2.1: Fehlerhafte Closure-Umgebung (Capturing)
-
-*   **Fehler:** `Closure capturing variable [jit]` und `Function - returning function [jit]` schlagen fehl mit `Type error: Cannot call non-function type None`.
-*   **Hypothese:** Dies ist ein kritisches Problem mit dem lexikalischen Gültigkeitsbereich (lexical scoping). Wenn eine Lambda-Funktion erstellt wird, erfasst (`capturing`) sie nicht die Umgebung (die zu diesem Zeitpunkt sichtbaren Variablen), in der sie definiert wurde. Wenn sie später außerhalb dieses Bereichs aufgerufen wird, sind die Variablen "verloren".
-*   **Vorgeschlagene Lösung:**
-    1.  **AST-Anpassung:** Erweitern Sie die `Function`-Struktur in `tb-core/src/ast.rs` um ein optionales Feld für die Closure-Umgebung: `closure_env: Option<ImHashMap<Arc<String>, Value>>`.
-    2.  **JIT-Executor anpassen (`tb-jit/src/executor.rs`):**
-        *   Beim Auswerten eines `Expression::Lambda`-Knotens, klonen Sie die *aktuelle Umgebung* (`self.env.clone()`) und speichern Sie sie im `closure_env`-Feld des neuen `Value::Function`.
-        *   In der `call_function`-Methode: Wenn die aufgerufene Funktion ein `closure_env` besitzt, verwenden Sie **diese Umgebung** als Basis für den neuen Ausführungskontext, anstatt der Umgebung des Aufrufers.
-
-##### Problem 2.2: Falscher Rückgabetyp für `None`
-
-*   **Fehler:** `Function returning None [compiled]` schlägt fehl mit `mismatched types: expected 'String', found 'Option<_>'`.
-*   **Hypothese:** Der Codegenerator leitet fälschlicherweise den Rückgabetyp `String` für eine Funktion ab, die `None` zurückgibt. Ein `None` in TB sollte in Rust zu `()` (dem "unit type") oder einem `Option`-Typ führen, aber nicht zu `String`.
-*   **Vorgeschlagene Lösung:** Korrigieren Sie die Typherleitung für Rückgabewerte in `tb-codegen/src/rust_codegen.rs`. Der Codegenerator muss erkennen, wenn eine Funktion implizit oder explizit `None` zurückgibt, und den Rust-Funktions-Rückgabetyp korrekt als `()` oder einen passenden `Option`-Typ deklarieren.
-
----
-
-## 4. HOCH: Range-Syntax in For-Loops
-
-### Problem:
-Parser unterstützt `for i in 1..5` und `for i in 1..=5` nicht.
-
-### Beispiel:
-```tb
-for i in 1..5 {  // ❌ Syntax error: Expected LBrace, found DotDot
-    print(i)
-}
-```
-
-### Ursache:
-Der Lexer tokenisiert `..` als `DotDot` und `..=` als `DotDotEq`, aber der Parser erwartet in `parse_for` einen allgemeinen Ausdruck, nicht speziell eine Range.
-
-### Lösung:
-
-**Option A: Range-Expression im AST**
-```rust
-// In tb-core/src/ast.rs, Expression enum
-Range {
-    start: Box<Expression>,
-    end: Box<Expression>,
-    inclusive: bool,
-    span: Span,
-}
-```
-
-**Option B: Desugaring zu range()-Funktion**
-```rust
-// In tb-parser/src/parser.rs, parse_for
-fn parse_for(&mut self) -> Result<Statement> {
-    // ...
-    let iterable = if self.peek_token() == Some(&Token::DotDot)
-                   || self.peek_token() == Some(&Token::DotDotEq) {
-        // Parse range syntax: start..end oder start..=end
-        let start = self.parse_expression()?;
-        let inclusive = self.consume_token() == Token::DotDotEq;
-        let end = self.parse_expression()?;
-
-        // Desugar zu range(start, end) oder range(start, end, 1)
-        Expression::Call {
-            function: Box::new(Expression::Ident(Arc::new("range".to_string()), span)),
-            args: vec![start, end],
-            span,
-        }
-    } else {
-        self.parse_expression()?
-    };
-    // ...
-}
-```
-
-### Betroffene Tests:
-- `Range - exclusive end` (jit + compiled)
-- `Range - inclusive end` (jit + compiled)
-
----
-
-## 5. HOCH: Codegen Type Inference Probleme
-
-### Problem 5.1: `type_of(&None)` Kompilierungsfehler
-
-**Fehler:**
-```rust
+
+[----------------------------------------] 6/332 (1.8%)
+[Arrow Functions]
+  Testing: arrow function - with block [     jit] OK (20ms)
+  Testing: arrow function - with block [compiled] FAIL (compile: 2114ms/2115ms)
+[=---------------------------------------] 16/332 (4.8%)
+[Builtins]
+  Testing: Builtin - type_of for all types [     jit] OK (20ms)
+  Testing: Builtin - type_of for all types [compiled] FAIL (compile: 144ms/145ms)
+[=====-----------------------------------] 43/332 (13.0%)
+[Cache - String Interning]
+  Testing: Cache: String interning statistics [     jit] FAIL (20ms)
+  Testing: Cache: String interning statistics [compiled] OK (669ms/934ms)
+[=====-----------------------------------] 46/332 (13.9%)
+[Functions]
+  Testing: Closure capturing variable [     jit] OK (21ms)
+  Testing: Closure capturing variable [compiled] FAIL (compile: 342ms/342ms)
+[======----------------------------------] 50/332 (15.1%)
+[Integration]
+  Testing: Complex program - closure with state [     jit] FAIL (21ms)
+  Testing: Complex program - closure with state [compiled] FAIL (compile: 437ms/438ms)
+  Testing: Complex program - fibonacci [     jit] FAIL (468ms)
+  Testing: Complex program - fibonacci [compiled] FAIL (compile: 14ms/15ms)
+  Testing: Complex program - match with ranges [     jit] FAIL (123ms)
+  Testing: Complex program - match with ranges [compiled] FAIL (compile: 14ms/16ms)
+  Testing: Complex program - nested data structures [     jit] OK (22ms)
+  Testing: Complex program - nested data structures [compiled] FAIL (compile: 711ms/712ms)
+  Testing: Complex program - recursive list sum [     jit] FAIL (118ms)
+  Testing: Complex program - recursive list sum [compiled] FAIL (compile: 13ms/14ms)
+  Testing: Complex program - string manipulation [     jit] OK (21ms)
+  Testing: Complex program - string manipulation [compiled] FAIL (compile: 601ms/601ms)
+[=======---------------------------------] 63/332 (19.0%)
+[Control]
+  Testing: Control Flow [     jit] FAIL (183ms)
+  Testing: Control Flow [compiled] FAIL (compile: 13ms/2907ms)
+[========--------------------------------] 72/332 (21.7%)
+[Dictionaries]
+  Testing: Dict iteration over keys [     jit] FAIL (19ms)
+  Testing: Dict iteration over keys [compiled] FAIL (1031ms/1440ms)
+[=========-------------------------------] 80/332 (24.1%)
+[Error Handling]
+  Testing: Division by zero [     jit] OK (162ms)
+  Testing: Division by zero [compiled] FAIL (409ms/881ms)
+[=========-------------------------------] 82/332 (24.7%)
+[EdgeCases]
+  Testing: Edge case - empty function body [     jit] OK (21ms)
+  Testing: Edge case - empty function body [compiled] FAIL (compile: 182ms/183ms)
+[===========-----------------------------] 94/332 (28.3%)
+[Literals]
+  Testing: Empty list literal [     jit] OK (21ms)
+  Testing: Empty list literal [compiled] FAIL (compile: 160ms/161ms)
+[===========-----------------------------] 98/332 (29.5%)
+[Errors]
+  Testing: Error - division by zero [     jit] OK (153ms)
+  Testing: Error - division by zero [compiled] FAIL (593ms/1132ms)
+  Testing: Error Handling [     jit] OK (682ms)32 (29.8%)
+  Testing: Error Handling [compiled] FAIL (500ms/1126ms)
+[============----------------------------] 107/332 (32.2%)
+[IO]
+  Testing: File I/O [     jit] OK (218ms)
+  Testing: File I/O [compiled] FAIL (971ms/5767ms)
+[=============---------------------------] 113/332 (34.0%)
+[Basic]
+  Testing: Float arithmetic [     jit] FAIL (158ms)
+  Testing: Float arithmetic [compiled] OK (515ms/1007ms)
+[===============-------------------------] 125/332 (37.7%)
+[Functions]
+  Testing: Function returning None [     jit] OK (23ms)
+  Testing: Function returning None [compiled] FAIL (compile: 212ms/213ms)
+[===============-------------------------] 128/332 (38.6%)
+[AdvancedFunctions]
+  Testing: Function - returning function [     jit] OK (23ms)
+  Testing: Function - returning function [compiled] FAIL (compile: 207ms/208ms)
+[===============-------------------------] 130/332 (39.2%)
+[Functions]
+  Testing: Functions and Closures [     jit] OK (63ms)
+  Testing: Functions and Closures [compiled] FAIL (compile: 306ms/2568ms)
+[=================-----------------------] 147/332 (44.3%)
+[Arrow Functions]
+  Testing: inline function syntax - with map [     jit] FAIL (25ms)
+  Testing: inline function syntax - with map [compiled] FAIL (compile: 254ms/255ms)
+[===================---------------------] 158/332 (47.6%)
+[Integration]
+  Testing: Integration: Quicksort algorithm [     jit] FAIL (26ms)
+  Testing: Integration: Quicksort algorithm [compiled] OK (889ms/1390ms)
+[====================--------------------] 166/332 (50.0%)
+[Serialization]
+  Testing: JSON and YAML Operations [     jit] OK (167ms)
+  Testing: JSON and YAML Operations [compiled] FAIL (535ms/6345ms)
+[====================--------------------] 168/332 (50.6%)
+[AdvancedFunctions]
+  Testing: function - as function argument [     jit] FAIL (166ms)
+  Testing: function - as function argument [compiled] FAIL (compile: 18ms/19ms)
+[====================--------------------] 171/332 (51.5%)
+[Functions]
+  Testing: Lambda traditional syntax [     jit] OK (22ms)
+  Testing: Lambda traditional syntax [compiled] FAIL (compile: 1063ms/1064ms)
+[=====================-------------------] 176/332 (53.0%)
+[Types]
+  Testing: List constructor [     jit] OK (22ms)
+  Testing: List constructor [compiled] FAIL (398ms/708ms)
+[======================------------------] 186/332 (56.0%)
+[Lists]
+  Testing: Pop from list [     jit] OK (21ms)
+  Testing: Pop from list [compiled] FAIL (361ms/646ms)
+[======================------------------] 188/332 (56.6%)
+[Fundamentals]
+  Testing: Literals and Basic Types [     jit] OK (194ms)
+  Testing: Literals and Basic Types [compiled] FAIL (compile: 161ms/162ms)
+[==========================--------------] 216/332 (65.1%)
+[Lists]
+  Testing: Nested lists [     jit] OK (20ms)
+  Testing: Nested lists [compiled] FAIL (compile: 185ms/187ms)
+[==========================--------------] 219/332 (66.0%)
+[Literals]
+  Testing: None literal [     jit] OK (20ms)
+  Testing: None literal [compiled] FAIL (compile: 147ms/148ms)
+[==============================----------] 254/332 (76.5%)
+[Builtins]
+  Testing: pop function [     jit] OK (22ms)
+  Testing: pop function [compiled] FAIL (compile: 171ms/172ms)
+[=================================-------] 274/332 (82.5%)
+[RealWorld]
+  Testing: Real program - grade calculator [     jit] FAIL (145ms)
+  Testing: Real program - grade calculator [compiled] FAIL (compile: 193ms/194ms)
+  Testing: Real program - text processing [     jit] OK (21ms)
+  Testing: Real program - text processing [compiled] FAIL (compile: 164ms/165ms)
+[=================================-------] 277/332 (83.4%)
+[Recursion]
+  Testing: Recursion - sum of list [     jit] OK (19ms)
+  Testing: Recursion - sum of list [compiled] FAIL (compile: 171ms/172ms)
+[==================================------] 285/332 (85.8%)
+[Scope]
+  Testing: Scope - nested blocks [     jit] FAIL (20ms)
+  Testing: Scope - nested blocks [compiled] FAIL (389ms/730ms)
+[====================================----] 307/332 (92.5%)
+[Truthiness]
+  Testing: Truthiness - None is falsy [     jit] OK (20ms)
+  Testing: Truthiness - None is falsy [compiled] FAIL (compile: 166ms/167ms)
+[=======================================-] 325/332 (97.9%)
+[Variables]
+  Testing: Variable shadowing in scope [     jit] FAIL (20ms)
+  Testing: Variable shadowing in scope [compiled] FAIL (472ms/821ms)
+[=======================================-] 327/332 (98.5%)
+[Fundamentals]
+  Testing: Variable Declaration and Scope [     jit] FAIL (42ms)
+  Testing: Variable Declaration and Scope [compiled] FAIL (787ms/1961ms)
+[========================================] 332/332 (100.0%)
+
+================================================================================
+TEST SUMMARY
+================================================================================
+FAILED - 52 of 80 tests failed
+OK - 28 passed
+
+Total time: 41805.14ms
+JIT avg time: 80.68ms
+Compiled avg time: 1110.50ms (compile: 418.46ms, exec: 690.97ms)
+
+Failed tests:
+  - arrow function - with block (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+   Compiling tb-runtime v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime)
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:17:11
+    |
+ 17 |     print(&triple(4));
+    |     ----- ^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:18:11
+    |
+ 18 |     print(&triple(7));
+    |     ----- ^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 2 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Builtin - type_of for all types (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
 error[E0282]: type annotations needed
   --> src\main.rs:19:21
    |
 19 |     print(&type_of(&None));
-   |                     ^^^^ cannot infer type of the type parameter `T`
-```
-
-**Lösung:**
-```rust
-// In tb-codegen/src/rust_codegen.rs, generate_expression
-Expression::Literal(Literal::None, _) => {
-    // Wenn in type_of()-Kontext, generiere Option::<()>::None
-    if self.in_type_of_context {
-        write!(self.buffer, "Option::<()>::None")?;
-    } else {
-        write!(self.buffer, "None")?;
-    }
-}
-```
-
-### Problem 5.2: `type_of` gibt Rust-Typen zurück statt TB-Typen
-
-**Fehler:**
-```
-Expected: "list"
-Actual: "alloc::vec::Vec<tb_runtime::DictValue>"
-```
-
-**Lösung:**
-```rust
-// In tb-runtime/src/lib.rs
-pub fn type_of_int(_: &i64) -> String { "int".to_string() }
-pub fn type_of_float(_: &f64) -> String { "float".to_string() }
-pub fn type_of_string(_: &String) -> String { "string".to_string() }
-pub fn type_of_bool(_: &bool) -> String { "bool".to_string() }
-pub fn type_of_list<T>(_: &Vec<T>) -> String { "list".to_string() }
-pub fn type_of_dict<K, V>(_: &HashMap<K, V>) -> String { "dict".to_string() }
-pub fn type_of_none<T>(_: &Option<T>) -> String { "none".to_string() }
-pub fn type_of_unit(_: &()) -> String { "none".to_string() }
-```
-
-**Codegen muss typ-spezifische Funktionen verwenden:**
-```rust
-// Statt: type_of(&value)
-// Generiere: type_of_int(&value) oder type_of_list(&value) etc.
-```
-
-### Problem 5.3: Funktionen mit `return;` generieren falschen Code
-
-**Fehler:**
-```rust
-error[E0069]: `return;` in a function whose return type is not `()`
-  --> src\main.rs:16:13
+   |                     ^^^^ cannot infer type of the type parameter `T` declared on the enum `Option`
    |
-13 |     fn countdown(n: i64) -> String {
-   |                             ------ expected `String` because of this return type
-...
-16 |             return;
-   |             ^^^^^^ return type is not `()`
-```
+help: consider specifying the generic argument
+   |
+19 |     print(&type_of(&None::<T>));
+   |                         +++++
 
-**Ursache:**
-`has_empty_return()` ist implementiert, aber die Funktion hat trotzdem einen Rückgabetyp `String` (vom letzten Statement inferiert).
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
 
-**Lösung:**
-```rust
-// In tb-codegen/src/rust_codegen.rs, generate_statement für Function
-let ret_ty = if let Some(ty) = return_type {
-    // Expliziter Rückgabetyp
-    ty.clone()
-} else {
-    // ✅ FIX: Prüfe auf empty return ZUERST
-    if self.has_empty_return(body) {
-        Type::None  // Funktion gibt nichts zurück
-    } else {
-        self.infer_return_type(body)?  // Inferiere von letztem Statement
-    }
-};
-```
 
-### Betroffene Tests:
-- `Builtin - type_of for all types` (compiled)
-- `List constructor` (compiled)
-- `Recursion - countdown` (compiled)
-- `Function returning None` (compiled)
+════════════════════════════════════════════════════════════════════════════════
 
----
 
-## 6. MITTEL: Parser-Erweiterungen
+  - Cache: String interning statistics (jit)
+    Output mismatch:
+Expected: '3'
+Got: '0'
+  - Closure capturing variable (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
 
-### Problem 6.1: `if` als Expression
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
 
-**Fehler:**
-```
-Syntax error at 2:9: Unexpected token: If
-```
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
 
-**Beispiel:**
-```tb
-let x = if true { 1 } else { 2 }  // ❌ Parser erkennt if nicht als Expression
-```
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
 
-**Lösung:**
-```rust
-// In tb-core/src/ast.rs, Expression enum
-IfElse {
-    condition: Box<Expression>,
-    then_branch: Box<Expression>,
-    else_branch: Box<Expression>,  // MUSS vorhanden sein!
-    span: Span,
-}
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:17:17
+   |
+17 |     print(&add5(10));
+   |            ---- ^^ expected `String`, found integer
+   |            |
+   |            arguments to this function are incorrect
+   |
+help: try using a conversion method
+   |
+17 |     print(&add5(10.to_string()));
+   |                   ++++++++++++
 
-// In tb-parser/src/parser.rs, parse_primary
-fn parse_primary(&mut self) -> Result<Expression> {
-    match self.current_token() {
-        Token::If => self.parse_if_expression(),
-        // ...
-    }
-}
+error[E0308]: mismatched types
+  --> src\main.rs:14:25
+   |
+14 |         return |x| (x + n);
+   |                         ^ expected `&str`, found `i64`
 
-fn parse_if_expression(&mut self) -> Result<Expression> {
-    self.consume(Token::If)?;
-    let condition = self.parse_expression()?;
-    let then_branch = self.parse_block_expression()?;
-    self.consume(Token::Else)?;  // else ist PFLICHT für if-expression
-    let else_branch = self.parse_block_expression()?;
+error[E0308]: mismatched types
+  --> src\main.rs:14:20
+   |
+14 |         return |x| (x + n);
+   |                    ^^^^^^^ expected `i64`, found `String`
 
-    Ok(Expression::IfElse { condition, then_branch, else_branch, span })
-}
-```
+error[E0308]: mismatched types
+  --> src\main.rs:14:16
+   |
+13 |     fn make_adder(n: i64) -> fn(String) -> i64 {
+   |                              ----------------- expected `fn(std::string::String) -> i64` because of return type
+14 |         return |x| (x + n);
+   |                ^^^^^^^^^^^ expected fn pointer, found closure
+   |
+   = note: expected fn pointer `fn(std::string::String) -> i64`
+                 found closure `{closure@src\main.rs:14:16: 14:19}`
+note: closures can only be coerced to `fn` types if they do not capture any variables
+  --> src\main.rs:14:25
+   |
+14 |         return |x| (x + n);
+   |                         ^ `n` captured here
 
-### Problem 6.2: Dict-Mutation
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 4 previous errors
 
-**Fehler:**
-```
-Syntax error at 3:9: Unexpected token: Eq
-```
 
-**Beispiel:**
-```tb
-let d = {"a": 1}
-d["a"] = 2  // ❌ Parser erkennt Index-Assignment nicht
-```
+════════════════════════════════════════════════════════════════════════════════
 
-**Lösung:**
-Erfordert neue Statement-Variante:
-```rust
-// In tb-core/src/ast.rs, Statement enum
-IndexAssignment {
-    object: Expression,
-    index: Expression,
-    value: Expression,
-    span: Span,
-}
-```
 
-### Betroffene Tests:
-- `Expression - if returns value` (jit + compiled)
-- `Control Flow` (jit + compiled)
-- `Dict modification` (jit + compiled)
+  - Complex program - closure with state (jit)
+    Output does not contain '1
+2
+3':
+1
+1
+1
 
----
+  - Complex program - closure with state (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
 
-## 7. MITTEL: Listenoperationen (push/pop)
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
 
-### Problem:
-`push` und `pop` sind pure Funktionen (geben neue Liste zurück), aber Tests erwarten In-Place-Mutation.
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
 
-### Beispiel:
-```tb
-let my_list = [1, 2]
-push(my_list, 3)
-print(my_list)  // Erwartet: [1, 2, 3], Aktuell: [1, 2]
-```
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
 
-### Lösung:
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:17:32
+   |
+17 |                         return count;
+   |                                ^^^^^ expected `String`, found integer
+   |
+note: return type inferred to be `std::string::String` here
+  --> src\main.rs:17:32
+   |
+17 |                         return count;
+   |                                ^^^^^
+help: try using a conversion method
+   |
+17 |                         return count.to_string();
+   |                                     ++++++++++++
 
-**Option A: Tests anpassen (empfohlen)**
-```tb
-let my_list = [1, 2]
-my_list = push(my_list, 3)  // ✅ Ergebnis zuweisen
-print(my_list)  // [1, 2, 3]
-```
+error[E0308]: mismatched types
+  --> src\main.rs:15:16
+   |
+13 |       fn make_counter() -> fn() -> String {
+   |                            -------------- expected `fn() -> std::string::String` because of return type
+14 |           let count = 0;
+15 |           return || {
+   |  ________________^
+16 | |                         count = (count + 1);
+17 | |                         return count;
+18 | |         };
+   | |_________^ expected fn pointer, found closure
+   |
+   = note: expected fn pointer `fn() -> std::string::String`
+                 found closure `{closure@src\main.rs:15:16: 15:18}`
+note: closures can only be coerced to `fn` types if they do not capture any variables
+  --> src\main.rs:16:34
+   |
+16 |                         count = (count + 1);
+   |                                  ^^^^^ `count` captured here
 
-**Option B: In-Place-Mutation implementieren**
-- Erfordert mutable References in TB
-- Komplexe Änderung am Typ-System
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 2 previous errors
 
-### Betroffene Tests:
-- `Push to list` (jit + compiled)
-- `Pop from list` (jit + compiled)
 
----
+════════════════════════════════════════════════════════════════════════════════
 
-## 8. NIEDRIG: Weitere Probleme
 
-### 8.1: Float Modulo
-**Fehler:** `Runtime error: Invalid modulo operation`
-**Lösung:** Implementiere Modulo für Float-Typen
+  - Complex program - fibonacci (jit)
+    Execution failed:
+Error: Type error: Cannot apply Add to types None and None
 
-### 8.2: Import-System
-**Fehler:** `Undefined variable: mymod`
-**Lösung:** Import-System ist nicht implementiert
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
 
-### 8.3: Pattern Matching
-**Fehler:** `Type error: Pattern type Int doesn't match value type Generic("n")`
-**Lösung:** Pattern-Matching-Typ-Inferenz verbessern
+  - Complex program - fibonacci (compiled)
+    Execution failed:
 
----
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
 
-## Implementierungsplan (Priorität)
+Type Error: Cannot apply Add to types None and None
 
-### Phase 1: Kritische Fixes (1-2 Tage)
-1. ✅ Short-circuit Evaluation (implementiert, aber Typ-Fehler)
-2. ❌ Scoping-Bug fixen (Option A: Scope-Stack)
-3. ❌ Closure Capturing implementieren
-4. ❌ Short-circuit Typ-Fehler fixen
+════════════════════════════════════════════════════════════════════════════════
 
-### Phase 2: Codegen-Fixes (1 Tag)
-5. ❌ `type_of(&None)` fixen
-6. ❌ `type_of` TB-Typen zurückgeben
-7. ❌ `return;` in Funktionen fixen
 
-### Phase 3: Parser-Erweiterungen (2-3 Tage)
-8. ❌ Range-Syntax in for-loops
-9. ❌ `if` als Expression
-10. ❌ Dict-Mutation
+  - Complex program - match with ranges (jit)
+    Execution failed:
+Error: Type error: Pattern type Int doesn't match value type Generic("n")
 
-### Phase 4: Weitere Fixes (1-2 Tage)
-11. ❌ Float Modulo
-12. ❌ Import-System
-13. ❌ Pattern Matching
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
 
----
+  - Complex program - match with ranges (compiled)
+    Execution failed:
 
-## Test-Statistiken
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
 
-### Aktuelle E2E-Test-Ergebnisse (17/92 bestanden):
+Type Error: Pattern type Int doesn't match value type Generic("n")
 
-**Bestanden (17):**
-- Builtin - type_of for all types (jit)
-- Complex program - nested data structures (jit)
-- Complex program - string manipulation (jit)
-- Edge case - empty function body (jit)
-- Empty list literal (jit)
-- File I/O (jit)
-- Float arithmetic (compiled)
-- Function returning None (jit)
-- List constructor (jit)
-- Literals and Basic Types (jit)
-- Nested lists (jit)
-- None literal (jit)
-- Real program - grade calculator (jit)
-- Real program - text processing (jit)
-- Recursion - countdown (jit)
-- Truthiness - None is falsy (jit)
+Location:
+  File: C:\Users\Markin\AppData\Local\Temp\tmp5w2z8jfg.tbx
+  Line: 3, Column: 12
 
-**Fehlgeschlagen (75):**
-- Alle Closure/Lambda-Tests (Capturing nicht implementiert)
-- Alle Scoping-Tests (Scoping-Bug)
-- Alle Short-circuit-Tests (Typ-Fehler)
-- Alle Range-Tests (Parser unterstützt nicht)
-- Alle if-as-expression-Tests (Parser unterstützt nicht)
-- Alle Dict-Mutation-Tests (Parser unterstützt nicht)
-- Viele Codegen-Tests (Typ-Inferenz-Probleme)
+   2 | fn classify(n) {
+   3 |     return match n {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   4 |         0 => "zero",
 
----
+════════════════════════════════════════════════════════════════════════════════
 
-## Alte Analyse (Referenz)
+
+  - Complex program - nested data structures (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0599]: no method named `iter` found for enum `tb_runtime::DictValue` in the current scope
+  --> src\main.rs:15:78
+   |
+15 | ...   let avg = ((user.get("scores").cloned().unwrap_or(DictValue::Int(0)).iter().fold(0, |a, &x| (a + x)) as f64) / (len(user.get("score...
+   |                   ---- ------------- --------                              ^^^^ method not found in `tb_runtime::DictValue`
+   |                   |    |             |
+   |                   |    |             method `iter` is available on `Option<tb_runtime::DictValue>`
+   |                   |    method `iter` is available on `Option<&tb_runtime::DictValue>`
+   |                   method `iter` is available on `&HashMap<std::string::String, tb_runtime::DictValue>`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Complex program - recursive list sum (jit)
+    Execution failed:
+Error: Syntax error at 6:38: Expected Comma, found For
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+
+  - Complex program - recursive list sum (compiled)
+    Execution failed:
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Syntax Error: Expected Comma, found For
+
+Location:
+  File: C:\Users\Markin\AppData\Local\Temp\tmp3m43mjmd.tbx
+  Line: 6, Column: 38
+
+   5 |     }
+   6 |     return lst[0] + sum_list([lst[i] for i in range(1, len(lst))])
+     |                                      ^^^
+   7 | }
+
+Hint: Check for missing brackets, parentheses, or semicolons
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Complex program - string manipulation (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0507]: cannot move out of a shared reference
+  --> src\main.rs:14:37
+   |
+14 |     let lengths = words.iter().map(|&x| len(&x)).collect::<Vec<_>>();
+   |                                     ^-
+   |                                      |
+   |                                      data moved here
+   |                                      move occurs because `x` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider removing the borrow
+   |
+14 -     let lengths = words.iter().map(|&x| len(&x)).collect::<Vec<_>>();
+14 +     let lengths = words.iter().map(|x| len(&x)).collect::<Vec<_>>();
+   |
+
+For more information about this error, try `rustc --explain E0507`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Control Flow (jit)
+    Execution failed:
+Error: Undefined variable: x
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+
+  - Control Flow (compiled)
+    Execution failed:
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Undefined Variable: Variable 'x' is not defined
+
+Hint: Did you forget to declare 'x'? Use: let x = ...
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Dict iteration over keys (jit)
+    Output does not contain 'a
+b':
+b
+a
+
+  - Dict iteration over keys (compiled)
+    Output does not contain 'a
+b':
+b
+a
+
+  - Division by zero (compiled)
+    Expected failure but succeeded:
+
+  - Edge case - empty function body (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:15:11
+    |
+ 15 |     print(&empty());
+    |     ----- ^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Empty list literal (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `Vec<i64>` doesn't implement `std::fmt::Display`
+   --> src\main.rs:13:11
+    |
+ 13 |     print(&Vec::<i64>::new());
+    |     ----- ^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `Vec<i64>`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Error - division by zero (compiled)
+    Expected failure but succeeded:
+inf
+
+  - Error Handling (compiled)
+    Expected failure but succeeded:
+inf
+
+  - File I/O (compiled)
+    Expected failure but succeeded:
+
+  - Float arithmetic (jit)
+    Execution failed:
+[TB JIT] Starting JIT execution with 7 statements
+[TB JIT] Statement 1: Line 2 | let a = 10.5
+[TB JIT] Statement 2: Line 3 | let b = 2.5
+[TB JIT] Statement 3: Line 4 | print(a + b)
+[TB JIT] Statement 4: Line 5 | print(a - b)
+[TB JIT] Statement 5: Line 6 | print(a * b)
+[TB JIT] Statement 6: Line 7 | print(a / b)
+[TB JIT] Statement 7: Line 8 | print(a % b)
+Error: Runtime error: Invalid modulo operation
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+
+  - Function returning None (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:14:9
+   |
+13 |     fn do_nothing() -> String {
+   |                        ------ expected `std::string::String` because of return type
+14 |         None
+   |         ^^^^ expected `String`, found `Option<_>`
+   |
+   = note: expected struct `std::string::String`
+                found enum `Option<_>`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Function - returning function (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:17:19
+   |
+17 |     print(&times3(7));
+   |            ------ ^ expected `String`, found integer
+   |            |
+   |            arguments to this function are incorrect
+   |
+help: try using a conversion method
+   |
+17 |     print(&times3(7.to_string()));
+   |                    ++++++++++++
+
+error[E0369]: cannot multiply `std::string::String` by `i64`
+   --> src\main.rs:14:23
+    |
+ 14 |         return |x| (x * factor);
+    |                     - ^ ------ i64
+    |                     |
+    |                     std::string::String
+    |
+note: the foreign item type `std::string::String` doesn't implement `Mul<i64>`
+   --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\alloc\src\string.rs:360:1
+    |
+360 | pub struct String {
+    | ^^^^^^^^^^^^^^^^^ not implement `Mul<i64>`
+
+error[E0308]: mismatched types
+  --> src\main.rs:14:16
+   |
+13 |     fn multiplier(factor: i64) -> fn(String) -> i64 {
+   |                                   ----------------- expected `fn(std::string::String) -> i64` because of return type
+14 |         return |x| (x * factor);
+   |                ^^^^^^^^^^^^^^^^ expected fn pointer, found closure
+   |
+   = note: expected fn pointer `fn(std::string::String) -> i64`
+                 found closure `{closure@src\main.rs:14:16: 14:19}`
+note: closures can only be coerced to `fn` types if they do not capture any variables
+  --> src\main.rs:14:25
+   |
+14 |         return |x| (x * factor);
+   |                         ^^^^^^ `factor` captured here
+
+Some errors have detailed explanations: E0308, E0369.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Functions and Closures (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:17:17
+   |
+17 |     print(&add5(10));
+   |            ---- ^^ expected `String`, found integer
+   |            |
+   |            arguments to this function are incorrect
+   |
+help: try using a conversion method
+   |
+17 |     print(&add5(10.to_string()));
+   |                   ++++++++++++
+
+error[E0308]: mismatched types
+  --> src\main.rs:14:25
+   |
+14 |         return |x| (x + n);
+   |                         ^ expected `&str`, found `i64`
+
+error[E0308]: mismatched types
+  --> src\main.rs:14:20
+   |
+14 |         return |x| (x + n);
+   |                    ^^^^^^^ expected `i64`, found `String`
+
+error[E0308]: mismatched types
+  --> src\main.rs:14:16
+   |
+13 |     fn make_adder(n: i64) -> fn(String) -> i64 {
+   |                              ----------------- expected `fn(std::string::String) -> i64` because of return type
+14 |         return |x| (x + n);
+   |                ^^^^^^^^^^^ expected fn pointer, found closure
+   |
+   = note: expected fn pointer `fn(std::string::String) -> i64`
+                 found closure `{closure@src\main.rs:14:16: 14:19}`
+note: closures can only be coerced to `fn` types if they do not capture any variables
+  --> src\main.rs:14:25
+   |
+14 |         return |x| (x + n);
+   |                         ^ `n` captured here
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 4 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - inline function syntax - with map (jit)
+    Output mismatch:
+Expected: '5\n3\n15'
+Got: '5\nNone\nNone'
+  - inline function syntax - with map (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:19:11
+    |
+ 19 |     print(&tripled[(0 as usize)].clone());
+    |     ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:20:11
+    |
+ 20 |     print(&tripled[(4 as usize)].clone());
+    |     ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 2 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Integration: Quicksort algorithm (jit)
+    Output mismatch:
+Expected: '9'
+Got: '1'
+  - JSON and YAML Operations (compiled)
+    Expected failure but succeeded:
+
+  - function - as function argument (jit)
+    Execution failed:
+Error: Type error: Cannot call non-function type Generic("f")
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+
+  - function - as function argument (compiled)
+    Execution failed:
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Type Error: Cannot call non-function type Generic("f")
+
+Location:
+  File: C:\Users\Markin\AppData\Local\Temp\tmpyay79izn.tbx
+  Line: 3, Column: 12
+
+   2 | fn apply(f, x) {
+   3 |     return f(x)
+     |            ^^^^
+   4 | }
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Lambda traditional syntax (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+   Compiling tb-runtime v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime)
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+   --> src\main.rs:17:11
+    |
+ 17 |     print(&triple(4));
+    |     ----- ^^^^^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - List constructor (compiled)
+    Output does not contain 'list':
+alloc::vec::Vec<tb_runtime::DictValue>
+
+  - Pop from list (compiled)
+    Output does not contain '3
+[1, 2, 3]
+[1, 2]':
+2
+[1, 2, 3]
+1
+
+  - Literals and Basic Types (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0282]: type annotations needed
+  --> src\main.rs:18:21
+   |
+18 |     print(&type_of(&None));
+   |                     ^^^^ cannot infer type of the type parameter `T` declared on the enum `Option`
+   |
+help: consider specifying the generic argument
+   |
+18 |     print(&type_of(&None::<T>));
+   |                         +++++
+
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Nested lists (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0599]: no method named `as_list` found for struct `Vec<{integer}>` in the current scope
+    --> src\main.rs:14:41
+     |
+  14 |     print(&matrix[(1 as usize)].clone().as_list()[(0 as usize)].clone());
+     |                                         ^^^^^^^
+     |
+help: there is a method `split` with a similar name, but with different arguments
+    --> C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\slice\mod.rs:2238:5
+     |
+2238 | /     pub fn split<F>(&self, pred: F) -> Split<'_, T, F>
+2239 | |     where
+2240 | |         F: FnMut(&T) -> bool,
+     | |_____________________________^
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - None literal (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0277]: `Option<_>` doesn't implement `std::fmt::Display`
+   --> src\main.rs:13:11
+    |
+ 13 |     print(&None);
+    |     ----- ^^^^^ the trait `std::fmt::Display` is not implemented for `Option<_>`
+    |     |
+    |     required by a bound introduced by this call
+    |
+note: required by a bound in `tb_runtime::print`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:393:17
+    |
+393 | pub fn print<T: fmt::Display>(value: &T) {
+    |                 ^^^^^^^^^^^^ required by this bound in `print`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - pop function (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0599]: no method named `as_list` found for type `{integer}` in the current scope
+  --> src\main.rs:15:43
+   |
+15 |     print(&len(less[(0 as usize)].clone().as_list()));
+   |                                           ^^^^^^^ method not found in `{integer}`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Real program - grade calculator (jit)
+    Execution failed:
+[TB JIT] Starting JIT execution with 3 statements
+[TB JIT] Statement 1: Line 2 | fn calculate_grade(scores) {
+[TB JIT] Statement 2: Line 15 | let students = [
+[TB JIT] Statement 3: Line 21 | forEach(student => print(student.name + ": " + calculate_grade(student.scores)), students)
+Error: Runtime error: Unsupported operation: None Add string
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::win64::trace
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\win64.rs:85
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\..\..\backtrace\src\backtrace\mod.rs:66
+   2: std::backtrace::Backtrace::create
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:331
+   3: std::backtrace::Backtrace::capture
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\backtrace.rs:296
+   4: anyhow::error::impl$1::from<enum2$<tb_core::error::TBError> >
+             at C:\Users\Markin\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\anyhow-1.0.100\src\backtrace.rs:27
+   5: core::result::impl$28::from_residual<tuple$<>,enum2$<tb_core::error::TBError>,anyhow::Error>
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\result.rs:2087
+   6: tb::main
+             at .\tb-exc\src\crates\tb-cli\src\main.rs:93
+   7: core::ops::function::FnOnce::call_once<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),tuple$<> >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:253
+   8: std::sys::backtrace::__rust_begin_short_backtrace<enum2$<core::result::Result<tuple$<>,anyhow::Error> > (*)(),enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\sys\backtrace.rs:158
+   9: std::rt::lang_start::closure$0<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:206
+  10: std::rt::lang_start_internal::closure$0
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:175
+  11: std::panicking::catch_unwind::do_call
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:589
+  12: std::panicking::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panicking.rs:552
+  13: std::panic::catch_unwind
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\panic.rs:359
+  14: std::rt::lang_start_internal
+             at /rustc/1159e78c4747b02ef996e55082b704c09b970588/library\std\src\rt.rs:171
+  15: std::rt::lang_start<enum2$<core::result::Result<tuple$<>,anyhow::Error> > >
+             at C:\Users\Markin\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\std\src\rt.rs:205
+  16: main
+  17: invoke_main
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+  18: __scrt_common_main_seh
+             at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+
+  - Real program - grade calculator (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:25:158
+   |
+25 | ..._string()), calculate_grade(student.get("scores").cloned().unwrap_or(DictValue::Int(0))))), students);
+   |                --------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `i64`, found `DictValue`
+   |                |
+   |                arguments to this function are incorrect
+   |
+note: function defined here
+  --> src\main.rs:13:8
+   |
+13 |     fn calculate_grade(scores: i64) -> String {
+   |        ^^^^^^^^^^^^^^^ -----------
+
+error[E0599]: no method named `iter` found for type `i64` in the current scope
+  --> src\main.rs:14:26
+   |
+14 |         let sum = scores.iter().fold(0, |a, &x| (a + x));
+   |                          ^^^^ method not found in `i64`
+
+error[E0277]: the trait bound `i64: Len` is not satisfied
+   --> src\main.rs:15:40
+    |
+ 15 |         let avg = ((sum as f64) / (len(&scores) as f64));
+    |                                    --- ^^^^^^^ the trait `Len` is not implemented for `i64`
+    |                                    |
+    |                                    required by a bound introduced by this call
+    |
+    = help: the following other types implement trait `Len`:
+              &[T]
+              &str
+              &tb_runtime::DictValue
+              HashMap<K, V>
+              Vec<T>
+              std::string::String
+              tb_runtime::DictValue
+note: required by a bound in `tb_runtime::len`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:553:15
+    |
+553 | pub fn len<T: Len>(collection: &T) -> i64 {
+    |               ^^^ required by this bound in `len`
+
+Some errors have detailed explanations: E0277, E0308, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Real program - text processing (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0507]: cannot move out of a shared reference
+  --> src\main.rs:14:43
+   |
+14 |     let long_words = words.iter().filter(|&&w| (len(&w) > 4)).cloned().collect::<Vec<_>>();
+   |                                           ^^-
+   |                                             |
+   |                                             data moved here
+   |                                             move occurs because `w` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider removing the borrow
+   |
+14 -     let long_words = words.iter().filter(|&&w| (len(&w) > 4)).cloned().collect::<Vec<_>>();
+14 +     let long_words = words.iter().filter(|&w| (len(&w) > 4)).cloned().collect::<Vec<_>>();
+   |
+
+error[E0507]: cannot move out of a shared reference
+  --> src\main.rs:15:50
+   |
+15 |     let uppercase_first = long_words.iter().map(|&w| (w).to_string()).collect::<Vec<_>>();
+   |                                                  ^-
+   |                                                   |
+   |                                                   data moved here
+   |                                                   move occurs because `w` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider removing the borrow
+   |
+15 -     let uppercase_first = long_words.iter().map(|&w| (w).to_string()).collect::<Vec<_>>();
+15 +     let uppercase_first = long_words.iter().map(|w| (w).to_string()).collect::<Vec<_>>();
+   |
+
+error[E0507]: cannot move out of a shared reference
+  --> src\main.rs:18:15
+   |
+18 |     for_each(|&w| print(&w), long_words);
+   |               ^-
+   |                |
+   |                data moved here
+   |                move occurs because `w` has type `std::string::String`, which does not implement the `Copy` trait
+   |
+help: consider removing the borrow
+   |
+18 -     for_each(|&w| print(&w), long_words);
+18 +     for_each(|w| print(&w), long_words);
+   |
+
+For more information about this error, try `rustc --explain E0507`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Recursion - sum of list (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+DEBUG: Analyzing function body with params
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0308]: mismatched types
+  --> src\main.rs:19:26
+   |
+19 |     print(&sum_recursive(vec![1, 2, 3, 4, 5], 0));
+   |            ------------- ^^^^^^^^^^^^^^^^^^^ expected `i64`, found `Vec<{integer}>`
+   |            |
+   |            arguments to this function are incorrect
+   |
+   = note: expected type `i64`
+            found struct `Vec<{integer}>`
+note: function defined here
+  --> src\main.rs:13:8
+   |
+13 |     fn sum_recursive(lst: i64, idx: i64) -> i64 {
+   |        ^^^^^^^^^^^^^ --------
+
+error[E0277]: the trait bound `i64: Len` is not satisfied
+   --> src\main.rs:14:24
+    |
+ 14 |         if (idx >= len(&lst)) {
+    |                    --- ^^^^ the trait `Len` is not implemented for `i64`
+    |                    |
+    |                    required by a bound introduced by this call
+    |
+    = help: the following other types implement trait `Len`:
+              &[T]
+              &str
+              &tb_runtime::DictValue
+              HashMap<K, V>
+              Vec<T>
+              std::string::String
+              tb_runtime::DictValue
+note: required by a bound in `tb_runtime::len`
+   --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:553:15
+    |
+553 | pub fn len<T: Len>(collection: &T) -> i64 {
+    |               ^^^ required by this bound in `len`
+
+error[E0599]: no method named `get` found for type `i64` in the current scope
+  --> src\main.rs:17:21
+   |
+17 |         return (lst.get(&idx).cloned().unwrap_or(DictValue::Int(0)) + sum_recursive(lst, (idx + 1)));
+   |                     ^^^
+   |
+help: there is a method `ge` with a similar name
+   |
+17 -         return (lst.get(&idx).cloned().unwrap_or(DictValue::Int(0)) + sum_recursive(lst, (idx + 1)));
+17 +         return (lst.ge(&idx).cloned().unwrap_or(DictValue::Int(0)) + sum_recursive(lst, (idx + 1)));
+   |
+
+Some errors have detailed explanations: E0277, E0308, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 3 previous errors
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Scope - nested blocks (jit)
+    Output does not contain '3
+2
+1':
+3
+3
+3
+
+  - Scope - nested blocks (compiled)
+    Output does not contain '3
+2
+1':
+3
+3
+3
+
+  - Truthiness - None is falsy (compiled)
+    Execution failed:
+[TB Compiler] ✓ No networking usage detected - using minimal single-threaded runtime
+
+════════════════════════════════════════════════════════════════════════════════
+ERROR
+════════════════════════════════════════════════════════════════════════════════
+
+Runtime Error: Cargo compilation failed:
+warning: unused import: `std::collections::HashMap as StdHashMap`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:8:5
+  |
+8 | use std::collections::HashMap as StdHashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused imports: `Arc` and `RwLock`
+ --> C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\crates\tb-runtime\src\lib.rs:9:17
+  |
+9 | use std::sync::{Arc, RwLock};
+  |                 ^^^  ^^^^^^
+
+warning: `tb-runtime` (lib) generated 2 warnings (run `cargo fix --lib -p tb-runtime` to apply 2 suggestions)
+   Compiling tb-compiled v0.1.0 (C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\tb-exc\src\target\tb-compile-cache)
+error[E0282]: type annotations needed
+  --> src\main.rs:13:19
+   |
+13 |     if is_truthy(&(None)) {
+   |                   ^^^^^^ cannot infer type of the type parameter `T` declared on the enum `Option`
+   |
+help: consider specifying the generic argument
+   |
+13 |     if is_truthy(&(None::<T>)) {
+   |                        +++++
+
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `tb-compiled` (bin "tb-compiled") due to 1 previous error
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+
+  - Variable shadowing in scope (jit)
+    Output does not contain '2
+1':
+2
+2
+
+  - Variable shadowing in scope (compiled)
+    Output does not contain '2
+1':
+2
+2
+
+  - Variable Declaration and Scope (jit)
+    Output does not contain '2
+1':
+2
+2
+
+  - Variable Declaration and Scope (compiled)
+    Output does not contain '2
+1':
+2
+2

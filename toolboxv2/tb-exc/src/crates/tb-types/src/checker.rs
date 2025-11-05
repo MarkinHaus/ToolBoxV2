@@ -335,23 +335,98 @@ impl TypeChecker {
                 Ok(Type::None)
             }
 
-            Statement::Assign { name, value, span } => {
-                // Check if variable exists
-                let existing_type = self.env.lookup(name)
-                    .ok_or_else(|| TBError::undefined_variable(name.to_string()))?
-                    .clone();
-
+            Statement::Assign { target, value, span } => {
                 let value_type = self.check_expression(value)?;
 
-                // Check type compatibility
-                if !self.is_assignable(&value_type, &existing_type) {
-                    return Err(self.type_error_with_context(
-                        format!("Cannot assign {:?} to variable of type {:?}", value_type, existing_type),
-                        Some(*span)
-                    ));
-                }
+                match target {
+                    Expression::Ident(name, _) => {
+                        // Simple variable assignment
+                        let existing_type = self.env.lookup(name)
+                            .ok_or_else(|| TBError::undefined_variable(name.to_string()))?
+                            .clone();
 
-                Ok(Type::None)
+                        // Check type compatibility
+                        if !self.is_assignable(&value_type, &existing_type) {
+                            return Err(self.type_error_with_context(
+                                format!("Cannot assign {:?} to variable of type {:?}", value_type, existing_type),
+                                Some(*span)
+                            ));
+                        }
+
+                        Ok(Type::None)
+                    }
+                    Expression::Member { object, member, .. } => {
+                        // Object property assignment: obj.member = value
+                        let obj_type = self.check_expression(object)?;
+
+                        match obj_type {
+                            Type::Dict(_, val_type) => {
+                                // Check if value type is compatible with dict value type
+                                if !self.is_assignable(&value_type, &val_type) {
+                                    return Err(self.type_error_with_context(
+                                        format!("Cannot assign {:?} to dict field of type {:?}", value_type, val_type),
+                                        Some(*span)
+                                    ));
+                                }
+                                Ok(Type::None)
+                            }
+                            _ => Err(self.type_error_with_context(
+                                format!("Cannot assign property to non-dict type: {:?}", obj_type),
+                                Some(*span)
+                            ))
+                        }
+                    }
+                    Expression::Index { object, index, .. } => {
+                        // Array/dict index assignment
+                        let obj_type = self.check_expression(object)?;
+                        let idx_type = self.check_expression(index)?;
+
+                        match obj_type {
+                            Type::List(elem_type) => {
+                                // Check index is int
+                                if idx_type != Type::Int && !matches!(idx_type, Type::Any) {
+                                    return Err(self.type_error_with_context(
+                                        "List index must be int".to_string(),
+                                        Some(*span)
+                                    ));
+                                }
+                                // Check value type matches element type
+                                if !self.is_assignable(&value_type, &elem_type) {
+                                    return Err(self.type_error_with_context(
+                                        format!("Cannot assign {:?} to list of {:?}", value_type, elem_type),
+                                        Some(*span)
+                                    ));
+                                }
+                                Ok(Type::None)
+                            }
+                            Type::Dict(key_type, val_type) => {
+                                // Check key type
+                                if !self.is_assignable(&idx_type, &key_type) {
+                                    return Err(self.type_error_with_context(
+                                        format!("Dict key type mismatch: expected {:?}, got {:?}", key_type, idx_type),
+                                        Some(*span)
+                                    ));
+                                }
+                                // Check value type
+                                if !self.is_assignable(&value_type, &val_type) {
+                                    return Err(self.type_error_with_context(
+                                        format!("Cannot assign {:?} to dict of {:?}", value_type, val_type),
+                                        Some(*span)
+                                    ));
+                                }
+                                Ok(Type::None)
+                            }
+                            _ => Err(self.type_error_with_context(
+                                format!("Cannot index into type: {:?}", obj_type),
+                                Some(*span)
+                            ))
+                        }
+                    }
+                    _ => Err(self.type_error_with_context(
+                        "Invalid assignment target".to_string(),
+                        Some(*span)
+                    ))
+                }
             }
 
             Statement::Function { name, params, return_type, body, span } => {
@@ -554,8 +629,20 @@ impl TypeChecker {
                     // Check pattern matches value type
                     self.check_pattern(&arm.pattern, &value_type, *span)?;
 
-                    // Check arm body
+                    // ✅ FIX: Bind pattern variables in a new scope
+                    // Save the old environment
+                    let old_env = self.env.clone();
+
+                    // Bind pattern variable if it's an Ident
+                    if let Pattern::Ident(var_name) = &arm.pattern {
+                        self.env.define(Arc::clone(var_name), value_type.clone());
+                    }
+
+                    // Check arm body (with pattern variable in scope)
                     let arm_type = self.check_expression(&arm.body)?;
+
+                    // Restore the old environment (remove pattern variable)
+                    self.env = old_env;
 
                     // Unify with previous arms
                     if let Some(ref prev) = result_type {
@@ -794,16 +881,33 @@ impl TypeChecker {
                     ));
                 }
 
-                // Check all patterns are compatible with value type
+                // Check all patterns are compatible with value type and collect arm types
+                let mut arm_types = Vec::new();
+
                 for arm in arms {
                     self.check_pattern(&arm.pattern, &value_type, *span)?;
+
+                    // ✅ FIX: Bind pattern variables in a new scope
+                    // Save the old environment
+                    let old_env = self.env.clone();
+
+                    // Bind pattern variable if it's an Ident
+                    if let Pattern::Ident(var_name) = &arm.pattern {
+                        self.env.define(Arc::clone(var_name), value_type.clone());
+                    }
+
+                    // Check arm body (with pattern variable in scope)
+                    let arm_type = self.check_expression(&arm.body)?;
+                    arm_types.push(arm_type);
+
+                    // Restore the old environment (remove pattern variable)
+                    self.env = old_env;
                 }
 
                 // All arms should return the same type
-                let first_arm_type = self.check_expression(&arms[0].body)?;
-                for arm in &arms[1..] {
-                    let arm_type = self.check_expression(&arm.body)?;
-                    if !TypeInference::types_compatible(&first_arm_type, &arm_type) {
+                let first_arm_type = &arm_types[0];
+                for arm_type in &arm_types[1..] {
+                    if !TypeInference::types_compatible(first_arm_type, arm_type) {
                         return Err(self.type_error_with_context(
                             format!("Match arms have incompatible types: {:?} vs {:?}", first_arm_type, arm_type),
                             Some(*span)
@@ -811,10 +915,10 @@ impl TypeChecker {
                     }
                 }
 
-                Ok(first_arm_type)
+                Ok(first_arm_type.clone())
             }
 
-            Expression::Member { object, member, .. } => {
+            Expression::Member { object, .. } => {
                 let obj_type = self.check_expression(object)?;
 
                 match obj_type {
@@ -859,6 +963,34 @@ impl TypeChecker {
                     params: param_types,
                     return_type: Box::new(return_type),
                 })
+            }
+
+            Expression::Block { statements, .. } => {
+                // Create a child environment for block scope
+                let old_env = self.env.clone();
+                self.env = self.env.child();
+
+                // Check all statements and get the type of the last one
+                let mut last_type = Type::None;
+                for stmt in statements {
+                    match stmt {
+                        Statement::Expression { expr, .. } => {
+                            last_type = self.check_expression(expr)?;
+                        }
+                        Statement::Return { value: Some(expr), .. } => {
+                            last_type = self.check_expression(expr)?;
+                        }
+                        _ => {
+                            self.check_statement(stmt)?;
+                            last_type = Type::None;
+                        }
+                    }
+                }
+
+                // Restore the old environment
+                self.env = old_env;
+
+                Ok(last_type)
             }
 
             _ => Ok(Type::Generic(Arc::new("Unknown".to_string()))),

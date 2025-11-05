@@ -61,10 +61,15 @@ impl TaskExecutor {
                 Ok(Value::None)
             }
 
-            Statement::Assign { name, value, .. } => {
-                let val = self.eval_expression(value)?;
-                self.env.insert(name.clone(), val);
-                Ok(Value::None)
+            Statement::Assign { target, value, .. } => {
+                // For now, only support simple variable assignment
+                if let Expression::Ident(name, _) = target {
+                    let val = self.eval_expression(value)?;
+                    self.env.insert(name.clone(), val);
+                    Ok(Value::None)
+                } else {
+                    Err(TBError::runtime_error("Complex assignment not supported in task runtime"))
+                }
             }
 
             Statement::Return { value, .. } => {
@@ -179,7 +184,8 @@ impl TaskExecutor {
                     Value::Function(f) => {
                         // ✅ CLOSURE FIX: Use closure environment if available
                         let base_env = if let Some(ref closure_env) = f.closure_env {
-                            closure_env.clone()
+                            // Read from the RwLock
+                            closure_env.read().unwrap().clone()
                         } else {
                             self.env.clone()
                         };

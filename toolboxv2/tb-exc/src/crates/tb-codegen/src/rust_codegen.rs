@@ -237,10 +237,49 @@ impl RustCodeGenerator {
                 self.current_variable = None;
             }
 
-            Statement::Assign { name, value, .. } => {
-                write!(self.buffer, "{}{} = ", self.indent(), name)?;
-                self.generate_expression(value)?;
-                writeln!(self.buffer, ";")?;
+            Statement::Assign { target, value, .. } => {
+                match target {
+                    Expression::Ident(name, _) => {
+                        // Simple variable assignment
+                        write!(self.buffer, "{}{} = ", self.indent(), name)?;
+                        self.generate_expression(value)?;
+                        writeln!(self.buffer, ";")?;
+                    }
+                    Expression::Member { object, member, .. } => {
+                        // Object property assignment: obj.member = value
+                        // For immutable data structures, we need to clone and update
+                        if let Expression::Ident(obj_name, _) = object.as_ref() {
+                            write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp.insert(\"{}\".to_string(), ",
+                                   self.indent(), obj_name, member)?;
+                            self.generate_expression(value)?;
+                            writeln!(self.buffer, "); {} = tmp; }}", obj_name)?;
+                        } else {
+                            return Err(TBError::compilation_error(
+                                "Complex member assignment not yet supported in compiled mode"
+                            ));
+                        }
+                    }
+                    Expression::Index { object, index, .. } => {
+                        // Array/dict index assignment
+                        if let Expression::Ident(obj_name, _) = object.as_ref() {
+                            write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp[",
+                                   self.indent(), obj_name)?;
+                            self.generate_expression(index)?;
+                            write!(self.buffer, "] = ")?;
+                            self.generate_expression(value)?;
+                            writeln!(self.buffer, "; {} = tmp; }}", obj_name)?;
+                        } else {
+                            return Err(TBError::compilation_error(
+                                "Complex index assignment not yet supported in compiled mode"
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(TBError::compilation_error(
+                            "Invalid assignment target"
+                        ));
+                    }
+                }
             }
 
             Statement::Function { name, params, body, return_type, .. } => {
@@ -1595,6 +1634,28 @@ impl RustCodeGenerator {
                 write!(self.buffer, " }}")?;
             }
 
+            Expression::Block { statements, .. } => {
+                // Generate block expression: { stmt1; stmt2; ... }
+                writeln!(self.buffer, "{{")?;
+                self.indent_level += 1;
+
+                for (i, stmt) in statements.iter().enumerate() {
+                    write!(self.buffer, "{}", self.indent())?;
+                    self.generate_statement(stmt)?;
+
+                    // Don't add semicolon after the last expression statement
+                    // This makes the block return the value
+                    if i == statements.len() - 1 {
+                        if matches!(stmt, Statement::Expression { .. }) {
+                            writeln!(self.buffer)?;
+                        }
+                    }
+                }
+
+                self.indent_level -= 1;
+                write!(self.buffer, "{}}}", self.indent())?;
+            }
+
             _ => {
                 write!(self.buffer, "/* unsupported expression */")?;
             }
@@ -2028,7 +2089,7 @@ impl RustCodeGenerator {
                 // Look up variable type from tracked types
                 Ok(self.variable_types.get(name).cloned().unwrap_or(Type::Any))
             }
-            Expression::Member { object, member, .. } => {
+            Expression::Member { object, .. } => {
                 // ✅ FIX: Infer type for member access
                 // For dict member access, we need to infer the value type
                 let obj_type = self.infer_expr_type(object)?;
@@ -2066,6 +2127,18 @@ impl RustCodeGenerator {
                 let then_type = self.infer_expr_type(then_branch)?;
                 let else_type = self.infer_expr_type(else_branch)?;
                 Ok(TypeInference::least_upper_bound(&[then_type, else_type]))
+            }
+            Expression::Block { statements, .. } => {
+                // Block type is the type of the last statement
+                if let Some(last_stmt) = statements.last() {
+                    match last_stmt {
+                        Statement::Expression { expr, .. } => self.infer_expr_type(expr),
+                        Statement::Return { value: Some(expr), .. } => self.infer_expr_type(expr),
+                        _ => Ok(Type::None),
+                    }
+                } else {
+                    Ok(Type::None)
+                }
             }
             _ => Ok(Type::Any),
         }
@@ -2291,6 +2364,14 @@ impl RustCodeGenerator {
             Expression::Unary { operand, .. } => {
                 self.contains_lambda(operand)
             }
+            Expression::Block { statements, .. } => {
+                statements.iter().any(|stmt| match stmt {
+                    Statement::Expression { expr, .. } => self.contains_lambda(expr),
+                    Statement::Return { value: Some(expr), .. } => self.contains_lambda(expr),
+                    Statement::Assign { value, .. } => self.contains_lambda(value),
+                    _ => false,
+                })
+            }
             _ => false,
         }
     }
@@ -2315,6 +2396,14 @@ impl RustCodeGenerator {
             }
             Expression::Member { object, .. } => {
                 self.contains_param(object, params)
+            }
+            Expression::Block { statements, .. } => {
+                statements.iter().any(|stmt| match stmt {
+                    Statement::Expression { expr, .. } => self.contains_param(expr, params),
+                    Statement::Return { value: Some(expr), .. } => self.contains_param(expr, params),
+                    Statement::Assign { value, .. } => self.contains_param(value, params),
+                    _ => false,
+                })
             }
             _ => false,
         }
@@ -2384,7 +2473,7 @@ impl RustCodeGenerator {
         params: &[Parameter]
     ) -> Option<Type> {
         match stmt {
-            Statement::Let { name, value, .. } | Statement::Assign { name, value, .. } => {
+            Statement::Let { name, value, .. } => {
                 // Check if this is: list_name = push(list_name, item)
                 if name == list_name {
                     if let Expression::Call { callee, args, .. } = value {
@@ -2420,6 +2509,46 @@ impl RustCodeGenerator {
                                         // Complex expression - try to infer
                                         if let Ok(ty) = self.infer_expr_type(pushed_item) {
                                             return Some(ty);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Statement::Assign { target, value, .. } => {
+                // Check if this is: list_name = push(list_name, item)
+                if let Expression::Ident(name, _) = target {
+                    if name == list_name {
+                        if let Expression::Call { callee, args, .. } = value {
+                            if let Expression::Ident(func_name, _) = callee.as_ref() {
+                                if func_name.as_str() == "push" && args.len() == 2 {
+                                    // Second argument is what's being pushed
+                                    let pushed_item = &args[1];
+
+                                    // Infer type of pushed item
+                                    match pushed_item {
+                                        Expression::Ident(var_name, _) => {
+                                            // Variable being pushed - look up its type
+                                            return self.variable_types.get(var_name).cloned();
+                                        }
+                                        Expression::Literal(lit, _) => {
+                                            // Literal being pushed
+                                            use tb_core::Literal;
+                                            return Some(match lit {
+                                                Literal::Int(_) => Type::Int,
+                                                Literal::Float(_) => Type::Float,
+                                                Literal::String(_) => Type::String,
+                                                Literal::Bool(_) => Type::Bool,
+                                                Literal::None => Type::Int, // Default for None
+                                            });
+                                        }
+                                        _ => {
+                                            // Complex expression - try to infer
+                                            if let Ok(ty) = self.infer_expr_type(pushed_item) {
+                                                return Some(ty);
+                                            }
                                         }
                                     }
                                 }
@@ -2697,8 +2826,23 @@ impl RustCodeGenerator {
     // Recursively collect all mutated variables
     fn collect_mutations(&self, stmt: &Statement, mutated: &mut HashSet<Arc<String>>) {
         match stmt {
-            Statement::Assign { name, .. } => {
-                mutated.insert(Arc::clone(name));
+            Statement::Assign { target, .. } => {
+                // Extract the variable name from the assignment target
+                if let Expression::Ident(name, _) = target {
+                    mutated.insert(Arc::clone(name));
+                }
+                // For member/index assignments (obj.field = x, arr[i] = x),
+                // the object itself is mutated
+                else if let Expression::Member { object, .. } = target {
+                    if let Expression::Ident(name, _) = object.as_ref() {
+                        mutated.insert(Arc::clone(name));
+                    }
+                }
+                else if let Expression::Index { object, .. } = target {
+                    if let Expression::Ident(name, _) = object.as_ref() {
+                        mutated.insert(Arc::clone(name));
+                    }
+                }
             }
             Statement::For { variable, body, .. } => {
                 mutated.insert(Arc::clone(variable));  // Loop variables are mutable
@@ -4765,7 +4909,7 @@ impl RustCodeGenerator {
     /// Find the type of elements being pushed into a list (with local type context)
     fn find_push_element_type_in_stmt_with_local_types(&self, list_name: &Arc<String>, stmt: &Statement, local_types: &HashMap<Arc<String>, Type>) -> Option<Type> {
         match stmt {
-            Statement::Assign { name, value, .. } | Statement::Let { name, value, .. } => {
+            Statement::Let { name, value, .. } => {
                 if name == list_name {
                     // Check if this is a push() call
                     if let Expression::Call { callee, args, .. } = value {
@@ -4800,6 +4944,46 @@ impl RustCodeGenerator {
                 }
                 None
             }
+            Statement::Assign { target, value, .. } => {
+                if let Expression::Ident(name, _) = target {
+                    if name == list_name {
+                        // Check if this is a push() call
+                        if let Expression::Call { callee, args, .. } = value {
+                            if let Expression::Ident(func_name, _) = callee.as_ref() {
+                                if func_name.as_str() == "push" && args.len() == 2 {
+                                    // Second argument is what's being pushed
+                                    let pushed_item = &args[1];
+
+                                    // Infer type of pushed item
+                                    match pushed_item {
+                                        Expression::Ident(var_name, _) => {
+                                            // Check local types first, then global
+                                            return local_types.get(var_name).cloned()
+                                                .or_else(|| self.variable_types.get(var_name).cloned());
+                                        }
+                                        Expression::Literal(lit, _) => {
+                                            use tb_core::Literal;
+                                            return Some(match lit {
+                                                Literal::Int(_) => Type::Int,
+                                                Literal::Float(_) => Type::Float,
+                                                Literal::String(_) => Type::String,
+                                                Literal::Bool(_) => Type::Bool,
+                                                Literal::None => Type::Int,
+                                            });
+                                        }
+                                        _ => {
+                                            if let Ok(ty) = self.infer_expr_type(pushed_item) {
+                                                return Some(ty);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
             Statement::If { then_block, else_block, .. } => {
                 for then_stmt in then_block {
                     if let Some(ty) = self.find_push_element_type_in_stmt_with_local_types(list_name, then_stmt, local_types) {
@@ -4828,7 +5012,7 @@ impl RustCodeGenerator {
     /// ✅ PASS 21: Find push element type with parameter type information and local types
     fn find_push_element_type_in_stmt_with_params_and_local_types(&self, list_name: &Arc<String>, stmt: &Statement, params: &[Parameter], local_types: &HashMap<Arc<String>, Type>) -> Option<Type> {
         match stmt {
-            Statement::Assign { name, value, .. } | Statement::Let { name, value, .. } => {
+            Statement::Let { name, value, .. } => {
                 if name == list_name {
                     // Check if this is a push() call
                     if let Expression::Call { callee, args, .. } = value {
@@ -4862,6 +5046,55 @@ impl RustCodeGenerator {
 
                                 // Otherwise infer from expression
                                 return self.infer_expr_type(pushed_item).ok();
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Statement::Assign { target, value, .. } => {
+                if let Expression::Ident(name, _) = target {
+                    if name == list_name {
+                        // Check if this is a push() call
+                        if let Expression::Call { callee, args, .. } = value {
+                            if let Expression::Ident(func_name, _) = callee.as_ref() {
+                                if func_name.as_str() == "push" && args.len() == 2 {
+                                    // Second argument is what's being pushed
+                                    let pushed_item = &args[1];
+
+                                    // Check if it's a variable reference
+                                    if let Expression::Ident(var_name, _) = pushed_item {
+                                        // Check local types first
+                                        if let Some(ty) = local_types.get(var_name) {
+                                            return Some(ty.clone());
+                                        }
+                                        // Check parameters
+                                        for param in params {
+                                            if &param.name == var_name {
+                                                if let Some(ty) = &param.type_annotation {
+                                                    return Some(ty.clone());
+                                                }
+                                            }
+                                        }
+                                        // Check global variable types
+                                        if let Some(ty) = self.variable_types.get(var_name) {
+                                            return Some(ty.clone());
+                                        }
+                                    } else if let Expression::Literal(lit, _) = pushed_item {
+                                        use tb_core::Literal;
+                                        return Some(match lit {
+                                            Literal::Int(_) => Type::Int,
+                                            Literal::Float(_) => Type::Float,
+                                            Literal::String(_) => Type::String,
+                                            Literal::Bool(_) => Type::Bool,
+                                            Literal::None => Type::Int,
+                                        });
+                                    } else {
+                                        if let Ok(ty) = self.infer_expr_type(pushed_item) {
+                                            return Some(ty);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
