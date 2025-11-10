@@ -37,9 +37,10 @@ im = "15.1"
 base64 = "0.22"
 uuid = { version = "1.8", features = ["v4"] }
 
-# Encryption (for blob files)
-# aes-gcm = "0.10"  # Disabled due to edition2024 requirement
-# argon2 = "0.5"    # Disabled due to edition2024 requirement
+# ✅ PHASE 1.1: Encryption removed - not implemented
+# # Encryption (for blob files)
+# # aes-gcm = "0.10"  # Disabled due to edition2024 requirement
+# # argon2 = "0.5"    # Disabled due to edition2024 requirement
 rand = "0.8"
 
 # Time handling

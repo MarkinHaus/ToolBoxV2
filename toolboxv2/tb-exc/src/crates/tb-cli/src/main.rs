@@ -145,8 +145,8 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Cache { action } => match action {
             CacheAction::Clear => {
-                cache_manager.import_cache().clear()?;
-                cache_manager.clear_hot_cache();
+                // ✅ PHASE 3.3: Use new clear() method that clears all caches
+                cache_manager.clear()?;
                 println!("{}", "Cache cleared".bright_green());
             }
             CacheAction::Stats => {

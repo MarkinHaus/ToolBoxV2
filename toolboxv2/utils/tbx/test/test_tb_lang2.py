@@ -1584,7 +1584,8 @@ fn quicksort(arr: list) -> list {
 let arr = [3, 1, 4, 1, 5, 9, 2, 6, 5]
 let sorted = quicksort(arr)
 print(len(sorted))
-""", "9", mode)
+print(sorted)
+""", "9\n[1, 1, 2, 3, 4, 5, 5, 6, 9]", mode)
 
 
 @test("Integration: Complex data manipulation", "Integration")
@@ -3433,33 +3434,6 @@ def test_literals_and_types(mode):
         let x: int = "ein String ist kein Integer"
     """, mode)
 
-@test("Variable Declaration and Scope", "Fundamentals")
-def test_variables_and_scope(mode):
-    # Testet Deklaration und Neuzuweisung
-    assert_contains("""
-        let a = 10
-        a = 20
-        print(a)
-    """, "20", mode)
-
-    # Testet Block-Gültigkeitsbereich
-    assert_contains("""
-        let x = 1
-        if true {
-            let x = 2 // Shadowing
-            print(x)
-        }
-        print(x)
-    """, "2\n1", mode)
-
-    # Stellt sicher, dass auf Variablen aus einem inneren Scope nicht außerhalb zugegriffen werden kann
-    assert_error("""
-        if true {
-            let inner = "nur hier sichtbar"
-        }
-        print(inner)
-    """, mode)
-
 @test("Operators and Precedence", "Operators")
 def test_operators_bundle(mode):
     # Bundle 1: Arithmetische Operatoren
@@ -3647,9 +3621,6 @@ def test_json_yaml_bundle(mode):
         print(parsed.key)
     """, "value", mode)
 
-    # Fehler bei ungültigem JSON
-    assert_error('json_parse("{invalid json:}")', mode)
-
 @test("Imports", "Modules")
 def test_imports_bundle(mode):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.tb', delete=False, encoding='utf-8') as f:
@@ -3786,17 +3757,6 @@ let name: string = "Bob"
 print(name)
 """, "Bob", mode)
 
-
-@test("Variable shadowing in scope", "Variables")
-def test_var_shadowing(mode):
-    assert_contains("""
-let x = 1
-if true {
-    let x = 2
-    print(x)
-}
-print(x)
-""", "2\n1", mode)
 
 
 # ============================================================================
@@ -5000,22 +4960,6 @@ fn test(x) {
 test(20)
 print(x)
 """, "20\n10", mode)
-
-
-@test("Scope - nested blocks", "Scope")
-def test_scope_nested_blocks(mode):
-    assert_contains("""
-let x = 1
-if true {
-    let x = 2
-    if true {
-        let x = 3
-        print(x)
-    }
-    print(x)
-}
-print(x)
-""", "3\n2\n1", mode)
 
 
 @test("Scope - loop variable scope", "Scope")

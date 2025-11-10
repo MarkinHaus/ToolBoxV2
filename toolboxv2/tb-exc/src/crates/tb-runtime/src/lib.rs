@@ -60,11 +60,11 @@ pub use tb_builtins::builtins_impl::{
     builtin_yaml_stringify as yaml_stringify_from_value,
     builtin_time as time_from_value,
 
-    // Higher-order functions
-    builtin_map as map_from_value,
-    builtin_filter as filter_from_value,
-    builtin_reduce as reduce_from_value,
-    builtin_for_each as forEach_from_value,
+    // ✅ PHASE 1.2: Higher-order functions removed - now implemented natively in JIT executor
+    // builtin_map as map_from_value,
+    // builtin_filter as filter_from_value,
+    // builtin_reduce as reduce_from_value,
+    // builtin_for_each as forEach_from_value,
 };
 
 // Plugin support (only when "plugins" feature is enabled)
@@ -392,6 +392,63 @@ pub fn print_value<T: fmt::Display>(value: &T) {
 // Alias for print_value to avoid conflict with Rust's print! macro
 pub fn print<T: fmt::Display>(value: &T) {
     println!("{}", value);
+}
+
+/// ✅ FIX 18: Print multiple values with space separator - for multi-argument print()
+pub fn print_multi(values: Vec<String>) {
+    for (i, value) in values.iter().enumerate() {
+        if i > 0 {
+            print!(" ");
+        }
+        print!("{}", value);
+    }
+    println!();
+}
+
+/// ✅ FIX 18: Convert values to String for multi-argument print()
+pub fn to_string_unit(_value: &()) -> String {
+    "None".to_string()
+}
+
+pub fn to_string_vec_dictvalue(vec: &Vec<DictValue>) -> String {
+    let mut result = String::from("[");
+    for (i, item) in vec.iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&to_string_dictvalue(item));
+    }
+    result.push(']');
+    result
+}
+
+pub fn to_string_hashmap_dictvalue(map: &HashMap<String, DictValue>) -> String {
+    let mut result = String::from("{");
+    for (i, (k, v)) in map.iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&format!("{}: {}", k, to_string_dictvalue(v)));
+    }
+    result.push('}');
+    result
+}
+
+pub fn to_string_dictvalue(value: &DictValue) -> String {
+    match value {
+        DictValue::Int(i) => i.to_string(),
+        DictValue::Float(f) => {
+            if f.fract() == 0.0 && f.is_finite() {
+                format!("{:.1}", f)
+            } else {
+                f.to_string()
+            }
+        }
+        DictValue::String(s) => s.clone(),
+        DictValue::Bool(b) => b.to_string(),
+        DictValue::List(l) => to_string_vec_dictvalue(l),
+        DictValue::Dict(d) => to_string_hashmap_dictvalue(d),
+    }
 }
 
 pub fn print_hashmap_i64(map: HashMap<String, i64>) {
@@ -740,6 +797,13 @@ impl IsTruthy for DictValue {
 impl<T> IsTruthy for Option<T> {
     fn is_truthy(&self) -> bool {
         self.is_some()
+    }
+}
+
+/// ✅ FIX: Unit type () is falsy (represents None in TB Language)
+impl IsTruthy for () {
+    fn is_truthy(&self) -> bool {
+        false
     }
 }
 

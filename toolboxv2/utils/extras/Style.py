@@ -124,6 +124,7 @@ class Style:
         "VIOLETBG": _VIOLETBG,
         "BEIGEBG": _BEIGEBG,
         "WHITEBG": _WHITEBG,
+        "GRAY": _GREY,
         "GREY": _GREY,
         "RED2": _RED2,
         "GREEN2": _GREEN2,
@@ -380,6 +381,11 @@ class Style:
     def Underline2(self):
         return self._Underline
 
+    def style_text(self, text, color, bold=False):
+        text = self.style_dic.get(color, 'WHITE') + text + self._END
+        if bold:
+            text = self._Bold + text + self._END
+        return text
 
 def remove_styles(text: str, infos=False):
     in_ = []

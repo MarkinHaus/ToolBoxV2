@@ -11,9 +11,7 @@ High-performance, non-blocking built-in functions for TB Language.
 
 ### 📁 **File I/O**
 - Real file operations (async)
-- Blob storage support (distributed, content-addressable)
-- Encryption support for sensitive data
-- Automatic caching for blob files
+- Automatic caching for files
 
 ### 🌐 **Networking**
 - **HTTP/HTTPS**: Session management, cookies, custom headers
@@ -36,7 +34,6 @@ tb-builtins/
 │   ├── lib.rs              # Main entry point, function registration
 │   ├── error.rs            # Error types and conversions
 │   ├── file_io.rs          # File I/O operations
-│   ├── blob.rs             # Distributed blob storage
 │   ├── networking.rs       # HTTP, TCP, UDP networking
 │   ├── utils.rs            # JSON, YAML, time utilities
 │   └── builtins_impl.rs    # Built-in function implementations
@@ -57,11 +54,6 @@ print(content)  // "Hello, World!"
 if file_exists("config.json") {
     let config = read_file("config.json")
 }
-
-// Blob storage
-let storage = blob_init(["http://server1:8080", "http://server2:8080"])
-let blob_id = blob_create(storage, "Important data")
-let data = blob_read(storage, blob_id)
 ```
 
 ### Networking
@@ -147,15 +139,6 @@ pub static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
 });
 ```
 
-### Blob Storage
-
-Based on the Python `blobs.py` implementation with:
-- **Consistent hashing** for distribution across servers
-- **Local caching** for performance
-- **Content-addressable storage** (SHA-256 hashing)
-- **Encryption support** (AES-GCM)
-- **Automatic failover** to backup servers
-
 ### Error Handling
 
 All errors are converted to TB's `TBError` type:
@@ -165,8 +148,6 @@ pub enum BuiltinError {
     Io(std::io::Error),
     Network(reqwest::Error),
     Serialization(String),
-    BlobStorage(String),
-    Encryption(String),
     InvalidArgument(String),
     NotFound(String),
     Runtime(String),
@@ -185,14 +166,13 @@ impl From<BuiltinError> for TBError {
 
 ### File I/O
 - **Async operations**: Non-blocking, concurrent file access
-- **Blob caching**: O(1) cache lookup, reduces network calls
+- **Caching**: O(1) cache lookup, reduces I/O calls
 - **Streaming**: Large files handled efficiently
 
 ### Networking
 - **Connection pooling**: HTTP sessions reuse connections
 - **Persistent cookies**: Automatic cookie management
 - **Timeout handling**: 30-second default timeout
-- **Retry logic**: Automatic retry with exponential backoff (blob storage)
 
 ### JSON/YAML
 - **Zero-copy parsing**: Uses `serde` for efficient deserialization

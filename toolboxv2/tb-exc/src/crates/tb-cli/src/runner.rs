@@ -38,10 +38,16 @@ pub fn run_file(
     let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
-    // Load imports before type checking
+    // Load imports before type checking (track dependencies)
     let file_dir = file.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
+
+    // Convert loaded modules to Vec for dependency tracking
+    let dependencies: Vec<PathBuf> = loaded_modules.iter()
+        .filter(|p| *p != file)  // Don't include self as dependency
+        .cloned()
+        .collect();
 
     // Type check (with source context for better error messages)
     let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
@@ -87,8 +93,8 @@ pub fn run_file(
                 });
             }
 
-            // Cache the result
-            cache_manager.import_cache().put(file, &program)?;
+            // Cache the result with dependencies
+            cache_manager.import_cache().put_with_dependencies(file, &program, dependencies)?;
 
             // Execute
             let output = Command::new(&output).output()?;
@@ -200,49 +206,10 @@ pub fn compile_file(
     // Build dependencies section dynamically based on required crates
     let mut dependencies = String::new();
 
-    // ALWAYS add tb_runtime as it contains DictValue and built-in functions
-    // Use path dependency to the local tb-runtime crate
-
-    // First, try environment variable TB_RUNTIME_PATH
-    let tb_runtime_path = if let Ok(env_path) = std::env::var("TB_RUNTIME_PATH") {
-        std::path::PathBuf::from(env_path)
-    } else {
-        // Try to find tb-runtime relative to the binary
-        let exe_path = std::env::current_exe().ok();
-
-        let mut candidates = Vec::new();
-
-        // PRIORITY 1: Relative to binary (most reliable)
-        if let Some(exe) = exe_path {
-            if let Some(parent) = exe.parent() {
-                // ✅ FIX: Added correct path for ToolBoxV2 structure
-                // From target/release/tb.exe -> ../../../toolboxv2/tb-exc/src/crates/tb-runtime
-                candidates.push(parent.join("../../../toolboxv2/tb-exc/src/crates/tb-runtime"));
-                candidates.push(parent.join("../../toolboxv2/tb-exc/src/crates/tb-runtime"));
-                // Legacy paths (for backward compatibility)
-                candidates.push(parent.join("../../crates/tb-runtime"));
-                candidates.push(parent.join("../../../crates/tb-runtime"));
-                candidates.push(parent.join("../crates/tb-runtime"));
-            }
-        }
-
-        // PRIORITY 2: Relative to current directory
-        if let Ok(cwd) = std::env::current_dir() {
-            // ✅ FIX: Prioritize correct ToolBoxV2 structure
-            candidates.push(cwd.join("toolboxv2/tb-exc/src/crates/tb-runtime"));
-            candidates.push(cwd.join("tb-exc/src/crates/tb-runtime"));
-            candidates.push(cwd.join("crates/tb-runtime"));
-        }
-
-        // Find first existing path and canonicalize it
-        candidates.into_iter()
-            .find(|path| path.exists())
-            .and_then(|p| p.canonicalize().ok())
-            .unwrap_or_else(|| {
-                // Last resort: use a default path
-                std::path::PathBuf::from("crates/tb-runtime")
-            })
-    };
+    // ✅ PHASE 3.1: Use TB_RUNTIME_PATH from build.rs (set at compile time)
+    // This makes the build process robust and independent of directory structure
+    let tb_runtime_path_str = env!("TB_RUNTIME_PATH");
+    let tb_runtime_path = std::path::PathBuf::from(tb_runtime_path_str);
 
     // Convert Windows backslashes to forward slashes for TOML compatibility
     let mut tb_runtime_path_str = tb_runtime_path.display().to_string().replace('\\', "/");
@@ -391,6 +358,10 @@ fn load_imports(
 
         // Skip if already loaded (prevent circular imports)
         if loaded.contains(&canonical_path) {
+            eprintln!(
+                "\x1b[33m[WARNING]\x1b[0m Circular import detected: '{}' is already loaded. Skipping to prevent infinite loop.",
+                canonical_path.display()
+            );
             continue;
         }
 
@@ -452,21 +423,9 @@ fn compile_with_rustc(
     optimize: bool,
 ) -> Result<()> {
 
-    // Find workspace root (going up from exe location)
-    let exe_path = env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
-
-    // ✅ FIX: Calculate correct path to tb-runtime
-    // exe is at: toolboxv2/tb-exc/src/target/release/tb.exe
-    // tb-runtime is at: toolboxv2/tb-exc/src/crates/tb-runtime
-    // So from exe_dir (target/release), go up 2 levels to src, then to crates/tb-runtime
-    let tb_runtime_path = exe_dir
-        .parent()  // target
-        .and_then(|p| p.parent())  // src
-        .map(|p| p.join("crates/tb-runtime"))
-        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot calculate tb-runtime path"))?;
+    // ✅ PHASE 3.1: Use TB_RUNTIME_PATH from build.rs (set at compile time)
+    let tb_runtime_path_str = env!("TB_RUNTIME_PATH");
+    let tb_runtime_path = std::path::PathBuf::from(tb_runtime_path_str);
 
     // Verify tb-runtime exists
     if !tb_runtime_path.join("Cargo.toml").exists() {
@@ -475,6 +434,12 @@ fn compile_with_rustc(
             tb_runtime_path.display()
         )));
     }
+
+    // Find workspace root (going up from exe location)
+    let exe_path = env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
 
     // Calculate workspace root for compile cache (3 levels up from exe)
     let workspace_root = exe_dir

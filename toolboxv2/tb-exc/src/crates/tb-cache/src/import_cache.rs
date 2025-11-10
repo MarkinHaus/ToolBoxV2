@@ -38,12 +38,21 @@ impl ImportCache {
         })
     }
 
-    /// Check if source is cached and valid
+    /// Check if source is cached and valid (including dependencies)
     pub fn is_cached(&self, source_path: &Path) -> Result<bool> {
         if let Some(entry) = self.manifest.get(source_path) {
             // Verify source hasn't changed
             let current_hash = Self::hash_file(source_path)?;
-            Ok(entry.source_hash == current_hash)
+            if entry.source_hash != current_hash {
+                return Ok(false);
+            }
+
+            // Verify dependencies haven't changed (transitive check)
+            if self.dependencies_changed(source_path)? {
+                return Ok(false);
+            }
+
+            Ok(true)
         } else {
             Ok(false)
         }
@@ -70,8 +79,13 @@ impl ImportCache {
         Ok(Some(Arc::new(program)))
     }
 
-    /// Store compiled module in cache
+    /// Store compiled module in cache with dependency tracking
     pub fn put(&self, source_path: &Path, program: &Program) -> Result<()> {
+        self.put_with_dependencies(source_path, program, Vec::new())
+    }
+
+    /// Store compiled module in cache with explicit dependencies
+    pub fn put_with_dependencies(&self, source_path: &Path, program: &Program, dependencies: Vec<PathBuf>) -> Result<()> {
         let source_hash = Self::hash_file(source_path)?;
 
         // Generate cache file path from hash (content-addressable)
@@ -90,7 +104,7 @@ impl ImportCache {
             source_hash,
             compiled_path,
             compiled_at: SystemTime::now(),
-            dependencies: Vec::new(), // TODO: track dependencies
+            dependencies,
             size_bytes: serialized.len() as u64,
         };
 
@@ -98,6 +112,73 @@ impl ImportCache {
         self.save_manifest()?;
 
         Ok(())
+    }
+
+    /// Check if any dependencies have changed (transitive invalidation)
+    /// Uses a visited set to prevent infinite loops from circular dependencies
+    pub fn dependencies_changed(&self, source_path: &Path) -> Result<bool> {
+        let mut visited = std::collections::HashSet::new();
+        self.dependencies_changed_impl(source_path, &mut visited)
+    }
+
+    fn dependencies_changed_impl(&self, source_path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>) -> Result<bool> {
+        // Prevent infinite loops from circular dependencies
+        if visited.contains(source_path) {
+            return Ok(false);
+        }
+        visited.insert(source_path.to_path_buf());
+
+        if let Some(entry) = self.manifest.get(source_path) {
+            for dep_path in &entry.dependencies {
+                // Check if dependency file still exists
+                if !dep_path.exists() {
+                    return Ok(true);
+                }
+
+                // Check if dependency hash changed
+                let current_hash = Self::hash_file(dep_path)?;
+                if let Some(dep_entry) = self.manifest.get(dep_path) {
+                    if dep_entry.source_hash != current_hash {
+                        return Ok(true);
+                    }
+                } else {
+                    // Dependency not in cache = changed
+                    return Ok(true);
+                }
+
+                // Recursively check transitive dependencies
+                if self.dependencies_changed_impl(dep_path, visited)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Invalidate cache entry and all modules that depend on it
+    pub fn invalidate_with_dependents(&self, source_path: &Path) -> Result<Vec<PathBuf>> {
+        let mut invalidated = Vec::new();
+
+        // Convert source_path to PathBuf for comparison
+        let source_pathbuf = source_path.to_path_buf();
+
+        // Find all modules that depend on this one
+        let dependents: Vec<PathBuf> = self.manifest.iter()
+            .filter(|entry| entry.value().dependencies.contains(&source_pathbuf))
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        // Recursively invalidate dependents first
+        for dependent in dependents {
+            let mut transitive = self.invalidate_with_dependents(&dependent)?;
+            invalidated.append(&mut transitive);
+        }
+
+        // Invalidate this entry
+        self.invalidate(source_path)?;
+        invalidated.push(source_path.to_path_buf());
+
+        Ok(invalidated)
     }
 
     /// Invalidate cache entry

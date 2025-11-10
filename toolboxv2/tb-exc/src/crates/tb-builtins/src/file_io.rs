@@ -7,79 +7,22 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use std::path::Path;
 
-/// File handle for tracking open files
-#[derive(Debug, Clone)]
-pub struct FileHandle {
-    pub id: String,
-    pub path: String,
-    pub mode: String,
-    pub encoding: String,
-}
-
-/// Open a file with optional encryption
-///
-/// # Arguments
-/// * `path` - File path
-/// * `mode` - File mode: "r" (read), "w" (write), "a" (append), "r+" (read/write)
-/// * `key` - Optional encryption key (currently unused)
-/// * `encoding` - Text encoding (default: "utf-8")
-///
-/// # Returns
-/// File handle ID for subsequent operations
-pub async fn open_file(
-    path: String,
-    mode: String,
-    _key: Option<String>,
-    encoding: String,
-) -> BuiltinResult<String> {
-    // Validate mode
-    if !["r", "w", "a", "r+", "w+", "a+"].contains(&mode.as_str()) {
-        return Err(BuiltinError::InvalidArgument(
-            format!("Invalid file mode: {}. Use r, w, a, r+, w+, or a+", mode)
-        ));
-    }
-
-    // Generate unique handle ID
-    let handle_id = format!("file_{}", uuid::Uuid::new_v4());
-
-    // Real file handling
-    let file_path = Path::new(&path);
-
-    // Check if file exists for read modes
-    if mode.starts_with('r') && !file_path.exists() {
-        return Err(BuiltinError::NotFound(
-            format!("File not found: {}", path)
-        ));
-    }
-
-    // Create parent directories for write modes
-    if mode.contains('w') || mode.contains('a') {
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-    }
-
-    // Store handle in global registry
-    FILE_HANDLES.insert(
-        handle_id.clone(),
-        FileHandleData {
-            path: path.clone(),
-            mode: mode.clone(),
-            encoding: encoding.clone(),
-        },
-    );
-
-    Ok(handle_id)
-}
+// ✅ PHASE 1.3: FileHandle and open_file removed - no usable functionality
+// /// File handle for tracking open files
+// #[derive(Debug, Clone)]
+// pub struct FileHandle { ... }
+// pub async fn open_file(...) -> BuiltinResult<String> { ... }
 
 /// Read entire file content (async, non-blocking)
-pub async fn read_file(path: String, _is_blob: bool) -> BuiltinResult<String> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn read_file(path: String) -> BuiltinResult<String> {
     let content = fs::read_to_string(&path).await?;
     Ok(content)
 }
 
 /// Write content to file (async, non-blocking)
-pub async fn write_file(path: String, content: String, _is_blob: bool) -> BuiltinResult<()> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn write_file(path: String, content: String) -> BuiltinResult<()> {
     // Create parent directories if needed
     if let Some(parent) = Path::new(&path).parent() {
         fs::create_dir_all(parent).await?;
@@ -89,18 +32,21 @@ pub async fn write_file(path: String, content: String, _is_blob: bool) -> Builti
 }
 
 /// Check if file exists (async, non-blocking)
-pub async fn file_exists(path: String, _is_blob: bool) -> BuiltinResult<bool> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn file_exists(path: String) -> BuiltinResult<bool> {
     Ok(Path::new(&path).exists())
 }
 
 /// Read file as bytes (async, non-blocking)
-pub async fn read_bytes(path: String, _is_blob: bool) -> BuiltinResult<Vec<u8>> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn read_bytes(path: String) -> BuiltinResult<Vec<u8>> {
     let bytes = fs::read(&path).await?;
     Ok(bytes)
 }
 
 /// Write bytes to file (async, non-blocking)
-pub async fn write_bytes(path: String, data: Vec<u8>, _is_blob: bool) -> BuiltinResult<()> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn write_bytes(path: String, data: Vec<u8>) -> BuiltinResult<()> {
     if let Some(parent) = Path::new(&path).parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -109,7 +55,8 @@ pub async fn write_bytes(path: String, data: Vec<u8>, _is_blob: bool) -> Builtin
 }
 
 /// Append content to file (async, non-blocking)
-pub async fn append_file(path: String, content: String, _is_blob: bool) -> BuiltinResult<()> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn append_file(path: String, content: String) -> BuiltinResult<()> {
     use tokio::fs::OpenOptions;
     let mut file = OpenOptions::new()
         .create(true)
@@ -121,7 +68,8 @@ pub async fn append_file(path: String, content: String, _is_blob: bool) -> Built
 }
 
 /// Delete file (async, non-blocking)
-pub async fn delete_file(path: String, _is_blob: bool) -> BuiltinResult<()> {
+/// ✅ PHASE 1.1: Removed _is_blob parameter - blob storage not implemented
+pub async fn delete_file(path: String) -> BuiltinResult<()> {
     fs::remove_file(&path).await?;
     Ok(())
 }
@@ -150,37 +98,14 @@ pub async fn create_dir(path: String, recursive: bool) -> BuiltinResult<()> {
     Ok(())
 }
 
-/// File handle data storage
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
+// ✅ PHASE 1.3: FILE_HANDLES and FileHandleData removed - no usable functionality
+// /// File handle data storage
+// use dashmap::DashMap;
+// use once_cell::sync::Lazy;
+// pub static FILE_HANDLES: Lazy<DashMap<String, FileHandleData>> = Lazy::new(DashMap::new);
+// #[derive(Debug, Clone)]
+// pub struct FileHandleData { ... }
 
-pub static FILE_HANDLES: Lazy<DashMap<String, FileHandleData>> = Lazy::new(DashMap::new);
-
-#[derive(Debug, Clone)]
-pub struct FileHandleData {
-    pub path: String,
-    pub mode: String,
-    pub encoding: String,
-}
-
-// UUID generation (simple implementation)
-mod uuid {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    pub struct Uuid(u64);
-
-    impl Uuid {
-        pub fn new_v4() -> Self {
-            Uuid(COUNTER.fetch_add(1, Ordering::SeqCst))
-        }
-    }
-
-    impl std::fmt::Display for Uuid {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:016x}", self.0)
-        }
-    }
-}
+// ✅ PHASE 1.4: Custom UUID implementation will be removed in next phase
+// mod uuid { ... }
 

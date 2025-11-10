@@ -1796,6 +1796,8 @@ class App(AppType, metaclass=Singleton):
         flush = kwargs.pop('flush', True)
         if self.sprint(None):
             print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+        if 'color' in kwargs:
+            text = Style.style_dic[kwargs.pop('color')] + text + Style.style_dic["END"]
         print(text, *args, **kwargs, flush=flush)
 
     def sprint(self, text="", show_system=True, *args, **kwargs):

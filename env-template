@@ -9,6 +9,8 @@ MOD_PROVIDER="https://simplecore.app"
 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 GUI_COMMAND="wt new-tab powershell -NoExit -Command"
 
+TB_RUNTIME_PATH=
+
 ICON_FILE="./favicon.ico"
 
 SHELL=

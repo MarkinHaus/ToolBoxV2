@@ -20,6 +20,7 @@ pub struct RustCodeGenerator {
     current_variable: Option<Arc<String>>, // ✅ PASS 21: Track current variable being assigned
     optional_dict_vars: HashSet<Arc<String>>, // Track variables that hold Option<HashMap> from json_parse/yaml_parse
     lambda_params: HashSet<Arc<String>>, // ✅ FIX 9: Track lambda parameters (which are already references)
+    iter_lambda_params: HashSet<Arc<String>>, // ✅ FIX: Track .iter() lambda parameters (need double deref **)
     vec_dictvalue_vars: HashSet<Arc<String>>, // ✅ FIX 11: Track variables that hold Vec<DictValue> from list()
     function_param_types: HashMap<Arc<String>, Vec<Type>>, // ✅ FIX 12: Track inferred parameter types from call sites
     // Track which external crates are used
@@ -44,6 +45,7 @@ impl RustCodeGenerator {
             current_variable: None, // ✅ PASS 21
             optional_dict_vars: HashSet::new(),
             lambda_params: HashSet::new(), // ✅ FIX 9
+            iter_lambda_params: HashSet::new(), // ✅ FIX: Track .iter() lambda parameters
             vec_dictvalue_vars: HashSet::new(), // ✅ FIX 11
             function_param_types: HashMap::new(), // ✅ FIX 12
             uses_serde_json: false,
@@ -67,11 +69,13 @@ impl RustCodeGenerator {
         // PRE-PASS 2: Extract plugin definitions and generate wrappers
         self.extract_and_generate_plugins(program)?;
 
-        // ✅ PASS 21 PRE-PASS 3: Analyze empty list types from usage patterns
-        self.analyze_empty_list_types(program);
-
-        // ✅ FIX 12 PRE-PASS 3.5: Analyze function parameter types from call sites
+        // ✅ FIX 17 PRE-PASS 3: Analyze function parameter types from call sites FIRST
+        // This must run BEFORE empty list analysis so that parameter types are known
         self.analyze_function_param_types_from_calls(program);
+
+        // ✅ PASS 21 PRE-PASS 3.5: Analyze empty list types from usage patterns
+        // This must run AFTER call-site analysis so that function parameters have concrete types
+        self.analyze_empty_list_types(program);
 
         // PRE-PASS 4: Analyze which crates are needed (serde_json, etc.)
         self.analyze_required_crates(program);
@@ -621,6 +625,7 @@ impl RustCodeGenerator {
             Expression::Literal(lit, _) => self.generate_literal(lit)?,
 
             Expression::Ident(name, _) => {
+                // Just write the identifier
                 write!(self.buffer, "{}", name)?;
             }
 
@@ -775,7 +780,26 @@ impl RustCodeGenerator {
                         write!(self.buffer, "(")?;
 
                         // Generate left operand
-                        if left_is_dict_access && matches!(left_type, Type::Any) {
+                        // ✅ FIX: Dereference lambda parameters in comparisons
+                        let left_is_lambda_param = if let Expression::Ident(name, _) = left.as_ref() {
+                            self.lambda_params.contains(name)
+                        } else {
+                            false
+                        };
+                        let left_is_iter_lambda_param = if let Expression::Ident(name, _) = left.as_ref() {
+                            self.iter_lambda_params.contains(name)
+                        } else {
+                            false
+                        };
+
+                        if left_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                            // .iter() lambda params need double deref: **x
+                            write!(self.buffer, "**")?;
+                            self.generate_expression(left)?;
+                        } else if left_is_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq) {
+                            write!(self.buffer, "*")?;
+                            self.generate_expression(left)?;
+                        } else if left_is_dict_access && matches!(left_type, Type::Any) {
                             // This might be a DictValue, extract based on right type or operation
                             self.generate_expression(left)?;
                             // For comparisons, try to infer the type from the right operand
@@ -795,8 +819,27 @@ impl RustCodeGenerator {
                         write!(self.buffer, " {} ", self.binary_op_str(op))?;
 
                         // Generate right operand
+                        // ✅ FIX: Dereference lambda parameters in comparisons
+                        let right_is_lambda_param = if let Expression::Ident(name, _) = right.as_ref() {
+                            self.lambda_params.contains(name)
+                        } else {
+                            false
+                        };
+                        let right_is_iter_lambda_param = if let Expression::Ident(name, _) = right.as_ref() {
+                            self.iter_lambda_params.contains(name)
+                        } else {
+                            false
+                        };
+
                         // ✅ FIX 4: Convert integer literal to float if comparing with a float
-                        if let (Type::Float, Type::Int) = (&left_type, &right_type) {
+                        if right_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                            // .iter() lambda params need double deref: **x
+                            write!(self.buffer, "**")?;
+                            self.generate_expression(right)?;
+                        } else if right_is_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq) {
+                            write!(self.buffer, "*")?;
+                            self.generate_expression(right)?;
+                        } else if let (Type::Float, Type::Int) = (&left_type, &right_type) {
                             if let Expression::Literal(tb_core::ast::Literal::Int(i), _) = right.as_ref() {
                                 write!(self.buffer, "{}.0", i)?;
                             } else {
@@ -946,25 +989,33 @@ impl RustCodeGenerator {
                         self.generate_expression(&args[1])?; // The iterable
                         write!(self.buffer, ".iter().filter(")?;
 
-                        // For lambdas, track parameters and generate with proper dereferencing
+                        // ✅ FIX: Use |x| pattern (x is &T) for all types
+                        // .iter() gives Iterator<Item = &T>, so filter receives &T
+                        // Using |x| pattern keeps x as &T
+                        // For function calls like len(x), x is &T which is correct (len expects &T)
+                        // For comparisons like **x > 0, we need to double-dereference x to T
                         if let Expression::Lambda { params, body, .. } = &args[0] {
                             write!(self.buffer, "|")?;
                             for (i, param) in params.iter().enumerate() {
                                 if i > 0 {
                                     write!(self.buffer, ", ")?;
                                 }
+                                // Use |x| pattern - x is &T (reference from .iter())
                                 write!(self.buffer, "{}", param.name)?;
-                                // Track lambda parameters for dereferencing in body
-                                self.lambda_params.insert(param.name.clone());
+                                // Track as iter lambda parameter (needs double deref **)
+                                self.iter_lambda_params.insert(param.name.clone());
                             }
                             write!(self.buffer, "| ")?;
+
                             self.generate_expression(body)?;
-                            // Clear lambda parameters after generating the body
-                            self.lambda_params.clear();
+                            self.iter_lambda_params.clear();
                         } else {
-                            write!(self.buffer, "|&x| ")?;
+                            // ✅ FIX: Named function - wrap in closure
+                            // filter uses |x| pattern, so x is &T (from .iter())
+                            // Named function expects T, so we double-dereference: **x
+                            write!(self.buffer, "|x| ")?;
                             self.generate_expression(&args[0])?;
-                            write!(self.buffer, "(x)")?;
+                            write!(self.buffer, "(**x)")?;
                         }
 
                         write!(self.buffer, ").cloned().collect::<Vec<_>>()")?;
@@ -973,8 +1024,34 @@ impl RustCodeGenerator {
                         // forEach(fn, list) -> for_each(fn, list) using runtime function
                         write!(self.buffer, "forEach(")?;
 
-                        // Generate the function/lambda directly (no wrapping)
-                        self.generate_expression(&args[0])?;
+                        // ✅ FIX: forEach expects Fn(&T), but TB lambdas/functions have signature Fn(T)
+                        // Always wrap in closure |x| to handle the reference conversion
+                        if let Expression::Lambda { params, body, .. } = &args[0] {
+                            // Lambda: wrap in closure that clones the value
+                            // forEach passes &T, lambda expects T, so we use |x| lambda(x.clone())
+                            write!(self.buffer, "|x| (")?;
+
+                            // Generate the lambda inline
+                            write!(self.buffer, "Box::new(move |")?;
+                            for (i, param) in params.iter().enumerate() {
+                                if i > 0 {
+                                    write!(self.buffer, ", ")?;
+                                }
+                                write!(self.buffer, "{}", param.name)?;
+                            }
+                            write!(self.buffer, "| ")?;
+                            self.generate_expression(body)?;
+                            write!(self.buffer, ")")?;
+
+                            // Call the lambda with cloned value
+                            write!(self.buffer, ")(x.clone())")?;
+                        } else {
+                            // Named function: wrap in closure to handle reference
+                            // forEach passes &T to closure, but function expects T
+                            write!(self.buffer, "|x| ")?;
+                            self.generate_expression(&args[0])?;
+                            write!(self.buffer, "(x.clone())")?;
+                        }
 
                         write!(self.buffer, ", ")?;
                         self.generate_expression(&args[1])?;
@@ -1006,14 +1083,13 @@ impl RustCodeGenerator {
                             }
                             if params.len() >= 2 {
                                 write!(self.buffer, ", &{}", params[1].name)?; // Pattern match to unpack &T
-                                // Track lambda parameters for dereferencing in body
-                                self.lambda_params.insert(params[1].name.clone());
+                                // ✅ FIX: Do NOT track lambda_params for fold()
+                                // After |&x| pattern, x is already the value (not a reference)
+                                // No dereferencing needed in the body
                             }
                             write!(self.buffer, "| ")?;
                             // No dereferencing needed - pattern matching unpacks the reference
                             self.generate_expression(body)?;
-                            // Clear lambda parameters after generating the body
-                            self.lambda_params.clear();
                         } else {
                             // Named function: wrap in closure to handle references
                             // .iter().fold() gives &T for second parameter, so we need *x
@@ -1048,6 +1124,52 @@ impl RustCodeGenerator {
                             write!(self.buffer, ")")?;
                         }
                         write!(self.buffer, ")")?;
+                        return Ok(());
+                    } else if name.as_str() == "print" && args.len() >= 2 {
+                        // ✅ FIX 18: Multi-argument print() - convert all args to String and pass to print_multi()
+                        write!(self.buffer, "tb_runtime::print_multi(vec![")?;
+
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                write!(self.buffer, ", ")?;
+                            }
+
+                            // Infer type and use appropriate conversion
+                            let arg_type = self.infer_expr_type(arg)?;
+                            match arg_type {
+                                Type::String => {
+                                    // Clone strings to avoid move errors
+                                    self.generate_expression(arg)?;
+                                    write!(self.buffer, ".clone()")?;
+                                }
+                                Type::Int | Type::Float | Type::Bool => {
+                                    write!(self.buffer, "format!(\"{{}}\", ")?;
+                                    self.generate_expression(arg)?;
+                                    write!(self.buffer, ")")?;
+                                }
+                                Type::None => {
+                                    write!(self.buffer, "\"None\".to_string()")?;
+                                }
+                                Type::List(_) => {
+                                    write!(self.buffer, "tb_runtime::to_string_vec_dictvalue(&")?;
+                                    self.generate_expression(arg)?;
+                                    write!(self.buffer, ")")?;
+                                }
+                                Type::Dict(_, _) => {
+                                    write!(self.buffer, "tb_runtime::to_string_hashmap_dictvalue(&")?;
+                                    self.generate_expression(arg)?;
+                                    write!(self.buffer, ")")?;
+                                }
+                                _ => {
+                                    // Fallback: try format!("{:?}", ...)
+                                    write!(self.buffer, "format!(\"{{:?}}\", ")?;
+                                    self.generate_expression(arg)?;
+                                    write!(self.buffer, ")")?;
+                                }
+                            }
+                        }
+
+                        write!(self.buffer, "])")?;
                         return Ok(());
                     } else if name.as_str() == "print" && args.len() == 1 {
                         // ✅ FIX: Check if argument is a pop() call - returns Vec<DictValue>
@@ -1167,15 +1289,38 @@ impl RustCodeGenerator {
                         // Use is_dict_value_producer() to determine if the result is a DictValue
                         if matches!(&args[0], Expression::Index { .. }) {
                             if let Expression::Index { object, .. } = &args[0] {
-                                // ✅ FIX 11: Use is_dict_value_producer() instead of manual checks
-                                // This correctly identifies Dict access and Vec<DictValue> access
-                                if self.is_dict_value_producer(object) {
+                                // ✅ FIX 13: Check if object is List<Any> (Vec<DictValue>)
+                                // Indexing into Vec<DictValue> returns &DictValue
+                                let should_use_print_dictvalue = if let Ok(obj_type) = self.infer_expr_type(object) {
+                                    matches!(obj_type, Type::List(ref elem_type) if matches!(elem_type.as_ref(), Type::Any))
+                                        || matches!(obj_type, Type::Dict(_, _))
+                                } else {
+                                    self.is_dict_value_producer(object)
+                                };
+
+                                if should_use_print_dictvalue {
                                     // This is a dict access or Vec<DictValue> access returning &DictValue
                                     // Use print_dictvalue to properly print lists and dicts
                                     write!(self.buffer, "print_dictvalue(&")?;
                                     self.generate_expression(&args[0])?;
                                     write!(self.buffer, ")")?;
                                     return Ok(());
+                                }
+                            }
+                        }
+
+                        // ✅ FIX 12: Check if argument is a variable of type List<Any> (Vec<DictValue>)
+                        // These need print_vec_dictvalue() instead of print()
+                        if let Expression::Ident(_var_name, _) = &args[0] {
+                            if let Ok(var_type) = self.infer_expr_type(&args[0]) {
+                                if let Type::List(elem_type) = var_type {
+                                    if matches!(elem_type.as_ref(), Type::Any) {
+                                        // This is Vec<DictValue>, use print_vec_dictvalue
+                                        write!(self.buffer, "print_vec_dictvalue(&")?;
+                                        self.generate_expression(&args[0])?;
+                                        write!(self.buffer, ")")?;
+                                        return Ok(());
+                                    }
                                 }
                             }
                         }
@@ -1234,9 +1379,9 @@ impl RustCodeGenerator {
                         // ✅ FIX: Check if argument is a Member/Index expression returning DictValue
                         let is_dict_access = matches!(&args[0], Expression::Member { .. } | Expression::Index { .. });
 
-                        // ✅ FIX 9: Check if argument is already a reference (e.g., lambda parameter)
+                        // ✅ FIX: Check if argument is a lambda parameter (reference)
                         // If it's an Ident, check if it's in lambda_params (which are already references)
-                        let is_already_ref = if let Expression::Ident(var_name, _) = &args[0] {
+                        let is_lambda_param = if let Expression::Ident(var_name, _) = &args[0] {
                             self.lambda_params.contains(var_name)
                         } else {
                             false
@@ -1248,8 +1393,10 @@ impl RustCodeGenerator {
                             write!(self.buffer, "len(")?;
                             self.generate_expression(&args[0])?;
                             write!(self.buffer, ".as_list())")?;
-                        } else if is_already_ref {
-                            // ✅ FIX 9: Argument is already a reference (lambda parameter), don't add &
+                        } else if is_lambda_param {
+                            // ✅ FIX: Lambda parameter from map() with non-Copy types is already &T (e.g., &String)
+                            // len<T: Len>(collection: &T) expects &T where T: Len
+                            // So we just pass x directly: len(x) where x is &String
                             write!(self.buffer, "len(")?;
                             self.generate_expression(&args[0])?;
                             write!(self.buffer, ")")?;
@@ -1307,9 +1454,10 @@ impl RustCodeGenerator {
                                     Type::Float => write!(self.buffer, "type_of_vec_f64(&")?,
                                     Type::String => write!(self.buffer, "type_of_vec_string(&")?,
                                     Type::Bool => write!(self.buffer, "type_of_vec_bool(&")?,
-                                    // ✅ FIX: For Any/unknown element types, default to type_of_vec_i64
-                                    // This ensures empty lists [] return "list" instead of "alloc::vec::Vec<i64>"
-                                    _ => write!(self.buffer, "type_of_vec_i64(&")?,
+                                    // ✅ FIX: For Any/unknown element types (empty lists), use type_of_vec_dictvalue
+                                    // Empty lists [] are generated as Vec<DictValue>, so we need type_of_vec_dictvalue
+                                    // This fixes "Builtin - type_of for all types" test
+                                    _ => write!(self.buffer, "type_of_vec_dictvalue(&")?,
                                 }
                                 self.generate_expression(&args[0])?;
                                 write!(self.buffer, ")")?;
@@ -1340,31 +1488,35 @@ impl RustCodeGenerator {
                         write!(self.buffer, ").exists()")?;
                         return Ok(());
                     } else if name.as_str() == "read_file" {
+                        // ✅ FIX 14: read_file should panic on error, not return empty string
                         write!(self.buffer, "std::fs::read_to_string(&")?;
                         self.generate_expression(&args[0])?;
-                        write!(self.buffer, ").unwrap_or_default()")?;
+                        write!(self.buffer, ").expect(\"Failed to read file\")")?;
                         return Ok(());
                     } else if name.as_str() == "write_file" && args.len() >= 2 {
+                        // ✅ FIX 14: write_file should panic on error
                         write!(self.buffer, "std::fs::write(&")?;
                         self.generate_expression(&args[0])?;
                         write!(self.buffer, ", &")?;
                         self.generate_expression(&args[1])?;
-                        write!(self.buffer, ").unwrap_or(())")?;
+                        write!(self.buffer, ").expect(\"Failed to write file\")")?;
                         return Ok(());
                     } else if name.as_str() == "append_file" && args.len() >= 2 {
+                        // ✅ FIX 14: append_file should panic on error
                         write!(self.buffer, "{{")?;
                         write!(self.buffer, "use std::io::Write; ")?;
                         write!(self.buffer, "std::fs::OpenOptions::new().create(true).append(true).open(&")?;
                         self.generate_expression(&args[0])?;
                         write!(self.buffer, ").and_then(|mut f| f.write_all(")?;
                         self.generate_expression(&args[1])?;
-                        write!(self.buffer, ".as_bytes())).unwrap_or(())")?;
+                        write!(self.buffer, ".as_bytes())).expect(\"Failed to append to file\")")?;
                         write!(self.buffer, "}}")?;
                         return Ok(());
                     } else if name.as_str() == "delete_file" {
+                        // ✅ FIX 14: delete_file should panic on error
                         write!(self.buffer, "std::fs::remove_file(&")?;
                         self.generate_expression(&args[0])?;
-                        write!(self.buffer, ").unwrap_or(())")?;
+                        write!(self.buffer, ").expect(\"Failed to delete file\")")?;
                         return Ok(());
                     }
                     // JSON functions
@@ -1629,6 +1781,11 @@ impl RustCodeGenerator {
                         Type::Int => write!(self.buffer, "Vec::<i64>::new()")?,
                         Type::Float => write!(self.buffer, "Vec::<f64>::new()")?,
                         Type::Bool => write!(self.buffer, "Vec::<bool>::new()")?,
+                        Type::Any => {
+                            // ✅ FIX: For Type::Any, generate Vec<DictValue> to match print() expectations
+                            // This ensures empty lists [] can be printed with print_vec_dictvalue()
+                            write!(self.buffer, "Vec::<DictValue>::new()")?
+                        }
                         _ => write!(self.buffer, "Vec::<i64>::new()")?,  // Default fallback
                     }
                 } else {
@@ -1650,8 +1807,12 @@ impl RustCodeGenerator {
                 self.generate_expression(object)?;
 
                 match obj_type {
-                    Type::List(_) => {
-                        if is_producer { write!(self.buffer, ".as_list()")?; }
+                    Type::List(elem_type) => {
+                        // ✅ FIX 13: Only call .as_list() if the object is NOT already Vec<DictValue>
+                        // Vec<DictValue> (List<Any>) is already a vector, no need for .as_list()
+                        if is_producer && !matches!(elem_type.as_ref(), Type::Any) {
+                            write!(self.buffer, ".as_list()")?;
+                        }
                         write!(self.buffer, "[(")?;
                         self.generate_expression(index)?;
                         write!(self.buffer, " as usize)].clone()")?;
@@ -1669,14 +1830,10 @@ impl RustCodeGenerator {
                             self.generate_expression(index)?;
                         }
 
-                        // ✅ FIX: Use type-appropriate default value
-                        match value_type.as_ref() {
-                            Type::Int => write!(self.buffer, ").cloned().unwrap_or(0)")?,
-                            Type::Float => write!(self.buffer, ").cloned().unwrap_or(0.0)")?,
-                            Type::String => write!(self.buffer, ").cloned().unwrap_or(String::new())")?,
-                            Type::Bool => write!(self.buffer, ").cloned().unwrap_or(false)")?,
-                            _ => write!(self.buffer, ").cloned().unwrap_or(DictValue::Int(0))")?, // DictValue for Any/complex types
-                        }
+                        // ✅ FIX: TB Language dicts are always HashMap<String, DictValue>
+                        // So dict access always returns DictValue, not the specific type
+                        // This fixes "Dict bracket access" test where person["name"] should return DictValue
+                        write!(self.buffer, ").cloned().unwrap_or(DictValue::Int(0))")?;
                     },
                     _ => { // Fallback for unknown types
                         write!(self.buffer, ".get(")?;
@@ -1692,50 +1849,20 @@ impl RustCodeGenerator {
             }
 
             Expression::Dict { entries, .. } => {
+                // ✅ FIX: TB Language dicts are ALWAYS HashMap<String, DictValue>
+                // This ensures consistency and fixes "Dict bracket access" test
+                // where person["name"] should return DictValue, not String
                 if entries.is_empty() {
                     // Empty dict - use DictValue for flexibility
                     write!(self.buffer, "HashMap::<String, DictValue>::new()")?;
-                } else if self.dict_needs_enum(entries) {
-                    // ✅ PHASE 1: Heterogeneous dict - use DictValue enum
+                } else {
+                    // All dicts use DictValue enum for consistency
                     write!(self.buffer, "{{ ")?;
                     write!(self.buffer, "let mut map = HashMap::new(); ")?;
                     for (key, value) in entries {
                         write!(self.buffer, "map.insert(\"{}\".to_string(), ", key)?;
                         // Wrap value in DictValue enum
                         self.generate_dict_value_wrapped(value)?;
-                        write!(self.buffer, "); ")?;
-                    }
-                    write!(self.buffer, "map ")?;
-                    write!(self.buffer, "}}")?;
-                } else {
-                    // ✅ LUB: Homogeneous or compatible dict (e.g., Int+Float -> Float)
-                    // Find the LUB type to determine if we need type conversion
-                    let mut value_types = Vec::new();
-                    for (_, value) in entries {
-                        if let Ok(ty) = self.infer_expr_type(value) {
-                            value_types.push(ty);
-                        }
-                    }
-                    let lub = TypeInference::least_upper_bound(&value_types);
-
-                    write!(self.buffer, "{{ ")?;
-                    write!(self.buffer, "let mut map = HashMap::new(); ")?;
-                    for (key, value) in entries {
-                        write!(self.buffer, "map.insert(")?;
-                        write!(self.buffer, "\"{}\"", key)?;
-                        write!(self.buffer, ".to_string(), ")?;
-
-                        // If LUB is Float and value is Int, convert to Float
-                        let value_type = self.infer_expr_type(value).ok();
-                        if matches!(lub, Type::Float) && matches!(value_type, Some(Type::Int)) {
-                            // Convert Int to Float
-                            write!(self.buffer, "(")?;
-                            self.generate_expression(value)?;
-                            write!(self.buffer, " as f64)")?;
-                        } else {
-                            self.generate_expression(value)?;
-                        }
-
                         write!(self.buffer, "); ")?;
                     }
                     write!(self.buffer, "map ")?;
@@ -1817,16 +1944,10 @@ impl RustCodeGenerator {
                     write!(self.buffer, ".as_dict()")?;
                 }
 
-                // ✅ FIX: Use type-appropriate default value based on dictionary value type
-                if let Some(Type::Dict(_, value_type)) = obj_type {
-                    write!(self.buffer, ".get(\"{}\")", member)?;
-                    match value_type.as_ref() {
-                        Type::Int => write!(self.buffer, ".cloned().unwrap_or(0)")?,
-                        Type::Float => write!(self.buffer, ".cloned().unwrap_or(0.0)")?,
-                        Type::String => write!(self.buffer, ".cloned().unwrap_or(String::new())")?,
-                        Type::Bool => write!(self.buffer, ".cloned().unwrap_or(false)")?,
-                        _ => write!(self.buffer, ".cloned().unwrap_or(DictValue::Int(0))")?, // DictValue for Any/complex types
-                    }
+                // ✅ FIX: TB Language dicts are always HashMap<String, DictValue>
+                // So dict member access always returns DictValue, not the specific type
+                if let Some(Type::Dict(_, _)) = obj_type {
+                    write!(self.buffer, ".get(\"{}\").cloned().unwrap_or(DictValue::Int(0))", member)?;
                 } else {
                     // Fallback: assume DictValue
                     write!(self.buffer, ".get(\"{}\").cloned().unwrap_or(DictValue::Int(0))", member)?;
@@ -1891,7 +2012,9 @@ impl RustCodeGenerator {
 
     fn generate_literal(&mut self, lit: &Literal) -> Result<()> {
         match lit {
-            Literal::None => write!(self.buffer, "Option::<()>::None")?,
+            // ✅ FIX: None literal should generate () not Option::<()>::None
+            // TB Language's None is equivalent to Rust's unit type ()
+            Literal::None => write!(self.buffer, "()")?,
             Literal::Bool(b) => write!(self.buffer, "{}", b)?,
             Literal::Int(i) => write!(self.buffer, "{}", i)?,
             Literal::Float(f) => {
@@ -2463,6 +2586,9 @@ impl RustCodeGenerator {
     /// Check if an expression produces a `DictValue` that needs unwrapping for nested access.
     fn is_dict_value_producer(&self, expr: &Expression) -> bool {
         // ✅ FIX 11: Only return true if the expression actually produces DictValue
+        // NOTE: This should return true ONLY if the expression returns a SINGLE DictValue,
+        // NOT if it returns Vec<DictValue>. Vec<DictValue> is already a vector and doesn't need .as_list()
+
         // Check for Index expressions
         if let Expression::Index { object, .. } = expr {
             // Check the type of the object being indexed
@@ -2471,6 +2597,8 @@ impl RustCodeGenerator {
                     // Dict access produces DictValue
                     Type::Dict(_, _) => return true,
                     // List<Any> means Vec<DictValue> (e.g., from pop())
+                    // When we index into Vec<DictValue>, we get &DictValue
+                    // BUT we should NOT call .as_list() on the Vec<DictValue> itself
                     Type::List(elem_type) if matches!(elem_type.as_ref(), Type::Any) => return true,
                     // Regular lists (Vec<i64>, Vec<Vec<i64>>, etc.) do NOT produce DictValue
                     _ => return false,
@@ -2497,7 +2625,8 @@ impl RustCodeGenerator {
             if let Expression::Ident(name, _) = &**callee {
                 let func_name = name.as_ref();
                 // REMOVED "time" - it returns HashMap directly, not DictValue wrapper
-                return func_name == "json_parse" || func_name == "yaml_parse" || func_name == "pop";
+                // REMOVED "pop" - it returns Vec<DictValue>, not a single DictValue
+                return func_name == "json_parse" || func_name == "yaml_parse";
             }
         }
         false
@@ -5100,12 +5229,12 @@ impl RustCodeGenerator {
                     }
                 }
             }
-            Statement::Function { name: _, params, body, return_type: _, .. } => {
+            Statement::Function { name, params, body, return_type: _, .. } => {
                 // ✅ PASS 21: Analyze function body with full context
                 // This is critical for functions that return lists
                 eprintln!("DEBUG: Analyzing function body with params");
                 for body_stmt in body {
-                    self.analyze_empty_lists_in_function_body_with_params(body_stmt, body, params);
+                    self.analyze_empty_lists_in_function_body_with_params(body_stmt, body, name, params);
                 }
             }
             Statement::For { body, .. } | Statement::While { body, .. } => {
@@ -5160,14 +5289,15 @@ impl RustCodeGenerator {
     }
 
     /// ✅ PASS 21: Analyze empty lists within function bodies with parameter context
-    fn analyze_empty_lists_in_function_body_with_params(&mut self, stmt: &Statement, full_body: &[Statement], params: &[Parameter]) {
+    /// ✅ FIX 17: Use inferred parameter types from function_param_types
+    fn analyze_empty_lists_in_function_body_with_params(&mut self, stmt: &Statement, full_body: &[Statement], func_name: &Arc<String>, params: &[Parameter]) {
         match stmt {
             Statement::Let { name, value, .. } => {
                 // Check if this is an empty list assignment
                 if let Expression::List { elements, .. } = value {
                     if elements.is_empty() {
                         // Scan the rest of the function body to find push() operations
-                        let inferred_type = self.infer_type_from_push_operations_with_params(name, full_body, params);
+                        let inferred_type = self.infer_type_from_push_operations_with_params(name, full_body, func_name, params);
                         eprintln!("DEBUG: Inserting '{}' -> {:?} into empty_list_types", name, inferred_type);
                         self.empty_list_types.insert(name.clone(), inferred_type);
                         eprintln!("DEBUG: empty_list_types after insert: {:?}", self.empty_list_types);
@@ -5176,16 +5306,16 @@ impl RustCodeGenerator {
             }
             Statement::For { body, .. } | Statement::While { body, .. } => {
                 for body_stmt in body {
-                    self.analyze_empty_lists_in_function_body_with_params(body_stmt, full_body, params);
+                    self.analyze_empty_lists_in_function_body_with_params(body_stmt, full_body, func_name, params);
                 }
             }
             Statement::If { then_block, else_block, .. } => {
                 for then_stmt in then_block {
-                    self.analyze_empty_lists_in_function_body_with_params(then_stmt, full_body, params);
+                    self.analyze_empty_lists_in_function_body_with_params(then_stmt, full_body, func_name, params);
                 }
                 if let Some(else_stmts) = else_block {
                     for else_stmt in else_stmts {
-                        self.analyze_empty_lists_in_function_body_with_params(else_stmt, full_body, params);
+                        self.analyze_empty_lists_in_function_body_with_params(else_stmt, full_body, func_name, params);
                     }
                 }
             }
@@ -5207,9 +5337,35 @@ impl RustCodeGenerator {
     }
 
     /// ✅ PASS 21: Infer element type with parameter type information
-    fn infer_type_from_push_operations_with_params(&self, list_name: &Arc<String>, body: &[Statement], params: &[Parameter]) -> Type {
+    /// ✅ FIX 17: Use inferred parameter types from function_param_types
+    fn infer_type_from_push_operations_with_params(&self, list_name: &Arc<String>, body: &[Statement], func_name: &Arc<String>, params: &[Parameter]) -> Type {
+        // ✅ FIX 17: Build parameter type map using inferred types from function_param_types
+        let mut param_type_map = HashMap::new();
+
+        // Get inferred parameter types from call-site analysis
+        if let Some(inferred_param_types) = self.function_param_types.get(func_name) {
+            eprintln!("DEBUG FIX17: Using inferred param types for '{}': {:?}", func_name, inferred_param_types);
+            for (i, param) in params.iter().enumerate() {
+                if i < inferred_param_types.len() {
+                    param_type_map.insert(param.name.clone(), inferred_param_types[i].clone());
+                    eprintln!("DEBUG FIX17:   Param '{}' -> {:?}", param.name, inferred_param_types[i]);
+                }
+            }
+        } else {
+            // Fallback to original parameter types
+            eprintln!("DEBUG: No inferred param types for '{}', using original types", func_name);
+            for param in params {
+                if let Some(ty) = &param.type_annotation {
+                    param_type_map.insert(param.name.clone(), ty.clone());
+                }
+            }
+        }
+
         // ✅ FIX: Build a local type map for variables in this scope (including nested scopes)
-        let local_types = self.build_local_type_map(body);
+        let mut local_types = self.build_local_type_map(body);
+
+        // Merge parameter types into local types
+        local_types.extend(param_type_map);
 
         eprintln!("DEBUG: Inferring type for list '{}' with params: {:?}", list_name, params.iter().map(|p| (&p.name, &p.type_annotation)).collect::<Vec<_>>());
 
@@ -5219,8 +5375,8 @@ impl RustCodeGenerator {
                 return elem_type;
             }
         }
-        eprintln!("DEBUG: No element type found for list '{}', defaulting to Int", list_name);
-        Type::Int  // Default fallback
+        eprintln!("DEBUG: No element type found for list '{}', defaulting to Any", list_name);
+        Type::Any  // Default fallback
     }
 
     /// Build a map of local variable types from all statements (including nested scopes)
@@ -5619,6 +5775,19 @@ impl RustCodeGenerator {
                     .or_else(|| self.infer_param_type_from_usage(param_name, index))
             }
 
+            // ✅ PHASE 3 FIX: Member access - detect .iter() calls on parameters
+            Expression::Member { object, member, .. } => {
+                // If parameter.iter() is called, parameter must be a List
+                if let Expression::Ident(name, _) = object.as_ref() {
+                    if name == param_name && member.as_str() == "iter" {
+                        // param.iter() means param is a List
+                        return Some(Type::List(Box::new(Type::Int)));
+                    }
+                }
+                // Recursively check object
+                self.infer_param_type_from_usage(param_name, object)
+            }
+
             // Other expressions - recurse
             Expression::Unary { operand, .. } => {
                 self.infer_param_type_from_usage(param_name, operand)
@@ -5672,7 +5841,18 @@ impl RustCodeGenerator {
     fn analyze_function_param_types_from_calls(&mut self, program: &Program) {
         eprintln!("DEBUG FIX12: Starting call-site analysis with {} statements", program.statements.len());
 
-        // ✅ FIX 13: FIRST, pre-populate variable_types with function signatures
+        // ✅ FIX 17: FIRST, pre-populate variable_types with top-level variables
+        // This allows call-site analysis to infer function parameter types from variable arguments
+        for stmt in &program.statements {
+            if let Statement::Let { name, value, .. } = stmt {
+                if let Ok(var_type) = self.infer_expr_type(value) {
+                    self.variable_types.insert(name.clone(), var_type.clone());
+                    eprintln!("DEBUG FIX17: Pre-populated variable '{}' with type {:?}", name, var_type);
+                }
+            }
+        }
+
+        // ✅ FIX 13: SECOND, pre-populate variable_types with function signatures
         // This allows infer_expr_type to recognize function identifiers
         for stmt in &program.statements {
             if let Statement::Function { name, params, return_type, body, .. } = stmt {
@@ -5921,8 +6101,9 @@ impl RustCodeGenerator {
                 return elem_type.clone();
             }
         }
-        // Default fallback
-        Type::Int
+        // ✅ FIX: Default to Type::Any for empty lists without context
+        // This will generate Vec::<DictValue>::new() which matches print() expectations
+        Type::Any
     }
 
     /// ✅ PASS 21: Infer list element type from returned variables in function body

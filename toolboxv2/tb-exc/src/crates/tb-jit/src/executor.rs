@@ -79,6 +79,9 @@ impl JitExecutor {
                 tb_debug_jit!("Statement {} result: {:?}", i, last);
             }
 
+            // ✅ PHASE 3.2: Process pending callback events after each statement
+            self.process_pending_callbacks()?;
+
             if self.return_value.is_some() {
                 tb_debug_jit!("Early return with value: {:?}", self.return_value);
                 return Ok(self.return_value.take().unwrap());
@@ -248,14 +251,28 @@ impl JitExecutor {
             Statement::If { condition, then_block, else_block, .. } => {
                 let cond = self.eval_expression(condition)?;
 
-                // ✅ FIX: Create new scope for if blocks to prevent variable leaking
-                if cond.is_truthy() {
-                    self.eval_block_with_scope(then_block)
+                // ✅ FIX 16: if blocks should allow modifications to existing variables
+                // but remove new variables declared with 'let'
+                use std::collections::HashSet;
+
+                // Track variables before if block
+                let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+
+                let result = if cond.is_truthy() {
+                    self.eval_block(then_block)
                 } else if let Some(else_stmts) = else_block {
-                    self.eval_block_with_scope(else_stmts)
+                    self.eval_block(else_stmts)
                 } else {
                     Ok(Value::None)
+                };
+
+                // Remove any new variables created in the if block
+                let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+                for new_key in keys_after.difference(&keys_before) {
+                    self.env.remove(new_key);
                 }
+
+                result
             }
 
             Statement::For { variable, iterable, body, span } => {
@@ -507,6 +524,20 @@ impl JitExecutor {
             }
 
             Expression::Call { callee, args, span } => {
+                // ✅ PHASE 2.1: Native implementation of map, filter, reduce, forEach, spawn
+                // Check if this is a call to one of these special functions
+                if let Expression::Ident(func_name, _) = callee.as_ref() {
+                    match func_name.as_str() {
+                        "map" => return self.builtin_map_native(args, *span),
+                        "filter" => return self.builtin_filter_native(args, *span),
+                        "reduce" => return self.builtin_reduce_native(args, *span),
+                        "forEach" => return self.builtin_foreach_native(args, *span),
+                        "spawn" => return self.builtin_spawn_native(args, *span),
+                        _ => {} // Fall through to normal function call
+                    }
+                }
+
+                // Normal function call
                 let func = self.eval_expression(callee)?;
                 let arg_values: Result<Vec<_>> = args.iter()
                     .map(|arg| self.eval_expression(arg))
@@ -782,8 +813,12 @@ impl JitExecutor {
             },
 
             BinaryOp::Mod => match (left, right) {
+                // ✅ FIX 15: Support float modulo operation
                 (Value::Int(a), Value::Int(b)) if b != 0 => Ok(Value::Int(a % b)),
-                _ => Err(self.runtime_error_with_context("Invalid modulo operation".to_string(), Some(span))),
+                (Value::Float(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a % b)),
+                (Value::Int(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float((a as f64) % b)),
+                (Value::Float(a), Value::Int(b)) if b != 0 => Ok(Value::Float(a % (b as f64))),
+                _ => Err(self.runtime_error_with_context("Invalid modulo operation or division by zero".to_string(), Some(span))),
             },
 
             BinaryOp::Eq => Ok(Value::Bool(self.values_equal(&left, &right))),
@@ -1290,6 +1325,241 @@ impl JitExecutor {
             Statement::Config { .. } => "config",
             Statement::Plugin { .. } => "plugin",
         }
+    }
+
+    // ============================================================================
+    // PHASE 2.1: Native implementation of map, filter, reduce, forEach, spawn
+    // ============================================================================
+    // These functions are implemented directly in the JIT executor to replace
+    // the task_runtime.rs mini-interpreter. This ensures proper scope handling
+    // and allows access to &mut self for calling functions.
+
+    /// map(fn, list) -> list
+    /// Applies a function to each element of a list and returns a new list
+    fn builtin_map_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "map() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "map() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Apply the function to each element
+        let mut result = Vec::new();
+        for item in list_items.iter() {
+            let mapped = self.call_function(func.clone(), vec![item.clone()], span)?;
+            result.push(mapped);
+        }
+
+        Ok(Value::List(Arc::new(result)))
+    }
+
+    /// filter(fn, list) -> list
+    /// Filters a list based on a predicate function
+    fn builtin_filter_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "filter() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "filter() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Filter the list based on the predicate
+        let mut result = Vec::new();
+        for item in list_items.iter() {
+            let predicate_result = self.call_function(func.clone(), vec![item.clone()], span)?;
+
+            // Check if the result is truthy
+            let keep = match predicate_result {
+                Value::Bool(b) => b,
+                Value::Int(i) => i != 0,
+                Value::None => false,
+                _ => true, // Non-empty strings, lists, etc. are truthy
+            };
+
+            if keep {
+                result.push(item.clone());
+            }
+        }
+
+        Ok(Value::List(Arc::new(result)))
+    }
+
+    /// reduce(fn, list, initial) -> value
+    /// Reduces a list to a single value using an accumulator function
+    fn builtin_reduce_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 3 {
+            return Err(self.runtime_error_with_context(
+                "reduce() takes exactly 3 arguments: function, list, initial".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "reduce() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Evaluate the initial value (third argument)
+        let mut accumulator = self.eval_expression(&args[2])?;
+
+        // Reduce the list
+        for item in list_items.iter() {
+            accumulator = self.call_function(
+                func.clone(),
+                vec![accumulator, item.clone()],
+                span
+            )?;
+        }
+
+        Ok(accumulator)
+    }
+
+    /// forEach(fn, list) -> None
+    /// Executes a function for each element in a list (side effects only)
+    fn builtin_foreach_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "forEach() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "forEach() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Execute the function for each element
+        for item in list_items.iter() {
+            self.call_function(func.clone(), vec![item.clone()], span)?;
+        }
+
+        Ok(Value::None)
+    }
+
+    /// spawn(fn, args...) -> None
+    /// Spawns an asynchronous task to execute a function
+    fn builtin_spawn_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.is_empty() {
+            return Err(self.runtime_error_with_context(
+                "spawn() requires at least 1 argument: function".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the remaining arguments
+        let func_args: Result<Vec<_>> = args[1..].iter()
+            .map(|arg| self.eval_expression(arg))
+            .collect();
+        let func_args = func_args?;
+
+        // Clone the current environment for the spawned task
+        let captured_env = self.env.clone();
+
+        // Spawn the task asynchronously
+        match func {
+            Value::Function(f) => {
+                // Use the task_executor module to spawn the task
+                use crate::task_executor::execute_function_in_task;
+
+                tokio::spawn(async move {
+                    match execute_function_in_task(f, func_args, captured_env) {
+                        Ok(_) => {},
+                        Err(e) => eprintln!("[TB Spawn Error] {}", e),
+                    }
+                });
+
+                Ok(Value::None)
+            }
+            _ => Err(self.runtime_error_with_context(
+                "spawn() first argument must be a function".to_string(),
+                Some(span)
+            )),
+        }
+    }
+
+    /// ✅ PHASE 3.2: Process pending callback events from networking
+    /// This is called after each statement to execute queued TB callbacks
+    fn process_pending_callbacks(&mut self) -> Result<Value> {
+        // Get all pending callbacks
+        let events = tb_builtins::get_pending_callbacks();
+
+        if events.is_empty() {
+            return Ok(Value::None);
+        }
+
+        tb_debug_jit!("Processing {} pending callback events", events.len());
+
+        // Execute each callback
+        for event in events {
+            tb_debug_jit!("Executing callback with {} args", event.args.len());
+
+            // Call the function with the provided arguments
+            // Wrap the Function in a Value::Function (needs Arc)
+            let func_value = Value::Function(Arc::new(event.callback));
+            let span = Span { start: 0, end: 0, line: 0, column: 0 }; // Dummy span for callbacks
+
+            match self.call_function(func_value, event.args, span) {
+                Ok(result) => {
+                    tb_debug_jit!("Callback executed successfully: {:?}", result);
+                }
+                Err(e) => {
+                    eprintln!("Callback execution error: {}", e);
+                    // Don't propagate callback errors - just log them
+                }
+            }
+        }
+
+        // Clear the queue after processing
+        tb_builtins::clear_pending_callbacks();
+
+        Ok(Value::None)
     }
 }
 

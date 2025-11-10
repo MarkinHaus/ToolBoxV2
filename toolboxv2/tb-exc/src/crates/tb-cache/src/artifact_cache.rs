@@ -57,5 +57,20 @@ impl ArtifactCache {
         self.artifacts.insert(hash, entry);
         Ok(())
     }
+
+    /// ✅ PHASE 3.3: Clear all cached artifacts
+    /// Deletes cached files from filesystem and clears the in-memory cache
+    pub fn clear(&self) -> Result<()> {
+        // Iterate and delete cached files from filesystem
+        for entry in self.artifacts.iter() {
+            if entry.value().path.exists() {
+                fs::remove_file(&entry.value().path)?;
+            }
+        }
+
+        // Clear the in-memory cache
+        self.artifacts.clear();
+        Ok(())
+    }
 }
 
