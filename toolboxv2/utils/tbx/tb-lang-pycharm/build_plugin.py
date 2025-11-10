@@ -17,7 +17,7 @@ def build_plugin():
     output_jar = plugin_dir / "tb-language.jar"
 
     if not resources_dir.exists():
-        print(f"❌ Resources directory not found: {resources_dir}")
+        print(f"Resources directory not found: {resources_dir}")
         return False
 
     print(f"Building PyCharm plugin...")
@@ -33,7 +33,7 @@ def build_plugin():
                 jar.write(file_path, arcname)
                 print(f"  + {arcname}")
 
-    print(f"✓ Plugin built: {output_jar}")
+    print(f"  Plugin built: {output_jar}")
     print(f"  Size: {output_jar.stat().st_size} bytes")
     return True
 

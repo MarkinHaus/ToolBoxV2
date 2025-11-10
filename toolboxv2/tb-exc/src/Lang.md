@@ -318,16 +318,8 @@ if x > 10 {
 }
 ```
 
-#### If-Else-If Chain
-```tb
-if x < 0 {
-    print("negative")
-} else if x == 0 {
-    print("zero")
-} else {
-    print("positive")
-}
-```
+#### If-Else-If Chain NO USE MATCHING INSTEAD
+
 
 #### Nested If
 ```tb
@@ -464,19 +456,6 @@ fn abs(x: int) -> int {
         return -x
     }
     return x
-}
-```
-
-#### Multiple Returns
-```tb
-fn categorize(x: int) -> string {
-    if x < 0 {
-        return "negative"
-    } else if x == 0 {
-        return "zero"
-    } else {
-        return "positive"
-    }
 }
 ```
 
@@ -875,10 +854,10 @@ fn add(a: int, b: int) -> int {
 ```tb
 let value = get_input()
 
-if type_of(value) == "int" {
-    process_number(value)
-} else if type_of(value) == "string" {
-    process_text(value)
+match type_of(value) {
+    "int" => process_number(value),
+    "string" => process_text(value),
+    _ => print("Unsupported type")
 }
 ```
 
@@ -1850,12 +1829,10 @@ fn process_list(items: list) -> int {
 fn process_value(value) {
     let t = type_of(value)
 
-    if t == "int" {
-        print("Processing integer")
-    } else if t == "string" {
-        print("Processing string")
-    } else {
-        print("Unsupported type")
+    match t {
+        "int" => print("Processing integer"),
+        "string" => print("Processing string"),
+        _ => print("Unsupported type")
     }
 }
 ```
@@ -2409,11 +2386,13 @@ let grade = match score {
 // Avoid: Long if-else chains
 let grade = ""
 if score < 60 {
-    grade = "F"
-} else if score < 70 {
-    grade = "D"
-} else if score < 80 {
-    grade = "C"
+match score {
+    0..60 => "F",
+    60..70 => "D",
+    70..80 => "C",
+    80..90 => "B",
+    90..100 => "A",
+    _ => "Invalid"
 }
 // ... more conditions
 ```

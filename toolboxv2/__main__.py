@@ -23,6 +23,7 @@ from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
+from toolboxv2.utils.clis.tbx_core_cli import cli_tbx_core
 from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
@@ -303,7 +304,7 @@ def setup_service_linux():
 RUNNER_KEYS = [
     "venv", "api", "ipy", "db", "gui", "p2p",
     "status", "browser", "mcp", "login", "logout",
-    "run", "mods", "flow"
+    "run", "mods", "flow", "core"
 ]
 
 DEFAULT_MODI = "cli"
@@ -1966,6 +1967,7 @@ def runner_setup():
         "flow": run_c,
         "mods": mods_manager,
         "run": cli_tbx_main,
+        "core": cli_tbx_core,
         "default": interactive_user_dashboard
     }
     return runner

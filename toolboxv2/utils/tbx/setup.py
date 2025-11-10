@@ -1,9 +1,13 @@
-# file: toolbox-exec/tb_setup.py
+# file: toolboxv2/utils/tbx/setup.py
 """
 TB Language Setup Utility
-- File association (.tbx files)
+- File association (.tbx and .tb files)
 - Icon registration
 - Desktop integration
+- System PATH configuration
+
+Version: 1.0.1
+Last Updated: 2025-11-10
 """
 
 import os
@@ -20,7 +24,7 @@ class TBxSetup:
     def __init__(self):
         self.system = platform.system()
         self.tb_root = self.get_tb_root()
-        self.icon_path = Path(os.getenv("FAVI", ".ico"))
+        self.icon_path = self.get_icon_path()
         self.executable = self.get_executable()
 
     def get_tb_root(self) -> Path:
@@ -29,21 +33,57 @@ class TBxSetup:
             from toolboxv2 import tb_root_dir
             return Path(tb_root_dir)
         except ImportError:
-            return Path(__file__).parent.parent
+            # Fallback: go up from utils/tbx to toolboxv2 root
+            return Path(__file__).parent.parent.parent
+
+    def get_icon_path(self) -> Path:
+        """Get icon file path"""
+        # Check environment variable first
+        env_icon = os.getenv("FAVI")
+        if env_icon:
+            icon = Path(env_icon)
+            if icon.exists():
+                return icon
+
+        # Check standard locations
+        possible_icons = [
+            self.tb_root / "favicon.ico",
+            self.tb_root / "resources" / "tb_icon.ico",
+            self.tb_root / "utils" / "tbx" / "resources" / "tb_icon.ico",
+        ]
+
+        for icon in possible_icons:
+            if icon.exists():
+                return icon
+
+        # Return default path (may not exist yet)
+        return self.tb_root / "resources" / "tb_icon.ico"
 
     def get_executable(self) -> Path:
         """Get TB executable path"""
+        # Priority 1: bin directory (installed location)
         if self.system == "Windows":
             exe = self.tb_root / "bin" / "tb.exe"
         else:
             exe = self.tb_root / "bin" / "tb"
 
-        if not exe.exists():
-            # Try target/release
-            if self.system == "Windows":
-                exe = self.tb_root / "tb-exc" / "target" / "release" / "tb.exe"
-            else:
-                exe = self.tb_root / "tb-exc" / "target" / "release" / "tb"
+        if exe.exists():
+            return exe
+
+        # Priority 2: tb-exc/target/release (build location)
+        if self.system == "Windows":
+            exe = self.tb_root / "tb-exc" / "target" / "release" / "tb.exe"
+        else:
+            exe = self.tb_root / "tb-exc" / "target" / "release" / "tb"
+
+        if exe.exists():
+            return exe
+
+        # Priority 3: tb-exc/target/debug (debug build)
+        if self.system == "Windows":
+            exe = self.tb_root / "tb-exc" / "target" / "debug" / "tb.exe"
+        else:
+            exe = self.tb_root / "tb-exc" / "target" / "debug" / "tb"
 
         return exe
 
@@ -127,7 +167,7 @@ You can use the ToolBox V2 logo/icon.
         return False
 
     def setup_windows(self) -> bool:
-        """Setup file association on Windows"""
+        """Setup file association on Windows for .tbx and .tb files"""
         print("🪟 Setting up Windows file association...")
 
         try:
@@ -136,10 +176,11 @@ You can use the ToolBox V2 logo/icon.
             # Create .tbx extension key
             print("   Creating registry entries...")
 
-            # HKEY_CURRENT_USER\Software\Classes\.tbx
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.tbx") as key:
-                winreg.SetValue(key, "", winreg.REG_SZ, "TBLanguageFile")
-                print("   ✓ Registered .tbx extension")
+            # Register both .tbx and .tb extensions
+            for ext in [".tbx", ".tb"]:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, fr"Software\Classes\{ext}") as key:
+                    winreg.SetValue(key, "", winreg.REG_SZ, "TBLanguageFile")
+                    print(f"   ✓ Registered {ext} extension")
 
             # HKEY_CURRENT_USER\Software\Classes\TBLanguageFile
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\TBLanguageFile") as key:
@@ -150,8 +191,10 @@ You can use the ToolBox V2 logo/icon.
                     icon_key = winreg.CreateKey(key, "DefaultIcon")
                     winreg.SetValue(icon_key, "", winreg.REG_SZ, str(self.icon_path))
                     print(f"   ✓ Set icon: {self.icon_path}")
+                else:
+                    print(f"   ⚠️  Icon not found: {self.icon_path}")
 
-                # Set open command
+                # Set open command (run in JIT mode by default)
                 command_key = winreg.CreateKey(key, r"shell\open\command")
                 cmd = f'"{self.executable}" run "%1"'
                 winreg.SetValue(command_key, "", winreg.REG_SZ, cmd)
@@ -163,6 +206,13 @@ You can use the ToolBox V2 logo/icon.
                 winreg.SetValue(terminal_key, "", winreg.REG_SZ, terminal_cmd)
                 winreg.SetValue(winreg.CreateKey(key, r"shell\run_terminal"), "", winreg.REG_SZ, "Run in Terminal")
                 print(f"   ✓ Added 'Run in Terminal' context menu")
+
+                # Add "Compile" context menu
+                compile_key = winreg.CreateKey(key, r"shell\compile\command")
+                compile_cmd = f'cmd /k "{self.executable}" compile "%1" && pause'
+                winreg.SetValue(compile_key, "", winreg.REG_SZ, compile_cmd)
+                winreg.SetValue(winreg.CreateKey(key, r"shell\compile"), "", winreg.REG_SZ, "Compile TB Program")
+                print(f"   ✓ Added 'Compile' context menu")
 
                 # Add "Edit" context menu
                 edit_key = winreg.CreateKey(key, r"shell\edit\command")
@@ -186,10 +236,12 @@ You can use the ToolBox V2 logo/icon.
             return False
         except Exception as e:
             print(f"   ❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def setup_linux(self) -> bool:
-        """Setup file association on Linux"""
+        """Setup file association on Linux for .tbx and .tb files"""
         print("🐧 Setting up Linux file association...")
 
         try:
@@ -207,29 +259,37 @@ You can use the ToolBox V2 logo/icon.
 Version=1.0
 Type=Application
 Name=TB Language
-Comment=Execute TB Language programs
+Comment=Execute TB Language programs (.tbx, .tb)
 Exec={self.executable} run %f
 Icon={icon_path}
 Terminal=false
-MimeType=text/x-tb;application/x-tb;
-Categories=Development;
+MimeType=text/x-tb;application/x-tb;text/x-tbx;application/x-tbx;
+Categories=Development;TextEditor;
+Keywords=programming;scripting;tb;toolbox;
 """
 
             desktop_file.write_text(desktop_content)
             desktop_file.chmod(0o755)
             print(f"   ✓ Created desktop entry: {desktop_file}")
 
-            # Create MIME type
+            # Create MIME type for both extensions
             mime_dir = Path.home() / ".local" / "share" / "mime" / "packages"
             mime_dir.mkdir(parents=True, exist_ok=True)
 
             mime_file = mime_dir / "tb-language.xml"
             mime_content = """<?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-    <mime-type type="text/x-tb">
-        <comment>TB Language Program</comment>
+    <mime-type type="text/x-tbx">
+        <comment>TB Language Program (.tbx)</comment>
         <glob pattern="*.tbx"/>
         <sub-class-of type="text/plain"/>
+        <alias type="application/x-tbx"/>
+    </mime-type>
+    <mime-type type="text/x-tb">
+        <comment>TB Language Program (.tb)</comment>
+        <glob pattern="*.tb"/>
+        <sub-class-of type="text/plain"/>
+        <alias type="application/x-tb"/>
     </mime-type>
 </mime-info>
 """
@@ -430,12 +490,17 @@ def main():
 
 def function_runner(action: str = 'install'):
     setup = TBxSetup()
-    if action == 'install':
+    if action[0] == 'install':
         success = setup.setup_all()
         return success
-    elif action == 'uninstall':
+    elif action[0] == 'uninstall':
         setup.uninstall()
         return True
+    else:
+        print("Invalid action", action)
+        print("Usage: python setup.py <install|uninstall>")
+        print("Example: tb run ide install")
+        return False
 
 if __name__ == "__main__":
     main()

@@ -311,21 +311,7 @@ if x > 0 {
 }
 ```
 
-### If-Else-If Chain
-
-```tb
-let score = 85
-
-if score >= 90 {
-    print("A")
-} else if score >= 80 {
-    print("B")
-} else if score >= 70 {
-    print("C")
-} else {
-    print("F")
-}
-```
+### If-Else-If Chain NOT IN THE LANG USE MATCHING INSTEAD
 
 ### If-Block Scoping (FIX 16)
 
@@ -691,16 +677,6 @@ if user != None {
 ### 5. Use Match for Complex Conditionals
 
 ```tb
-// ❌ AVOID: Nested if-else
-if x == 1 {
-    "one"
-} else if x == 2 {
-    "two"
-} else if x == 3 {
-    "three"
-} else {
-    "other"
-}
 
 // ✅ PREFER: Match expression
 match x {

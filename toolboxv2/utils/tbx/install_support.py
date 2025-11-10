@@ -1,16 +1,22 @@
-# file: setup_tb.py
+# file: toolboxv2/utils/tbx/install_support.py
 """
 Complete TB Language Setup
-- Build executable
-- Setup file associations
+- Build executable from Rust source
+- Setup file associations (.tbx and .tb)
 - Install VS Code extension
 - Install PyCharm plugin
+- Configure system PATH
+
+Version: 1.0.1
+Last Updated: 2025-11-10
 """
 
 import subprocess
 import sys
 import shutil
+import time
 import zipfile
+import json
 from pathlib import Path
 import platform
 
@@ -19,14 +25,28 @@ class TBSetup:
     """Complete TB Language setup manager"""
 
     def __init__(self):
-        self.root = Path(__file__).parent
+        # Get toolboxv2 root directory
+        self.root = Path(__file__).parent.parent.parent
+        self.tbx_utils = Path(__file__).parent
         self.system = platform.system()
+        self.tb_exc_dir = self.root / "tb-exc" / "src"
+
+        # Verify critical paths
+        if not self.tb_exc_dir.exists():
+            print(f"⚠️  Warning: tb-exc directory not found at {self.tb_exc_dir}")
+
+        if not (self.tbx_utils / "setup.py").exists():
+            print(f"⚠️  Warning: setup.py not found at {self.tbx_utils / 'setup.py'}")
 
     def setup_all(self):
         """Run complete setup"""
         print("═" * 70)
-        print("  TB Language - Complete Setup")
+        print("  TB Language - Complete Setup v1.0.1")
         print("═" * 70)
+        print()
+        print(f"  Root directory: {self.root}")
+        print(f"  TB Compiler:    {self.tb_exc_dir}")
+        print(f"  Platform:       {self.system}")
         print()
 
         success = True
@@ -61,44 +81,89 @@ class TBSetup:
         print()
         print("Next steps:")
         print("  1. Restart PyCharm and VS Code (if open)")
-        print("  2. Create a test file: test.tbx")
+        print("  2. Create a test file: test.tbx or test.tb")
         print("  3. Run it: tb run test.tbx")
-        print("  4. Or double-click test.tbx to run")
-        print("  5. Open .tbx files in PyCharm/VS Code for syntax highlighting")
+        print("  4. Or compile it: tb compile test.tbx")
+        print("  5. Or double-click test.tbx to run (JIT mode)")
+        print("  6. Open .tbx/.tb files in PyCharm/VS Code for syntax highlighting")
         print()
 
         return success
 
     def build_executable(self):
-        """Step 1: Build TB Language"""
+        """Step 1: Build TB Language from Rust source"""
         print("Step 1/4: Building TB Language...")
         print("-" * 70)
 
-        result = subprocess.run([
-            sys.executable,
-            str(self.root / "toolbox-exec" / "tb_lang_cli.py"),
-            "build"
-        ])
-
-        if result.returncode != 0:
+        if not self.tb_exc_dir.exists():
+            print(f"❌ TB compiler source not found at: {self.tb_exc_dir}")
             return False
 
-        print("✓ Build successful")
+        # Check if Cargo is available
+        try:
+            cargo_check = subprocess.run(
+                ["cargo", "--version"],
+                capture_output=True,
+                text=True
+            , encoding='utf-8')
+            if cargo_check.returncode != 0:
+                print("❌ Cargo not found. Please install Rust: https://rustup.rs/")
+                return False
+            print(f"   Using: {cargo_check.stdout.strip()}")
+        except FileNotFoundError:
+            print("❌ Cargo not found. Please install Rust: https://rustup.rs/")
+            return False
+
+        # Build in release mode
+        print(f"   Building from: {self.tb_exc_dir}")
+        print("   This may take a few minutes...")
+
+        result = subprocess.run(
+            ["cargo", "build", "--release"],
+            cwd=str(self.tb_exc_dir),
+            capture_output=False
+        , encoding='utf-8')
+
+        if result.returncode != 0:
+            print("❌ Build failed!")
+            return False
+
+        # Verify executable exists
+        if self.system == "Windows":
+            exe_path = self.tb_exc_dir / "target" / "release" / "tb.exe"
+        else:
+            exe_path = self.tb_exc_dir / "target" / "release" / "tb"
+
+        if not exe_path.exists():
+            print(f"❌ Executable not found at: {exe_path}")
+            return False
+
+        print(f"   ✓ Executable built: {exe_path}")
+        print("   ✓ Build successful")
         print()
         return True
 
     def setup_system_integration(self):
-        """Step 2: System integration"""
+        """Step 2: System integration (file associations)"""
         print("Step 2/4: Setting up system integration...")
         print("-" * 70)
 
+        setup_script = self.tbx_utils / "setup.py"
+
+        if not setup_script.exists():
+            print(f"❌ Setup script not found at: {setup_script}")
+            print()
+            return False
+
         result = subprocess.run([
             sys.executable,
-            str(self.root / "toolbox-exec" / "tb_setup.py"),
+            str(setup_script),
             "install"
-        ])
+        ], encoding='utf-8')
 
         print()
+        if result.returncode == 0:
+            print("   ✓ System integration complete")
         return result.returncode == 0
 
     def setup_vscode(self):
@@ -106,36 +171,39 @@ class TBSetup:
         print("Step 3/4: Installing VS Code extension...")
         print("-" * 70)
 
-        vscode_ext = self.root / "tb-lang-vscode"
+        # Correct path: utils/tbx/tb-lang-support
+        vscode_ext = self.tbx_utils / "tb-lang-support"
         if not vscode_ext.exists():
-            print("⚠️  VS Code extension directory not found")
+            print(f"⚠️  VS Code extension directory not found at: {vscode_ext}")
             print()
             return False
+
+        print(f"   Extension directory: {vscode_ext}")
 
         try:
             # Check if npm is available
             subprocess.run(["npm", "--version"],
-                           capture_output=True, check=True)
+                           capture_output=True, check=True, encoding='utf-8')
 
             # Install dependencies
             print("  Installing npm dependencies...")
             subprocess.run(["npm", "install"],
                            cwd=vscode_ext,
                            capture_output=True,
-                           check=True)
+                           check=True, encoding='utf-8')
 
             # Compile TypeScript
             print("  Compiling TypeScript...")
             subprocess.run(["npm", "run", "compile"],
                            cwd=vscode_ext,
                            capture_output=True,
-                           check=True)
+                           check=True, encoding='utf-8')
 
             # Try to install to VS Code
             print("  Installing to VS Code...")
             result = subprocess.run([
                 "code", "--install-extension", str(vscode_ext.resolve())
-            ], capture_output=True)
+            ], capture_output=True, encoding='utf-8')
 
             if result.returncode == 0:
                 print("✓ VS Code extension installed")
@@ -163,13 +231,14 @@ class TBSetup:
         print("Step 4/4: Installing PyCharm plugin...")
         print("-" * 70)
 
-        pycharm_plugin = self.root / "tb-lang-pycharm"
+        # Correct path: utils/tbx/tb-lang-pycharm
+        pycharm_plugin = self.tbx_utils / "tb-lang-pycharm"
         if not pycharm_plugin.exists():
-            print("⚠️  PyCharm plugin directory not found")
-            print("   Creating plugin structure...")
-            if not self.create_pycharm_plugin():
-                print()
-                return False
+            print(f"⚠️  PyCharm plugin directory not found at: {pycharm_plugin}")
+            print()
+            return False
+
+        print(f"   Plugin directory: {pycharm_plugin}")
 
         try:
             # Build plugin JAR
@@ -198,7 +267,7 @@ class TBSetup:
 
     def create_pycharm_plugin(self):
         """Create PyCharm plugin structure"""
-        plugin_dir = self.root / "tb-lang-pycharm"
+        plugin_dir = self.root /"utils"/"tbx"/ "tb-lang-pycharm"
         plugin_dir.mkdir(exist_ok=True)
 
         # Create directory structure
@@ -209,7 +278,7 @@ class TBSetup:
 
     def build_pycharm_plugin(self):
         """Build PyCharm plugin JAR"""
-        plugin_dir = self.root / "tb-lang-pycharm"
+        plugin_dir = self.root /"utils"/"tbx"/ "tb-lang-pycharm"
         build_script = plugin_dir / "build_plugin.py"
 
         if not build_script.exists():
@@ -238,7 +307,7 @@ print(f"✓ Plugin built: {output_jar}")
 
         # Run build script
         result = subprocess.run([sys.executable, str(build_script)],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding='utf-8')
 
         if result.returncode == 0:
             print(f"  {result.stdout.strip()}")
@@ -249,10 +318,11 @@ print(f"✓ Plugin built: {output_jar}")
 
     def install_pycharm_plugin(self):
         """Install plugin to PyCharm"""
-        plugin_jar = self.root / "tb-lang-pycharm" / "tb-language.jar"
+        time.sleep(2)
+        plugin_jar = self.root  /"utils"/"tbx" / "tb-lang-pycharm" / "tb-language.jar"
 
         if not plugin_jar.exists():
-            print("  Plugin JAR not found")
+            print(f"  Plugin JAR not found")
             return False
 
         # Find PyCharm config directory
@@ -348,15 +418,13 @@ def main():
 
     sys.exit(0 if success else 1)
 
-def function_runner(args=None, skip_build=False, skip_system=False, skip_vscode=False, skip_pycharm=False):
-    if not args:
-        sys.argv = [sys.argv[0], '--skip-build' if skip_build else '',
-                    '--skip-system' if skip_system else '',
-                    '--skip-vscode' if skip_vscode else '',
-                    '--skip-pycharm' if skip_pycharm else '']
-        sys.argv = [x for x in sys.argv if x != '']
-    else:
-        sys.argv = [sys.argv[0]]+args
+def function_runner(skip_build=False, skip_system=False, skip_vscode=False, skip_pycharm=False):
+
+    sys.argv = [sys.argv[0], '--skip-build' if skip_build else '',
+                '--skip-system' if skip_system else '',
+                '--skip-vscode' if skip_vscode else '',
+                '--skip-pycharm' if skip_pycharm else '']
+    sys.argv = [x for x in sys.argv if x != '']
     main()
 
 

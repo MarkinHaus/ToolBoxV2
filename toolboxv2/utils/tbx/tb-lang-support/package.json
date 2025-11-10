@@ -1,8 +1,8 @@
 {
   "name": "tb-language",
   "displayName": "TB Language",
-  "description": "Language support for TB (.tbx) files",
-  "version": "1.0.0",
+  "description": "Language support for TB (.tbx and .tb) files - Modern multi-paradigm scripting language",
+  "version": "1.0.1",
   "publisher": "tb-lang",
   "engines": {
     "vscode": "^1.75.0"
@@ -12,12 +12,19 @@
     "Snippets",
     "Formatters"
   ],
+  "keywords": [
+    "tb",
+    "tbx",
+    "toolbox",
+    "scripting",
+    "programming"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "tb",
         "aliases": ["TB Language", "tb", "tbx"],
-        "extensions": [".tbx"],
+        "extensions": [".tbx", ".tb"],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/tb-icon-light.png",
@@ -49,9 +56,14 @@
         },
         "tb.defaultMode": {
           "type": "string",
-          "enum": ["jit", "compiled", "streaming"],
+          "enum": ["jit", "aot", "streaming"],
           "default": "jit",
-          "description": "Default execution mode"
+          "description": "Default execution mode (JIT=Just-In-Time, AOT=Ahead-Of-Time)"
+        },
+        "tb.enableTypeChecking": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable type checking on save"
         }
       }
     },

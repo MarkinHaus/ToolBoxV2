@@ -1891,16 +1891,32 @@ impl RustCodeGenerator {
             }
 
             Expression::Match { value, arms, .. } => {
+                // ✅ FIX: Check if we're matching on a String type
+                // If so, we need to use .as_str() to match against &str patterns
+                let value_type = self.infer_expr_type(value)?;
+                let is_string_match = matches!(value_type, Type::String);
+
                 write!(self.buffer, "match ")?;
-                self.generate_expression(value)?;
+                if is_string_match {
+                    // For String values, convert to &str for pattern matching
+                    self.generate_expression(value)?;
+                    write!(self.buffer, ".as_str()")?;
+                } else {
+                    self.generate_expression(value)?;
+                }
                 writeln!(self.buffer, " {{")?;
                 self.indent_level += 1;
 
                 for arm in arms {
                     write!(self.buffer, "{}", self.indent())?;
+
+                    // Track if this pattern is an identifier binding
+                    let is_ident_pattern = matches!(&arm.pattern, Pattern::Ident(_));
+
                     match &arm.pattern {
                         Pattern::Literal(lit) => {
-                            self.generate_literal(lit)?;
+                            // Use pattern literal generation (no .to_string())
+                            self.generate_pattern_literal(lit)?;
                         }
                         Pattern::Ident(name) => {
                             write!(self.buffer, "{}", name)?;
@@ -1917,7 +1933,22 @@ impl RustCodeGenerator {
                         }
                     }
                     write!(self.buffer, " => ")?;
-                    self.generate_expression(&arm.body)?;
+
+                    // ✅ FIX: If we're matching on String with .as_str() and the pattern
+                    // is an identifier binding, we need to convert the bound &str back to String
+                    if is_string_match && is_ident_pattern {
+                        // Check if the arm body is just the identifier (simple case)
+                        if let Expression::Ident(name, _) = &arm.body {
+                            // If the body is just the bound identifier, convert it to String
+                            write!(self.buffer, "{}.to_string()", name)?;
+                        } else {
+                            // For more complex expressions, generate as-is
+                            // (the user's code should handle the type conversion)
+                            self.generate_expression(&arm.body)?;
+                        }
+                    } else {
+                        self.generate_expression(&arm.body)?;
+                    }
                     writeln!(self.buffer, ",")?;
                 }
 
@@ -2035,6 +2066,37 @@ impl RustCodeGenerator {
                 } else {
                     // Regular string with proper escaping
                     write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Generate a literal for use in match patterns
+    /// Unlike generate_literal(), this doesn't add .to_string() for strings
+    /// because match patterns can't contain expressions
+    fn generate_pattern_literal(&mut self, lit: &Literal) -> Result<()> {
+        match lit {
+            Literal::None => write!(self.buffer, "()")?,
+            Literal::Bool(b) => write!(self.buffer, "{}", b)?,
+            Literal::Int(i) => write!(self.buffer, "{}", i)?,
+            Literal::Float(f) => {
+                // Ensure .0 is displayed for whole numbers (e.g., 13.0 not 13)
+                let s = f.to_string();
+                if s.contains('.') {
+                    write!(self.buffer, "{}", s)?;
+                } else {
+                    write!(self.buffer, "{}.0", s)?;
+                }
+            }
+            Literal::String(s) => {
+                // ✅ FIX: For match patterns, we need to match against a reference to the String
+                // We use a variable binding pattern with an if guard
+                // This will be handled specially in the match generation
+                if s.contains('\\') {
+                    write!(self.buffer, "r\"{}\"", s.replace('"', "\\\""))?;
+                } else {
+                    write!(self.buffer, "\"{}\"", s.replace('"', "\\\""))?;
                 }
             }
         }

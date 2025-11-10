@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -483,18 +484,73 @@ def handle_run(file_path: str, mode: str = "jit", watch: bool = False):
     print_box_footer()
 
     try:
-        cmd = [str(exe_path), "run", file_path, "--mode", mode]
+        if mode == "compiled":
+            # Step 1: Compile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.exe' if os.name == 'nt' else '') as f:
+                output_path = f.name
 
-        result = subprocess.run(cmd, check=False)
+            try:
+                print_status("Compiling...", "info")
+                compile_start = time.perf_counter()
 
-        if result.returncode == 0:
-            print()
-            print_status("Execution completed successfully", "success")
-            return True
-        else:
-            print()
-            print_status(f"Execution failed with code {result.returncode}", "error")
-            return False
+                compile_result = subprocess.run(
+                    [str(exe_path), "compile", file_path, "--output", output_path],
+                    capture_output=True, text=True, check=False,
+                    encoding='utf-8', errors='replace'
+                )
+
+                compile_time = (time.perf_counter() - compile_start) * 1000
+
+                if compile_result.returncode != 0:
+                    print()
+                    print_status(f"Compilation failed", "error")
+                    if compile_result.stderr:
+                        print(compile_result.stderr)
+                    return False
+
+                print_status(f"Compiled in {compile_time:.2f}ms", "success")
+
+                # Step 2: Execute
+                if os.name != 'nt':
+                    os.chmod(output_path, 0o755)
+
+                print_status("Executing...", "info")
+                exec_start = time.perf_counter()
+
+                exec_result = subprocess.run(
+                    [output_path],
+                    check=False
+                )
+
+                exec_time = (time.perf_counter() - exec_start) * 1000
+
+                print()
+                if exec_result.returncode == 0:
+                    print_status(f"Execution completed successfully in {exec_time:.2f}ms", "success")
+                    return True
+                else:
+                    print_status(f"Execution failed with code {exec_result.returncode}", "error")
+                    return False
+
+            finally:
+                try:
+                    if os.path.exists(output_path):
+                        os.unlink(output_path)
+                except:
+                    pass
+
+        else:  # JIT mode
+            cmd = [str(exe_path), "run", file_path, "--mode", mode]
+            result = subprocess.run(cmd, check=False)
+
+            if result.returncode == 0:
+                print()
+                print_status("Execution completed successfully", "success")
+                return True
+            else:
+                print()
+                print_status(f"Execution failed with code {result.returncode}", "error")
+                return False
 
     except KeyboardInterrupt:
         print()
@@ -503,7 +559,6 @@ def handle_run(file_path: str, mode: str = "jit", watch: bool = False):
     except Exception as e:
         print_status(f"Failed to run: {e}", "error")
         return False
-
 
 def handle_compile(input_file: str, output_file: str, target: str = "native"):
     """Compile a TB program"""

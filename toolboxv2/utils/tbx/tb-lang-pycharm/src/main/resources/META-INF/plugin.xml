@@ -1,25 +1,42 @@
 <!-- file: tb-lang-pycharm/src/main/resources/META-INF/plugin.xml -->
+<!-- TB Language Plugin for PyCharm/IntelliJ IDEA -->
+<!-- Version: 1.0.1 - Updated 2025-11-10 -->
 
 <idea-plugin>
     <id>dev.tblang.tb-language</id>
     <name>TB Language</name>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <vendor email="support@tblang.dev" url="https://tblang.dev">TB Language Team</vendor>
 
     <description><![CDATA[
-        Support for TB Language (.tbx files)
+        Support for TB Language (.tbx and .tb files)
         <br/>
         <br/>
-        Features:
+        TB is a modern, multi-paradigm scripting language with:
         <ul>
-            <li>Syntax highlighting</li>
+            <li>Type safety with annotations and inference</li>
+            <li>Multi-language integration via plugin system</li>
+            <li>Two execution modes: JIT (fast development) and AOT (production performance)</li>
+            <li>Pattern matching for elegant control flow</li>
+        </ul>
+        <br/>
+        Plugin Features:
+        <ul>
+            <li>Syntax highlighting with C-style comments (// and /* */)</li>
             <li>Code completion</li>
-            <li>Run configurations</li>
-            <li>File type support</li>
+            <li>Run configurations (JIT and AOT modes)</li>
+            <li>File type support for .tbx and .tb extensions</li>
         </ul>
     ]]></description>
 
     <change-notes><![CDATA[
+        <b>1.0.1</b>
+        <ul>
+            <li>Fixed comment syntax: Changed from # to // and /* */</li>
+            <li>Added support for .tb file extension</li>
+            <li>Updated keywords to match current language specification</li>
+            <li>Improved syntax highlighting</li>
+        </ul>
         <b>1.0.0</b>
         <ul>
             <li>Initial release</li>
@@ -36,13 +53,13 @@
     <depends>com.intellij.modules.lang</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- File Type -->
+        <!-- File Type - supports both .tbx and .tb extensions -->
         <fileType
             name="TB Language"
             implementationClass="dev.tblang.TBFileType"
             fieldName="INSTANCE"
             language="TB"
-            extensions="tbx"/>
+            extensions="tbx;tb"/>
 
         <!-- Language -->
         <lang.parserDefinition
