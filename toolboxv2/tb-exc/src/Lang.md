@@ -1080,13 +1080,10 @@ max(10, 20, 5)   // 20
 ### File I/O Functions
 
 #### open
-Open a file (real or blob storage) with optional encryption
+Open a file
 ```tb
 // Real file
 let file = open("data.txt", "r")
-
-// Blob file with encryption
-let blob_file = open("blob_id/folder/file.txt", "w", true, "encryption_key")
 
 // Modes: "r" (read), "w" (write), "a" (append), "r+" (read/write)
 ```
@@ -1096,9 +1093,6 @@ Read entire file content (async, non-blocking)
 ```tb
 // Read real file
 let content = read_file("data.txt")
-
-// Read blob file
-let blob_content = read_file("blob_id/file.txt", true)
 ```
 
 #### write_file
@@ -1106,9 +1100,6 @@ Write content to file (async, non-blocking)
 ```tb
 // Write to real file
 write_file("output.txt", "Hello, World!")
-
-// Write to blob file
-write_file("blob_id/data.txt", "Blob content", true)
 ```
 
 #### file_exists
@@ -1116,11 +1107,6 @@ Check if file exists
 ```tb
 if file_exists("config.json") {
     print("Config found")
-}
-
-// Check blob file
-if file_exists("blob_id/settings.json", true) {
-    print("Blob settings found")
 }
 ```
 

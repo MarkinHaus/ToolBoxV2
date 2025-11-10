@@ -67,26 +67,54 @@ impl DeadCodeElimination {
         removed
     }
 
+    /// Check if a block contains variable declarations
+    fn block_declares_variables(&self, statements: &[Statement]) -> bool {
+        statements.iter().any(|stmt| matches!(stmt, Statement::Let { .. }))
+    }
+
     fn eliminate_constant_conditions(&mut self, statements: &mut Vec<Statement>) -> usize {
         let mut removed = 0;
 
         let mut i = 0;
         while i < statements.len() {
             match &statements[i] {
-                // ✅ RE-ENABLED: This optimization is now safe after fixing JIT scoping!
-                // The JIT executor now properly handles block scopes using im::HashMap clone,
-                // so variables declared in if-blocks no longer leak to the outer scope.
+                // ⚠️ CRITICAL FIX: Do NOT inline if-blocks that declare variables!
+                //
+                // The previous optimization replaced `if true { let x = 2 }` with `let x = 2`,
+                // which BREAKS SCOPING! Variables declared in if-blocks should NOT leak to outer scope.
+                //
+                // Example that breaks:
+                //   let x = 1
+                //   if true {
+                //       let x = 2  // This should shadow outer x in this block only
+                //       print(x)   // Should print 2
+                //   }
+                //   print(x)       // Should print 1, not 2!
+                //
+                // After inlining, it becomes:
+                //   let x = 1
+                //   let x = 2      // ❌ This overwrites outer x!
+                //   print(x)       // ❌ Prints 2
+                //   print(x)       // ❌ Prints 2 (should be 1)
+                //
+                // Solution: Only inline if-blocks that don't declare variables
                 Statement::If { condition, then_block, else_block, .. } => {
                     if let Expression::Literal(Literal::Bool(value), _) = condition {
-                        let replacement = if *value {
-                            then_block.clone()
-                        } else {
-                            else_block.clone().unwrap_or_default()
-                        };
+                        // ✅ FIX: Only inline if the block doesn't declare variables
+                        let block_to_check = if *value { then_block } else { else_block.as_ref().map(|v| v.as_slice()).unwrap_or(&[]) };
 
-                        statements.splice(i..=i, replacement);
-                        removed += 1;
-                        continue; // Don't increment i, check new statements
+                        if !self.block_declares_variables(block_to_check) {
+                            let replacement = if *value {
+                                then_block.clone()
+                            } else {
+                                else_block.clone().unwrap_or_default()
+                            };
+
+                            statements.splice(i..=i, replacement);
+                            removed += 1;
+                            continue; // Don't increment i, check new statements
+                        }
+                        // If block declares variables, keep the if-statement to preserve scoping
                     }
                 }
                 Statement::While { condition, .. } => {

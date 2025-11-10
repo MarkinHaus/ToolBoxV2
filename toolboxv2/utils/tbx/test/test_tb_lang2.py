@@ -177,8 +177,8 @@ def find_tb_binary() -> str:
     try:
         from toolboxv2 import tb_root_dir
         paths = [
-            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tb",  # Prefer release for faster compilation
-            tb_root_dir / "tb-exc" /"src" / "target" / "debug" / "tb",
+            tb_root_dir / "tb-exc" /"src" / "target" / "debug" / "tb",  # Prefer release for faster compilation
+            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tb",
             tb_root_dir / "bin" / "tb",
         ]
     except:
@@ -1109,8 +1109,8 @@ def test_pop_function(mode):
     assert_output("""
 let items = [1, 2, 3, 4]
 let less = pop(items)
-print(len(less[0]))
-""", "3", mode)
+print(less)
+""", "[[1, 2, 3], 4]", mode)
 
 
 @test("keys function", "Builtins")
@@ -3625,6 +3625,8 @@ def test_file_io(mode):
     finally:
         os.unlink(path)
 
+@test("File I/O error", "IO")
+def test_file_io_error(mode):
     # Fehler beim Lesen einer nicht existierenden Datei
     assert_error(f'read_file("some/non/existent/file.txt")', mode)
 

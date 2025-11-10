@@ -1032,6 +1032,10 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Literal(Literal::Bool(false), span))
             }
+            TokenKind::None => {
+                self.advance();
+                Ok(Expression::Literal(Literal::None, span))
+            }
             TokenKind::Integer(i) => {
                 let val = *i;
                 self.advance();
@@ -1360,6 +1364,10 @@ impl Parser {
             TokenKind::False => {
                 self.advance();
                 Ok(Pattern::Literal(Literal::Bool(false)))
+            }
+            TokenKind::None => {
+                self.advance();
+                Ok(Pattern::Literal(Literal::None))
             }
             TokenKind::Integer(i) => {
                 let val = *i;
