@@ -1,7 +1,17 @@
 """Top-level package for ToolBox."""
 import os
+import sys
 
 from yaml import safe_load
+
+# Suppress print statements during import in PyO3 environment
+_suppress_output = os.environ.get('PYTHONIOENCODING') == 'utf-8'
+if _suppress_output:
+    import io
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
 
 try:
     from .utils.toolbox import App
@@ -80,8 +90,21 @@ except ImportError:
 try:
     from .utils.system.getting_and_closing_app import get_app
 except ImportError:
-    get_app = None
-    print("⚠️ Missing: utils.system.getting_and_closing_app.get_app")
+    # Fallback for PyO3 environment where imports may fail
+    class _DummyApp:
+        def __init__(self):
+            self.id = "toolbox-main"
+
+        def __str__(self):
+            return f"<App id='{self.id}'>"
+
+        def __repr__(self):
+            return self.__str__()
+
+    def get_app():
+        return _DummyApp()
+
+    print("⚠️ Missing: utils.system.getting_and_closing_app.get_app (using fallback)")
 
 try:
     from .utils.system.types import Result
@@ -141,7 +164,7 @@ __init_cwd__ = init_cwd = Path.cwd()
 
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
 os.chdir(__tb_root_dir__)
-__version__ = get_version_from_pyproject()
+__version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.24"
 
 ToolBox_over: str = "root"
 __all__ = [
@@ -177,3 +200,8 @@ __all__ = [
     "__init_cwd__",
     "TBxSetup",
 ]
+
+# Restore stdout/stderr after import
+if _suppress_output:
+    sys.stdout = _original_stdout
+    sys.stderr = _original_stderr

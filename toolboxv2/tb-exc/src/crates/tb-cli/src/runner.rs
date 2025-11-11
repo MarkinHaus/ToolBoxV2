@@ -147,6 +147,12 @@ pub fn compile_file(
     // ═══════════════════════════════════════════════════════════════════════════
     let uses_networking = detect_networking_usage(&program.statements) || config_networking;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-DETECT PLUGIN USAGE
+    // ═══════════════════════════════════════════════════════════════════════════
+    let uses_plugins = detect_plugin_usage(&program.statements);
+    let uses_python_plugins = detect_python_plugin_usage(&program.statements);
+
     // Determine runtime configuration
     let (runtime_config, worker_threads, use_multi_thread) = if uses_networking {
         eprintln!("[TB Compiler] ✓ Auto-detected networking usage - enabling networking features");
@@ -196,7 +202,7 @@ pub fn compile_file(
 
     if use_fast_compile {
         let required_crates_refs: Vec<&str> = required_crates.iter().map(|s| s.as_str()).collect();
-        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, config_optimize);
+        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, uses_plugins, uses_python_plugins, config_optimize);
     }
 
     // FALLBACK: Old Cargo-based compilation (slow but more compatible)
@@ -420,6 +426,8 @@ fn compile_with_rustc(
     required_crates: &[&str],
     uses_networking: bool,
     use_multi_thread: bool,
+    uses_plugins: bool,
+    uses_python_plugins: bool,
     optimize: bool,
 ) -> Result<()> {
 
@@ -469,6 +477,14 @@ fn compile_with_rustc(
     }
     if required_crates.contains(&"serde_yaml") {
         features.push("yaml");
+    }
+    // ✅ FIX: Add plugins feature if plugins are used
+    if uses_plugins {
+        features.push("plugins");
+    }
+    // ✅ FIX: Add python feature if Python plugins are used
+    if uses_python_plugins {
+        features.push("python");
     }
 
     let features_str = if features.is_empty() {
@@ -659,6 +675,30 @@ fn detect_networking_usage(statements: &[Statement]) -> bool {
     for stmt in statements {
         if statement_uses_networking(stmt) {
             return true;
+        }
+    }
+    false
+}
+
+/// Auto-detect plugin usage from statements
+fn detect_plugin_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if matches!(stmt, Statement::Plugin { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Auto-detect Python plugin usage from statements
+fn detect_python_plugin_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if let Statement::Plugin { definitions, .. } = stmt {
+            for def in definitions {
+                if matches!(def.language, tb_core::PluginLanguage::Python) {
+                    return true;
+                }
+            }
         }
     }
     false

@@ -1739,6 +1739,64 @@ let numbers = [1, 2, 3, 4, 5]
 print(data_analysis.mean(numbers))
 """, "3.0", mode)
 
+@test("Plugin: Python with toolboxv2", "Plugins - Python", slow=True)
+def test_plugin_python_toolboxv2(mode):
+    assert_output("""
+@plugin {
+    python "tb" {
+        mode: "jit",
+        requires: ["toolboxv2"],
+
+        def version() -> str:
+            import toolboxv2
+            return toolboxv2.__version__
+
+        def get_app_id() -> str:
+            from toolboxv2 import get_app
+            return get_app().id
+
+        def get_app():
+            from toolboxv2 import get_app
+            return get_app()
+    }
+}
+
+print(tb.version())
+let app = tb.get_app_id()
+print(app)
+let app = tb.get_app()
+print(app)
+""", "0.1.24\ntoolbox-main\n<App id='toolbox-main'>", mode)
+
+@test("Plugin: Python with toolboxv2 compiled", "Plugins - Python", slow=True)
+def test_plugin_python_toolboxv2_copiled(mode):
+    assert_output("""
+@plugin {
+    python "tb" {
+        mode: "compiled",
+        requires: ["toolboxv2"],
+
+        def version() -> str:
+            import toolboxv2
+            return toolboxv2.__version__
+
+        def get_app_id() -> str:
+            from toolboxv2 import get_app
+            return get_app().id
+
+        def get_app():
+            from toolboxv2 import get_app
+            return get_app()
+    }
+}
+
+print(tb.version())
+let app = tb.get_app_id()
+print(app)
+let app = tb.get_app()
+print(app)
+""", "0.1.24\ntoolbox-main\n<App id='toolbox-main'>", mode)
+
 
 @test("Plugin: Python inline with recursion", "Plugins - Python")
 def test_plugin_python_compiled(mode):

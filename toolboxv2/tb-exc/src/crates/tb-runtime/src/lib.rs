@@ -30,7 +30,7 @@ pub mod ffi;
 
 // Re-export built-in functions only when "full" feature is enabled
 #[cfg(feature = "full")]
-use tb_core::Value;
+pub use tb_core::Value;
 
 #[cfg(feature = "full")]
 pub use tb_builtins::builtins_impl::{
@@ -75,7 +75,7 @@ use tb_core::PluginLanguage;
 
 /// Global plugin loader instance (only with "plugins" feature)
 #[cfg(feature = "plugins")]
-static PLUGIN_LOADER: once_cell::sync::Lazy<Arc<PluginLoader>> =
+pub static PLUGIN_LOADER: once_cell::sync::Lazy<Arc<PluginLoader>> =
     once_cell::sync::Lazy::new(|| Arc::new(PluginLoader::new()));
 
 /// Global plugin function cache: (module_name, function_name) -> function_id (only with "plugins" feature)
@@ -338,7 +338,8 @@ pub extern "C" fn tb_plugin_call_python_jit(
 
     // Execute Python function
     let args = vec![Value::Int(arg)];
-    match PLUGIN_LOADER.execute_python_jit_inline(source, func_name, args) {
+    let requires = &[]; // No dependencies for this FFI call
+    match PLUGIN_LOADER.execute_python_jit_inline(source, func_name, args, requires) {
         Ok(Value::Int(result)) => result,
         _ => 0, // Error fallback
     }

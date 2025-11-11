@@ -256,6 +256,7 @@ impl PluginLoader {
         source_code: &str,
         function_name: &str,
         args: Vec<Value>,
+        requires: &[Arc<String>],
     ) -> Result<Value> {
         use tb_core::{PluginLanguage, PluginMode};
 
@@ -264,7 +265,7 @@ impl PluginLoader {
         match (language, mode) {
             (PluginLanguage::Python, PluginMode::Jit) => {
                 tb_debug_plugin!("Executing Python JIT inline");
-                self.execute_python_jit_inline(source_code, function_name, args)
+                self.execute_python_jit_inline(source_code, function_name, args, requires)
             }
             (PluginLanguage::JavaScript, PluginMode::Jit) => {
                 tb_debug_plugin!("Executing JavaScript JIT inline");
@@ -529,7 +530,18 @@ rayon = "1.8"
         use pyo3::prelude::*;
         use pyo3::types::PyModule;
 
+        // ✅ FIX: Set UTF-8 encoding for Python I/O to avoid Windows charmap errors
+        std::env::set_var("PYTHONIOENCODING", "utf-8");
+
         Python::with_gil(|py| {
+            // ✅ FIX: Configure Python to use UTF-8 for stdout/stderr
+            // Note: This may fail on some systems, so we ignore errors
+            let _ = py.run(
+                "import sys, io\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass",
+                None,
+                None
+            );
+
             let code = std::fs::read_to_string(script_path)
                 .map_err(|e| TBError::plugin_error(format!("Failed to read Python script: {}", e)))?;
 
@@ -539,9 +551,15 @@ rayon = "1.8"
             let func = module.getattr(function_name)
                 .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
-            let py_args = self.values_to_python(py, args)?;
-            let result = func.call(py_args.as_ref(py), None)
-                .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?;
+            // Call the function based on number of arguments
+            let result = if args.is_empty() {
+                func.call0()
+                    .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?
+            } else {
+                let py_args = self.values_to_python(py, args)?;
+                func.call1(py_args.as_ref(py))
+                    .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?
+            };
 
             self.python_to_value(result)
         })
@@ -553,6 +571,7 @@ rayon = "1.8"
         source_code: &str,
         function_name: &str,
         args: Vec<Value>,
+        requires: &[Arc<String>],
     ) -> Result<Value> {
         use pyo3::prelude::*;
         use pyo3::types::PyModule;
@@ -562,17 +581,87 @@ rayon = "1.8"
         tb_debug_plugin!("Source code:\n{}", source_code);
         tb_debug_plugin!("--- End of source code ---");
 
+        // ✅ FIX: Set UTF-8 encoding for Python I/O to avoid Windows charmap errors
+        std::env::set_var("PYTHONIOENCODING", "utf-8");
+
+        // ✅ FIX: Ensure dependencies are installed
+        if !requires.is_empty() {
+            tb_debug_plugin!("Installing Python dependencies: {:?}", requires);
+            let requires_strings: Vec<String> = requires.iter().map(|s| s.to_string()).collect();
+            self.ensure_dependencies(&tb_core::PluginLanguage::Python, &requires_strings)?;
+        }
+
         Python::with_gil(|py| {
+            // ✅ FIX: Configure Python to use UTF-8 for stdout/stderr and add venv site-packages to sys.path
+            // Note: This may fail on some systems, so we ignore errors
+            let setup_code = if let Ok(cwd) = std::env::current_dir() {
+                tb_debug_plugin!("Current directory: {:?}", cwd);
+                // The cwd is usually C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2
+                // We need to go up one level to get to the project root
+                let mut project_root = cwd.clone();
+                project_root.pop(); // ToolBoxV2
+
+                // Try python_env first (where toolboxv2 is installed)
+                let mut python_env_path = project_root.clone();
+                python_env_path.push("python_env");
+                python_env_path.push("Lib");
+                python_env_path.push("site-packages");
+
+                tb_debug_plugin!("Checking python_env path: {:?}", python_env_path);
+                if python_env_path.exists() {
+                    let python_env_str = python_env_path.to_string_lossy().to_string();
+                    tb_debug_plugin!("Adding python_env site-packages to sys.path: {}", python_env_str);
+                    format!("import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add python_env site-packages to sys.path (for toolboxv2)\npython_env_sp = r'{}'\nif python_env_sp not in sys.path:\n    sys.path.insert(0, python_env_sp)\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())", python_env_str)
+                } else {
+                    tb_debug_plugin!("python_env path does not exist, using default setup");
+                    "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
+                }
+            } else {
+                tb_debug_plugin!("Could not get current directory");
+                "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
+            };
+
+            let _ = py.run(&setup_code, None, None);
+
+            tb_debug_plugin!("Creating Python module from source code");
+
             let module = PyModule::from_code(py, source_code, "plugin", "plugin")
                 .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
 
+            tb_debug_plugin!("Getting function '{}' from module", function_name);
             let func = module.getattr(function_name)
                 .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
-            let py_args = self.values_to_python(py, args)?;
-            let result = func.call(py_args.as_ref(py), None)
-                .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?;
+            tb_debug_plugin!("Function type: {:?}", func.get_type());
+            tb_debug_plugin!("Is callable: {}", func.is_callable());
+            tb_debug_plugin!("Function repr: {:?}", func.repr());
 
+            tb_debug_plugin!("Converting args to Python: {:?}", args);
+
+            // Call the function based on number of arguments
+            let result = if args.is_empty() {
+                tb_debug_plugin!("Calling function with 0 args using call0()");
+                func.call0()
+                    .map_err(|e| {
+                        tb_debug_plugin!("Python call0 failed with error: {}", e);
+                        // Print full traceback
+                        e.print(py);
+                        TBError::plugin_error(format!("Python execution error: {}", e))
+                    })?
+            } else {
+                let py_args = self.values_to_python(py, args)?;
+                tb_debug_plugin!("Calling function with {} args using call1()", py_args.as_ref(py).len());
+                tb_debug_plugin!("py_args: {:?}", py_args.as_ref(py));
+                func.call1(py_args.as_ref(py))
+                    .map_err(|e| {
+                        tb_debug_plugin!("Python call1 failed with error: {}", e);
+                        // Print full traceback
+                        e.print(py);
+                        TBError::plugin_error(format!("Python execution error: {}", e))
+                    })?
+            };
+
+            tb_debug_plugin!("Function returned: {:?}", result);
             self.python_to_value(result)
         })
     }
@@ -593,6 +682,7 @@ rayon = "1.8"
         _source_code: &str,
         _function_name: &str,
         _args: Vec<Value>,
+        _requires: &[Arc<String>],
     ) -> Result<Value> {
         Err(TBError::plugin_error("Python support not enabled. Rebuild with --features python"))
     }
@@ -764,6 +854,13 @@ rayon = "1.8"
             }
             Ok(Value::Dict(std::sync::Arc::new(map)))
         } else {
+            // Try to convert to string using str()
+            if let Ok(s) = obj.str() {
+                if let Ok(s_str) = s.extract::<String>() {
+                    tb_debug_plugin!("Converting Python object to string: {}", s_str);
+                    return Ok(Value::String(std::sync::Arc::new(s_str)));
+                }
+            }
             tb_debug_plugin!("Unsupported Python type, returning None");
             Ok(Value::None)
         }

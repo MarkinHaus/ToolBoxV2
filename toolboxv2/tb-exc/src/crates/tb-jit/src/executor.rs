@@ -435,11 +435,12 @@ impl JitExecutor {
                     let module_name = Arc::clone(&def.name);
                     let language = def.language.clone();
                     let mode = def.mode.clone();
+                    let requires = def.requires.clone();
 
                     // Create module dict with plugin functions
                     let module = match &def.source {
                         PluginSource::Inline(code) => {
-                            self.create_plugin_module_inline(&language, &mode, code)?
+                            self.create_plugin_module_inline(&language, &mode, code, &requires)?
                         }
                         PluginSource::File(path) => {
                             self.create_plugin_module_file(&language, &mode, path)?
@@ -1052,6 +1053,7 @@ impl JitExecutor {
         language: &PluginLanguage,
         mode: &PluginMode,
         source_code: &str,
+        requires: &[Arc<String>],
     ) -> Result<Value> {
         tb_debug_plugin!("Creating inline plugin module for {:?} in {:?} mode", language, mode);
         tb_debug_plugin!("Source code length: {} bytes", source_code.len());
@@ -1070,6 +1072,7 @@ impl JitExecutor {
             let source_clone = source_code.to_string();
             let language_clone = language.clone();
             let mode_clone = mode.clone();
+            let requires_clone = requires.to_vec();
             let loader = Arc::clone(&self.plugin_loader);
 
             tb_debug_plugin!("Registering function: {}", func_name);
@@ -1085,6 +1088,7 @@ impl JitExecutor {
                         &source_clone,
                         &func_name,
                         args,
+                        &requires_clone,
                     )
                 }),
             }));

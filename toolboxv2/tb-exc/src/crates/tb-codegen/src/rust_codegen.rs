@@ -3673,6 +3673,80 @@ impl RustCodeGenerator {
         Ok(())
     }
 
+    /// Generate Python JIT plugin call implementation
+    /// This generates code that calls the plugin loader to execute Python code
+    fn generate_python_jit_plugin_call(
+        &self,
+        func_name: &str,
+        source_code: &Arc<String>,
+        param_types: &[String],
+        return_type: &str,
+        requires: &[Arc<String>],
+    ) -> String {
+        // Build args vector from parameters
+        let args_vec = if param_types.is_empty() {
+            "vec![]".to_string()
+        } else {
+            let args: Vec<String> = (0..param_types.len())
+                .map(|i| {
+                    let param_type = &param_types[i];
+                    // Convert parameter to Value based on type
+                    if param_type == "i64" {
+                        format!("Value::Int(arg{})", i)
+                    } else if param_type == "f64" {
+                        format!("Value::Float(arg{})", i)
+                    } else if param_type == "String" || param_type == "&str" {
+                        format!("Value::String(arg{}.to_string())", i)
+                    } else if param_type == "bool" {
+                        format!("Value::Bool(arg{})", i)
+                    } else {
+                        // Default: assume it's an integer
+                        format!("Value::Int(arg{})", i)
+                    }
+                })
+                .collect();
+            format!("vec![{}]", args.join(", "))
+        };
+
+        // For raw strings (r###"..."###), we don't need to escape anything except the delimiter
+        // Just use the source code as-is
+
+        // Build requires array
+        let requires_array = if requires.is_empty() {
+            "&[]".to_string()
+        } else {
+            let requires_items: Vec<String> = requires.iter()
+                .map(|r| format!("std::sync::Arc::new(\"{}\".to_string())", r))
+                .collect();
+            format!("&[{}]", requires_items.join(", "))
+        };
+
+        // Generate the plugin loader call
+        let loader_call = format!(
+            "    use tb_runtime::{{PLUGIN_LOADER, Value}};\n    let args = {};\n    let requires = {};\n    match PLUGIN_LOADER.execute_python_jit_inline(r###\"{}\"###, \"{}\", args, requires) {{",
+            args_vec,
+            requires_array,
+            source_code,
+            func_name
+        );
+
+        // Generate return value conversion based on return type
+        let return_conversion = if return_type == "i64" {
+            "        Ok(Value::Int(v)) => v,\n        Ok(v) => panic!(\"Expected Int, got {:?}\", v),\n        Err(e) => panic!(\"Plugin error: {:?}\", e),\n    }"
+        } else if return_type == "f64" {
+            "        Ok(Value::Float(v)) => v,\n        Ok(Value::Int(v)) => v as f64,\n        Ok(v) => panic!(\"Expected Float, got {:?}\", v),\n        Err(e) => panic!(\"Plugin error: {:?}\", e),\n    }"
+        } else if return_type == "String" {
+            "        Ok(Value::String(v)) => v.to_string(),\n        Ok(v) => format!(\"{:?}\", v),\n        Err(e) => panic!(\"Plugin error: {:?}\", e),\n    }"
+        } else if return_type == "bool" {
+            "        Ok(Value::Bool(v)) => v,\n        Ok(v) => panic!(\"Expected Bool, got {:?}\", v),\n        Err(e) => panic!(\"Plugin error: {:?}\", e),\n    }"
+        } else {
+            // Default: return as string
+            "        Ok(Value::String(v)) => v.to_string(),\n        Ok(v) => format!(\"{:?}\", v),\n        Err(e) => panic!(\"Plugin error: {:?}\", e),\n    }"
+        };
+
+        format!("{}\n{}", loader_call, return_conversion)
+    }
+
     /// Extract function names from plugin source code
     /// ✅ PASS 20 Phase 5: Support external file loading
     /// ✅ FIX #4: Enhanced Rust function extraction with #[no_mangle] support
@@ -3789,7 +3863,7 @@ impl RustCodeGenerator {
                     self.plugin_modules.insert(Arc::clone(&def.name), func_names.clone());
 
                     // Generate wrapper functions
-                    self.generate_plugin_wrappers(&def.name, &def.language, &def.mode, &def.source, &func_names)?;
+                    self.generate_plugin_wrappers(&def.name, &def.language, &def.mode, &def.source, &func_names, &def.requires)?;
                 }
             }
         }
@@ -3815,6 +3889,7 @@ impl RustCodeGenerator {
         mode: &PluginMode,
         source: &PluginSource,
         func_names: &[String],
+        requires: &[Arc<String>],
     ) -> Result<()> {
         let source_code = match source {
             PluginSource::Inline(code) => code.clone(),
@@ -3852,15 +3927,20 @@ impl RustCodeGenerator {
             write!(&mut self.plugin_wrappers, ") -> {}", return_type)?;
             writeln!(&mut self.plugin_wrappers, " {{")?;
 
-            // Analyze the function source to generate appropriate implementation
-            let implementation = self.analyze_and_generate_plugin_impl_with_types(
-                func_name,
-                &source_code,
-                language,
-                &param_types,
-                &return_type,
-                module_name  // ✅ PASS 20 Phase 7: Pass module name for recursive calls
-            );
+            // ✅ FIX: For Python JIT mode, generate plugin loader call instead of heuristic implementation
+            let implementation = if matches!(language, PluginLanguage::Python) && matches!(mode, PluginMode::Jit) {
+                self.generate_python_jit_plugin_call(func_name, &source_code, &param_types, &return_type, requires)
+            } else {
+                // Analyze the function source to generate appropriate implementation
+                self.analyze_and_generate_plugin_impl_with_types(
+                    func_name,
+                    &source_code,
+                    language,
+                    &param_types,
+                    &return_type,
+                    module_name  // ✅ PASS 20 Phase 7: Pass module name for recursive calls
+                )
+            };
             writeln!(&mut self.plugin_wrappers, "{}", implementation)?;
 
             writeln!(&mut self.plugin_wrappers, "}}")?;
@@ -3896,8 +3976,9 @@ impl RustCodeGenerator {
 
                     // Parse parameters and infer types
                     // ✅ PASS 22: Pass func_name for body analysis
+                    // ✅ FIX: If function has no parameters, return empty vec instead of vec!["i64"]
                     let param_types = if params_str.trim().is_empty() {
-                        vec!["i64".to_string()] // Default to single i64 parameter
+                        vec![] // No parameters
                     } else {
                         // ✅ PASS 25 FIX #4 & #5: Use FFI body analysis for Rust FFI functions
                         if language == &PluginLanguage::Rust && params_str.contains("*const FFIValue") {
@@ -3919,8 +4000,9 @@ impl RustCodeGenerator {
             }
         }
 
-        // Default: single i64 parameter, i64 return
-        (vec!["i64".to_string()], "i64".to_string())
+        // Default: no parameters, String return (safest fallback for unknown functions)
+        // ✅ FIX: Changed from vec!["i64"] to vec![] to avoid generating invalid function signatures
+        (vec![], "String".to_string())
     }
 
     /// Enhanced parameter type inference with 4-phase analysis
@@ -5251,7 +5333,15 @@ impl RustCodeGenerator {
             return format!("    if arg0 <= 1 {{ arg0 }} else {{ {}(arg0 - 1) + {}(arg0 - 2) }}", recursive_call, recursive_call);
         }
 
-        // Default: return first argument
+        // ✅ FIX: Handle zero-parameter functions - should never reach here for Python JIT
+        // This is a fallback for unknown patterns
+        if param_count == 0 {
+            // For zero-parameter functions, generate a placeholder that doesn't reference arg0
+            return r#"    // TODO: Implement plugin function
+    String::from("Not implemented")"#.to_string();
+        }
+
+        // Default: return first argument (only for functions with parameters)
         "    arg0 // TODO: Implement plugin function".to_string()
     }
 
