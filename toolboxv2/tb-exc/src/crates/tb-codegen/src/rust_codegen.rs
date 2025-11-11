@@ -23,6 +23,8 @@ pub struct RustCodeGenerator {
     iter_lambda_params: HashSet<Arc<String>>, // ✅ FIX: Track .iter() lambda parameters (need double deref **)
     vec_dictvalue_vars: HashSet<Arc<String>>, // ✅ FIX 11: Track variables that hold Vec<DictValue> from list()
     function_param_types: HashMap<Arc<String>, Vec<Type>>, // ✅ FIX 12: Track inferred parameter types from call sites
+    string_literal_as_str: bool, // ✅ FIX: When true, generate string literals as &str instead of String
+    dictvalue_loop_vars: HashSet<Arc<String>>, // ✅ FIX: Track for-loop variables that iterate over Vec<DictValue>
     // Track which external crates are used
     uses_serde_json: bool,
     uses_serde_yaml: bool,
@@ -48,6 +50,8 @@ impl RustCodeGenerator {
             iter_lambda_params: HashSet::new(), // ✅ FIX: Track .iter() lambda parameters
             vec_dictvalue_vars: HashSet::new(), // ✅ FIX 11
             function_param_types: HashMap::new(), // ✅ FIX 12
+            string_literal_as_str: false, // ✅ FIX
+            dictvalue_loop_vars: HashSet::new(), // ✅ FIX
             uses_serde_json: false,
             uses_serde_yaml: false,
             uses_chrono: false,
@@ -269,9 +273,20 @@ impl RustCodeGenerator {
                         // Object property assignment: obj.member = value
                         // For immutable data structures, we need to clone and update
                         if let Expression::Ident(obj_name, _) = object.as_ref() {
+                            // Check if the object is a dictionary (HashMap<String, DictValue>)
+                            let obj_type = self.infer_expr_type(object).ok();
+                            let is_dict = matches!(obj_type, Some(Type::Dict(_, _)));
+
                             write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp.insert(\"{}\".to_string(), ",
                                    self.indent(), obj_name, member)?;
-                            self.generate_expression(value)?;
+
+                            // If it's a dict, wrap the value in DictValue
+                            if is_dict {
+                                self.generate_dict_value_wrapped(value)?;
+                            } else {
+                                self.generate_expression(value)?;
+                            }
+
                             writeln!(self.buffer, "); {} = tmp; }}", obj_name)?;
                         } else {
                             return Err(TBError::compilation_error(
@@ -282,12 +297,32 @@ impl RustCodeGenerator {
                     Expression::Index { object, index, .. } => {
                         // Array/dict index assignment
                         if let Expression::Ident(obj_name, _) = object.as_ref() {
-                            write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp[",
-                                   self.indent(), obj_name)?;
-                            self.generate_expression(index)?;
-                            write!(self.buffer, "] = ")?;
-                            self.generate_expression(value)?;
-                            writeln!(self.buffer, "; {} = tmp; }}", obj_name)?;
+                            // Check if the object is a dictionary (HashMap<String, DictValue>)
+                            let obj_type = self.infer_expr_type(object).ok();
+                            let is_dict = matches!(obj_type, Some(Type::Dict(_, _)));
+
+                            if is_dict {
+                                // For dictionaries, use .insert() with &str key
+                                write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp.insert(",
+                                       self.indent(), obj_name)?;
+                                // Generate key - for string literals, use &str
+                                if let Expression::Literal(Literal::String(s), _) = index.as_ref() {
+                                    write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                                } else {
+                                    self.generate_expression(index)?;
+                                }
+                                write!(self.buffer, ", ")?;
+                                self.generate_dict_value_wrapped(value)?;
+                                writeln!(self.buffer, "); {} = tmp; }}", obj_name)?;
+                            } else {
+                                // For arrays/lists, use index notation
+                                write!(self.buffer, "{}{{ let mut tmp = {}.clone(); tmp[",
+                                       self.indent(), obj_name)?;
+                                self.generate_expression(index)?;
+                                write!(self.buffer, "] = ")?;
+                                self.generate_expression(value)?;
+                                writeln!(self.buffer, "; {} = tmp; }}", obj_name)?;
+                            }
                         } else {
                             return Err(TBError::compilation_error(
                                 "Complex index assignment not yet supported in compiled mode"
@@ -518,20 +553,30 @@ impl RustCodeGenerator {
             Statement::For { variable, iterable, body, .. } => {
                 // ✅ FIX: Track loop variable type
                 let iterable_type = self.infer_expr_type(iterable).ok();
-                if let Some(Type::List(elem_type)) = iterable_type {
-                    self.variable_types.insert(variable.clone(), (*elem_type).clone());
-                }
+                let is_dictvalue_list = if let Some(Type::List(elem_type)) = &iterable_type {
+                    self.variable_types.insert(variable.clone(), (*elem_type.clone()).clone());
+                    matches!(**elem_type, Type::Any)
+                } else {
+                    false
+                };
 
                 write!(self.buffer, "{}for {} in ", self.indent(), variable)?;
 
                 // ✅ FIX: Check if iterable is a Member/Index expression returning DictValue
+                // Also check if the inferred type is Any (which means it's a DictValue)
                 let is_dict_access = matches!(iterable, Expression::Member { .. } | Expression::Index { .. });
+                let is_dict_value = matches!(iterable_type, Some(Type::Any));
 
                 self.generate_expression(iterable)?;
 
-                // If it's a dictionary access, unwrap the list from DictValue
-                if is_dict_access {
+                // If it's a dictionary access or returns DictValue (Type::Any), unwrap the list from DictValue
+                if is_dict_access || is_dict_value {
                     write!(self.buffer, ".as_list()")?;
+                    // Track that this loop variable is a reference to DictValue
+                    self.dictvalue_loop_vars.insert(variable.clone());
+                } else if is_dictvalue_list {
+                    // Even if not a dict access, if the list contains DictValue, track the variable
+                    self.dictvalue_loop_vars.insert(variable.clone());
                 }
 
                 writeln!(self.buffer, " {{")?;
@@ -546,6 +591,7 @@ impl RustCodeGenerator {
 
                 // Remove loop variable from tracking after the loop
                 self.variable_types.remove(variable);
+                self.dictvalue_loop_vars.remove(variable);
             }
 
             Statement::While { condition, body, .. } => {
@@ -791,8 +837,26 @@ impl RustCodeGenerator {
                         } else {
                             false
                         };
+                        let left_is_dictvalue_loop_var = if let Expression::Ident(name, _) = left.as_ref() {
+                            self.dictvalue_loop_vars.contains(name)
+                        } else {
+                            false
+                        };
 
-                        if left_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                        if left_is_dictvalue_loop_var && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                            // DictValue loop vars need deref and unwrap: (*x).as_int()
+                            write!(self.buffer, "(*")?;
+                            self.generate_expression(left)?;
+                            write!(self.buffer, ")")?;
+                            // Default to .as_int() for arithmetic
+                            match right_type {
+                                Type::Int => write!(self.buffer, ".as_int()")?,
+                                Type::Float => write!(self.buffer, ".as_float()")?,
+                                Type::String => write!(self.buffer, ".as_string()")?,
+                                Type::Bool => write!(self.buffer, ".as_bool()")?,
+                                _ => write!(self.buffer, ".as_int()")?, // Default to int
+                            }
+                        } else if left_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
                             // .iter() lambda params need double deref: **x
                             write!(self.buffer, "**")?;
                             self.generate_expression(left)?;
@@ -802,15 +866,32 @@ impl RustCodeGenerator {
                         } else if left_is_dict_access && matches!(left_type, Type::Any) {
                             // This might be a DictValue, extract based on right type or operation
                             self.generate_expression(left)?;
-                            // For comparisons, try to infer the type from the right operand
-                            if matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq) {
-                                match right_type {
-                                    Type::Int => write!(self.buffer, ".as_int()")?,
-                                    Type::Float => write!(self.buffer, ".as_float()")?,
-                                    Type::String => write!(self.buffer, ".as_string()")?,
-                                    Type::Bool => write!(self.buffer, ".as_bool()")?,
-                                    _ => {}, // Leave as is
+                            // For comparisons AND arithmetic, try to infer the type from the right operand
+                            if matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
+                                // Check if right is a string literal - if so, DON'T unwrap, compare DictValue with &str
+                                if !matches!(right.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                                    match right_type {
+                                        Type::Int => write!(self.buffer, ".as_int()")?,
+                                        Type::Float => write!(self.buffer, ".as_float()")?,
+                                        Type::String => write!(self.buffer, ".as_string()")?,
+                                        Type::Bool => write!(self.buffer, ".as_bool()")?,
+                                        Type::Any => {
+                                            // Both sides are Type::Any (DictValue), default to .as_int() for arithmetic
+                                            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
+                                                write!(self.buffer, ".as_int()")?;
+                                            }
+                                        }
+                                        _ => {}, // Leave as is
+                                    }
                                 }
+                            }
+                        } else if let (Type::Int, Type::Float) = (&left_type, &right_type) {
+                            // Convert int to float when comparing with float
+                            if let Expression::Ident(name, _) = left.as_ref() {
+                                write!(self.buffer, "{} as f64", name)?;
+                            } else {
+                                self.generate_expression(left)?;
+                                write!(self.buffer, " as f64")?;
                             }
                         } else {
                             self.generate_expression(left)?;
@@ -830,9 +911,27 @@ impl RustCodeGenerator {
                         } else {
                             false
                         };
+                        let right_is_dictvalue_loop_var = if let Expression::Ident(name, _) = right.as_ref() {
+                            self.dictvalue_loop_vars.contains(name)
+                        } else {
+                            false
+                        };
 
                         // ✅ FIX 4: Convert integer literal to float if comparing with a float
-                        if right_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                        if right_is_dictvalue_loop_var && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
+                            // DictValue loop vars need deref and unwrap: (*x).as_int()
+                            write!(self.buffer, "(*")?;
+                            self.generate_expression(right)?;
+                            write!(self.buffer, ")")?;
+                            // Default to .as_int() for arithmetic
+                            match left_type {
+                                Type::Int => write!(self.buffer, ".as_int()")?,
+                                Type::Float => write!(self.buffer, ".as_float()")?,
+                                Type::String => write!(self.buffer, ".as_string()")?,
+                                Type::Bool => write!(self.buffer, ".as_bool()")?,
+                                _ => write!(self.buffer, ".as_int()")?, // Default to int
+                            }
+                        } else if right_is_iter_lambda_param && matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Mod | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div) {
                             // .iter() lambda params need double deref: **x
                             write!(self.buffer, "**")?;
                             self.generate_expression(right)?;
@@ -847,16 +946,37 @@ impl RustCodeGenerator {
                             }
                         } else if right_is_dict_access && matches!(right_type, Type::Any) {
                             self.generate_expression(right)?;
-                            // For comparisons, try to infer the type from the left operand
-                            if matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq) {
-                                match left_type {
-                                    Type::Int => write!(self.buffer, ".as_int()")?,
-                                    Type::Float => write!(self.buffer, ".as_float()")?,
-                                    Type::String => write!(self.buffer, ".as_string()")?,
-                                    Type::Bool => write!(self.buffer, ".as_bool()")?,
-                                    _ => {}, // Leave as is
+                            // For comparisons AND arithmetic, try to infer the type from the left operand
+                            if matches!(op, BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
+                                // Check if left is a string literal - if so, DON'T unwrap, compare DictValue with &str
+                                if !matches!(left.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                                    match left_type {
+                                        Type::Int => write!(self.buffer, ".as_int()")?,
+                                        Type::Float => write!(self.buffer, ".as_float()")?,
+                                        Type::String => write!(self.buffer, ".as_string()")?,
+                                        Type::Bool => write!(self.buffer, ".as_bool()")?,
+                                        Type::Any => {
+                                            // Both sides are Type::Any (DictValue), default to .as_int() for arithmetic
+                                            if matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod) {
+                                                write!(self.buffer, ".as_int()")?;
+                                            }
+                                        }
+                                        _ => {}, // Leave as is
+                                    }
                                 }
                             }
+                        } else if matches!(left_type, Type::Any) && matches!(right.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                            // Special case: DictValue (Type::Any) == String literal
+                            // DictValue implements PartialEq<&str>, so generate string as &str not String
+                            self.string_literal_as_str = true;
+                            self.generate_expression(right)?;
+                            self.string_literal_as_str = false;
+                        } else if matches!(right_type, Type::Any) && matches!(left.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                            // Special case: String literal == DictValue (Type::Any)
+                            // DictValue implements PartialEq<&str>, so generate string as &str not String
+                            self.string_literal_as_str = true;
+                            self.generate_expression(right)?;
+                            self.string_literal_as_str = false;
                         } else {
                             self.generate_expression(right)?;
                         }
@@ -1688,13 +1808,13 @@ impl RustCodeGenerator {
                                             // Already DictValue
                                             write!(self.buffer, "dict_from_dict_value(")?;
                                             self.generate_expression(&args[0])?;
-                                            write!(self.buffer, ")")?;
+                                            write!(self.buffer, ".clone())")?;
                                         }
                                         _ => {
                                             // Default to DictValue
                                             write!(self.buffer, "dict_from_dict_value(")?;
                                             self.generate_expression(&args[0])?;
-                                            write!(self.buffer, ")")?;
+                                            write!(self.buffer, ".clone())")?;
                                         }
                                     }
                                 }
@@ -2058,14 +2178,21 @@ impl RustCodeGenerator {
                 }
             }
             Literal::String(s) => {
-                // ✅ FIX: Use raw strings for Windows paths to avoid escape issues
-                // Check if string contains backslashes (likely a Windows path)
-                if s.contains('\\') {
-                    // Use raw string literal r"..." to avoid escape interpretation
-                    write!(self.buffer, "r\"{}\".to_string()", s.replace('"', "\\\""))?;
+                // ✅ FIX: When comparing with DictValue, use &str instead of String
+                // DictValue implements PartialEq<&str> but not PartialEq<String>
+                if self.string_literal_as_str {
+                    // Generate as &str for DictValue comparison
+                    write!(self.buffer, "\"{}\"", s.replace('"', "\\\""))?;
                 } else {
-                    // Regular string with proper escaping
-                    write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                    // ✅ FIX: Use raw strings for Windows paths to avoid escape issues
+                    // Check if string contains backslashes (likely a Windows path)
+                    if s.contains('\\') {
+                        // Use raw string literal r"..." to avoid escape interpretation
+                        write!(self.buffer, "r\"{}\".to_string()", s.replace('"', "\\\""))?;
+                    } else {
+                        // Regular string with proper escaping
+                        write!(self.buffer, "\"{}\".to_string()", s.replace('"', "\\\""))?;
+                    }
                 }
             }
         }
@@ -2523,18 +2650,10 @@ impl RustCodeGenerator {
                 }
             }
             Expression::Dict { entries, .. } => {
-                if entries.is_empty() {
-                    Ok(Type::Dict(Box::new(Type::String), Box::new(Type::Any)))
-                } else {
-                    // ✅ LUB: Use Least Upper Bound for dictionary value types
-                    let mut value_types = Vec::new();
-                    for (_, value) in entries {
-                        let value_type = self.infer_expr_type(value)?;
-                        value_types.push(value_type);
-                    }
-                    let lub = TypeInference::least_upper_bound(&value_types);
-                    Ok(Type::Dict(Box::new(Type::String), Box::new(lub)))
-                }
+                // ✅ FIX (fixes.md Korrektur 1): TB Language dicts are ALWAYS HashMap<String, DictValue>
+                // This ensures consistency across all dictionary operations
+                // Always return Dict(String, Any) to force DictValue usage
+                Ok(Type::Dict(Box::new(Type::String), Box::new(Type::Any)))
             }
             Expression::Ident(name, _) => {
                 // Look up variable type from tracked types
@@ -6100,9 +6219,7 @@ impl RustCodeGenerator {
                                 eprintln!("DEBUG FIX12:   Arg {} type: {:?}", i, ty);
                                 if !matches!(ty, Type::Any | Type::Generic(_)) {
                                     param_types[i] = Some(ty.clone());
-                                    eprintln!("DEBUG FIX12:   -> Stored type for param {}", i);
-                                } else {
-                                    eprintln!("DEBUG FIX13:   -> Skipped (Any or Generic)");
+
                                 }
                             }
                         }
@@ -6110,7 +6227,6 @@ impl RustCodeGenerator {
                 }
 
                 // Recursively check arguments
-                eprintln!("DEBUG FIX12:   Recursing into {} args", args.len());
                 for (i, arg) in args.iter().enumerate() {
                     eprintln!("DEBUG FIX13:   Recursing into arg {}: {:?}", i, arg);
                     self.collect_param_types_from_expr_calls(func_name, arg, param_types);

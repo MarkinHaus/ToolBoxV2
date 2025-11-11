@@ -518,9 +518,9 @@ impl JitExecutor {
                 }
             }
 
-            Expression::Unary { op, operand, .. } => {
+            Expression::Unary { op, operand, span } => {
                 let val = self.eval_expression(operand)?;
-                self.eval_unary_op(*op, val)
+                self.eval_unary_op(*op, val, *span)
             }
 
             Expression::Call { callee, args, span } => {
@@ -603,7 +603,7 @@ impl JitExecutor {
                 }
             }
 
-            Expression::Match { value, arms, .. } => {
+            Expression::Match { value, arms, span } => {
                 let val = self.eval_expression(value)?;
 
                 for arm in arms {
@@ -627,7 +627,10 @@ impl JitExecutor {
                     }
                 }
 
-                Err(TBError::invalid_operation("No matching pattern in match expression".to_string()))
+                Err(self.runtime_error_with_context(
+                    format!("No matching pattern in match expression for value: {}", val.type_name()),
+                    Some(*span)
+                ))
             }
 
             Expression::If { condition, then_branch, else_branch, .. } => {
@@ -775,6 +778,10 @@ impl JitExecutor {
 
 
     fn eval_binary_op(&self, op: BinaryOp, left: Value, right: Value, span: Span) -> Result<Value> {
+        // Store type names before moving values
+        let left_type = left.type_name();
+        let right_type = right.type_name();
+
         match op {
             BinaryOp::Add => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -784,7 +791,10 @@ impl JitExecutor {
                 (Value::String(a), Value::String(b)) => {
                     Ok(Value::String(Arc::new(format!("{}{}", a, b))))
                 }
-                _ => Err(TBError::invalid_operation("Invalid addition".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot add {} and {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Sub => match (left, right) {
@@ -792,7 +802,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid subtraction".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot subtract {} from {}", right_type, left_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Mul => match (left, right) {
@@ -800,7 +813,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid multiplication".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot multiply {} and {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Div => match (left, right) {
@@ -829,7 +845,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a < b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} < {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Gt => match (left, right) {
@@ -837,19 +856,28 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a > b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} > {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::LtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} <= {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::GtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} >= {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             // ✅ NOTE: AND/OR are now handled with short-circuit evaluation in eval_expression
@@ -872,20 +900,24 @@ impl JitExecutor {
                     (Value::String(key), Value::Dict(dict)) => {
                         Ok(Value::Bool(dict.contains_key(key)))
                     }
-                    _ => Err(TBError::invalid_operation(
-                        format!("'in' operator not supported for {} in {}", left.type_name(), right.type_name())
+                    _ => Err(self.invalid_operation_with_context(
+                        format!("'in' operator not supported for {} in {}", left_type, right_type),
+                        Some(span)
                     )),
                 }
             }
         }
     }
 
-    fn eval_unary_op(&self, op: UnaryOp, operand: Value) -> Result<Value> {
+    fn eval_unary_op(&self, op: UnaryOp, operand: Value, span: Span) -> Result<Value> {
         match op {
             UnaryOp::Neg => match operand {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
-                _ => Err(TBError::invalid_operation("Cannot negate non-numeric value".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot negate {} value", operand.type_name()),
+                    Some(span)
+                )),
             },
             UnaryOp::Not => Ok(Value::Bool(!operand.is_truthy())),
         }
@@ -1253,7 +1285,31 @@ impl JitExecutor {
     }
 
     /// Create an undefined variable error with source context and span
+    /// Enhanced with debugging information about available variables and imports
     fn undefined_variable_with_context(&self, name: String, span: Option<Span>) -> TBError {
+        #[cfg(debug_assertions)]
+        {
+            // Debug output: Show available variables in current scope
+            eprintln!("\n[TB DEBUG] Undefined variable '{}' detected", name);
+            eprintln!("[TB DEBUG] Available variables in current scope:");
+            let mut var_names: Vec<_> = self.env.keys().map(|k| k.as_ref()).collect();
+            var_names.sort();
+            for var_name in var_names.iter().take(20) {  // Show first 20 to avoid spam
+                eprintln!("  - {}", var_name);
+            }
+            if var_names.len() > 20 {
+                eprintln!("  ... and {} more", var_names.len() - 20);
+            }
+
+            // Check if it might be from an import
+            if let Some(ctx) = &self.source_context {
+                if ctx.source.contains("@import") {
+                    eprintln!("[TB DEBUG] Note: This file contains @import statements.");
+                    eprintln!("[TB DEBUG] Make sure imported modules are loaded correctly.");
+                }
+            }
+        }
+
         if let Some(ctx) = &self.source_context {
             TBError::UndefinedVariable {
                 name,
@@ -1262,6 +1318,32 @@ impl JitExecutor {
             }
         } else {
             TBError::undefined_variable(name)
+        }
+    }
+
+    /// Create an invalid operation error with source context and span
+    fn invalid_operation_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::InvalidOperation {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::invalid_operation(message)
+        }
+    }
+
+    /// Create a plugin error with source context and span
+    fn plugin_error_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::PluginError {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::plugin_error(message)
         }
     }
 

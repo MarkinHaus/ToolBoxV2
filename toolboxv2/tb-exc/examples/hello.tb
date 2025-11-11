@@ -4,8 +4,8 @@
 }
 
 fn main() {
-    echo "Hello, TB Language!"
-    echo "This is a simple example"
+    print( "Hello, TB Language!")
+    print( "This is a simple example")
 }
 
 main()

@@ -90,13 +90,17 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Run { file, mode, opt_level } => {
-            runner::run_file(
+            // Handle errors with detailed messages
+            if let Err(e) = runner::run_file(
                 &file,
                 &mode,
                 opt_level,
                 Arc::clone(&interner),
                 Arc::clone(&cache_manager),
-            )?;
+            ) {
+                eprintln!("{}", e.detailed_message());
+                std::process::exit(1);
+            }
         }
 
         Commands::Compile { file, output, opt_level } => {
@@ -140,7 +144,11 @@ fn main() -> anyhow::Result<()> {
             println!("{}", "Type :help for commands".bright_black());
             println!();
 
-            repl::start_repl(&mode, interner, cache_manager)?;
+            // Handle errors with detailed messages
+            if let Err(e) = repl::start_repl(&mode, interner, cache_manager) {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
 
         Commands::Cache { action } => match action {

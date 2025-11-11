@@ -525,9 +525,10 @@ panic = {}
     fs::write(&main_rs, rust_code)?;
 
     // Compile with Cargo (uses cached dependencies)
+    // ALWAYS compile in DEBUG mode for better error messages and debugging
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
-        .arg("--release")
+        // .arg("--release")  // DISABLED: Always use debug mode
         .arg("--manifest-path")
         .arg(&cargo_toml)
         .env("CARGO_TARGET_DIR", compile_cache.join("target"));
@@ -548,7 +549,8 @@ panic = {}
     #[cfg(not(target_os = "windows"))]
     let binary_name = "tb-compiled";
 
-    let compiled_binary = compile_cache.join("target").join("release").join(binary_name);
+    // Use debug folder since we're compiling in debug mode
+    let compiled_binary = compile_cache.join("target").join("debug").join(binary_name);
 
     // Ensure output has .exe extension on Windows
     #[cfg(target_os = "windows")]

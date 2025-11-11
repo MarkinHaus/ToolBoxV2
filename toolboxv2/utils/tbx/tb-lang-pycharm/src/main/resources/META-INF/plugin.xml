@@ -1,11 +1,11 @@
 <!-- file: tb-lang-pycharm/src/main/resources/META-INF/plugin.xml -->
 <!-- TB Language Plugin for PyCharm/IntelliJ IDEA -->
-<!-- Version: 1.0.1 - Updated 2025-11-10 -->
+<!-- Version: 1.0.2 - Updated 2025-11-11 -->
 
 <idea-plugin>
     <id>dev.tblang.tb-language</id>
     <name>TB Language</name>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <vendor email="support@tblang.dev" url="https://tblang.dev">TB Language Team</vendor>
 
     <description><![CDATA[
@@ -23,13 +23,18 @@
         Plugin Features:
         <ul>
             <li>Syntax highlighting with C-style comments (// and /* */)</li>
-            <li>Code completion</li>
-            <li>Run configurations (JIT and AOT modes)</li>
             <li>File type support for .tbx and .tb extensions</li>
+            <li>Keyword highlighting</li>
         </ul>
     ]]></description>
 
     <change-notes><![CDATA[
+        <b>1.0.2</b>
+        <ul>
+            <li>Fixed plugin loading issues</li>
+            <li>Simplified to file type definition only</li>
+            <li>Removed dependencies on non-existent Java classes</li>
+        </ul>
         <b>1.0.1</b>
         <ul>
             <li>Fixed comment syntax: Changed from # to // and /* */</li>
@@ -50,69 +55,6 @@
 
     <!-- Product and plugin compatibility -->
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.lang</depends>
 
-    <extensions defaultExtensionNs="com.intellij">
-        <!-- File Type - supports both .tbx and .tb extensions -->
-        <fileType
-            name="TB Language"
-            implementationClass="dev.tblang.TBFileType"
-            fieldName="INSTANCE"
-            language="TB"
-            extensions="tbx;tb"/>
-
-        <!-- Language -->
-        <lang.parserDefinition
-            language="TB"
-            implementationClass="dev.tblang.TBParserDefinition"/>
-
-        <!-- Syntax Highlighter -->
-        <lang.syntaxHighlighterFactory
-            language="TB"
-            implementationClass="dev.tblang.TBSyntaxHighlighterFactory"/>
-
-        <!-- Color Settings -->
-        <colorSettingsPage
-            implementation="dev.tblang.TBColorSettingsPage"/>
-
-        <!-- Run Configuration -->
-        <configurationType
-            implementation="dev.tblang.TBRunConfigurationType"/>
-
-        <runConfigurationProducer
-            implementation="dev.tblang.TBRunConfigurationProducer"/>
-
-        <!-- Code Completion -->
-        <completion.contributor
-            language="TB"
-            implementationClass="dev.tblang.TBCompletionContributor"/>
-
-        <!-- Commenter -->
-        <lang.commenter
-            language="TB"
-            implementationClass="dev.tblang.TBCommenter"/>
-    </extensions>
-
-    <actions>
-        <!-- Run Action -->
-        <action
-            id="TB.RunFile"
-            class="dev.tblang.actions.TBRunFileAction"
-            text="Run TB Program"
-            description="Run current TB program"
-            icon="/icons/tb_run.svg">
-            <add-to-group group-id="RunMenu" anchor="first"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift R"/>
-        </action>
-
-        <!-- Check Action -->
-        <action
-            id="TB.CheckFile"
-            class="dev.tblang.actions.TBCheckFileAction"
-            text="Check TB Program"
-            description="Check TB program syntax and types"
-            icon="/icons/tb_check.svg">
-            <add-to-group group-id="RunMenu" anchor="after" relative-to-action="TB.RunFile"/>
-        </action>
-    </actions>
+    <!-- No extensions or actions - file type is defined in fileTypes/TB.xml -->
 </idea-plugin>

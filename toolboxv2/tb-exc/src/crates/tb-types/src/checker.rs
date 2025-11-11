@@ -736,7 +736,26 @@ impl TypeChecker {
             Expression::Ident(name, _span) => {
                 self.env.lookup(name.as_ref())
                     .cloned()
-                    .ok_or_else(|| TBError::undefined_variable(name.to_string()))
+                    .ok_or_else(|| {
+                        #[cfg(debug_assertions)]
+                        {
+                            // Debug output: Show available types in current scope
+                            eprintln!("\n[TB TYPE CHECK] Undefined variable '{}' during type checking", name);
+                            eprintln!("[TB TYPE CHECK] Available variables in type environment:");
+                            let bindings = self.env.bindings();
+                            let mut var_names: Vec<_> = bindings.keys().map(|k| k.as_ref()).collect();
+                            var_names.sort();
+                            for var_name in var_names.iter().take(20) {
+                                if let Some(ty) = bindings.get(&Arc::new(var_name.to_string())) {
+                                    eprintln!("  - {}: {:?}", var_name, ty);
+                                }
+                            }
+                            if var_names.len() > 20 {
+                                eprintln!("  ... and {} more", var_names.len() - 20);
+                            }
+                        }
+                        TBError::undefined_variable(name.to_string())
+                    })
             }
 
             Expression::Binary { op, left, right, .. } => {

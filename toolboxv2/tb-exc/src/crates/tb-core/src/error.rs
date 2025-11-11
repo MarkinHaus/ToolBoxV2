@@ -337,10 +337,22 @@ impl TBError {
     fn get_hint(&self) -> Option<String> {
         match self {
             TBError::UndefinedVariable { name, .. } => {
-                Some(format!("Did you forget to declare '{}'? Use: let {} = ...", name, name))
+                // Enhanced hint with import suggestion
+                let mut hint = format!("Variable '{}' is not defined.\n", name);
+                hint.push_str(&format!("  • Did you forget to declare it? Use: let {} = ...\n", name));
+                hint.push_str(&format!("  • Is it from an imported module? Check your @import {{ ... }} statements\n"));
+                hint.push_str(&format!("  • Is it a built-in function? Check the spelling (e.g., 'print', 'len', 'range')\n"));
+                hint.push_str(&format!("  • Was it defined in a different scope? Variables from if/for/while blocks may not be accessible"));
+                Some(hint)
             }
             TBError::UndefinedFunction { name, .. } => {
-                Some(format!("Did you forget to define '{}'? Use: fn {}(...) {{ ... }}", name, name))
+                // Enhanced hint with import suggestion
+                let mut hint = format!("Function '{}' is not defined.\n", name);
+                hint.push_str(&format!("  • Did you forget to define it? Use: fn {}(...) {{ ... }}\n", name));
+                hint.push_str(&format!("  • Is it from an imported module? Check your @import {{ ... }} statements\n"));
+                hint.push_str(&format!("  • Is it a built-in function? Check the spelling\n"));
+                hint.push_str(&format!("  • Available built-ins: print, len, range, int, float, str, bool, map, filter, reduce, etc."));
+                Some(hint)
             }
             TBError::TypeError { message, .. } if message.contains("Int") && message.contains("Float") => {
                 Some("Try converting types explicitly with int() or float()".to_string())
