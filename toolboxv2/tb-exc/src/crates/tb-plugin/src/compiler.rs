@@ -112,6 +112,10 @@ impl PluginCompiler {
                 // Compile: Use Nuitka
                 self.compile_python_nuitka(&source_file, name)
             }
+            PluginMode::Ffi => {
+                // FFI mode doesn't use compiler - precompiled libraries are loaded directly
+                Err(TBError::plugin_error("FFI mode does not require compilation - use precompiled library path directly"))
+            }
         }
     }
 
@@ -193,6 +197,10 @@ impl PluginCompiler {
             PluginMode::Compile => {
                 // Compile: Use esbuild for bundling
                 self.compile_javascript_esbuild(&source_file, name)
+            }
+            PluginMode::Ffi => {
+                // FFI mode doesn't use compiler - precompiled libraries are loaded directly
+                Err(TBError::plugin_error("FFI mode does not require compilation - use precompiled library path directly"))
             }
         }
     }

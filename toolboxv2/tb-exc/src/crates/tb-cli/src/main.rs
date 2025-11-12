@@ -9,7 +9,7 @@ mod repl;
 mod runner;
 
 #[derive(Parser)]
-#[command(name = "tb")]
+#[command(name = "tbx")]
 #[command(about = "TB Language Compiler & Interpreter", long_about = None)]
 struct Cli {
     #[command(subcommand)]

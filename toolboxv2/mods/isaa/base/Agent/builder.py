@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toolboxv2 import Spinner
+from toolboxv2.mods.isaa.base.Agent.types import CheckpointConfig
 
 # Import agent components
 from .agent import (
@@ -118,15 +119,6 @@ class TelemetryConfig(BaseModel):
     console_export: bool = True
     batch_export: bool = True
     sample_rate: float = 1.0
-
-
-class CheckpointConfig(BaseModel):
-    """Checkpoint configuration"""
-    enabled: bool = True
-    interval_seconds: int = 300  # 5 minutes
-    max_checkpoints: int = 10
-    checkpoint_dir: str = "./checkpoints"
-    auto_save_on_exit: bool = True
 
 
 class AgentConfig(BaseModel):
@@ -1244,10 +1236,17 @@ class FlowAgentBuilder:
 
         return issues
 
+    def set_max_checkpoint_age(self, max_age_hours: int) -> 'FlowAgentBuilder':
+        """Set the maximum age for checkpoints in hours"""
+        self.config.checkpoint.max_age_hours = max_age_hours
+        return self
+
     # ===== MAIN BUILD METHOD =====
 
     async def build(self) -> FlowAgent:
         """Build the production-ready FlowAgent"""
+        from toolboxv2 import get_app
+        info_print = get_app().get_mod("isaa").print
 
         with Spinner(message=f"Building Agent {self.config.name}", symbols='c'):
             iprint(f"Building production FlowAgent: {self.config.name}")
@@ -1318,6 +1317,8 @@ class FlowAgentBuilder:
                     max_parallel_tasks=self.config.max_parallel_tasks
                 )
 
+                agent.checkpoint_config = self.config.checkpoint
+
                 # 5. Add custom variables
                 for key, value in self.config.custom_variables.items():
                     agent.set_variable(key, value)
@@ -1380,6 +1381,11 @@ class FlowAgentBuilder:
                 except Exception as e:
                     wprint(f"Session context initialization failed: {e}")
 
+                # 11. Reestor from checkpoint if needed
+                if self.config.checkpoint.enabled:
+                    info_print("loading latest checkpoint")
+                    res = await agent.load_latest_checkpoint(auto_restore_history=True, max_age_hours=self.config.checkpoint.max_age_hours)
+                    info_print(f"loading completed {res}")
 
                 # Final summary
                 iprint("ok FlowAgent built successfully!")

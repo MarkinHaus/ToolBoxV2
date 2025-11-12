@@ -449,10 +449,10 @@ impl Parser {
                         self.expect(TokenKind::Colon)?;
 
                         if let TokenKind::String(m) = &self.current().kind {
-                            mode = if m.as_str() == "compile" {
-                                PluginMode::Compile
-                            } else {
-                                PluginMode::Jit
+                            mode = match m.as_str() {
+                                "compile" => PluginMode::Compile,
+                                "ffi" | "precompiled" => PluginMode::Ffi,
+                                _ => PluginMode::Jit,
                             };
                             self.advance();
                         }

@@ -177,15 +177,15 @@ def find_tb_binary() -> str:
     try:
         from toolboxv2 import tb_root_dir
         paths = [
-            tb_root_dir / "tb-exc" /"src" / "target" / "debug" / "tb",  # Prefer release for faster compilation
-            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tb",
-            tb_root_dir / "bin" / "tb",
+            tb_root_dir / "tb-exc" /"src" / "target" / "debug" / "tbx",  # Prefer release for faster compilation
+            tb_root_dir / "tb-exc" /"src" / "target" / "release" / "tbx",
+            tb_root_dir / "bin" / "tbx",
         ]
     except:
         paths = [
-            Path("target/release/tb"),
-            Path("target/debug/tb"),
-            Path("tb"),
+            Path("target/release/tbx"),
+            Path("target/debug/tbx"),
+            Path("tbx"),
         ]
 
     paths = [os.environ.get("TB_EXE"), os.environ.get("TB_BINARY")]+paths
@@ -1751,7 +1751,7 @@ def test_plugin_python_toolboxv2(mode):
             import toolboxv2
             return toolboxv2.__version__
 
-        def get_app_id() -> str:
+        def get_app_id(info: str) -> str:
             from toolboxv2 import get_app
             return get_app().id
 
@@ -1762,7 +1762,7 @@ def test_plugin_python_toolboxv2(mode):
 }
 
 print(tb.version())
-let app = tb.get_app_id()
+let app = tb.get_app_id("test")
 print(app)
 let app = tb.get_app()
 print(app)
@@ -1780,7 +1780,7 @@ def test_plugin_python_toolboxv2_copiled(mode):
             import toolboxv2
             return toolboxv2.__version__
 
-        def get_app_id() -> str:
+        def get_app_id(info:str) -> str:
             from toolboxv2 import get_app
             return get_app().id
 
@@ -1791,7 +1791,7 @@ def test_plugin_python_toolboxv2_copiled(mode):
 }
 
 print(tb.version())
-let app = tb.get_app_id()
+let app = tb.get_app_id("test")
 print(app)
 let app = tb.get_app()
 print(app)
@@ -2002,6 +2002,153 @@ let users = [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]
 let names = nested_ops.extract_names(users)
 print(len(names))
 """, "2", mode)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLUGIN SYSTEM TESTS - PYTHON STATE PERSISTENCE (CRITICAL FIX)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@test("Plugin: Python state persistence - global variables", "Plugins - Python - State", slow=True)
+def test_plugin_python_state_persistence_globals(mode):
+    """
+    CRITICAL TEST: Python plugins should maintain state between function calls.
+
+    Problem: Currently each function call creates a new Python module,
+    so global variables are reset.
+
+    Expected: Global variables should persist across function calls.
+    """
+    assert_output("""
+@plugin {
+    python "stateful" {
+        mode: "jit",
+
+        _counter = 0
+        _app_instance = None
+
+        def increment() -> int:
+            global _counter
+            _counter += 1
+            return _counter
+
+        def get_counter() -> int:
+            global _counter
+            return _counter
+
+        def set_app(name: str) -> str:
+            global _app_instance
+            _app_instance = {"name": name, "initialized": True}
+            return "App set"
+
+        def get_app_name() -> str:
+            global _app_instance
+            if _app_instance is None:
+                return "No app"
+            return _app_instance["name"]
+    }
+}
+
+# Test counter persistence
+print(stateful.increment())
+print(stateful.increment())
+print(stateful.get_counter())
+
+# Test object persistence
+print(stateful.set_app("TestApp"))
+print(stateful.get_app_name())
+""", "1\n2\n2\nApp set\nTestApp", mode)
+
+
+@test("Plugin: Python state persistence - toolboxv2 app instance", "Plugins - Python - State", slow=True)
+def test_plugin_python_state_persistence_toolboxv2(mode):
+    """
+    CRITICAL TEST: Real-world use case from fixes.md
+
+    The server plugin needs to maintain a single App instance across
+    multiple function calls (get_app, list_modules, etc.)
+    """
+    assert_output("""
+@plugin {
+    python "server" {
+        mode: "jit",
+        requires: ["toolboxv2"],
+
+        _app_instance = None
+
+        def init_app(instance_id: str) -> str:
+            global _app_instance
+            from toolboxv2 import get_app
+            _app_instance = get_app(instance_id)
+            return f"Initialized: {_app_instance.id}"
+
+        def get_app_id() -> str:
+            global _app_instance
+            if _app_instance is None:
+                return "ERROR: App not initialized"
+            return _app_instance.id
+
+        def list_modules() -> int:
+            global _app_instance
+            if _app_instance is None:
+                return -1
+            return len(_app_instance.get_all_mods())
+    }
+}
+
+# Initialize app
+print(server.init_app("toolbox-main"))
+
+# These should use the SAME app instance
+print(server.get_app_id())
+let mod_count = server.list_modules()
+print(mod_count > 0)
+""", "Initialized: toolbox-main\ntoolbox-main\ntrue", mode)
+
+
+@test("Plugin: Python state persistence - class instances", "Plugins - Python - State")
+def test_plugin_python_state_persistence_classes(mode):
+    """
+    Test that class instances persist across function calls.
+    """
+    assert_output("""
+@plugin {
+    python "stateful_class" {
+        mode: "jit",
+
+        class Counter:
+            def __init__(self):
+                self.count = 0
+
+            def increment(self):
+                self.count += 1
+                return self.count
+
+        _instance = None
+
+        def create_counter() -> str:
+            global _instance
+            _instance = Counter()
+            return "Counter created"
+
+        def increment() -> int:
+            global _instance
+            if _instance is None:
+                return -1
+            return _instance.increment()
+
+        def get_count() -> int:
+            global _instance
+            if _instance is None:
+                return -1
+            return _instance.count
+    }
+}
+
+print(stateful_class.create_counter())
+print(stateful_class.increment())
+print(stateful_class.increment())
+print(stateful_class.get_count())
+""", "Counter created\n1\n2\n2", mode)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2373,6 +2520,50 @@ def test_plugin_rust_parallel(mode):
 
 print(parallel_ops.parallel_sum(1, 2, 3, 4, 5))
 """, "15", mode)
+
+
+
+@test("Plugin: Rust compile mode (inline)", "Plugins - Rust", slow=True)
+def test_plugin_rust_compile_inline(mode):
+    """Test compiling Rust plugins from inline code"""
+    code = """
+@plugin {
+    rust "math_ops" {
+        mode: "compile",
+
+        use std::os::raw::c_void;
+
+        #[repr(C)]
+        pub struct FFIValue {
+            tag: u8,
+            data: FFIValueData,
+        }
+
+        #[repr(C)]
+        union FFIValueData {
+            int_val: i64,
+            float_val: f64,
+            bool_val: u8,
+            ptr: *mut c_void,
+        }
+
+        const TAG_INT: u8 = 2;
+
+        #[no_mangle]
+        pub unsafe extern "C" fn triple(args: *const FFIValue, _len: usize) -> FFIValue {
+            let n = (*args).data.int_val;
+            FFIValue {
+                tag: TAG_INT,
+                data: FFIValueData { int_val: n * 3 },
+            }
+        }
+    }
+}
+
+print(math_ops.triple(7))
+print(math_ops.triple(10))
+"""
+    assert_output(code, "21\n30", mode)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

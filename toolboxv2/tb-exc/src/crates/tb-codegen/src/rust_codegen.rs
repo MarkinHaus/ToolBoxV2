@@ -127,7 +127,12 @@ impl RustCodeGenerator {
         writeln!(self.buffer)?;
         writeln!(self.buffer, "extern crate tb_runtime;")?;
         writeln!(self.buffer)?;
+
+        // ✅ FIX 2 (fixes.md): Add standard library imports
         writeln!(self.buffer, "use std::collections::HashMap;")?;
+        writeln!(self.buffer, "use std::ffi::{{CStr, CString}};")?;
+        writeln!(self.buffer, "use std::sync::{{Arc, Mutex}};")?;
+        writeln!(self.buffer, "use std::sync::atomic::{{AtomicBool, Ordering}};")?;
         writeln!(self.buffer, "use tb_runtime::*;")?;
         writeln!(self.buffer)?;
 
@@ -135,6 +140,88 @@ impl RustCodeGenerator {
         if self.uses_serde_json || self.uses_serde_yaml {
             writeln!(self.buffer, "use serde::{{Serialize, Deserialize}};")?;
         }
+
+        // ✅ FIX 2 (fixes.md): Add external crate imports for server plugin
+        // These are conditionally included based on usage
+        if self.uses_chrono {
+            writeln!(self.buffer, "use chrono::Utc;")?;
+        }
+        writeln!(self.buffer)?;
+
+        // ✅ FIX 3 (fixes.md): Define server plugin types
+        // These types are used by server plugin functionality
+        writeln!(self.buffer, "// Server Plugin Types")?;
+        writeln!(self.buffer, "#[derive(Debug, Clone)]")?;
+        writeln!(self.buffer, "pub struct SessionData {{")?;
+        writeln!(self.buffer, "    pub id: String,")?;
+        writeln!(self.buffer, "    pub valid: bool,")?;
+        writeln!(self.buffer, "    pub user_name: Option<String>,")?;
+        writeln!(self.buffer, "    pub jwt_claim: Option<String>,")?;
+        writeln!(self.buffer, "    pub ip: String,")?;
+        writeln!(self.buffer, "    pub created_at: i64,")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+
+        writeln!(self.buffer, "#[derive(Clone, Debug)]")?;
+        writeln!(self.buffer, "pub struct WsMessage {{")?;
+        writeln!(self.buffer, "    pub source_conn_id: String,")?;
+        writeln!(self.buffer, "    pub content: String,")?;
+        writeln!(self.buffer, "    pub target_conn_id: Option<String>,")?;
+        writeln!(self.buffer, "    pub target_channel_id: Option<String>,")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+
+        writeln!(self.buffer, "#[repr(C)]")?;
+        writeln!(self.buffer, "pub struct PluginResult {{")?;
+        writeln!(self.buffer, "    pub success: bool,")?;
+        writeln!(self.buffer, "    pub data: *mut std::os::raw::c_char,")?;
+        writeln!(self.buffer, "    pub error: *mut std::os::raw::c_char,")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+
+        // ✅ FIX 4 (fixes.md): Define global variables for server plugin
+        writeln!(self.buffer, "// Server Plugin Global Variables")?;
+        writeln!(self.buffer, "type TbLangCallback = extern \"C\" fn(*const std::os::raw::c_char) -> *mut std::os::raw::c_char;")?;
+        writeln!(self.buffer)?;
+        writeln!(self.buffer, "static SERVER_RUNNING: std::sync::OnceLock<Arc<HashMap<u16, AtomicBool>>> = std::sync::OnceLock::new();")?;
+        writeln!(self.buffer, "static TB_CALLBACK: std::sync::OnceLock<Arc<Mutex<Option<TbLangCallback>>>> = std::sync::OnceLock::new();")?;
+        writeln!(self.buffer, "static ACTIVE_CONNECTIONS: std::sync::OnceLock<Arc<HashMap<String, String>>> = std::sync::OnceLock::new();")?;
+        writeln!(self.buffer, "static GLOBAL_WS_BROADCASTER: std::sync::OnceLock<Arc<Mutex<Option<String>>>> = std::sync::OnceLock::new();")?;
+        writeln!(self.buffer)?;
+
+        // ✅ FIX 5 (fixes.md): Define server plugin helper functions
+        writeln!(self.buffer, "// Server Plugin Helper Functions")?;
+        writeln!(self.buffer, "fn is_valid_host(host: &str) -> bool {{")?;
+        writeln!(self.buffer, "    if host == \"0.0.0.0\" || host == \"127.0.0.1\" || host == \"localhost\" {{")?;
+        writeln!(self.buffer, "        return true;")?;
+        writeln!(self.buffer, "    }}")?;
+        writeln!(self.buffer, "    let parts: Vec<&str> = host.split('.').collect();")?;
+        writeln!(self.buffer, "    if parts.len() == 4 {{")?;
+        writeln!(self.buffer, "        for part in &parts {{")?;
+        writeln!(self.buffer, "            if part.parse::<u8>().is_err() {{")?;
+        writeln!(self.buffer, "                return !host.is_empty() && !host.starts_with('.') && !host.ends_with('.');")?;
+        writeln!(self.buffer, "            }}")?;
+        writeln!(self.buffer, "        }}")?;
+        writeln!(self.buffer, "        return true;")?;
+        writeln!(self.buffer, "    }}")?;
+        writeln!(self.buffer, "    !host.is_empty() && !host.starts_with('.') && !host.ends_with('.')")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+        writeln!(self.buffer, "fn start_server_with_host(_port: &str, _host: &str) -> DictValue {{")?;
+        writeln!(self.buffer, "    // Placeholder implementation - actual server functionality requires plugin")?;
+        writeln!(self.buffer, "    let mut result = HashMap::new();")?;
+        writeln!(self.buffer, "    result.insert(\"success\".to_string(), DictValue::Bool(false));")?;
+        writeln!(self.buffer, "    result.insert(\"error\".to_string(), DictValue::String(\"Server plugin not loaded\".to_string()));")?;
+        writeln!(self.buffer, "    DictValue::Dict(result)")?;
+        writeln!(self.buffer, "}}")?;
+        writeln!(self.buffer)?;
+        writeln!(self.buffer, "fn run_server(_port: u16, _host: &str) -> DictValue {{")?;
+        writeln!(self.buffer, "    // Placeholder implementation - actual server functionality requires plugin")?;
+        writeln!(self.buffer, "    let mut result = HashMap::new();")?;
+        writeln!(self.buffer, "    result.insert(\"success\".to_string(), DictValue::Bool(false));")?;
+        writeln!(self.buffer, "    result.insert(\"error\".to_string(), DictValue::String(\"Server plugin not loaded\".to_string()));")?;
+        writeln!(self.buffer, "    DictValue::Dict(result)")?;
+        writeln!(self.buffer, "}}")?;
         writeln!(self.buffer)?;
 
         // Note: DictValue, built-in functions, and traits are now imported from tb_runtime
@@ -712,6 +799,22 @@ impl RustCodeGenerator {
                             self.generate_expression(right)?;
                             write!(self.buffer, ".contains_key(&")?;
                             self.generate_expression(left)?;
+                            write!(self.buffer, ")")?;
+                        }
+                        Type::Any => {
+                            // ✅ FIX 1 (fixes.md): Type::Any can be String/List/Dict at runtime
+                            // Generate runtime type check and appropriate contains operation
+                            // For now, assume it's a String (most common case for 'in' operator)
+                            // This handles cases like: let path = request["path"]; if "/api/" in path
+                            self.generate_expression(right)?;
+                            write!(self.buffer, ".as_string().contains(")?;
+                            if matches!(left.as_ref(), Expression::Literal(Literal::String(_), _)) {
+                                self.generate_expression(left)?;
+                                write!(self.buffer, ".as_str()")?;
+                            } else {
+                                self.generate_expression(left)?;
+                                write!(self.buffer, ".as_str()")?;
+                            }
                             write!(self.buffer, ")")?;
                         }
                         _ => {
@@ -3696,12 +3799,15 @@ impl RustCodeGenerator {
                     } else if param_type == "f64" {
                         format!("Value::Float(arg{})", i)
                     } else if param_type == "String" || param_type == "&str" {
-                        format!("Value::String(arg{}.to_string())", i)
+                        // ✅ FIX: Use .into() for Arc<String> conversion (cleaner than Arc::new)
+                        format!("Value::String(arg{}.into())", i)
                     } else if param_type == "bool" {
                         format!("Value::Bool(arg{})", i)
                     } else {
-                        // Default: assume it's an integer
-                        format!("Value::Int(arg{})", i)
+                        // ✅ FIX: Default to String for unknown types (safer than Int)
+                        // This handles cases where type inference might fail
+                        eprintln!("[CODEGEN WARNING] Unknown parameter type '{}' for arg{}, defaulting to String", param_type, i);
+                        format!("Value::String(arg{}.to_string().into())", i)
                     }
                 })
                 .collect();
@@ -3750,11 +3856,19 @@ impl RustCodeGenerator {
     /// Extract function names from plugin source code
     /// ✅ PASS 20 Phase 5: Support external file loading
     /// ✅ FIX #4: Enhanced Rust function extraction with #[no_mangle] support
+    /// ✅ PHASE 4: FFI mode support - skip function extraction for precompiled libraries
     fn extract_plugin_functions(
         &self,
         language: &PluginLanguage,
+        mode: &PluginMode,
         source: &PluginSource,
     ) -> Result<Vec<String>> {
+        // FFI mode: Precompiled libraries don't need function extraction
+        // Functions will be discovered at runtime via FFI
+        if matches!(mode, PluginMode::Ffi) {
+            return Ok(Vec::new());
+        }
+
         let source_code = match source {
             PluginSource::Inline(code) => code.as_str().to_string(),
             PluginSource::File(path) => {
@@ -3819,6 +3933,16 @@ impl RustCodeGenerator {
                         has_no_mangle = false;  // Reset after finding function
                     }
                 }
+            } else if trimmed.starts_with("pub fn ") {
+                // ✅ FIX: Extract regular pub fn functions
+                let after_pub_fn = &trimmed[7..];  // Skip "pub fn "
+                if let Some(paren_pos) = after_pub_fn.find('(') {
+                    let func_name = after_pub_fn[..paren_pos].trim().to_string();
+                    if !func_name.is_empty() {
+                        functions.push(func_name);
+                    }
+                }
+                has_no_mangle = false;
             } else if trimmed.starts_with("fn ") && has_no_mangle {
                 // Handle "fn name(...)" after #[no_mangle]
                 let after_fn = &trimmed[3..];
@@ -3858,7 +3982,7 @@ impl RustCodeGenerator {
         for stmt in &program.statements {
             if let Statement::Plugin { definitions, .. } = stmt {
                 for def in definitions {
-                    let func_names = self.extract_plugin_functions(&def.language, &def.source)?;
+                    let func_names = self.extract_plugin_functions(&def.language, &def.mode, &def.source)?;
                     eprintln!("[CODEGEN DEBUG] Plugin '{}' extracted {} functions: {:?}", def.name, func_names.len(), func_names);
                     self.plugin_modules.insert(Arc::clone(&def.name), func_names.clone());
 
@@ -3928,8 +4052,12 @@ impl RustCodeGenerator {
             writeln!(&mut self.plugin_wrappers, " {{")?;
 
             // ✅ FIX: For Python JIT mode, generate plugin loader call instead of heuristic implementation
+            // ✅ FIX: For Rust Compile mode, embed the function body directly
             let implementation = if matches!(language, PluginLanguage::Python) && matches!(mode, PluginMode::Jit) {
                 self.generate_python_jit_plugin_call(func_name, &source_code, &param_types, &return_type, requires)
+            } else if matches!(language, PluginLanguage::Rust) && matches!(mode, PluginMode::Compile) {
+                // For Rust plugins in compile mode, extract and embed the function body directly
+                self.generate_rust_inline_plugin_impl(func_name, &source_code, &param_types)
             } else {
                 // Analyze the function source to generate appropriate implementation
                 self.analyze_and_generate_plugin_impl_with_types(
@@ -4239,7 +4367,8 @@ impl RustCodeGenerator {
             PluginLanguage::Python => {
                 // Python: def func(s: str), def func(arr: list[int])
                 // ✅ FIX: Enhanced dict and list type detection
-                if param.contains(": dict") || param.contains(": Dict") {
+                // ✅ FIX: Support both "param: type" and "param:type" (with and without space)
+                if param.contains(": dict") || param.contains(":dict") || param.contains(": Dict") || param.contains(":Dict") {
                     Some("HashMap<String, DictValue>".to_string())
                 } else if param.contains("list[int]") || param.contains("List[int]") {
                     Some("Vec<i64>".to_string())
@@ -4248,17 +4377,17 @@ impl RustCodeGenerator {
                 } else if param.contains("list[dict]") || param.contains("List[dict]") || param.contains("List[Dict]") {
                     // List of dictionaries
                     Some("Vec<HashMap<String, DictValue>>".to_string())
-                } else if param.contains(": str") {
+                } else if param.contains(": str") || param.contains(":str") {
                     Some("String".to_string())
-                } else if param.contains(": int") {
+                } else if param.contains(": int") || param.contains(":int") {
                     // ✅ FIX: Added missing int parameter type annotation
                     Some("i64".to_string())
-                } else if param.contains(": float") {
+                } else if param.contains(": float") || param.contains(":float") {
                     Some("f64".to_string())
-                } else if param.contains(": bool") {
+                } else if param.contains(": bool") || param.contains(":bool") {
                     // ✅ FIX: Added missing bool parameter type annotation
                     Some("bool".to_string())
-                } else if param.contains(": list") || param.contains(": List") {
+                } else if param.contains(": list") || param.contains(":list") || param.contains(": List") || param.contains(":List") {
                     // Generic list - could be list of dicts, default to Vec<DictValue> for flexibility
                     Some("Vec<DictValue>".to_string())
                 } else {
@@ -5021,6 +5150,55 @@ impl RustCodeGenerator {
         String::new()
     }
 
+    /// Generate Rust inline plugin implementation by extracting and renaming parameters
+    fn generate_rust_inline_plugin_impl(&self, func_name: &str, source_code: &str, param_types: &[String]) -> String {
+        // Extract the function body
+        let body = self.extract_rust_function_body(func_name, source_code);
+
+        if body.is_empty() {
+            return "    // TODO: Implement plugin function\n    String::from(\"Not implemented\")".to_string();
+        }
+
+        // Extract parameter names from the original function
+        let func_start = format!("fn {}(", func_name);
+        if let Some(start_pos) = source_code.find(&func_start) {
+            let rest = &source_code[start_pos + func_start.len()..];
+            if let Some(params_end) = rest.find(')') {
+                let params_str = &rest[..params_end];
+
+                // Parse parameter names
+                let param_names: Vec<String> = params_str
+                    .split(',')
+                    .filter_map(|p| {
+                        let trimmed = p.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            // Extract parameter name (before ':')
+                            trimmed.split(':').next().map(|s| s.trim().to_string())
+                        }
+                    })
+                    .collect();
+
+                // Replace parameter names with arg0, arg1, etc.
+                let mut result = body.clone();
+                for (i, param_name) in param_names.iter().enumerate() {
+                    let arg_name = format!("arg{}", i);
+                    // Use word boundaries to avoid partial replacements
+                    result = result.replace(&format!(" {}", param_name), &format!(" {}", arg_name));
+                    result = result.replace(&format!("({})", param_name), &format!("({})", arg_name));
+                    result = result.replace(&format!("({},", param_name), &format!("({},", arg_name));
+                    result = result.replace(&format!(", {})", param_name), &format!(", {})", arg_name));
+                    result = result.replace(&format!(", {},", param_name), &format!(", {},", arg_name));
+                }
+
+                return result;
+            }
+        }
+
+        body
+    }
+
     /// Extract Rust function body using brace matching
     fn extract_rust_function_body(&self, func_name: &str, source_code: &str) -> String {
         let func_start = format!("fn {}(", func_name);
@@ -5118,7 +5296,8 @@ impl RustCodeGenerator {
         }
 
         if body_end > 0 {
-            text[0..body_end].to_string()
+            // Include the closing brace
+            text[0..=body_end].to_string()
         } else {
             String::new()
         }

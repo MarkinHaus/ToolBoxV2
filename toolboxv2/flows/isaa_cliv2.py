@@ -541,6 +541,7 @@ class AdvancedIsaaCli:
             "/agent": {
                 "list": None,
                 "create": None,
+                "build": None,  # NEW: Interactive agent builder
                 "switch": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
                 "inspect": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
                 "config": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
@@ -549,13 +550,13 @@ class AdvancedIsaaCli:
                 "status": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
                 "clone": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
                 "checkpoint": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),
+                "clear-context": WordCompleter(self.isaa_tools.config.get("agents-name-list", [])),  # NEW: Moved from /context
             },
             "/task": {
                 "run": None,
                 "list": None,
                 "attach": None,
                 "pause": None,
-                "resume": None,
                 "cancel": None,
                 "inspect": None,
             },
@@ -566,12 +567,13 @@ class AdvancedIsaaCli:
                 "inspect": WordCompleter(list(self.flow_parser.saved_flows.keys())),
                 "save": None,
             },
-            "/context": {
+            "/session": {  # NEW: Replaces /context for session management
+                "list": None,
+                "switch": None,
                 "inspect": None,
-                "overview": None,
                 "clear": None,
-                "save": None,
-                "load": None,
+                "export": None,
+                "import": None,
             },
             "/var": {
                 "list": None,
@@ -583,7 +585,7 @@ class AdvancedIsaaCli:
                 "status": None,
                 "verbosity": WordCompleter(["MINIMAL", "STANDARD", "VERBOSE", "DEBUG", "REALTIME"]),
                 "notifications": WordCompleter(["on", "off"]),
-                "checkpoint": WordCompleter(["create", "load", "list", "clean"]),
+                "checkpoint": WordCompleter(["create", "load"]),  # Removed list and clean
             },
             "/help": None,
             "/quit": None,
@@ -664,10 +666,10 @@ class AdvancedIsaaCli:
         # Quick tips
         tips = [
             f"💡 Type {Style.CYAN('/help')} to see all commands",
-            f"🔗 Use {Style.CYAN('/agent bind <name>')} to connect agents to your preferences",
-            f"⚡ Start background tasks with {Style.CYAN('/task run \"prompt\" --bg')}",
-            f"🔄 Create workflows with {Style.CYAN('/flow design')}",
-            f"📊 Check system status with {Style.CYAN('/context overview')}",
+            f"🔨 Build custom agents with {Style.CYAN('/agent build')}",
+            f"🔍 Inspect agents with {Style.CYAN('/agent inspect -d')} for detailed context",
+            f"⚡ Use {Style.CYAN('--fast')} or {Style.CYAN('--callback')} flags for advanced execution",
+            f"💬 Manage sessions with {Style.CYAN('/session list')}",
         ]
 
         print()
@@ -797,7 +799,7 @@ class AdvancedIsaaCli:
             "/agent": self._handle_agent_cmd,
             "/task": self._handle_task_cmd,
             "/flow": self._handle_flow_cmd,
-            "/context": self._handle_context_cmd,
+            "/session": self._handle_session_cmd,  # NEW: Replaces /context
             "/var": self._handle_var_cmd,
             "/system": self._handle_system_cmd,
             "/help": self._handle_help_cmd,
@@ -820,11 +822,21 @@ class AdvancedIsaaCli:
                 self.formatter.print_info("Type '/help' for available commands")
 
     async def _handle_agent_request(self, request: str):
-        """Handle direct agent requests with full task management"""
+        """Handle direct agent requests with fast mode and callback support"""
+        # Parse inline flags (NEW)
+        fast_mode = False
+        use_callback = False
+
+        if request.startswith("--fast "):
+            fast_mode = True
+            request = request[7:]
+        elif request.startswith("--callback "):
+            use_callback = True
+            request = request[11:]
+
         try:
             # Get active agent
             agent = await self.isaa_tools.get_agent(self.active_agent_name)
-
 
             tools_interface = self.isaa_tools.get_tools_interface(self.active_agent_name)
             if tools_interface.vfs.base_dir != self.workspace_path:
@@ -833,12 +845,33 @@ class AdvancedIsaaCli:
             # Set progress callback
             agent.set_progress_callback(self.printer.progress_callback)
 
+            # Prepare run kwargs (NEW)
+            run_kwargs = {}
+            if fast_mode:
+                run_kwargs["fast_run"] = True
+                self.formatter.print_info("⚡ Fast mode enabled")
+
+            if use_callback:
+                # Define dynamic callback
+                async def dynamic_callback(context_data):
+                    """Interactive callback for context injection"""
+                    print(f"\n🔄 Callback triggered")
+                    print(f"   Context: {context_data}")
+                    additional_context = await self.prompt_session.prompt_async(
+                        "Add additional context (or press Enter to skip): "
+                    )
+                    return additional_context if additional_context else None
+
+                run_kwargs["as_callback"] = dynamic_callback
+                self.formatter.print_info("🔄 Callback mode enabled")
+
             # Start task
             task_id = await self.task_manager.start_task(
                 agent=agent,
                 prompt=request,
                 session_id=self.session_id,
-                is_background=False
+                is_background=False,
+                **run_kwargs  # NEW: Pass additional kwargs
             )
 
             # Wait for completion and show result
@@ -870,6 +903,8 @@ class AdvancedIsaaCli:
             await self._agent_list(sub_args)
         elif sub_cmd == "create":
             await self._agent_create(sub_args)
+        elif sub_cmd == "build":  # NEW: Interactive agent builder
+            await self._agent_build_interactive(sub_args)
         elif sub_cmd == "switch":
             await self._agent_switch(sub_args)
         elif sub_cmd == "inspect":
@@ -886,6 +921,8 @@ class AdvancedIsaaCli:
             await self._agent_clone(sub_args)
         elif sub_cmd == "checkpoint":
             await self._agent_checkpoint(sub_args)
+        elif sub_cmd == "clear-context":  # NEW: Moved from /context
+            await self._agent_clear_context(sub_args)
         else:
             self.formatter.print_error(f"Unknown agent subcommand: {sub_cmd}")
             await self._show_agent_help()
@@ -1010,6 +1047,158 @@ class AdvancedIsaaCli:
         except (EOFError, KeyboardInterrupt):
             self.formatter.print_warning("\nAgent creation cancelled")
 
+    async def _agent_build_interactive(self, args: List[str]):
+        """Interactive agent builder with comprehensive configuration"""
+        try:
+            self.formatter.print_section("🔨 Interactive Agent Builder", "")
+            print("Let's build your custom agent step by step.\n")
+
+            # Step 1: Name
+            name = args[0] if args else await self.prompt_session.prompt_async("Agent name: ")
+
+            # Step 2: Choose base template or start from scratch
+            print("\n📋 Base Template:")
+            templates = {
+                "1": ("Developer", "developer"),
+                "2": ("Analyst", "analyst"),
+                "3": ("Assistant", "assistant"),
+                "4": ("Creative", "creative"),
+                "5": ("Executive", "executive"),
+                "6": ("From Scratch", "custom")
+            }
+
+            for key, (title, _) in templates.items():
+                print(f"  {key}. {title}")
+
+            template_choice = await self.prompt_session.prompt_async("Select base (1-6): ")
+
+            if template_choice not in templates:
+                self.formatter.print_error("Invalid selection")
+                return
+
+            template_name, template_type = templates[template_choice]
+
+            # Initialize builder
+            builder = self.isaa_tools.get_agent_builder(name, working_directory=self.workspace_path)
+
+            # Apply template persona if not custom
+            if template_type != "custom":
+                if template_type == "developer":
+                    builder.with_developer_persona()
+                elif template_type == "analyst":
+                    builder.with_analyst_persona()
+                elif template_type == "assistant":
+                    builder.with_assistant_persona()
+                elif template_type == "creative":
+                    builder.with_creative_persona()
+                elif template_type == "executive":
+                    builder.with_executive_persona()
+
+                print(f"✅ Applied {template_name} persona")
+
+            # Step 3: Models
+            print("\n🧠 Models:")
+            use_defaults = await self.prompt_session.prompt_async("Use default models? (Y/n): ")
+
+            if use_defaults.lower() not in ['n', 'no']:
+                fast_model = os.environ.get("FAST_MODEL", "openrouter/anthropic/claude-3-haiku")
+                complex_model = "openrouter/openai/gpt-5"
+            else:
+                fast_model = await self.prompt_session.prompt_async("Fast model: ")
+                complex_model = await self.prompt_session.prompt_async("Complex model: ")
+
+            builder.with_models(fast_model, complex_model)
+            print(f"✅ Models configured")
+
+            # Step 4: System Message (if custom or override)
+            if template_type == "custom":
+                print("\n💬 System Message:")
+                system_msg = await self.prompt_session.prompt_async("System message: ")
+                builder.with_system_message(system_msg)
+            else:
+                override_msg = await self.prompt_session.prompt_async("Override system message? (y/N): ")
+                if override_msg.lower() in ['y', 'yes']:
+                    system_msg = await self.prompt_session.prompt_async("System message: ")
+                    builder.with_system_message(system_msg)
+
+            # Step 5: Features
+            print("\n⚙️  Features:")
+
+            # Checkpointing
+            enable_checkpoint = await self.prompt_session.prompt_async("Enable checkpointing? (Y/n): ")
+            if enable_checkpoint.lower() not in ['n', 'no']:
+                builder.with_checkpointing(enabled=True, interval_seconds=300)
+                print("  ✅ Checkpointing enabled")
+
+            # MCP
+            enable_mcp = await self.prompt_session.prompt_async("Enable MCP server? (y/N): ")
+            if enable_mcp.lower() in ['y', 'yes']:
+                mcp_port = await self.prompt_session.prompt_async("MCP port (default 8001): ", default="8001")
+                builder.enable_mcp_server(port=int(mcp_port))
+                print(f"  ✅ MCP server enabled on port {mcp_port}")
+
+            # A2A
+            enable_a2a = await self.prompt_session.prompt_async("Enable A2A (Agent-to-Agent)? (y/N): ")
+            if enable_a2a.lower() in ['y', 'yes']:
+                a2a_port = await self.prompt_session.prompt_async("A2A port (default 5001): ", default="5001")
+                builder.enable_a2a_server(port=int(a2a_port))
+                print(f"  ✅ A2A enabled on port {a2a_port}")
+
+            # Telemetry
+            enable_telemetry = await self.prompt_session.prompt_async("Enable telemetry? (y/N): ")
+            if enable_telemetry.lower() in ['y', 'yes']:
+                builder.enable_telemetry(console_export=True)
+                print("  ✅ Telemetry enabled")
+
+            # Step 6: Custom Variables
+            print("\n📦 Custom Variables:")
+            add_vars = await self.prompt_session.prompt_async("Add custom variables? (y/N): ")
+            if add_vars.lower() in ['y', 'yes']:
+                variables = {}
+                while True:
+                    var_name = await self.prompt_session.prompt_async("Variable name (or Enter to finish): ")
+                    if not var_name:
+                        break
+                    var_value = await self.prompt_session.prompt_async(f"Value for '{var_name}': ")
+                    variables[var_name] = var_value
+
+                if variables:
+                    builder.with_custom_variables(variables)
+                    print(f"  ✅ Added {len(variables)} variables")
+
+            # Step 7: Preview & Confirm
+            print("\n📋 Agent Configuration Summary:")
+            print(f"  Name: {name}")
+            print(f"  Template: {template_name}")
+            print(f"  Fast Model: {fast_model}")
+            print(f"  Complex Model: {complex_model}")
+
+            confirm = await self.prompt_session.prompt_async("\nBuild this agent? (Y/n): ")
+
+            if confirm.lower() in ['n', 'no']:
+                self.formatter.print_warning("Agent build cancelled")
+                return
+
+            # Build the agent
+            print("\n🔨 Building agent...")
+            await self.isaa_tools.register_agent(builder)
+
+            self.formatter.print_success(f"✅ Agent '{name}' built successfully!")
+
+            # Post-build options
+            bind_choice = await self.prompt_session.prompt_async("Bind to user-proxy? (y/N): ")
+            if bind_choice.lower() in ['y', 'yes']:
+                await self._agent_bind([name])
+
+            switch_choice = await self.prompt_session.prompt_async("Switch to new agent? (Y/n): ")
+            if switch_choice.lower() not in ['n', 'no']:
+                await self._agent_switch([name])
+
+        except (EOFError, KeyboardInterrupt):
+            self.formatter.print_warning("\nAgent build cancelled")
+        except Exception as e:
+            self.formatter.print_error(f"Failed to build agent: {e}")
+
     async def _agent_switch(self, args: List[str]):
         """Switch active agent"""
         if not args:
@@ -1034,8 +1223,19 @@ class AdvancedIsaaCli:
             self.formatter.print_error(f"Agent '{agent_name}' not found")
 
     async def _agent_inspect(self, args: List[str]):
-        """Inspect agent with comprehensive details"""
-        agent_name = args[0] if args else self.active_agent_name
+        """Inspect agent with comprehensive details including context distribution"""
+        # Parse arguments
+        agent_name = None
+        detailed = False
+
+        for arg in args:
+            if arg in ["-d", "--detailed"]:
+                detailed = True
+            elif not agent_name:
+                agent_name = arg
+
+        if not agent_name:
+            agent_name = self.active_agent_name
 
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
@@ -1070,17 +1270,71 @@ class AdvancedIsaaCli:
                 print(f"📋 Recent Tasks: {len(recent_tasks)}")
                 for task in recent_tasks:
                     status_emoji = {"completed": "✅", "failed": "❌", "running": "⏳", "queued": "📋", "paused": "⏸️"}.get(
-                        task.status.value, "❓")
+                        task.status, "❓")
                     print(f"     {status_emoji} {task.task_id}: {task.prompt[:50]}...")
 
-            # Context overview
+            # Context Distribution (NEW - Enhanced)
+            print(f"\n📊 Context Distribution:")
             try:
-                context_overview = await agent.get_context_overview()
+                context_overview = await agent.get_context_overview(display=False)
+
                 if context_overview and 'token_summary' in context_overview:
-                    total_tokens = context_overview['token_summary']['total_tokens']
-                    print(f"🔍 Context Size: ~{total_tokens:,} tokens")
-            except:
-                pass
+                    token_summary = context_overview['token_summary']
+                    print(f"   Total: ~{token_summary['total_tokens']:,} tokens")
+
+                    # Show breakdown with visual bars
+                    breakdown = token_summary.get('breakdown', {})
+                    percentages = token_summary.get('percentage_breakdown', {})
+
+                    for component, token_count in breakdown.items():
+                        if token_count > 0:
+                            percentage = percentages.get(component, 0)
+                            bar_length = int(percentage / 5)  # 20 chars max (100% / 5)
+                            bar = "█" * bar_length
+                            print(f"   {component:20s}: {bar:20s} {token_count:6,} ({percentage:5.1f}%)")
+                else:
+                    print(f"   No context data available")
+            except Exception as e:
+                print(f"   Error retrieving context: {e}")
+
+            # Session Information (NEW)
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                sessions = agent.context_manager.session_managers
+                print(f"\n💬 Active Sessions: {len(sessions)}")
+                for session_id, session in list(sessions.items())[:5]:  # Show max 5
+                    history_len = len(session.history) if hasattr(session, 'history') else 0
+                    print(f"   {session_id}: {history_len} messages")
+                if len(sessions) > 5:
+                    print(f"   ... and {len(sessions) - 5} more")
+
+            # Detailed Mode (-d flag) (NEW)
+            if detailed:
+                print(f"\n🔍 Detailed Information:")
+
+                # Full context breakdown with display
+                try:
+                    await agent.get_context_overview(display=True)
+                except:
+                    pass
+
+                # All tools with descriptions
+                if hasattr(agent, 'shared') and 'available_tools' in agent.shared:
+                    print(f"\n🛠️  All Tools:")
+                    for tool_name in agent.shared['available_tools']:
+                        print(f"   - {tool_name}")
+
+                # Variable scopes
+                if hasattr(agent, 'context_manager') and hasattr(agent.context_manager, 'variable_manager'):
+                    var_manager = agent.context_manager.variable_manager
+                    print(f"\n📦 Variables:")
+                    for scope in ['global', 'agent', 'session', 'task']:
+                        vars_in_scope = var_manager.get_all_variables(scope)
+                        if vars_in_scope:
+                            print(f"   {scope}: {len(vars_in_scope)} variables")
+                            for key in list(vars_in_scope.keys())[:3]:
+                                print(f"      - {key}")
+                            if len(vars_in_scope) > 3:
+                                print(f"      ... and {len(vars_in_scope) - 3} more")
 
         except Exception as e:
             self.formatter.print_error(f"Failed to inspect agent '{agent_name}': {e}")
@@ -1243,6 +1497,49 @@ class AdvancedIsaaCli:
         except Exception as e:
             self.formatter.print_error(f"Failed to create checkpoint: {e}")
 
+    async def _agent_clear_context(self, args: List[str]):
+        """Clear agent context with confirmation (moved from /context)"""
+        agent_name = args[0] if args else self.active_agent_name
+        session_id = None
+
+        # Check for session-specific clear
+        if "--session" in args:
+            session_idx = args.index("--session")
+            if session_idx + 1 < len(args):
+                session_id = args[session_idx + 1]
+
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
+
+            # Confirm action
+            confirm_msg = f"Clear context for agent '{agent_name}'"
+            if session_id:
+                confirm_msg += f" (session: {session_id})"
+            confirm_msg += "? (y/N): "
+
+            confirmation = await self.prompt_session.prompt_async(confirm_msg)
+
+            if confirmation.lower() in ['y', 'yes']:
+                success = agent.clear_context(session_id)
+
+                if success:
+                    self.formatter.print_success("✅ Context cleared successfully")
+
+                    # Send notification
+                    self.notification_system.show_notification(
+                        title="Context Cleared",
+                        message=f"Context cleared for {agent_name}",
+                        notification_type=NotificationType.INFO,
+                        timeout=1500
+                    )
+                else:
+                    self.formatter.print_error("Failed to clear context")
+            else:
+                self.formatter.print_info("Context clear cancelled")
+
+        except Exception as e:
+            self.formatter.print_error(f"Failed to clear context: {e}")
+
     async def _handle_task_cmd(self, args: List[str]):
         """Handle /task commands"""
         if not args:
@@ -1260,8 +1557,6 @@ class AdvancedIsaaCli:
             await self._task_attach(sub_args)
         elif sub_cmd == "pause":
             await self._task_pause(sub_args)
-        elif sub_cmd == "resume":
-            await self._task_resume(sub_args)
         elif sub_cmd == "cancel":
             await self._task_cancel(sub_args)
         elif sub_cmd == "inspect":
@@ -1271,10 +1566,12 @@ class AdvancedIsaaCli:
             await self._show_task_help()
 
     async def _task_run(self, args: List[str]):
-        """Run a task with full option support"""
+        """Run a task with full option support including fast mode and callback"""
         # Parse arguments
         is_background = "--bg" in args or "--background" in args
         is_watch = "--watch" in args
+        fast_mode = "--fast" in args  # NEW: Fast mode flag
+        use_callback = "--callback" in args  # NEW: Callback flag
         agent_name = None
 
         # Extract agent name
@@ -1297,7 +1594,7 @@ class AdvancedIsaaCli:
             prompt_parts.append(arg)
 
         if not prompt_parts:
-            self.formatter.print_error("Usage: /task run \"prompt\" [--agent name] [--bg] [--watch]")
+            self.formatter.print_error("Usage: /task run \"prompt\" [--agent name] [--bg] [--watch] [--fast] [--callback]")
             return
 
         prompt = " ".join(prompt_parts)
@@ -1314,12 +1611,33 @@ class AdvancedIsaaCli:
             if is_watch or not is_background:
                 agent.set_progress_callback(self.printer.progress_callback)
 
+            # Prepare run kwargs (NEW)
+            run_kwargs = {}
+            if fast_mode:
+                run_kwargs["fast_run"] = True
+                self.formatter.print_info("⚡ Fast mode enabled")
+
+            if use_callback:
+                # Define dynamic callback
+                async def dynamic_callback(context_data):
+                    """Interactive callback for context injection"""
+                    print(f"\n🔄 Callback triggered")
+                    print(f"   Context: {context_data}")
+                    additional_context = await self.prompt_session.prompt_async(
+                        "Add additional context (or press Enter to skip): "
+                    )
+                    return additional_context if additional_context else None
+
+                run_kwargs["as_callback"] = dynamic_callback
+                self.formatter.print_info("🔄 Callback mode enabled")
+
             # Start task
             task_id = await self.task_manager.start_task(
                 agent=agent,
                 prompt=prompt,
                 session_id=self.session_id,
-                is_background=is_background
+                is_background=is_background,
+                **run_kwargs  # NEW: Pass additional kwargs
             )
 
             if is_background:
@@ -1437,11 +1755,6 @@ class AdvancedIsaaCli:
             self.formatter.print_success(f"✅ Task {task_id} paused")
         else:
             self.formatter.print_error(f"Cannot pause task '{task_id}'")
-
-    async def _task_resume(self, args: List[str]):
-        """Resume a paused task"""
-        # Note: This would require more complex implementation with actual agent pause/resume support
-        self.formatter.print_info("Task resume functionality requires agent-level pause/resume support")
 
     async def _task_cancel(self, args: List[str]):
         """Cancel a running task"""
@@ -1703,107 +2016,221 @@ class AdvancedIsaaCli:
         except Exception as e:
             self.formatter.print_error(f"Invalid flow syntax: {e}")
 
-    async def _handle_context_cmd(self, args: List[str]):
-        """Handle /context commands"""
+    async def _handle_session_cmd(self, args: List[str]):
+        """Handle /session commands for session-specific management"""
         if not args:
-            await self._show_context_help()
+            await self._show_session_help()
             return
 
         sub_cmd = args[0].lower()
         sub_args = args[1:] if len(args) > 1 else []
 
-        if sub_cmd == "inspect" or sub_cmd == "overview":
-            await self._context_overview(sub_args)
+        if sub_cmd == "list":
+            await self._session_list(sub_args)
+        elif sub_cmd == "switch":
+            await self._session_switch(sub_args)
+        elif sub_cmd == "inspect":
+            await self._session_inspect(sub_args)
         elif sub_cmd == "clear":
-            await self._context_clear(sub_args)
-        elif sub_cmd == "save":
-            await self._context_save(sub_args)
-        elif sub_cmd == "load":
-            await self._context_load(sub_args)
+            await self._session_clear(sub_args)
+        elif sub_cmd == "export":
+            await self._session_export(sub_args)
+        elif sub_cmd == "import":
+            await self._session_import(sub_args)
         else:
-            self.formatter.print_error(f"Unknown context subcommand: {sub_cmd}")
-            await self._show_context_help()
+            self.formatter.print_error(f"Unknown session subcommand: {sub_cmd}")
+            await self._show_session_help()
 
-    async def _context_overview(self, args: List[str]):
-        """Show comprehensive context overview"""
+    async def _session_list(self, args: List[str]):
+        """List all sessions for active agent"""
         agent_name = args[0] if args else self.active_agent_name
-        display = "--display" in args or "-d" in args
 
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
 
-            # Get context overview with display
-            overview = await agent.get_context_overview(display=display)
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                sessions = agent.context_manager.session_managers
 
-            if not display:
-                # Show summary
-                if 'token_summary' in overview:
-                    token_summary = overview['token_summary']
-                    self.formatter.print_section(f"Context Overview: {agent_name}", "")
-                    print(f"📊 Total Context: ~{token_summary['total_tokens']:,} tokens")
+                self.formatter.print_section(f"Sessions: {agent_name}", "")
 
-                    # Show breakdown
-                    for component, token_count in token_summary['breakdown'].items():
-                        if token_count > 0:
-                            percentage = token_summary['percentage_breakdown'].get(component, 0)
-                            print(f"   {component}: {token_count:,} tokens ({percentage:.1f}%)")
+                if not sessions:
+                    self.formatter.print_info("No active sessions")
+                    return
+
+                for session_id, session in sessions.items():
+                    history_len = len(session.history) if hasattr(session, 'history') else 0
+                    is_active = session_id == self.session_id
+                    marker = "▶️" if is_active else "  "
+
+                    print(f"{marker} {session_id}: {history_len} messages")
+
+                    # Show last message preview
+                    if history_len > 0 and hasattr(session, 'history'):
+                        last_msg = session.history[-1]
+                        role = last_msg.get('role', 'unknown')
+                        content = last_msg.get('content', '')[:50]
+                        print(f"     Last: [{role}] {content}...")
+            else:
+                self.formatter.print_error("Agent has no session manager")
 
         except Exception as e:
-            self.formatter.print_error(f"Failed to get context overview: {e}")
+            self.formatter.print_error(f"Failed to list sessions: {e}")
 
-    async def _context_clear(self, args: List[str]):
-        """Clear agent context with confirmation"""
-        agent_name = args[0] if args else self.active_agent_name
-        session_id = None
+    async def _session_switch(self, args: List[str]):
+        """Switch to a different session"""
+        if not args:
+            self.formatter.print_error("Usage: /session switch <session_id>")
+            return
 
-        if "--session" in args:
-            session_idx = args.index("--session")
-            if session_idx + 1 < len(args):
-                session_id = args[session_idx + 1]
+        new_session_id = args[0]
+        self.session_id = new_session_id
+        self.formatter.print_success(f"✅ Switched to session: {new_session_id}")
+
+    async def _session_inspect(self, args: List[str]):
+        """Inspect a specific session"""
+        if not args:
+            self.formatter.print_error("Usage: /session inspect <session_id>")
+            return
+
+        session_id = args[0]
+        agent_name = args[1] if len(args) > 1 else self.active_agent_name
+
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
+
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                sessions = agent.context_manager.session_managers
+
+                if session_id not in sessions:
+                    self.formatter.print_error(f"Session '{session_id}' not found")
+                    return
+
+                session = sessions[session_id]
+                history_len = len(session.history) if hasattr(session, 'history') else 0
+
+                self.formatter.print_section(f"Session: {session_id}", "")
+                print(f"Agent: {agent_name}")
+                print(f"Messages: {history_len}")
+
+                # Show recent messages
+                if history_len > 0 and hasattr(session, 'history'):
+                    print(f"\nRecent Messages:")
+                    for msg in session.history[-5:]:  # Last 5 messages
+                        role = msg.get('role', 'unknown')
+                        content = msg.get('content', '')[:100]
+                        timestamp = msg.get('timestamp', 'N/A')
+                        print(f"  [{role}] {content}...")
+                        print(f"     Time: {timestamp}")
+            else:
+                self.formatter.print_error("Agent has no session manager")
+
+        except Exception as e:
+            self.formatter.print_error(f"Failed to inspect session: {e}")
+
+    async def _session_clear(self, args: List[str]):
+        """Clear a specific session"""
+        if not args:
+            self.formatter.print_error("Usage: /session clear <session_id>")
+            return
+
+        session_id = args[0]
+        agent_name = args[1] if len(args) > 1 else self.active_agent_name
 
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
 
             # Confirm action
-            confirm_msg = f"Clear context for agent '{agent_name}'"
-            if session_id:
-                confirm_msg += f" (session: {session_id})"
-            confirm_msg += "? (y/N): "
-
-            confirmation = await self.prompt_session.prompt_async(confirm_msg)
+            confirmation = await self.prompt_session.prompt_async(
+                f"Clear session '{session_id}'? (y/N): "
+            )
 
             if confirmation.lower() in ['y', 'yes']:
                 success = agent.clear_context(session_id)
 
                 if success:
-                    self.formatter.print_success("✅ Context cleared successfully")
+                    self.formatter.print_success(f"✅ Session '{session_id}' cleared")
                 else:
-                    self.formatter.print_error("❌ Failed to clear context")
+                    self.formatter.print_error("Failed to clear session")
             else:
-                self.formatter.print_info("Context clear cancelled")
+                self.formatter.print_info("Session clear cancelled")
 
         except Exception as e:
-            self.formatter.print_error(f"Failed to clear context: {e}")
+            self.formatter.print_error(f"Failed to clear session: {e}")
 
-    async def _context_save(self, args: List[str]):
-        """Save context to file"""
-        agent_name = args[0] if args else self.active_agent_name
+    async def _session_export(self, args: List[str]):
+        """Export session to file"""
+        if len(args) < 2:
+            self.formatter.print_error("Usage: /session export <session_id> <file_path>")
+            return
+
+        session_id = args[0]
+        file_path = args[1]
+        agent_name = args[2] if len(args) > 2 else self.active_agent_name
 
         try:
             agent = await self.isaa_tools.get_agent(agent_name)
-            success = await agent.save_context_to_file()
 
-            if success:
-                self.formatter.print_success("✅ Context saved to file")
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                sessions = agent.context_manager.session_managers
+
+                if session_id not in sessions:
+                    self.formatter.print_error(f"Session '{session_id}' not found")
+                    return
+
+                session = sessions[session_id]
+
+                # Export session history
+                import json
+                export_data = {
+                    "session_id": session_id,
+                    "agent_name": agent_name,
+                    "history": session.history if hasattr(session, 'history') else []
+                }
+
+                with open(file_path, 'w') as f:
+                    json.dump(export_data, f, indent=2)
+
+                self.formatter.print_success(f"✅ Session exported to: {file_path}")
             else:
-                self.formatter.print_error("❌ Failed to save context")
+                self.formatter.print_error("Agent has no session manager")
 
         except Exception as e:
-            self.formatter.print_error(f"Failed to save context: {e}")
+            self.formatter.print_error(f"Failed to export session: {e}")
 
-    async def _context_load(self, args: List[str]):
-        """Load context from file"""
-        self.formatter.print_info("Context loading from file not yet implemented")
+    async def _session_import(self, args: List[str]):
+        """Import session from file"""
+        if not args:
+            self.formatter.print_error("Usage: /session import <file_path>")
+            return
+
+        file_path = args[0]
+
+        try:
+            import json
+            with open(file_path, 'r') as f:
+                import_data = json.load(f)
+
+            session_id = import_data.get('session_id')
+            agent_name = import_data.get('agent_name', self.active_agent_name)
+            history = import_data.get('history', [])
+
+            agent = await self.isaa_tools.get_agent(agent_name)
+
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                # Initialize session if not exists
+                await agent.initialize_session_context(session_id)
+
+                # Add history
+                session = agent.context_manager.session_managers.get(session_id)
+                if session and hasattr(session, 'history'):
+                    session.history.extend(history)
+
+                self.formatter.print_success(f"✅ Session imported: {session_id} ({len(history)} messages)")
+            else:
+                self.formatter.print_error("Agent has no session manager")
+
+        except Exception as e:
+            self.formatter.print_error(f"Failed to import session: {e}")
 
     async def _handle_var_cmd(self, args: List[str]):
         """Handle /var commands for variable management"""
@@ -2078,10 +2505,9 @@ class AdvancedIsaaCli:
         elif sub_cmd == "load":
             await self._load_state()
             self.formatter.print_success("✅ System checkpoint loaded")
-        elif sub_cmd == "list":
-            self.formatter.print_info("Checkpoint listing not yet implemented")
-        elif sub_cmd == "clean":
-            self.formatter.print_info("Checkpoint cleanup not yet implemented")
+        else:
+            self.formatter.print_error(f"Unknown checkpoint subcommand: {sub_cmd}")
+            self.formatter.print_info("Available: create, load")
 
     # ===== HELP COMMANDS =====
 
@@ -2089,19 +2515,21 @@ class AdvancedIsaaCli:
         """Show agent command help"""
         self.formatter.print_section("Agent Commands", "")
         commands = [
-            ("/agent list [--detailed]", "List all agents with optional details"),
-            ("/agent create [name]", "Create a new agent interactively"),
+            ("/agent list [--detailed] [--bound]", "List all agents with optional details"),
+            ("/agent create [name]", "Create a new agent with templates"),
+            ("/agent build [name]", "Interactive agent builder (NEW)"),
             ("/agent switch <name>", "Switch to a different agent"),
-            ("/agent inspect [name]", "Inspect agent details and status"),
+            ("/agent inspect [name] [-d]", "Inspect agent with context distribution (NEW)"),
             ("/agent config [name]", "Configure agent settings"),
             ("/agent bind <name> [--scopes]", "Bind agent to user-proxy"),
             ("/agent unbind <name>", "Unbind agent from user-proxy"),
             ("/agent clone <source> <new_name>", "Clone an existing agent"),
             ("/agent checkpoint [name]", "Create agent checkpoint"),
+            ("/agent clear-context [name]", "Clear agent context (NEW)"),
         ]
 
         for cmd, desc in commands:
-            print(f"  {Style.CYAN(cmd.ljust(30))} {desc}")
+            print(f"  {Style.CYAN(cmd.ljust(40))} {desc}")
 
     async def _show_task_help(self):
         """Show task command help"""
@@ -2111,16 +2539,17 @@ class AdvancedIsaaCli:
             ("  --bg, --background", "Run task in background"),
             ("  --agent <name>", "Use specific agent"),
             ("  --watch", "Show live progress"),
+            ("  --fast", "Enable fast mode (NEW)"),
+            ("  --callback", "Enable interactive callback (NEW)"),
             ("/task list [--status] [--agent]", "List tasks with filters"),
             ("/task attach <id>", "Attach to background task"),
             ("/task pause <id>", "Pause running task"),
-            ("/task resume <id>", "Resume paused task"),
             ("/task cancel <id>", "Cancel running task"),
             ("/task inspect <id>", "Inspect task details"),
         ]
 
         for cmd, desc in commands:
-            print(f"  {Style.CYAN(cmd.ljust(30))} {desc}")
+            print(f"  {Style.CYAN(cmd.ljust(40))} {desc}")
 
     async def _show_flow_help(self):
         """Show flow command help"""
@@ -2150,14 +2579,16 @@ class AdvancedIsaaCli:
         for op, desc in syntax:
             print(f"  {Style.CYAN(op.ljust(15))} {desc}")
 
-    async def _show_context_help(self):
-        """Show context command help"""
-        self.formatter.print_section("Context Commands", "")
+    async def _show_session_help(self):
+        """Show session command help"""
+        self.formatter.print_section("Session Commands", "")
         commands = [
-            ("/context overview [agent] [-d]", "Show context overview with display"),
-            ("/context clear [agent] [--session]", "Clear agent context"),
-            ("/context save [agent]", "Save context to file"),
-            ("/context load [agent]", "Load context from file"),
+            ("/session list [agent]", "List all sessions for agent"),
+            ("/session switch <session_id>", "Switch to different session"),
+            ("/session inspect <session_id>", "Inspect session details"),
+            ("/session clear <session_id>", "Clear session history"),
+            ("/session export <id> <file>", "Export session to file"),
+            ("/session import <file>", "Import session from file"),
         ]
 
         for cmd, desc in commands:
@@ -2200,8 +2631,8 @@ class AdvancedIsaaCli:
                 await self._show_task_help()
             elif topic == "flow":
                 await self._show_flow_help()
-            elif topic == "context":
-                await self._show_context_help()
+            elif topic == "session":  # NEW: Changed from context
+                await self._show_session_help()
             elif topic == "var":
                 await self._show_var_help()
             elif topic == "system":
@@ -2216,7 +2647,7 @@ class AdvancedIsaaCli:
                 ("Agent Management", "/agent", "Create, manage, and bind agents"),
                 ("Task Execution", "/task", "Run and manage tasks in background"),
                 ("Workflow System", "/flow", "Design and execute complex workflows"),
-                ("Context Control", "/context", "Manage agent context and memory"),
+                ("Session Management", "/session", "Manage agent sessions and history"),  # NEW: Changed from Context Control
                 ("Variable System", "/var", "Set and get agent variables"),
                 ("System Control", "/system", "CLI settings and status"),
             ]

@@ -1116,7 +1116,30 @@ impl JitExecutor {
 
         tb_debug_plugin!("Resolved path: {}", canonical_path.display());
 
-        // Read the file content
+        // ✅ PHASE 4: FFI mode - precompiled libraries don't need function extraction
+        // For FFI mode, we return an empty module since functions are called dynamically
+        if matches!(mode, PluginMode::Ffi) {
+            tb_debug_plugin!("FFI mode: Skipping function extraction for precompiled library");
+
+            // Store minimal metadata
+            let plugin_name = canonical_path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let metadata = tb_plugin::PluginMetadata {
+                path: canonical_path.to_string_lossy().to_string(),
+                language: format!("{:?}", language),
+                functions: Vec::new(), // No functions extracted for FFI mode
+            };
+
+            self.plugin_loader.store_metadata(plugin_name, metadata);
+
+            // Return empty module - functions will be called via dynamic lookup
+            return Ok(Value::Dict(Arc::new(ImHashMap::new())));
+        }
+
+        // Read the file content (only for non-FFI modes)
         let source_code = std::fs::read_to_string(&canonical_path)
             .map_err(|e| TBError::plugin_error(format!("Failed to read plugin file '{}': {}", canonical_path.display(), e)))?;
 

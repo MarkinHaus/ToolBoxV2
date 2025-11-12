@@ -2,8 +2,6 @@
 import os
 import sys
 
-from yaml import safe_load
-
 # Suppress print statements during import in PyO3 environment
 _suppress_output = os.environ.get('PYTHONIOENCODING') == 'utf-8'
 if _suppress_output:

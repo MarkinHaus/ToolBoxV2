@@ -106,6 +106,46 @@ TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
 import functools
 
+import json
+import pickle
+from typing import Any
+
+def _is_json_serializable(obj: Any) -> bool:
+    """Prüft, ob ein Objekt sicher nach JSON serialisiert werden kann."""
+    if obj is None or isinstance(obj, (str, int, float, bool, list, dict)):
+        try:
+            # Der schnellste und sicherste Test
+            json.dumps(obj)
+            return True
+        except (TypeError, OverflowError):
+            return False
+    return False
+
+def _clean_data_for_serialization(data: Any) -> Any:
+    """
+    Bereinigt rekursiv Dictionaries und Listen, um nur sicher serialisierbare
+    Werte beizubehalten.
+    """
+    if isinstance(data, dict):
+        clean_dict = {}
+        for k, v in data.items():
+            # Überspringe bekanntermaßen nicht serialisierbare Schlüssel und Instanzen
+            if isinstance(v, (types.FunctionType, types.ModuleType, threading.Thread, FlowAgent, AsyncNode, VariableManager, UnifiedContextManager)):
+                continue
+            if _is_json_serializable(v):
+                clean_dict[k] = _clean_data_for_serialization(v)
+        return clean_dict
+    elif isinstance(data, list):
+        clean_list = []
+        for item in data:
+            if isinstance(item, (types.FunctionType, types.ModuleType, threading.Thread, FlowAgent, AsyncNode, VariableManager, UnifiedContextManager)):
+                continue
+            if _is_json_serializable(item):
+                clean_list.append(_clean_data_for_serialization(item))
+        return clean_list
+    else:
+        return data
+
 # Annahme: Die folgenden Klassen sind bereits definiert
 # from your_project import AsyncNode, ProgressEvent, NodeStatus
 
@@ -4063,6 +4103,7 @@ class LLMReasonerNode(AsyncNode):
             "llm_tool_node": shared.get("llm_tool_node_instance"),
             "task_planner": shared.get("task_planner_instance"),
             "task_executor": shared.get("task_executor_instance"),
+            "fast_run": shared.get("fast_run", False),  # Das fast_run Flag übergeben
         }
 
     async def exec_async(self, prep_res):
@@ -4073,37 +4114,50 @@ class LLMReasonerNode(AsyncNode):
         original_query = prep_res["original_query"]
         agent_instance = prep_res["agent_instance"]
         progress_tracker = prep_res.get("progress_tracker")
+        fast_run = prep_res.get("fast_run", False)  # fast_run-Flag abrufen
 
         # Initialize enhanced reasoning context
         await self._initialize_reasoning_session(prep_res, original_query)
 
-        # STEP 1: MANDATORY OUTLINE CREATION
+        # STEP 1: BEDINGTE GLIEDERUNGSERSTELLUNG
         if not self.outline:
-            with Spinner("Creating initial outline..."):
-                outline_result = await self._create_initial_outline(prep_res)
-            if self.outline and len(self.outline.get("steps", [])) == 1:
-                # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
-                print("Fast direct response triggered")
-                response = await self.agent_instance.a_run_llm_completion(
-                    model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                    messages=[{"role": "user", "content": prep_res["original_query"]}],
-                    temperature=0.3,
-                    max_tokens=2048,
-                    node_name="LLMReasonerNode",
-                    task_id="fast_direct_response"
-                )
-                return {
-                        "final_result": response,
-                        "reasoning_loops": self.current_loop_count,
-                        "reasoning_context": self.reasoning_context.copy(),
-                        "internal_task_stack": self.internal_task_stack.copy(),
-                        "outline": self.outline,
-                        "outline_completion": self.current_outline_step,
-                        "performance_metrics": self.performance_metrics,
-                        "auto_recovery_attempts": self.auto_recovery_attempts
-                    }
-            elif not outline_result:
-                return await self._fallback_direct_response(prep_res)
+            # --- Neu: Bedingte Gliederungserstellung ---
+            if fast_run:
+                self.outline = self._create_generic_adaptive_outline()
+                self.reasoning_context.append({
+                    "type": "outline_created",
+                    "content": "Using generic adaptive outline for fast run.",
+                    "outline": self.outline,
+                    "timestamp": datetime.now().isoformat()
+                })
+                rprint("Fast run mode: Using generic adaptive outline")
+            else:
+                with Spinner("Creating initial outline..."):
+                    outline_result = await self._create_initial_outline(prep_res)
+                if self.outline and len(self.outline.get("steps", [])) == 1:
+                    # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
+                    print("Fast direct response triggered")
+                    response = await self.agent_instance.a_run_llm_completion(
+                        model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                        messages=[{"role": "user", "content": prep_res["original_query"]}],
+                        temperature=0.3,
+                        max_tokens=2048,
+                        node_name="LLMReasonerNode",
+                        task_id="fast_direct_response"
+                    )
+                    return {
+                            "final_result": response,
+                            "reasoning_loops": self.current_loop_count,
+                            "reasoning_context": self.reasoning_context.copy(),
+                            "internal_task_stack": self.internal_task_stack.copy(),
+                            "outline": self.outline,
+                            "outline_completion": self.current_outline_step,
+                            "performance_metrics": self.performance_metrics,
+                            "auto_recovery_attempts": self.auto_recovery_attempts
+                        }
+                elif not outline_result:
+                    return await self._fallback_direct_response(prep_res)
+            # -----------------------------------------
 
         final_result = None
         consecutive_no_progress = 0
@@ -4569,6 +4623,39 @@ Create the outline now:"""
             "steps": steps,
             "created_at": datetime.now().isoformat(),
             "total_steps": len(steps)
+        }
+
+    def _create_generic_adaptive_outline(self) -> dict:
+        """Erstellt eine generische Gliederung für schnelle, werkzeugbasierte Antworten.
+
+        Diese Methode wird verwendet, wenn fast_run=True ist, um die detaillierte
+        Outline-Erstellung zu überspringen und stattdessen eine vordefinierte,
+        adaptive Gliederung zu verwenden, die sofortige Werkzeugnutzung fördert.
+
+        Returns:
+            dict: Eine generische Outline-Struktur mit 2 Schritten
+        """
+        return {
+            "steps": [
+                {
+                    "description": "Initiale Analyse und sofortige Werkzeugnutzung für eine schnelle Antwort.",
+                    "method": "delegate_to_llm_tool_node",
+                    "expected_outcome": "Eine direkte Antwort oder das Ergebnis einer einzelnen Werkzeugausführung.",
+                    "success_criteria": "Ein Werkzeug wurde aufgerufen oder eine direkte Antwort wurde formuliert.",
+                    "status": "pending"
+                },
+                {
+                    "description": "Ergebnisse zusammenfassen und eine umfassende Antwort geben.",
+                    "method": "direct_response",
+                    "expected_outcome": "Eine vollständige Antwort auf die Benutzeranfrage.",
+                    "success_criteria": "Die Benutzeranfrage ist vollständig beantwortet.",
+                    "is_final": True,
+                    "status": "pending"
+                }
+            ],
+            "created_at": datetime.now().isoformat(),
+            "total_steps": 2,
+            "fast_run_mode": True
         }
 
     def _build_enhanced_system_context(self, shared) -> str:
@@ -8206,6 +8293,7 @@ class FlowAgent:
         self.verbose = verbose
         self.enable_pause_resume = enable_pause_resume
         self.checkpoint_interval = checkpoint_interval
+        self.checkpoint_config = CheckpointConfig()
         self.max_parallel_tasks = max_parallel_tasks
         self.progress_tracker = ProgressTracker(progress_callback, agent_name=amd.name)
 
@@ -8445,9 +8533,22 @@ class FlowAgent:
         user_id: str = None,
         stream_callback: Callable = None,
         remember: bool = True,
+        as_callback: Callable = None,
+        fast_run: bool = False,
         **kwargs
     ) -> str:
-        """Main entry point für Agent-Ausführung mit UnifiedContextManager"""
+        """Main entry point für Agent-Ausführung mit UnifiedContextManager
+
+        Args:
+            query: Die Benutzeranfrage
+            session_id: Session-ID für Kontext-Management
+            user_id: Benutzer-ID
+            stream_callback: Callback für Streaming-Antworten
+            remember: Ob die Interaktion gespeichert werden soll
+            as_callback: Optional - Callback-Funktion für Echtzeit-Kontext-Injektion
+            fast_run: Optional - Überspringt detaillierte Outline-Phase für schnelle Antworten
+            **kwargs: Zusätzliche Argumente
+        """
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
@@ -8458,7 +8559,7 @@ class FlowAgent:
             status=NodeStatus.RUNNING,
             node_name="FlowAgent",
             session_id=session_id,
-            metadata={"query": query, "user_id": user_id}
+            metadata={"query": query, "user_id": user_id, "fast_run": fast_run, "has_callback": as_callback is not None}
         ))
 
         try:
@@ -8501,8 +8602,18 @@ class FlowAgent:
                 "remember": remember,
                 # CENTRAL: Context Manager ist die primäre Context-Quelle
                 "context_manager": self.context_manager,
-                "variable_manager": self.variable_manager
+                "variable_manager": self.variable_manager,
+                "fast_run": fast_run,  # fast_run-Flag übergeben
             })
+
+            # --- Neu: as_callback behandeln ---
+            if as_callback:
+                self.shared['callback_context'] = {
+                    'callback_timestamp': datetime.now().isoformat(),
+                    'callback_name': getattr(as_callback, '__name__', 'unnamed_callback'),
+                    'initial_query': query
+                }
+            # --------------------------------
 
             # Set LLM models in shared context
             self.shared['fast_llm_model'] = self.amd.fast_llm_model
@@ -9014,7 +9125,7 @@ class FlowAgent:
         else:
             wprint("No persona configured to update")
 
-    def get_available_variables(self) -> dict[str, str]:
+    def get_available_variables(self) -> dict[str, dict]:
         """Get available variables for dynamic formatting"""
         return self.variable_manager.get_available_variables()
 
@@ -9124,7 +9235,8 @@ class FlowAgent:
             "task_types_used": {},
             "tools_used": [],
             "adaptations": self.shared.get("plan_adaptations", 0),
-            "execution_timeline": []
+            "execution_timeline": [],
+            "results_store": results_store
         }
 
         for task_id, task in tasks.items():
@@ -9238,65 +9350,43 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
     # ===== CHECKPOINT MANAGEMENT =====
 
     async def _create_checkpoint(self) -> AgentCheckpoint:
-        """Vereinfachte Checkpoint-Erstellung - fokussiert auf wesentliche Daten"""
+        """
+        Erstellt einen robusten, serialisierbaren Checkpoint, der nur reine Daten enthält.
+        Laufzeitobjekte und nicht-serialisierbare Elemente werden explizit ausgeschlossen.
+        """
         try:
-            # Budget Manager Daten vor Checkpoint speichern
+            rprint("Starte Erstellung eines Daten-Checkpoints...")
             if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
                 self.amd.budget_manager.save_data()
 
-            # Bereite AMD-Daten vor (ohne budget_manager für Serialisierung)
             amd_data = self.amd.model_dump()
-            amd_data['budget_manager'] = None
+            amd_data['budget_manager'] = None  # Explizit entfernen, da es nicht serialisierbar ist
 
-            # Sammle wesentliche Session-Daten (vereinfacht)
+            # 1. Bereinige die Variable-Scopes: Dies ist der wichtigste Schritt.
+            cleaned_variable_scopes = {}
+            if self.variable_manager:
+                # Wir erstellen eine tiefe Kopie, um den laufenden Zustand nicht zu verändern
+                # import copy
+                scopes_copy = self.variable_manager.scopes.copy()
+                cleaned_variable_scopes = _clean_data_for_serialization(scopes_copy)
+
+            # 2. Bereinige Session-Daten
             session_data = {}
             if self.context_manager and self.context_manager.session_managers:
                 for session_id, session in self.context_manager.session_managers.items():
-                    try:
-                        if hasattr(session, 'history') and session.history:
-                            # Nur die letzten 20 Nachrichten pro Session für Checkpoint
-                            recent_history = session.history[-20:]
-                            session_data[session_id] = {
-                                "history": recent_history,
-                                "session_type": "chatsession",
-                                "message_count": len(session.history)
-                            }
-                        elif isinstance(session, dict) and session.get('history'):
-                            session_data[session_id] = {
-                                "history": session['history'][-20:],
-                                "session_type": "fallback",
-                                "message_count": len(session['history'])
-                            }
-                    except Exception as e:
-                        rprint(f"Skipping session {session_id} in checkpoint: {e}")
+                    history = []
+                    # Greife sicher auf die History zu
+                    if hasattr(session, 'history') and session.history:
+                        history = session.history[-50:]  # Nur die letzten 50 Interaktionen speichern
+                    elif isinstance(session, dict) and 'history' in session:
+                        history = session.get('history', [])[-50:]
 
-            # Sammle serialisierbare Variable-Scopes
-            variable_scopes = {}
-            if self.variable_manager:
-                NON_SERIALIZABLE_KEYS = {
-                    "tool_registry", "variable_manager", "context_manager", "agent_instance",
-                    "llm_tool_node_instance", "task_planner_instance", "task_executor_instance",
-                    "progress_tracker", "session_managers", "stream_callback"
-                }
+                    session_data[session_id] = {
+                        "history": history,
+                        "session_type": "chatsession" if hasattr(session, 'history') else "fallback"
+                    }
 
-                for scope_name, scope_data in self.variable_manager.scopes.items():
-                    if isinstance(scope_data, dict):
-                        # Filtere nicht-serialisierbare Objekte heraus
-                        clean_scope = {
-                            k: v for k, v in scope_data.items()
-                            if k not in NON_SERIALIZABLE_KEYS
-                        }
-                        variable_scopes[scope_name] = clean_scope
-                    else:
-                        try:
-                            # Teste Serialisierbarkeit
-                            pickle.dumps(scope_data)
-                            variable_scopes[scope_name] = scope_data
-                        except:
-                            # Überspringe nicht-serialisierbare Scopes
-                            pass
-
-            # Erstelle konsolidierten Checkpoint
+            # 3. Erstelle den Checkpoint nur mit den bereinigten, reinen Daten
             checkpoint = AgentCheckpoint(
                 timestamp=datetime.now(),
                 agent_state={
@@ -9314,22 +9404,23 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 metadata={
                     "session_id": self.shared.get("session_id", "default"),
                     "last_query": self.shared.get("current_query", ""),
-                    "checkpoint_version": "3.0_simplified",
+                    "checkpoint_version": "4.1_data_only",
                     "agent_name": self.amd.name
                 },
-                # Konsolidierte Zusatzdaten
+                # Die bereinigten Zusatzdaten
                 session_data=session_data,
-                variable_scopes=variable_scopes,
+                variable_scopes=cleaned_variable_scopes,
                 results_store=self.shared.get("results", {}),
-                conversation_history=self.shared.get("conversation_history", [])[-50:],  # Letzte 50 Nachrichten
+                conversation_history=self.shared.get("conversation_history", [])[-100:],
                 tool_capabilities=self._tool_capabilities.copy()
             )
 
-            rprint(f"Vereinfachter Checkpoint erstellt mit {len(session_data)} Sessions")
+            rprint(
+                f"Daten-Checkpoint erfolgreich erstellt. {len(cleaned_variable_scopes)} Scopes bereinigt und gespeichert.")
             return checkpoint
 
         except Exception as e:
-            eprint(f"Checkpoint-Erstellung fehlgeschlagen: {e}")
+            eprint(f"FEHLER bei der Checkpoint-Erstellung: {e}")
             import traceback
             print(traceback.format_exc())
             raise
@@ -9424,6 +9515,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             with open(latest_checkpoint_path, 'rb') as f:
                 checkpoint: AgentCheckpoint = pickle.load(f)
 
+                print("Loaded Checkpoint: ", f.__sizeof__())
             # Stelle Agent-Status wieder her
             restore_stats = await self._restore_from_checkpoint_simplified(checkpoint, auto_restore_history)
 
@@ -9446,26 +9538,23 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             return {"success": False, "error": str(e)}
 
     async def _restore_from_checkpoint_simplified(self, checkpoint: AgentCheckpoint, auto_restore_history: bool) -> \
-    dict[
-        str, Any]:
-        """Vereinfachte Checkpoint-Wiederherstellung"""
+    dict[str, Any]:
+        """
+        Stellt den Agentenzustand aus einem bereinigten Daten-Checkpoint wieder her, indem Laufzeitobjekte
+        neu initialisiert und mit den geladenen Daten hydriert werden.
+        """
         restore_stats = {
-            "agent_state_restored": False,
-            "world_model_restored": False,
-            "tasks_restored": 0,
-            "sessions_restored": 0,
-            "variables_restored": 0,
-            "conversation_restored": 0,
-            "errors": []
+            "agent_state_restored": False, "world_model_restored": False,
+            "tasks_restored": 0, "sessions_restored": 0, "variables_restored": 0,
+            "conversation_restored": 0, "errors": []
         }
+        rprint("Starte Wiederherstellung aus Daten-Checkpoint...")
 
         try:
-            # 1. Agent-Status wiederherstellen
+            # 1. Agent-Status wiederherstellen (einfache Daten)
             if checkpoint.agent_state:
-                self.is_running = checkpoint.agent_state.get("is_running", False)
                 self.is_paused = checkpoint.agent_state.get("is_paused", False)
                 self.active_session = checkpoint.agent_state.get("active_session")
-
                 # AMD-Daten selektiv wiederherstellen
                 amd_data = checkpoint.agent_state.get("amd_data", {})
                 if amd_data:
@@ -9489,33 +9578,10 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 2. World Model wiederherstellen
             if checkpoint.world_model:
                 self.shared["world_model"] = checkpoint.world_model.copy()
-                self.world_model = checkpoint.world_model.copy()
+                self.world_model = self.shared["world_model"]
                 restore_stats["world_model_restored"] = True
 
-            # 3. Variable System wiederherstellen
-            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
-                # Variable Manager neu initialisieren
-                self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
-
-                # Basis-Scopes einrichten
-                self._setup_variable_scopes()
-
-                # Gespeicherte Scopes wiederherstellen
-                for scope_name, scope_data in checkpoint.variable_scopes.items():
-                    try:
-                        self.variable_manager.register_scope(scope_name, scope_data)
-                        restore_stats["variables_restored"] += 1
-                    except Exception as e:
-                        restore_stats["errors"].append(f"Variable scope {scope_name}: {e}")
-
-                # Runtime-Objekte wieder einsetzen
-                self.variable_manager.set("shared", "variable_manager", self.variable_manager)
-                self.variable_manager.set("shared", "context_manager", self.context_manager)
-                self.variable_manager.set("shared", "agent_instance", self)
-
-                self.shared["variable_manager"] = self.variable_manager
-
-            # 4. Tasks wiederherstellen
+            # 3. Tasks wiederherstellen
             if checkpoint.task_state:
                 restored_tasks = {}
                 for task_id, task_data in checkpoint.task_state.items():
@@ -9536,13 +9602,38 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
                 self.shared["tasks"] = restored_tasks
 
-            # 5. Results Store wiederherstellen
+            # 4. Results Store wiederherstellen
             if hasattr(checkpoint, 'results_store') and checkpoint.results_store:
                 self.shared["results"] = checkpoint.results_store
                 if self.variable_manager:
                     self.variable_manager.set_results_store(checkpoint.results_store)
 
-            # 6. Sessions und Conversation wiederherstellen (falls gewünscht)
+            # 5. Variable System wiederherstellen (KRITISCHER TEIL)
+            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
+                # A. Der VariableManager wird mit dem geladenen World Model neu erstellt.
+                self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+                self._setup_variable_scopes()
+
+                # B. Stellen Sie die bereinigten Daten-Scopes wieder her.
+                for scope_name, scope_data in checkpoint.variable_scopes.items():
+                    self.variable_manager.register_scope(scope_name, scope_data)
+                restore_stats["variables_restored"] = len(checkpoint.variable_scopes)
+
+                # C. WICHTIG: Fügen Sie jetzt die Laufzeitobjekte wieder in den 'shared' Scope ein.
+                # Diese werden nicht aus dem Checkpoint geladen, sondern neu zugewiesen.
+                self.shared["variable_manager"] = self.variable_manager
+                self.shared["context_manager"] = self.context_manager
+                self.shared["agent_instance"] = self
+                self.shared["progress_tracker"] = self.progress_tracker
+                self.shared["llm_tool_node_instance"] = self.task_flow.llm_tool_node
+                self.shared["task_planner_instance"] = self.task_flow.planner_node
+                self.shared["task_executor_instance"] = self.task_flow.executor_node
+                # Verbinde den Executor wieder mit der Agent-Instanz
+                self.task_flow.executor_node.agent_instance = self
+
+                rprint("Variablen-System aus Daten wiederhergestellt und Laufzeitobjekte neu verknüpft.")
+
+            # 6. Sessions und Conversation wiederherstellen
             if auto_restore_history:
                 await self._restore_sessions_and_conversation_simplified(checkpoint, restore_stats)
 
@@ -9550,19 +9641,18 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
 
-            # Status setzen
             self.shared["system_status"] = "restored"
             restore_stats["restoration_timestamp"] = datetime.now().isoformat()
 
             rprint(
-                f"Checkpoint wiederhergestellt: {restore_stats['tasks_restored']} Tasks, {restore_stats['sessions_restored']} Sessions, {len(restore_stats['errors'])} Fehler")
+                f"Checkpoint-Wiederherstellung abgeschlossen: {restore_stats['tasks_restored']} Tasks, {restore_stats['sessions_restored']} Sessions, {len(restore_stats['errors'])} Fehler.")
             return restore_stats
 
         except Exception as e:
-            eprint(f"Checkpoint-Wiederherstellung fehlgeschlagen: {e}")
+            eprint(f"FEHLER bei der Checkpoint-Wiederherstellung: {e}")
             import traceback
             print(traceback.format_exc())
-            restore_stats["errors"].append(f"Critical restore error: {e}")
+            restore_stats["errors"].append(f"Kritischer Fehler bei der Wiederherstellung: {e}")
             return restore_stats
 
     async def _restore_sessions_and_conversation_simplified(self, checkpoint: AgentCheckpoint, restore_stats: dict):
@@ -9616,242 +9706,10 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
             try:
                 checkpoint = await self._create_checkpoint()
+                await self.delete_old_checkpoints(keep_count=self.checkpoint_config.max_checkpoints)
                 await self._save_checkpoint(checkpoint)
             except Exception as e:
                 eprint(f"Automatic checkpoint failed: {e}")
-
-
-    async def save_context_to_session(self, session_id: str = None, context_type: str = "full") -> bool:
-        """Save current context to ChatSession for persistent storage"""
-        try:
-            session_id = session_id or self.shared.get("session_id", "default")
-
-            if not self.context_manager:
-                eprint("Context manager not available")
-                return False
-
-            # Build comprehensive context
-            unified_context = await self.context_manager.build_unified_context(session_id, None, context_type)
-
-            # Create context message for session storage
-            context_message = {
-                "role": "system",
-                "content": f"[CONTEXT_SNAPSHOT_{context_type.upper()}] " + json.dumps(unified_context, default=str),
-                "timestamp": datetime.now().isoformat(),
-                "context_type": context_type,
-                "metadata": {
-                    "is_context_snapshot": True,
-                    "context_version": "2.0",
-                    "agent_name": self.amd.name,
-                    "session_stats": unified_context.get("session_stats", {}),
-                    "variables_count": len(unified_context.get("variables", {}).get("recent_results", [])),
-                    "execution_state": unified_context.get("execution_state", {}).get("system_status", "unknown")
-                }
-            }
-
-            # Store in session
-            await self.context_manager.add_interaction(
-                session_id,
-                "system",
-                context_message["content"],
-                metadata=context_message["metadata"]
-            )
-
-            rprint(f"Context snapshot saved to session {session_id} (type: {context_type})")
-            return True
-
-        except Exception as e:
-            eprint(f"Failed to save context to session: {e}")
-            return False
-
-    async def load_context_from_session(self, session_id: str, context_type: str = "full") -> dict[str, Any]:
-        """Load context from ChatSession storage"""
-        try:
-            if not self.context_manager:
-                return {"error": "Context manager not available"}
-
-            session = self.context_manager.session_managers.get(session_id)
-            if not session:
-                return {"error": f"Session {session_id} not found"}
-
-            # Search for context snapshots in session history
-            context_snapshots = []
-
-            if hasattr(session, 'history'):
-                for message in reversed(session.history):  # Search from newest
-                    if (message.get("role") == "system" and
-                        message.get("metadata", {}).get("is_context_snapshot") and
-                        message.get("metadata", {}).get("context_type") == context_type):
-
-                        try:
-                            # Extract context data
-                            content = message.get("content", "")
-                            if content.startswith(f"[CONTEXT_SNAPSHOT_{context_type.upper()}]"):
-                                json_data = content.replace(f"[CONTEXT_SNAPSHOT_{context_type.upper()}] ", "")
-                                context_data = json.loads(json_data)
-                                context_snapshots.append({
-                                    "context": context_data,
-                                    "timestamp": message.get("timestamp"),
-                                    "metadata": message.get("metadata", {})
-                                })
-                        except Exception as e:
-                            wprint(f"Failed to parse context snapshot: {e}")
-
-            if context_snapshots:
-                # Return most recent context snapshot
-                latest_context = context_snapshots[0]
-                rprint(f"Loaded context snapshot from session {session_id} (timestamp: {latest_context['timestamp']})")
-                return latest_context["context"]
-            else:
-                return {"error": f"No context snapshots of type '{context_type}' found in session {session_id}"}
-
-        except Exception as e:
-            eprint(f"Failed to load context from session: {e}")
-            return {"error": str(e)}
-
-    async def cleanup_session_context(self, session_id: str = None, keep_count: int = 100,
-                                      remove_old_snapshots: bool = True) -> dict[str, Any]:
-        """Cleanup session context by removing old snapshots and entries"""
-        try:
-            session_id = session_id or self.shared.get("session_id", "default")
-
-            if not self.context_manager:
-                return {"error": "Context manager not available"}
-
-            session = self.context_manager.session_managers.get(session_id)
-            if not session or not hasattr(session, 'history'):
-                return {"error": f"Session {session_id} not found or has no history"}
-
-            cleanup_stats = {
-                "original_message_count": len(session.history),
-                "context_snapshots_removed": 0,
-                "context_entries_removed": 0,
-                "regular_messages_kept": 0,
-                "cleanup_performed": False
-            }
-
-            if len(session.history) <= keep_count:
-                return {**cleanup_stats, "message": "No cleanup needed"}
-
-            # Separate different types of messages
-            regular_messages = []
-            context_snapshots = []
-            context_entries = []
-
-            for message in session.history:
-                metadata = message.get("metadata", {})
-
-                if metadata.get("is_context_snapshot"):
-                    context_snapshots.append(message)
-                elif metadata.get("is_context_entry"):
-                    context_entries.append(message)
-                else:
-                    regular_messages.append(message)
-
-            # Keep most recent regular messages
-            messages_to_keep = regular_messages[-keep_count:]
-            cleanup_stats["regular_messages_kept"] = len(messages_to_keep)
-
-            # Keep most recent context snapshots (if not removing)
-            if not remove_old_snapshots:
-                recent_snapshots = context_snapshots[-5:]  # Keep last 5 snapshots
-                messages_to_keep.extend(recent_snapshots)
-            else:
-                cleanup_stats["context_snapshots_removed"] = len(context_snapshots)
-
-            # Keep persistent context entries
-            persistent_entries = [
-                entry for entry in context_entries
-                if entry.get("persistent", True)
-            ]
-            messages_to_keep.extend(persistent_entries)
-            cleanup_stats["context_entries_removed"] = len(context_entries) - len(persistent_entries)
-
-            # Sort by timestamp and update session
-            messages_to_keep.sort(key=lambda x: x.get("timestamp", ""))
-            session.history = messages_to_keep
-
-            cleanup_stats.update({
-                "final_message_count": len(session.history),
-                "cleanup_performed": True,
-                "messages_removed": cleanup_stats["original_message_count"] - len(session.history)
-            })
-
-            rprint(f"Session cleanup completed: {cleanup_stats['messages_removed']} messages removed")
-            return cleanup_stats
-
-        except Exception as e:
-            eprint(f"Failed to cleanup session context: {e}")
-            return {"error": str(e)}
-
-    def get_session_storage_stats(self) -> dict[str, Any]:
-        """Get comprehensive session storage statistics"""
-        try:
-            stats = {
-                "context_manager_active": bool(self.context_manager),
-                "total_sessions": 0,
-                "session_details": {},
-                "storage_summary": {
-                    "total_messages": 0,
-                    "context_snapshots": 0,
-                    "context_entries": 0,
-                    "regular_messages": 0
-                }
-            }
-
-            if not self.context_manager:
-                return stats
-
-            stats["total_sessions"] = len(self.context_manager.session_managers)
-
-            for session_id, session in self.context_manager.session_managers.items():
-                session_stats = {
-                    "session_type": "chatsession" if hasattr(session, 'history') else "fallback",
-                    "message_count": 0,
-                    "context_snapshots": 0,
-                    "context_entries": 0,
-                    "regular_messages": 0,
-                    "storage_size_estimate": 0
-                }
-
-                if hasattr(session, 'history'):
-                    session_stats["message_count"] = len(session.history)
-
-                    for message in session.history:
-                        content_size = len(str(message))
-                        session_stats["storage_size_estimate"] += content_size
-
-                        metadata = message.get("metadata", {})
-                        if metadata.get("is_context_snapshot"):
-                            session_stats["context_snapshots"] += 1
-                        elif metadata.get("is_context_entry"):
-                            session_stats["context_entries"] += 1
-                        else:
-                            session_stats["regular_messages"] += 1
-
-                elif isinstance(session, dict) and 'history' in session:
-                    session_stats["message_count"] = len(session['history'])
-                    session_stats["regular_messages"] = len(session['history'])
-                    session_stats["storage_size_estimate"] = sum(len(str(msg)) for msg in session['history'])
-
-                stats["session_details"][session_id] = session_stats
-
-                # Update totals
-                stats["storage_summary"]["total_messages"] += session_stats["message_count"]
-                stats["storage_summary"]["context_snapshots"] += session_stats["context_snapshots"]
-                stats["storage_summary"]["context_entries"] += session_stats["context_entries"]
-                stats["storage_summary"]["regular_messages"] += session_stats["regular_messages"]
-
-            # Estimate total storage size
-            stats["storage_summary"]["estimated_total_size_kb"] = sum(
-                details["storage_size_estimate"] for details in stats["session_details"].values()
-            ) / 1024
-
-            return stats
-
-        except Exception as e:
-            eprint(f"Failed to get session storage stats: {e}")
-            return {"error": str(e)}
 
     def list_available_checkpoints(self, max_age_hours: int = 168) -> list[dict[str, Any]]:  # Default 1 week
         """List all available checkpoints with metadata"""

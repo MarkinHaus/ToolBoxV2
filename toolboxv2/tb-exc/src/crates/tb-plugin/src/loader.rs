@@ -20,6 +20,8 @@ pub struct PluginLoader {
     loaded_libraries: DashMap<String, Arc<Library>>,
     function_cache: DashMap<String, PluginFn>,
     plugin_metadata: DashMap<String, PluginMetadata>,
+    #[cfg(feature = "python")]
+    python_modules: DashMap<String, pyo3::Py<pyo3::types::PyModule>>,
 }
 
 impl PluginLoader {
@@ -28,6 +30,8 @@ impl PluginLoader {
             loaded_libraries: DashMap::new(),
             function_cache: DashMap::new(),
             plugin_metadata: DashMap::new(),
+            #[cfg(feature = "python")]
+            python_modules: DashMap::new(),
         }
     }
 
@@ -197,6 +201,12 @@ impl PluginLoader {
         tb_debug_plugin!("load_and_execute: {:?} {:?} {} {}", language, mode, library_path.display(), function_name);
 
         match (language, mode) {
+            // FFI Mode: Load precompiled library directly (any language)
+            (_, PluginMode::Ffi) => {
+                tb_debug_plugin!("Loading precompiled library (FFI mode): {}", library_path.display());
+                let library = self.load_library(library_path)?;
+                self.call_function(&library, function_name, args)
+            }
             (PluginLanguage::Python, PluginMode::Jit) => {
                 tb_debug_plugin!("Executing Python JIT from file: {}", library_path.display());
                 self.execute_python_jit(library_path, function_name, args)
@@ -533,6 +543,12 @@ rayon = "1.8"
         // ✅ FIX: Set UTF-8 encoding for Python I/O to avoid Windows charmap errors
         std::env::set_var("PYTHONIOENCODING", "utf-8");
 
+        // ✅ CRITICAL FIX: Use file path as cache key for file-based plugins
+        let module_key = format!("python_file_{}", script_path.to_string_lossy());
+
+        tb_debug_plugin!("Python file JIT execution: {}", script_path.display());
+        tb_debug_plugin!("Module cache key: {}", module_key);
+
         Python::with_gil(|py| {
             // ✅ FIX: Configure Python to use UTF-8 for stdout/stderr
             // Note: This may fail on some systems, so we ignore errors
@@ -542,26 +558,41 @@ rayon = "1.8"
                 None
             );
 
-            let code = std::fs::read_to_string(script_path)
-                .map_err(|e| TBError::plugin_error(format!("Failed to read Python script: {}", e)))?;
+            // ✅ CRITICAL FIX: Check if module already exists in cache
+            let module = if let Some(cached_module) = self.python_modules.get(&module_key) {
+                tb_debug_plugin!("Using cached Python module (state will persist!)");
+                cached_module.value().clone_ref(py)
+            } else {
+                tb_debug_plugin!("Creating new Python module from file (first call)");
 
-            let module = PyModule::from_code(py, &code, "plugin", "plugin")
-                .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
+                let code = std::fs::read_to_string(script_path)
+                    .map_err(|e| TBError::plugin_error(format!("Failed to read Python script: {}", e)))?;
 
-            let func = module.getattr(function_name)
+                let new_module = PyModule::from_code(py, &code, "plugin", "plugin")
+                    .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
+
+                // ✅ CRITICAL FIX: Store module in cache for future calls
+                self.python_modules.insert(module_key.clone(), new_module.into());
+
+                // Get the module again from cache to ensure we have the right reference
+                self.python_modules.get(&module_key).unwrap().value().clone_ref(py)
+            };
+
+            let func = module.getattr(py, function_name)
                 .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
             // Call the function based on number of arguments
             let result = if args.is_empty() {
-                func.call0()
+                func.call0(py)
                     .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?
             } else {
                 let py_args = self.values_to_python(py, args)?;
-                func.call1(py_args.as_ref(py))
+                // Use call() instead of call1() to properly unpack arguments
+                func.call(py, py_args.as_ref(py), None)
                     .map_err(|e| TBError::plugin_error(format!("Python execution error: {}", e)))?
             };
 
-            self.python_to_value(result)
+            self.python_to_value(result.as_ref(py))
         })
     }
 
@@ -575,6 +606,8 @@ rayon = "1.8"
     ) -> Result<Value> {
         use pyo3::prelude::*;
         use pyo3::types::PyModule;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
 
         tb_debug_plugin!("Python inline JIT execution:");
         tb_debug_plugin!("Function: {}", function_name);
@@ -591,57 +624,79 @@ rayon = "1.8"
             self.ensure_dependencies(&tb_core::PluginLanguage::Python, &requires_strings)?;
         }
 
+        // ✅ CRITICAL FIX: Generate cache key from source code hash
+        // This ensures the same module is reused for the same source code
+        let mut hasher = DefaultHasher::new();
+        source_code.hash(&mut hasher);
+        let module_key = format!("python_inline_{}", hasher.finish());
+
+        tb_debug_plugin!("Module cache key: {}", module_key);
+
         Python::with_gil(|py| {
-            // ✅ FIX: Configure Python to use UTF-8 for stdout/stderr and add venv site-packages to sys.path
-            // Note: This may fail on some systems, so we ignore errors
-            let setup_code = if let Ok(cwd) = std::env::current_dir() {
-                tb_debug_plugin!("Current directory: {:?}", cwd);
-                // The cwd is usually C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2
-                // We need to go up one level to get to the project root
-                let mut project_root = cwd.clone();
-                project_root.pop(); // ToolBoxV2
-
-                // Try python_env first (where toolboxv2 is installed)
-                let mut python_env_path = project_root.clone();
-                python_env_path.push("python_env");
-                python_env_path.push("Lib");
-                python_env_path.push("site-packages");
-
-                tb_debug_plugin!("Checking python_env path: {:?}", python_env_path);
-                if python_env_path.exists() {
-                    let python_env_str = python_env_path.to_string_lossy().to_string();
-                    tb_debug_plugin!("Adding python_env site-packages to sys.path: {}", python_env_str);
-                    format!("import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add python_env site-packages to sys.path (for toolboxv2)\npython_env_sp = r'{}'\nif python_env_sp not in sys.path:\n    sys.path.insert(0, python_env_sp)\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())", python_env_str)
-                } else {
-                    tb_debug_plugin!("python_env path does not exist, using default setup");
-                    "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
-                }
+            // ✅ CRITICAL FIX: Check if module already exists in cache
+            let module = if let Some(cached_module) = self.python_modules.get(&module_key) {
+                tb_debug_plugin!("Using cached Python module (state will persist!)");
+                cached_module.value().clone_ref(py)
             } else {
-                tb_debug_plugin!("Could not get current directory");
-                "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
+                tb_debug_plugin!("Creating new Python module (first call)");
+
+                // ✅ FIX: Configure Python to use UTF-8 for stdout/stderr and add venv site-packages to sys.path
+                // Note: This may fail on some systems, so we ignore errors
+                let setup_code = if let Ok(cwd) = std::env::current_dir() {
+                    tb_debug_plugin!("Current directory: {:?}", cwd);
+                    // The cwd is usually C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2
+                    // We need to go up one level to get to the project root
+                    let mut project_root = cwd.clone();
+                    project_root.pop(); // ToolBoxV2
+
+                    // Try python_env first (where toolboxv2 is installed)
+                    let mut python_env_path = project_root.clone();
+                    python_env_path.push("python_env");
+                    python_env_path.push("Lib");
+                    python_env_path.push("site-packages");
+
+                    tb_debug_plugin!("Checking python_env path: {:?}", python_env_path);
+                    if python_env_path.exists() {
+                        let python_env_str = python_env_path.to_string_lossy().to_string();
+                        tb_debug_plugin!("Adding python_env site-packages to sys.path: {}", python_env_str);
+                        format!("import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add python_env site-packages to sys.path (for toolboxv2)\npython_env_sp = r'{}'\nif python_env_sp not in sys.path:\n    sys.path.insert(0, python_env_sp)\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())", python_env_str)
+                    } else {
+                        tb_debug_plugin!("python_env path does not exist, using default setup");
+                        "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
+                    }
+                } else {
+                    tb_debug_plugin!("Could not get current directory");
+                    "import sys, io, os\ntry:\n    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')\n    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')\nexcept:\n    pass\n# Suppress warnings during import\nimport warnings\nwarnings.filterwarnings('ignore')\n# Add current working directory to sys.path for imports\nif os.getcwd() not in sys.path:\n    sys.path.insert(0, os.getcwd())".to_string()
+                };
+
+                let _ = py.run(&setup_code, None, None);
+
+                tb_debug_plugin!("Creating Python module from source code");
+
+                let new_module = PyModule::from_code(py, source_code, "plugin", "plugin")
+                    .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
+
+                // ✅ CRITICAL FIX: Store module in cache for future calls
+                self.python_modules.insert(module_key.clone(), new_module.into());
+
+                // Get the module again from cache to ensure we have the right reference
+                self.python_modules.get(&module_key).unwrap().value().clone_ref(py)
             };
 
-            let _ = py.run(&setup_code, None, None);
-
-            tb_debug_plugin!("Creating Python module from source code");
-
-            let module = PyModule::from_code(py, source_code, "plugin", "plugin")
-                .map_err(|e| TBError::plugin_error(format!("Python compilation error: {}", e)))?;
-
             tb_debug_plugin!("Getting function '{}' from module", function_name);
-            let func = module.getattr(function_name)
+            let func = module.getattr(py, function_name)
                 .map_err(|e| TBError::plugin_error(format!("Function '{}' not found: {}", function_name, e)))?;
 
-            tb_debug_plugin!("Function type: {:?}", func.get_type());
-            tb_debug_plugin!("Is callable: {}", func.is_callable());
-            tb_debug_plugin!("Function repr: {:?}", func.repr());
+            tb_debug_plugin!("Function type: {:?}", func.as_ref(py).get_type());
+            tb_debug_plugin!("Is callable: {}", func.as_ref(py).is_callable());
+            tb_debug_plugin!("Function repr: {:?}", func.as_ref(py).repr());
 
             tb_debug_plugin!("Converting args to Python: {:?}", args);
 
             // Call the function based on number of arguments
             let result = if args.is_empty() {
                 tb_debug_plugin!("Calling function with 0 args using call0()");
-                func.call0()
+                func.call0(py)
                     .map_err(|e| {
                         tb_debug_plugin!("Python call0 failed with error: {}", e);
                         // Print full traceback
@@ -650,11 +705,13 @@ rayon = "1.8"
                     })?
             } else {
                 let py_args = self.values_to_python(py, args)?;
-                tb_debug_plugin!("Calling function with {} args using call1()", py_args.as_ref(py).len());
+                tb_debug_plugin!("Calling function with {} args using call()", py_args.as_ref(py).len());
                 tb_debug_plugin!("py_args: {:?}", py_args.as_ref(py));
-                func.call1(py_args.as_ref(py))
+                // Use call() instead of call1() to properly unpack arguments
+                // call1() passes the tuple as a single argument, call() unpacks it
+                func.call(py, py_args.as_ref(py), None)
                     .map_err(|e| {
-                        tb_debug_plugin!("Python call1 failed with error: {}", e);
+                        tb_debug_plugin!("Python call() failed with error: {}", e);
                         // Print full traceback
                         e.print(py);
                         TBError::plugin_error(format!("Python execution error: {}", e))
@@ -662,7 +719,7 @@ rayon = "1.8"
             };
 
             tb_debug_plugin!("Function returned: {:?}", result);
-            self.python_to_value(result)
+            self.python_to_value(result.as_ref(py))
         })
     }
 
@@ -956,7 +1013,32 @@ rayon = "1.8"
     pub fn unload_all(&self) {
         self.loaded_libraries.clear();
         self.function_cache.clear();
+        #[cfg(feature = "python")]
+        self.python_modules.clear();
     }
+
+    /// Execute Rust plugin from external file (compile mode)
+    pub fn execute_rust_compile(
+        &self,
+        script_path: &Path,
+        function_name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value> {
+        tb_debug_plugin!("Executing Rust compile mode from file: {}", script_path.display());
+
+        // Read the source code
+        let source_code = std::fs::read_to_string(script_path)
+            .map_err(|e| TBError::plugin_error(format!("Failed to read Rust source file: {}", e)))?;
+
+        // Compile to library
+        let compiled_lib = self.compile_inline_to_library(&tb_core::PluginLanguage::Rust, &source_code)?;
+
+        // Load and call
+        tb_debug_plugin!("Loading compiled Rust library: {}", compiled_lib.display());
+        let library = self.load_library(&compiled_lib)?;
+        self.call_function(&library, function_name, args)
+    }
+
 
     /// Execute Go code in JIT mode (from file)
     fn execute_go_jit(

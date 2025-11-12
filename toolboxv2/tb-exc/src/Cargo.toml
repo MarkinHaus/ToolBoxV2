@@ -11,6 +11,7 @@ members = [
     "crates/tb-cli",
     "crates/tb-runtime",
     "crates/tb-builtins",
+    "builtin-plugins/server",
 ]
 
 resolver = "2"

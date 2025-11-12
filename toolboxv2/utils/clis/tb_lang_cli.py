@@ -66,7 +66,7 @@ from toolboxv2.utils.clis.cli_printing import (
 )
 
 # --- Configuration ---
-EXECUTABLE_NAME = "tb"
+EXECUTABLE_NAME = "tbx"
 PROJECT_DIR = "tb-exc/src"
 
 # =================== Helper Functions ===================

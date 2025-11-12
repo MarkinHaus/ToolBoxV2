@@ -24,10 +24,9 @@ use tracing::{info, warn, error, debug};
 
 use std::sync::{Arc, Mutex};
 use lazy_static::lazy_static;
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple, PyList};
+// PyO3 removed - using Nuitka-only implementation
+use simple_core_server::{NuitkaClient, NuitkaClientError};
 use tokio::{task, time};
-use pyo3::PyResult;
 use std::env;
 use std::process::Command;
 use base64::Engine;
@@ -65,102 +64,23 @@ struct UploadedFile {
     content_base64: String, // Store content as base64
 }
 
-// For io::Error
-// Helper function to convert PyObject to Bytes
-fn py_object_to_bytes(py: Python, obj: PyObject) -> PyResult<Bytes> {
-    // Prioritize raw bytes if available (e.g., from PyBytes)
-    if let Ok(py_bytes) = obj.downcast::<pyo3::types::PyBytes>(py) {
-        return Ok(Bytes::from(py_bytes.as_bytes().to_vec()));
-    }
-    // Then Vec<u8>
-    if let Ok(bytes_vec) = obj.extract::<Vec<u8>>(py) {
-        return Ok(Bytes::from(bytes_vec));
-    }
-    // Then string
-    if let Ok(string) = obj.extract::<String>(py) {
-        return Ok(Bytes::from(string));
-    }
-
-    // Fallback to JSON representation ONLY if other types fail
-    // The 'py' parameter already represents the held GIL token.
-    match py_to_value_global(py, obj.as_ref(py)) { // Use the 'py' passed into the function
-        Ok(json_value) => {
-            match serde_json::to_vec(&json_value) {
-                Ok(vec) => Ok(Bytes::from(vec)),
-                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("JSON serialization error: {}", e))),
-            }
-        },
-        Err(e) => {
-             // Log the original Python error for better debugging
-             error!("Error converting Python object to JSON Value: {}", e);
-             Err(e) // Propagate the original PyErr
-        }
-    }
-}
-// Hypothetical global version of py_to_value for the helper
-// You might need to adapt this based on where py_to_value is actually defined
-fn py_to_value_global(py: Python, value: &PyAny) -> PyResult<serde_json::Value> {
-    // ... (Implementation of py_to_value, assuming it's accessible here)
-    // For demonstration, let's copy the logic (ideally, share it)
-    if value.is_none() { return Ok(serde_json::Value::Null); }
-    if let Ok(b) = value.extract::<bool>() { return Ok(serde_json::Value::Bool(b)); }
-    if let Ok(i) = value.extract::<i64>() { return Ok(serde_json::Value::Number(i.into())); }
-    if let Ok(f) = value.extract::<f64>() { return Ok(serde_json::json!(f)); } // Use json! macro for potential NaN/Infinity
-    if let Ok(s) = value.extract::<String>() { return Ok(serde_json::Value::String(s)); }
-    if let Ok(seq) = value.downcast::<PyList>() {
-        let mut arr = Vec::new();
-        for item in seq.iter() { arr.push(py_to_value_global(py, item)?); }
-        return Ok(serde_json::Value::Array(arr));
-    }
-    if let Ok(tup) = value.downcast::<PyTuple>() {
-        let mut arr = Vec::new();
-        for item in tup.iter() { arr.push(py_to_value_global(py, item)?); }
-        return Ok(serde_json::Value::Array(arr));
-    }
-    if let Ok(dict) = value.downcast::<PyDict>() {
-        let mut map = serde_json::Map::new();
-        for (key, val) in dict.iter() {
-            let key_str = key.extract::<String>()?;
-            map.insert(key_str, py_to_value_global(py, val)?);
-        }
-        return Ok(serde_json::Value::Object(map));
-    }
-    if let Ok(s) = value.str()?.extract::<String>() { return Ok(serde_json::Value::String(s)); }
-    Ok(serde_json::Value::Null) // Fallback
-}
+// =================== PyO3 Helper Functions - REMOVED ===================
+// py_object_to_bytes() and py_to_value_global() are no longer needed
+// Type conversion is handled by NuitkaModuleLoader in lib.rs
+/*
+fn py_object_to_bytes(py: Python, obj: PyObject) -> PyResult<Bytes> { ... }
+fn py_to_value_global(py: Python, value: &PyAny) -> PyResult<serde_json::Value> { ... }
+*/
 
 
-// Define a struct to hold the state needed in the Drop impl
-struct InstanceGuard {
-    client: ToolboxClient,
-    instance_id: String,
-    released: bool, // Flag to prevent double-release
-}
-
-impl InstanceGuard {
-    fn new(client: ToolboxClient, instance_id: String) -> Self {
-        InstanceGuard { client, instance_id, released: false }
-    }
-
-    // Explicitly release the instance (e.g., after successful stream completion)
-    fn release(&mut self) {
-        if !self.released {
-            self.client.mark_instance_done(&self.instance_id);
-            self.released = true;
-            debug!("Instance {} released explicitly.", self.instance_id);
-        }
-    }
-}
-
-// Implement Drop to ensure the instance is marked done even on errors/panics
-impl Drop for InstanceGuard {
-    fn drop(&mut self) {
-        if !self.released {
-            self.client.mark_instance_done(&self.instance_id);
-            debug!("Instance {} released via Drop.", self.instance_id);
-        }
-    }
-}
+// =================== InstanceGuard - REMOVED ===================
+// InstanceGuard is no longer needed with NuitkaClient
+// Instance management is handled internally by NuitkaClient
+/*
+struct InstanceGuard { ... }
+impl InstanceGuard { ... }
+impl Drop for InstanceGuard { ... }
+*/
 
 
 
@@ -196,14 +116,14 @@ struct WsMessage {
 
 struct WebSocketActor {
     conn_id: String,
-    client:  Arc<ToolboxClient>,
+    client:  Arc<NuitkaClient>,
     session: SessionData, // Annahme: SessionData wird aus der Session extrahiert
     channel_id: Option<String>, // Der "Raum" oder die Gruppe, der diese Verbindung angehört
     hb: Instant,
 }
 
 impl WebSocketActor {
-    fn new(client: Arc<ToolboxClient>, session: Session, module: &str, function: &str) -> Self {
+    fn new(client: Arc<NuitkaClient>, session: Session, module: &str, function: &str) -> Self {
         let conn_id = Uuid::new_v4().to_string();
         let session_data = session.get("live_data").unwrap_or(None).unwrap_or_default(); // Vereinfachte Extraktion
         Self {
@@ -261,13 +181,13 @@ impl Actor for WebSocketActor {
             let mut kwargs = HashMap::new();
             kwargs.insert("conn_id".to_string(), Value::String(conn_id));
             kwargs.insert("session".to_string(), session_data_json);
+            kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
+            kwargs.insert("args".to_string(), Value::Array(vec![]));
 
-            if let Err(e) = client.run_function(
-                &channel_id, // Der Kanalname dient zur Identifizierung des Handlers
-                "on_connect",
-                "ws_internal",
-                vec![],
-                kwargs,
+            if let Err(e) = client.call_module(
+                channel_id, // Der Kanalname dient zur Identifizierung des Handlers
+                "on_connect".to_string(),
+                serde_json::json!(kwargs),
             ).await {
                 error!("Python on_connect handler failed: {:?}", e);
             }
@@ -286,12 +206,12 @@ impl Actor for WebSocketActor {
         tokio::spawn(async move {
             let mut kwargs = HashMap::new();
             kwargs.insert("conn_id".to_string(), Value::String(conn_id));
-            if let Err(e) = client.run_function(
-                &channel_id,
-                "on_disconnect",
-                "ws_internal",
-                vec![],
-                kwargs,
+            kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
+            kwargs.insert("args".to_string(), Value::Array(vec![]));
+            if let Err(e) = client.call_module(
+                channel_id,
+                "on_disconnect".to_string(),
+                serde_json::json!(kwargs),
             ).await {
                 error!("Python on_disconnect handler failed: {:?}", e);
             }
@@ -367,13 +287,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
                         Err(_) => Value::String(text_content), // Sende als String, wenn kein JSON
                     };
                     kwargs.insert("payload".to_string(), payload);
+                    kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
+                    kwargs.insert("args".to_string(), Value::Array(vec![]));
 
-                    if let Err(e) = client.run_function(
-                        &channel_id,
-                        "on_message",
-                        "ws_internal",
-                        vec![],
-                        kwargs,
+                    if let Err(e) = client.call_module(
+                        channel_id.clone(),
+                        "on_message".to_string(),
+                        serde_json::json!(kwargs),
                     ).await {
                         error!("Python on_message handler failed: {:?}", e);
                     }
@@ -423,8 +343,8 @@ async fn websocket_handler(
         }
     }
 
-    let client = get_toolbox_client().map_err(|e| {
-        error!("Could not get ToolboxClient for WebSocket: {:?}", e);
+    let client = get_nuitka_client().map_err(|e| {
+        error!("Could not get NuitkaClient for WebSocket: {:?}", e);
         actix_web::error::ErrorInternalServerError("Backend service unavailable")
     })?;
 
@@ -437,228 +357,71 @@ async fn websocket_handler(
     .start()
 }
 
-// --- NEU: Die Rust-zu-Python Bridge-Klasse ---
-
-/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
-/// Diese Klasse wird an Python übergeben. Ihre Methoden können von Python aus aufgerufen werden.
+// =================== PyO3 WebSocket Bridge - REMOVED ===================
+// RustWsBridge and rust_bridge_internal are no longer needed
+// WebSocket functionality will be reimplemented with Nuitka if needed
+/*
 #[pyclass]
 struct RustWsBridge;
-
 #[pymethods]
-impl RustWsBridge {
-    /// KORREKTUR: Füge einen `#[new]` Konstruktor hinzu.
-    /// Dieser wird aufgerufen, wenn Python `RustWsBridge()` ausführt.
-    #[new]
-    fn new() -> Self {
-        RustWsBridge
-    }
-
-    /// Sendet eine Nachricht an eine einzelne WebSocket-Verbindung.
-    #[pyo3(name = "send_message")]
-    fn send_message_py<'p>(&self, py: Python<'p>, conn_id: String, payload: String) -> PyResult<&'p PyAny> {
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            if let Some(conn) = ACTIVE_CONNECTIONS.get(&conn_id) {
-                conn.value().do_send(WsMessage {
-                    source_conn_id: "python_direct".to_string(),
-                    content: payload,
-                    target_conn_id: Some(conn_id),
-                    target_channel_id: None,
-                });
-            } else {
-                warn!("RustWsBridge: Connection ID '{}' not found for sending.", conn_id);
-            }
-            Ok(())
-        })
-    }
-
-    /// Sendet eine Nachricht an alle Clients in einem Kanal.
-    #[pyo3(name = "broadcast_message")]
-    fn broadcast_message_py<'p>(&self, py: Python<'p>, channel_id: String, payload: String, source_conn_id: String) -> PyResult<&'p PyAny> {
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            let msg = WsMessage {
-                source_conn_id,
-                content: payload,
-                target_conn_id: None,
-                target_channel_id: Some(channel_id),
-            };
-            if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
-                error!("RustWsBridge: Failed to send broadcast message: {}", e);
-            }
-            Ok(())
-        })
-    }
-}
-
-/// Ein internes Python-Modul, das in Rust erstellt wird.
+impl RustWsBridge { ... }
 #[pymodule]
-fn rust_bridge_internal(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<RustWsBridge>()?;
-    Ok(())
-}
+fn rust_bridge_internal(_py: Python, m: &PyModule) -> PyResult<()> { ... }
+*/
 
 lazy_static! {
-    // Der Option-Typ enthält nun einen Arc<ToolboxClient>, nicht den Client selbst.
-    static ref TOOLBOX_CLIENT: Mutex<Option<Arc<ToolboxClient>>> = Mutex::new(None);
+    // Nuitka-only implementation - no PyO3
+    static ref NUITKA_CLIENT: Mutex<Option<Arc<NuitkaClient>>> = Mutex::new(None);
 }
 
-/// A Python toolbox instance that runs within the process
-#[derive(Debug, Clone)]
-struct PyToolboxInstance {
-    id: String,
-    module_cache: HashMap<String, bool>,
-    py_app: PyObject,
-    last_used: Instant,
-    active_requests: usize,
-}
-
-/// Client for interacting with Python toolbox instances
-#[derive(Debug, Clone)]
-pub struct ToolboxClient {
-    instances: Arc<Mutex<Vec<PyToolboxInstance>>>,
-    max_instances: usize,
-    timeout: Duration,
-    maintenance_last_run: Arc<Mutex<Instant>>,
-    pub client_prifix: String,
-}
-
-/// Errors that can occur when using the toolbox
-#[derive(Debug, thiserror::Error)]
-pub enum ToolboxError {
-    #[error("Python error: {0}")]
-    PyError(String),
-    #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
-    #[error("Operation timeout")]
-    Timeout,
-    #[error("No available instances")]
-    NoAvailableInstances,
-    #[error("Instance not found: {0}")]
-    InstanceNotFound(String),
-    #[error("Maximum instances reached")]
-    MaxInstancesReached,
-    #[error("Module not found: {0}")]
-    ModuleNotFound(String),
-    #[error("Python initialization error: {0}")]
-    PythonInitError(String),
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-}
-
-impl From<PyErr> for ToolboxError {
-    fn from(err: PyErr) -> Self {
-        ToolboxError::PyError(err.to_string())
-    }
-}
+// =================== PyO3-based structures - REMOVED ===================
+// Replaced by NuitkaClient from lib.rs
+// PyToolboxInstance, ToolboxClient, ToolboxError are now in nuitka_client.rs
 
 
-/// Initializes the Python environment by setting PYTHONHOME and PYTHONPATH
-pub fn initialize_python_environment() -> Result<(), ToolboxError> {
-    // First try to detect Python from conda environment
-    if let Ok(conda_prefix) = env::var("CONDA_PREFIX") {
-        // Set PYTHONHOME to conda environment
-        env::set_var("PYTHONHOME", &conda_prefix);
+// =================== PyO3-based initialization - REMOVED ===================
+// initialize_python_environment() is no longer needed with Nuitka
+// Python environment is managed by PythonFFI in lib.rs
 
-        // Determine Python executable path
-        let python_executable = if cfg!(windows) {
-            format!("{}\\python.exe", conda_prefix.replace("\\", "\\\\"))
-        } else {
-            format!("{}/bin/python", conda_prefix)
-        };
-        env::set_var("PYTHON_EXECUTABLE", &python_executable);
-
-        // Create proper PYTHONPATH for Windows
-        let lib_path = format!(
-            "{0}\\Lib;{0}\\Lib\\site-packages;{0}\\DLLs",
-            conda_prefix.replace("\\", "\\\\")
-        );
-        env::set_var("PYTHONPATH", &lib_path);
-
-        info!("Using conda environment at: {}", conda_prefix);
-        debug!(" PYTHONHOME={}", conda_prefix);
-        debug!(" PYTHON_EXECUTABLE={}", python_executable);
-        debug!(" PYTHONPATH={}", lib_path);
-
-        return Ok(());
-    }
-
-    // Fallback to detecting Python normally
-    let output = std::process::Command::new("python")
-        .args(&["-c", "import sys; print(sys.executable)"])
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            env::set_var("PYTHON_EXECUTABLE", stdout.trim());
-            info!("Detected system Python at: {}", stdout.trim());
-            return Ok(());
-        }
-        _ => {
-            warn!("Could not detect Python automatically");
-        }
-    }
-
-    // As a last resort, try to use pyo3's auto-detection
-    warn!("Falling back to PyO3 auto-detection for Python environment");
-
-    Ok(())
-}
-
-
-/// Initialize the toolbox client and immediately create an instance
-
-pub async fn initialize_and_get_toolbox_client(
+/// Initialize the Nuitka client
+pub async fn initialize_and_get_nuitka_client(
     max_instances: usize,
     timeout_seconds: u64,
-    client_prifix: String,
-) -> Result<Arc<ToolboxClient>, ToolboxError> {
-    initialize_python_environment()?;
-    let client = ToolboxClient::new(max_instances, timeout_seconds, client_prifix);
+    client_prefix: String,
+) -> Result<Arc<NuitkaClient>, NuitkaClientError> {
+    info!("Initializing Nuitka client...");
 
-    if let Err(e) = client.create_python_instance().await {
-        error!("Critical error during initial Python instance creation: {:?}", e);
-        return Err(e);
-    }
-
+    let client = NuitkaClient::new(max_instances, timeout_seconds, client_prefix)?;
     let client_arc = Arc::new(client);
 
-    let mut client_mutex = TOOLBOX_CLIENT.lock().unwrap();
-    // KORREKTUR: Speichere den Arc direkt. .clone() erhöht nur den Zähler.
+    let mut client_mutex = NUITKA_CLIENT.lock().unwrap();
     *client_mutex = Some(client_arc.clone());
 
-    info!("ToolboxClient initialized and first Python instance created successfully.");
+    info!("NuitkaClient initialized successfully.");
     Ok(client_arc)
 }
 
-/// Get the global toolbox client
-pub fn get_toolbox_client() -> Result<Arc<ToolboxClient>, ToolboxError> {
-    let client_guard = TOOLBOX_CLIENT.lock().unwrap();
-    // .clone() auf einer Option<Arc<T>> klont den Arc, was genau das ist, was wir wollen.
+/// Get the global Nuitka client
+pub fn get_nuitka_client() -> Result<Arc<NuitkaClient>, NuitkaClientError> {
+    let client_guard = NUITKA_CLIENT.lock().unwrap();
     client_guard.clone().ok_or_else(|| {
-        ToolboxError::Unknown("ToolboxClient not initialized".to_string())
+        NuitkaClientError::Unknown("NuitkaClient not initialized".to_string())
     })
 }
 
 
-fn check_python_paths(py: Python) {
-    let sys = py.import("sys").unwrap();
-    let sys_path: &PyList = sys.getattr("path").unwrap().downcast().unwrap();
+// =================== PyO3 Debug Functions - REMOVED ===================
+// check_python_paths() and check_toolboxv2() are no longer needed
+/*
+fn check_python_paths(py: Python) { ... }
+fn check_toolboxv2(py: Python) -> PyResult<()> { ... }
+*/
 
-    println!("Python sys.path:");
-    for path in sys_path.iter() {
-        println!("  {:?}", path);
-    }
+// =================== impl ToolboxClient - REMOVED ===================
+// All ToolboxClient methods are now in NuitkaClient (nuitka_client.rs)
+// This entire impl block (558-1396) has been replaced by NuitkaClient
 
-}
-
-fn check_toolboxv2(py: Python) -> PyResult<()> {
-    let toolbox = py.import("toolboxv2")?;
-    let version: &PyAny = toolbox.getattr("__version__")?;
-    println!("toolboxv2 version: {}", version.extract::<String>()?);
-
-    Ok(())
-}
-
+/*
 impl ToolboxClient {
     /// Create a new ToolboxClient
     pub fn new(max_instances: usize, timeout_seconds: u64, client_prifix: String) -> Self {
@@ -1498,6 +1261,8 @@ def process_async_gen(gen):
         Ok(())
     }
 }
+*/
+// =================== END OF REMOVED ToolboxClient ===================
 
 // Configuration struct
 #[derive(Debug, Deserialize, Clone)]
@@ -1593,7 +1358,7 @@ fn generate_session_id() -> String {
 struct SessionManager {
     sessions: SessionStore,
     config: SessionSettings,
-    client: Arc<ToolboxClient>,
+    client: Arc<NuitkaClient>,
     gray_list: Vec<String>,
     black_list: Vec<String>,
 }
@@ -1601,7 +1366,7 @@ struct SessionManager {
 impl SessionManager {
     fn new(
         config: SessionSettings,
-        client: Arc<ToolboxClient>,
+        client: Arc<NuitkaClient>,
     ) -> Self {
         SessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -1677,17 +1442,15 @@ impl SessionManager {
 
         // Check JWT validity
         info!("Checking JWT validity for user: {}", username);
-        let jwt_valid = match self.client.run_function(
-            "CloudM.AuthManager",
-            "jwt_check_claim_server_side",
-            "",  // Using default spec initially
-            vec![],
-            {
-                let mut map = HashMap::new();
-                map.insert("username".to_string(), serde_json::json!(username));
-                map.insert("jwt_claim".to_string(), serde_json::json!(jwt_claim));
-                map
-            },
+        let jwt_valid = match self.client.call_module(
+            "CloudM.AuthManager".to_string(),
+            "jwt_check_claim_server_side".to_string(),
+            serde_json::json!({
+                "username": username,
+                "jwt_claim": jwt_claim,
+                "spec": "",
+                "args": []
+            }),
         ).await {
             Ok(response) => {
                 let is_valid = response
@@ -1714,16 +1477,14 @@ impl SessionManager {
 
         // Get user by name
         info!("Getting user information for: {}", username);
-        let user_result = match self.client.run_function(
-            "CloudM.AuthManager",
-            "get_user_by_name",
-            "",  // Using default spec initially
-            vec![],
-            {
-                let mut map = HashMap::new();
-                map.insert("username".to_string(), serde_json::json!(username));
-                map
-            },
+        let user_result = match self.client.call_module(
+            "CloudM.AuthManager".to_string(),
+            "get_user_by_name".to_string(),
+            serde_json::json!({
+                "username": username,
+                "spec": "",
+                "args": []
+            }),
         ).await {
             Ok(response) => response,
             Err(e) => {
@@ -1750,15 +1511,15 @@ impl SessionManager {
         info!("User UID: {}", uid);
 
         info!("Getting user instance for UID: {}", uid);
-        let instance_result = match self.client.run_function(
-                "CloudM.UserInstances",
-                "get_user_instance",
-                "",
-                vec![],
-                HashMap::from([
-                    ("uid".to_string(), serde_json::json!(uid)),
-                    ("hydrate".to_string(), serde_json::json!(false)),
-                ]),
+        let instance_result = match self.client.call_module(
+                "CloudM.UserInstances".to_string(),
+                "get_user_instance".to_string(),
+                serde_json::json!({
+                    "uid": uid,
+                    "hydrate": false,
+                    "spec": "",
+                    "args": []
+                }),
             ).await {
                 Ok(response) => response,
                 Err(e) => {
@@ -2028,8 +1789,8 @@ async fn logout_handler(
         Ok(Some(true)) => true,
         _ => false,
     };
-    let client = match get_toolbox_client() {
-        Ok(client) => Arc::new(client),
+    let client = match get_nuitka_client() {
+        Ok(client) => client,
         Err(e) => {
             panic!("{:?}", e)
         }
@@ -2038,16 +1799,14 @@ async fn logout_handler(
         if let Ok(Some(live_data)) = session.get::<HashMap<String, String>>("live_data") {
             if let Some(si_id) = live_data.get("SiID") {
                 // Get instance UID
-                let instance_result = client.run_function(
-                    "CloudM.UserInstances",
-                    "get_instance_si_id",
-                    live_data.get("spec").unwrap_or(&String::new()),
-                    vec![],
-                    {
-                        let mut map = HashMap::new();
-                        map.insert("si_id".to_string(), serde_json::json!(si_id));
-                        map
-                    },
+                let instance_result = client.call_module(
+                    "CloudM.UserInstances".to_string(),
+                    "get_instance_si_id".to_string(),
+                    serde_json::json!({
+                        "si_id": si_id,
+                        "spec": live_data.get("spec").unwrap_or(&String::new()),
+                        "args": []
+                    }),
                 ).await.unwrap_or_else(|e| {
                     log::error!("Error getting instance by si_id: {}", e);
                     serde_json::json!({})
@@ -2060,16 +1819,14 @@ async fn logout_handler(
                 {
                     // Close user instance
                     let default_value = String::new();
-                    let close_result = client.run_function(
-                        "CloudM.UserInstances",
-                        "close_user_instance",
-                        live_data.get("spec").unwrap_or(&default_value),
-                        vec![],
-                        {
-                            let mut map = HashMap::new();
-                            map.insert("uid".to_string(), serde_json::json!(uid));
-                            map
-                        },
+                    let close_result = client.call_module(
+                        "CloudM.UserInstances".to_string(),
+                        "close_user_instance".to_string(),
+                        serde_json::json!({
+                            "uid": uid,
+                            "spec": live_data.get("spec").unwrap_or(&default_value),
+                            "args": []
+                        }),
                     );
 
                     if let Err(e) = close_result.await {
@@ -2246,55 +2003,11 @@ fn binary_response(data: Value) -> Vec<u8> {
 }
 
 /// 🔀 **Helper for Streaming Responses**
-fn streaming_response(data: Value) -> HttpResponse {
-    // Extract streaming parameters
-    let module = data.get("module").and_then(Value::as_str).unwrap_or("default");
-    let function = data.get("function").and_then(Value::as_str).unwrap_or("stream");
-    let spec = data.get("spec").and_then(Value::as_str).unwrap_or("default");
-    let content_type = data.get("content_type").and_then(Value::as_str).unwrap_or("text/plain");
-
-    // Extract args and kwargs
-    let args = data.get("args")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-
-    let kwargs = data.get("kwargs")
-        .and_then(Value::as_object)
-        .map(|obj| obj.clone())
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-
-    // Set up streaming
-    match get_toolbox_client() {
-        Ok(client) => {
-            match tokio::runtime::Runtime::new() {
-                Ok(rt) => {
-                    match rt.block_on(client.stream_generator(module, function, spec, args, kwargs)) {
-                        Ok(stream) => {
-                            // Return a streaming response with the appropriate content type
-                            HttpResponse::Ok()
-                                .content_type(content_type)
-                                .streaming(stream)
-                        },
-                        Err(e) => {
-                            HttpResponse::InternalServerError()
-                                .body(format!("Failed to create stream: {}", e))
-                        }
-                    }
-                },
-                Err(e) => {
-                    HttpResponse::InternalServerError()
-                        .body(format!("Failed to create runtime: {}", e))
-                }
-            }
-        },
-        Err(e) => {
-            HttpResponse::InternalServerError()
-                .body(format!("Failed to get toolbox client: {}", e))
-        }
-    }
+/// TODO: Implement streaming with NuitkaClient
+fn streaming_response(_data: Value) -> HttpResponse {
+    // Streaming is not yet implemented with NuitkaClient
+    HttpResponse::NotImplemented()
+        .body("Streaming responses are not yet implemented with NuitkaClient")
 }
 
 
@@ -2516,21 +2229,24 @@ async fn api_handler(
 
 
     kwargs.insert("request".to_string(), request_metadata);
+    // Add spec and args to kwargs for compatibility
+    kwargs.insert("spec".to_string(), serde_json::json!(spec));
+    kwargs.insert("args".to_string(), serde_json::json!(args));
     info!("Final kwargs keys before sending to Python: {:?}", kwargs.keys());
 
-    // Process API request with Toolbox
-    let client_result = get_toolbox_client();
+    // Process API request with Nuitka
+    let client_result = get_nuitka_client();
     if client_result.is_err() {
-        error!("Failed to get toolbox client: {:?}", client_result.err());
+        error!("Failed to get nuitka client: {:?}", client_result.err());
         return HttpResponse::InternalServerError().json(ApiResult {
             error: Some("Internal Server Error: Cannot access backend service.".to_string()),
             origin: None, result: None, info: None,
         });
     }
 
-    let client = Arc::new(client_result.unwrap());
+    let client = client_result.unwrap();
 
-    match client.run_function(&module_name, &function_name, &spec, args, kwargs).await {
+    match client.call_module(module_name.clone(), function_name.clone(), serde_json::json!(kwargs)).await {
         Ok(response_value) => {
             match serde_json::from_value::<ApiResult>(response_value.clone()) {
                 Ok(parsed_api_result) => parse_response(parsed_api_result, response_value),
@@ -2612,29 +2328,10 @@ async fn sse_handler(
         "session_id": session_id,
     }));
 
-    // Stream starten
-    match get_toolbox_client() {
-        Ok(client) => {
-            match client.stream_sse_events(&module_name, &function_name, &spec, vec![], kwargs).await {
-                Ok(stream) => {
-                    // Force immediate streaming with critical headers
-                    HttpResponse::Ok()
-                        .content_type("text/event-stream")
-                        .insert_header(("Cache-Control", "no-cache, no-transform"))
-                        .insert_header(("Connection", "keep-alive"))
-                        .insert_header(("X-Accel-Buffering", "no"))
-                        .insert_header(("Content-Encoding", "identity"))
-                        .streaming(stream)
-                },
-                Err(e) => {
-                    HttpResponse::InternalServerError().body(format!("Stream error: {:?}", e))
-                }
-            }
-        },
-        Err(e) => {
-            HttpResponse::InternalServerError().body(format!("Toolbox error: {:?}", e))
-        }
-    }
+    // TODO: Implement SSE streaming with NuitkaClient
+    // SSE streaming is not yet implemented with NuitkaClient
+    HttpResponse::NotImplemented()
+        .body(format!("SSE streaming for {}/{} is not yet implemented with NuitkaClient", module_name, function_name))
 }
 
 const PERSISTENT_FD_FILE: &str = "server_socket.fd"; // File to store the FD on POSIX
@@ -2656,14 +2353,14 @@ async fn main() -> std::io::Result<()> {
     info!("Configuration loaded: {:?}", config);
 
 
-    let client = match initialize_and_get_toolbox_client(
+    let client = match initialize_and_get_nuitka_client(
         config.toolbox.max_instances as usize,
         config.toolbox.timeout_seconds,
         config.toolbox.client_prifix,
     ).await {
         Ok(client_instance) => client_instance,
         Err(e) => {
-            error!("FATAL: ToolboxClient initialization failed: {:?}", e);
+            error!("FATAL: NuitkaClient initialization failed: {:?}", e);
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to initialize Python backend: {:?}", e),
