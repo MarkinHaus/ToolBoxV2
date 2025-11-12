@@ -2047,7 +2047,7 @@ def server_helper(instance_id:str="main", db_mode=None):
     sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE")))
     print("Using Python executable env:", sys.executable)
     loop = asyncio.new_event_loop()
-    sys.argv.append('-l')
+    # sys.argv.append('-l')
     sys.argv.append('--debug')
     app, _ = loop.run_until_complete(setup_app(instance_id))
     app.loop = loop
