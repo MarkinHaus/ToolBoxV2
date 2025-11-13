@@ -35,6 +35,8 @@ type Py_IsInitialized_t = unsafe extern "C" fn() -> i32;
 type Py_Finalize_t = unsafe extern "C" fn();
 type Py_SetPath_t = unsafe extern "C" fn(*const u16);
 type PySys_SetPath_t = unsafe extern "C" fn(*const u16);
+type PyEval_SaveThread_t = unsafe extern "C" fn() -> *mut c_void;
+type PyEval_RestoreThread_t = unsafe extern "C" fn(*mut c_void);
 
 type PyImport_ImportModule_t = unsafe extern "C" fn(*const i8) -> PyObject;
 type PyImport_AddModule_t = unsafe extern "C" fn(*const i8) -> PyObject;
@@ -71,6 +73,7 @@ type PyBool_FromLong_t = unsafe extern "C" fn(i64) -> PyObject;
 
 type Py_IncRef_t = unsafe extern "C" fn(PyObject);
 type Py_DecRef_t = unsafe extern "C" fn(PyObject);
+type Py_NewRef_t = unsafe extern "C" fn(PyObject) -> PyObject;
 
 type PyErr_Occurred_t = unsafe extern "C" fn() -> PyObject;
 type PyErr_Print_t = unsafe extern "C" fn();
@@ -195,6 +198,16 @@ impl PythonFFI {
                 } else {
                     debug!("Python stdout/stderr redirected successfully");
                 }
+
+                // CRITICAL FIX: Release the GIL after initialization!
+                // After Py_Initialize(), Python holds the GIL and never releases it.
+                // This causes PyGILState_Ensure() to block forever.
+                // We must call PyEval_SaveThread() to release the GIL so that
+                // subsequent PyGILState_Ensure() calls can acquire it.
+                debug!("Releasing GIL after initialization with PyEval_SaveThread()...");
+                let save_thread: Symbol<PyEval_SaveThread_t> = ffi.lib.get(b"PyEval_SaveThread\0")?;
+                save_thread();
+                debug!("GIL released successfully! Subsequent with_gil() calls will now work.");
             }
 
             debug!("Python FFI initialized successfully");
@@ -208,26 +221,42 @@ impl PythonFFI {
     where
         F: FnOnce() -> Result<R>,
     {
+        use tracing::info;
         unsafe {
+            info!("with_gil: Loading GIL symbols...");
             let gil_ensure: Symbol<PyGILState_Ensure_t> = self.lib.get(b"PyGILState_Ensure\0")?;
             let gil_release: Symbol<PyGILState_Release_t> = self.lib.get(b"PyGILState_Release\0")?;
             let err_occurred: Symbol<PyErr_Occurred_t> = self.lib.get(b"PyErr_Occurred\0")?;
             let err_print: Symbol<PyErr_Print_t> = self.lib.get(b"PyErr_Print\0")?;
             let err_clear: Symbol<PyErr_Clear_t> = self.lib.get(b"PyErr_Clear\0")?;
+            info!("with_gil: Symbols loaded successfully");
 
+            info!("with_gil: Calling PyGILState_Ensure() - THIS MAY BLOCK IF GIL IS HELD BY ANOTHER THREAD!");
             let gil = gil_ensure();
-            let result = f();
-            gil_release(gil);
+            info!("with_gil: GIL acquired successfully! Executing closure...");
 
-            // Check for Python errors
+            let result = f();
+            info!("with_gil: Closure executed, checking for Python errors...");
+
+            // CRITICAL: Check for Python errors BEFORE releasing the GIL!
+            // err_occurred() requires the GIL to be held!
             if !err_occurred().is_null() {
+                info!("with_gil: Python error occurred, printing and clearing...");
                 err_print();
                 err_clear();
+                gil_release(gil);
+                info!("with_gil: GIL released after error");
                 if result.is_err() {
                     return result;
                 }
+                bail!("Python error occurred during with_gil");
             }
 
+            info!("with_gil: No Python errors, releasing GIL...");
+            gil_release(gil);
+            info!("with_gil: GIL released successfully");
+
+            info!("with_gil: Returning result");
             result
         }
     }
@@ -235,42 +264,63 @@ impl PythonFFI {
     // =================== Module Import ===================
 
     pub fn import_module(&self, name: &str) -> Result<PyObject> {
-        unsafe {
-            let import_module: Symbol<PyImport_ImportModule_t> = self.lib.get(b"PyImport_ImportModule\0")?;
-            let err_print: Symbol<PyErr_Print_t> = self.lib.get(b"PyErr_Print\0")?;
-            let err_clear: Symbol<PyErr_Clear_t> = self.lib.get(b"PyErr_Clear\0")?;
+        // CRITICAL: Must hold GIL when calling PyImport_ImportModule!
+        self.with_gil(|| {
+            unsafe {
+                let import_module: Symbol<PyImport_ImportModule_t> = self.lib.get(b"PyImport_ImportModule\0")?;
+                let err_print: Symbol<PyErr_Print_t> = self.lib.get(b"PyErr_Print\0")?;
+                let err_clear: Symbol<PyErr_Clear_t> = self.lib.get(b"PyErr_Clear\0")?;
 
-            let c_name = CString::new(name)?;
-            let module = import_module(c_name.as_ptr());
+                let c_name = CString::new(name)?;
+                let module = import_module(c_name.as_ptr());
 
-            if module.is_null() {
-                err_print();
-                err_clear();
-                bail!("Failed to import module: {}", name);
+                if module.is_null() {
+                    err_print();
+                    err_clear();
+                    bail!("Failed to import module: {}", name);
+                }
+
+                // PyImport_ImportModule() already returns a new reference, so we don't need to increment it
+                debug!("Imported module: {}", name);
+                Ok(module)
             }
-
-            debug!("Imported module: {}", name);
-            Ok(module)
-        }
+        })
     }
 
     // =================== Object Operations ===================
 
     pub fn get_attr(&self, obj: PyObject, attr: &str) -> Result<PyObject> {
-        self.with_gil(|| {
-            unsafe {
-                let get_attr: Symbol<PyObject_GetAttrString_t> = self.lib.get(b"PyObject_GetAttrString\0")?;
+        use tracing::info;
+        info!("get_attr() called for attribute: {}", attr);
+        info!("Calling with_gil()...");
 
+        let result = self.with_gil(|| {
+            info!("GIL acquired successfully!");
+            unsafe {
+                info!("Loading PyObject_GetAttrString symbol...");
+                let get_attr: Symbol<PyObject_GetAttrString_t> = self.lib.get(b"PyObject_GetAttrString\0")?;
+                info!("Symbol loaded successfully");
+
+                info!("Creating CString for attribute name...");
                 let c_attr = CString::new(attr)?;
+                info!("CString created successfully");
+
+                info!("Calling PyObject_GetAttrString()...");
                 let result = get_attr(obj, c_attr.as_ptr());
+                info!("PyObject_GetAttrString() returned!");
 
                 if result.is_null() {
                     bail!("Failed to get attribute: {}", attr);
                 }
 
+                // PyObject_GetAttrString() already returns a new reference
+                info!("Attribute retrieved successfully");
                 Ok(result)
             }
-        })
+        });
+
+        info!("with_gil() returned, result: {:?}", result.is_ok());
+        result
     }
 
     pub fn call_function(&self, func: PyObject, args: PyObject, kwargs: Option<PyObject>) -> Result<PyObject> {
@@ -293,6 +343,7 @@ impl PythonFFI {
                     bail!("Function call failed");
                 }
 
+                // PyObject_Call() already returns a new reference
                 Ok(result)
             }
         })
@@ -336,6 +387,7 @@ impl PythonFFI {
                 bail!("Function call failed");
             }
 
+            // PyObject_Call() already returns a new reference
             Ok(result)
         }
     }
@@ -346,7 +398,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let tuple_new: Symbol<PyTuple_New_t> = self.lib.get(b"PyTuple_New\0")?;
-                Ok(tuple_new(size))
+                let result = tuple_new(size);
+                // PyTuple_New() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -368,7 +422,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let dict_new: Symbol<PyDict_New_t> = self.lib.get(b"PyDict_New\0")?;
-                Ok(dict_new())
+                let result = dict_new();
+                // PyDict_New() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -392,7 +448,9 @@ impl PythonFFI {
             unsafe {
                 let unicode_from_string: Symbol<PyUnicode_FromString_t> = self.lib.get(b"PyUnicode_FromString\0")?;
                 let c_str = CString::new(s)?;
-                Ok(unicode_from_string(c_str.as_ptr()))
+                let result = unicode_from_string(c_str.as_ptr());
+                // PyUnicode_FromString() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -401,7 +459,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let long_from_long: Symbol<PyLong_FromLong_t> = self.lib.get(b"PyLong_FromLong\0")?;
-                Ok(long_from_long(val))
+                let result = long_from_long(val);
+                // PyLong_FromLong() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -410,7 +470,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let float_from_double: Symbol<PyFloat_FromDouble_t> = self.lib.get(b"PyFloat_FromDouble\0")?;
-                Ok(float_from_double(val))
+                let result = float_from_double(val);
+                // PyFloat_FromDouble() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -419,7 +481,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let bool_from_long: Symbol<PyBool_FromLong_t> = self.lib.get(b"PyBool_FromLong\0")?;
-                Ok(bool_from_long(if val { 1 } else { 0 }))
+                let result = bool_from_long(if val { 1 } else { 0 });
+                // PyBool_FromLong() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -428,7 +492,9 @@ impl PythonFFI {
         self.with_gil(|| {
             unsafe {
                 let list_new: Symbol<PyList_New_t> = self.lib.get(b"PyList_New\0")?;
-                Ok(list_new(size))
+                let result = list_new(size);
+                // PyList_New() already returns a new reference
+                Ok(result)
             }
         })
     }
@@ -451,6 +517,7 @@ impl PythonFFI {
                 if result.is_null() {
                     bail!("Failed to convert object to string");
                 }
+                // PyObject_Str() already returns a new reference
                 Ok(result)
             }
         })

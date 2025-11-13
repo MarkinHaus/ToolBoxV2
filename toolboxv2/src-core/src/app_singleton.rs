@@ -10,7 +10,7 @@ use tracing::{debug, info};
 /// Wrapper für den global App Singleton
 pub struct AppSingleton {
     ffi: Arc<PythonFFI>,
-    module: *mut std::ffi::c_void, // PyObject für app_singleton module
+    module_name: String, // Name des Moduls (wird bei Bedarf re-importiert)
     app_instance: Option<*mut std::ffi::c_void>, // PyObject für App instance
 }
 
@@ -22,35 +22,52 @@ impl AppSingleton {
     pub fn new(ffi: Arc<PythonFFI>) -> Result<Self> {
         info!("Loading app_singleton module...");
 
-        // Lade app_singleton Modul
-        let module = ffi.import_module("app_singleton")?;
+        // Verify module can be imported (but don't store the PyObject)
+        info!("Verifying app_singleton module can be imported...");
+        let _module = ffi.import_module("app_singleton")?;
+        info!("app_singleton module verified successfully!");
 
-        debug!("app_singleton module loaded successfully");
-
-        Ok(Self {
+        info!("Creating AppSingleton struct...");
+        let app_singleton = Self {
             ffi,
-            module,
+            module_name: "app_singleton".to_string(),
             app_instance: None,
-        })
+        };
+        info!("AppSingleton struct created successfully!");
+
+        info!("Returning AppSingleton...");
+        Ok(app_singleton)
     }
 
     /// Initialisiert den globalen App Singleton
     pub fn init_app(&mut self, instance_id: &str) -> Result<Value> {
         info!("Initializing App singleton with instance_id: {}", instance_id);
 
+        // Re-import module to get a fresh PyObject
+        info!("Re-importing {} module...", self.module_name);
+        let module = self.ffi.import_module(&self.module_name)?;
+        info!("Module re-imported successfully");
+
         // Hole init_app Funktion
-        let init_app_fn = self.ffi.get_attr(self.module, "init_app")?;
+        info!("Getting init_app function from module...");
+        let init_app_fn = self.ffi.get_attr(module, "init_app")?;
+        info!("Got init_app function successfully");
 
         // Erstelle Args tuple mit instance_id
+        info!("Creating args tuple...");
         let args = self.ffi.create_tuple(1)?;
         let id_str = self.ffi.string_from_str(instance_id)?;
+        info!("Created args tuple successfully");
 
         // Setze args[0] = instance_id
+        info!("Setting args[0] = instance_id...");
         self.ffi.tuple_set_item(args, 0, id_str)?;
+        info!("Set args[0] successfully");
 
-        // Rufe init_app(instance_id) auf mit call_function_async()
-        // Dies gibt den GIL frei, damit Python den asyncio Event Loop ausführen kann
-        let _result = self.ffi.call_function_async(init_app_fn, args, None)?;
+        // Rufe init_app(instance_id) auf
+        info!("Calling init_app(instance_id) - THIS MAY TAKE 1-2 MINUTES...");
+        let _result = self.ffi.call_function(init_app_fn, args, None)?;
+        info!("init_app() returned successfully!");
 
         // Konvertiere Result zu JSON
         // TODO: Implementiere py_to_json Konvertierung
@@ -71,8 +88,11 @@ impl AppSingleton {
 
         debug!("Getting App singleton instance...");
 
+        // Re-import module to get a fresh PyObject
+        let module = self.ffi.import_module(&self.module_name)?;
+
         // Hole get_app Funktion
-        let get_app_fn = self.ffi.get_attr(self.module, "get_app")?;
+        let get_app_fn = self.ffi.get_attr(module, "get_app")?;
 
         // Rufe get_app() auf (keine Args)
         let empty_args = self.ffi.create_tuple(0)?;
@@ -94,8 +114,11 @@ impl AppSingleton {
     ) -> Result<Value> {
         info!("Calling module function: {}::{}", module, function);
 
+        // Re-import module to get a fresh PyObject
+        let app_singleton_module = self.ffi.import_module(&self.module_name)?;
+
         // Hole call_module_function
-        let call_fn = self.ffi.get_attr(self.module, "call_module_function")?;
+        let call_fn = self.ffi.get_attr(app_singleton_module, "call_module_function")?;
 
         // Erstelle Args tuple (module, function)
         let args = self.ffi.create_tuple(2)?;
@@ -121,8 +144,11 @@ impl AppSingleton {
     pub fn health_check(&self) -> Result<Value> {
         debug!("Running health check...");
 
+        // Re-import module to get a fresh PyObject
+        let module = self.ffi.import_module(&self.module_name)?;
+
         // Hole health_check Funktion
-        let health_fn = self.ffi.get_attr(self.module, "health_check")?;
+        let health_fn = self.ffi.get_attr(module, "health_check")?;
 
         // Rufe health_check() auf
         let empty_args = self.ffi.create_tuple(0)?;

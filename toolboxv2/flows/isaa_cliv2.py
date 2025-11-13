@@ -512,7 +512,7 @@ class AdvancedIsaaCli:
 
         # CLI state
         self.active_agent_name = "user-proxy"
-        self.session_id = f"cli_session_{int(time.time())}"
+        self.session_id = "cli_session_default"  # Default session without timestamp
         self.workspace_path = __init_cwd__
 
         # Persistence
@@ -569,6 +569,7 @@ class AdvancedIsaaCli:
             },
             "/session": {  # NEW: Replaces /context for session management
                 "list": None,
+                "new": None,  # NEW: Create new session
                 "switch": None,
                 "inspect": None,
                 "clear": None,
@@ -669,7 +670,7 @@ class AdvancedIsaaCli:
             f"🔨 Build custom agents with {Style.CYAN('/agent build')}",
             f"🔍 Inspect agents with {Style.CYAN('/agent inspect -d')} for detailed context",
             f"⚡ Use {Style.CYAN('--fast')} or {Style.CYAN('--callback')} flags for advanced execution",
-            f"💬 Manage sessions with {Style.CYAN('/session list')}",
+            f"💬 Create new sessions with {Style.CYAN('/session new <name>')}",
         ]
 
         print()
@@ -1246,7 +1247,14 @@ class AdvancedIsaaCli:
             print(f"🤖 Name: {agent.amd.name}")
             print(f"🧠 Fast Model: {agent.amd.fast_llm_model}")
             print(f"🧠 Complex Model: {agent.amd.complex_llm_model}")
-            print(f"💰 Total Cost: ${agent.total_cost:.4f}")
+
+            # Token and cost statistics
+            print(f"\n💰 Usage Statistics:")
+            print(f"   Total Cost: ${agent.total_cost_accumulated:.4f}")
+            print(f"   Total LLM Calls: {agent.total_llm_calls}")
+            print(f"   Tokens In: {agent.total_tokens_in:,}")
+            print(f"   Tokens Out: {agent.total_tokens_out:,}")
+            print(f"   Total Tokens: {agent.total_tokens_in + agent.total_tokens_out:,}")
 
             # Binding status
             is_bound = agent_name in self.user_proxy_manager.get_bound_agents()
@@ -2027,6 +2035,8 @@ class AdvancedIsaaCli:
 
         if sub_cmd == "list":
             await self._session_list(sub_args)
+        elif sub_cmd == "new":
+            await self._session_new(sub_args)
         elif sub_cmd == "switch":
             await self._session_switch(sub_args)
         elif sub_cmd == "inspect":
@@ -2075,6 +2085,43 @@ class AdvancedIsaaCli:
 
         except Exception as e:
             self.formatter.print_error(f"Failed to list sessions: {e}")
+
+    async def _session_new(self, args: List[str]):
+        """Create a new session with custom name"""
+        if not args:
+            self.formatter.print_error("Usage: /session new <session_name>")
+            return
+
+        session_name = args[0]
+        agent_name = args[1] if len(args) > 1 else self.active_agent_name
+
+        try:
+            agent = await self.isaa_tools.get_agent(agent_name)
+
+            if hasattr(agent, 'context_manager') and agent.context_manager:
+                # Initialize new session
+                await agent.initialize_session_context(session_name)
+
+                self.formatter.print_success(f"✅ New session created: {session_name}")
+
+                # Ask if user wants to switch to new session
+                switch_choice = await self.prompt_session.prompt_async("Switch to new session? (Y/n): ")
+                if switch_choice.lower() not in ['n', 'no']:
+                    self.session_id = session_name
+                    self.formatter.print_success(f"✅ Switched to session: {session_name}")
+
+                    # Send notification
+                    self.notification_system.show_notification(
+                        title="Session Created",
+                        message=f"New session '{session_name}' created and activated",
+                        notification_type=NotificationType.SUCCESS,
+                        timeout=2000
+                    )
+            else:
+                self.formatter.print_error("Agent has no session manager")
+
+        except Exception as e:
+            self.formatter.print_error(f"Failed to create session: {e}")
 
     async def _session_switch(self, args: List[str]):
         """Switch to a different session"""
@@ -2584,6 +2631,7 @@ class AdvancedIsaaCli:
         self.formatter.print_section("Session Commands", "")
         commands = [
             ("/session list [agent]", "List all sessions for agent"),
+            ("/session new <name> [agent]", "Create new named session (NEW)"),
             ("/session switch <session_id>", "Switch to different session"),
             ("/session inspect <session_id>", "Inspect session details"),
             ("/session clear <session_id>", "Clear session history"),
@@ -2592,7 +2640,7 @@ class AdvancedIsaaCli:
         ]
 
         for cmd, desc in commands:
-            print(f"  {Style.CYAN(cmd.ljust(30))} {desc}")
+            print(f"  {Style.CYAN(cmd.ljust(40))} {desc}")
 
     async def _show_var_help(self):
         """Show variable command help"""

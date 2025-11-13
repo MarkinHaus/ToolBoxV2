@@ -33,6 +33,7 @@ pub struct NuitkaClient {
     timeout: Duration,
     maintenance_last_run: Arc<Mutex<Instant>>,
     pub client_prefix: String,
+    app_initialized: Arc<Mutex<bool>>,  // Track if init_app() was called
 }
 
 /// Errors für NuitkaClient
@@ -91,6 +92,7 @@ impl NuitkaClient {
             timeout: Duration::from_secs(timeout_seconds),
             maintenance_last_run: Arc::new(Mutex::new(Instant::now())),
             client_prefix,
+            app_initialized: Arc::new(Mutex::new(false)),
         })
     }
 
@@ -98,19 +100,38 @@ impl NuitkaClient {
     pub async fn initialize(&self, modules: Vec<String>, attr_name: Option<&str>) -> Result<(), NuitkaClientError> {
         info!("Initializing NuitkaClient with modules: {:?}", modules);
 
-        // Erstelle erste Instanz
-        let instance_id = if self.instances.lock().unwrap().is_empty() {
-            self.create_python_instance().await?
-        } else {
-            self.instances.lock().unwrap()[0].id.clone()
-        };
+        // Ensure App is initialized (only once)
+        let mut app_init = self.app_initialized.lock().unwrap();
+        if !*app_init {
+            info!("First initialize() call - creating Python instance and calling init_app()");
+            drop(app_init); // Release lock before async operation
 
-        // Lade Module
-        for module in modules {
-            info!("Preloading module: {}", module);
-            if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
-                error!("Failed to preload module {}: {}", module, e);
-                // Continue loading other modules
+            // Create first instance (this calls init_app())
+            let instance_id = self.create_python_instance().await?;
+
+            // Mark as initialized
+            *self.app_initialized.lock().unwrap() = true;
+
+            // Load modules into this instance
+            for module in modules {
+                info!("Preloading module: {}", module);
+                if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
+                    error!("Failed to preload module {}: {}", module, e);
+                }
+            }
+        } else {
+            info!("App already initialized - using existing instance");
+            drop(app_init);
+
+            // Get existing instance
+            let instance_id = self.instances.lock().unwrap()[0].id.clone();
+
+            // Load modules into existing instance
+            for module in modules {
+                info!("Preloading module: {}", module);
+                if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
+                    error!("Failed to preload module {}: {}", module, e);
+                }
             }
         }
 

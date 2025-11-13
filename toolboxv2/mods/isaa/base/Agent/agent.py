@@ -2427,7 +2427,6 @@ class LLMToolNode(AsyncNode):
                     final_response = "I encountered an error while processing your request."
                     break
 
-
                 # Check for tool calls
                 tool_calls = self._extract_tool_calls(llm_response)
 
@@ -2439,6 +2438,13 @@ class LLMToolNode(AsyncNode):
                     # No more tool calls, this is the final response
                     final_response = llm_response
                     break
+                direct_response_call = next(
+                    (call for call in tool_calls if call.get("tool_name") == "direct_response"), None)
+                if direct_response_call:
+                    final_response = direct_response_call.get("arguments", {}).get("final_answer",
+                                                                                   "Task completed successfully.")
+                    tool_call_count += 1
+                    break
 
                 # Execute tool calls
                 tool_results = await self._execute_tool_calls(tool_calls, prep_res)
@@ -2447,9 +2453,15 @@ class LLMToolNode(AsyncNode):
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
                 final_response = tool_results_text
-                conversation_history.append({"role": "user",
-                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue with the next action do nor repeat or provide your final response."})
+                next_prompt = f"""Tool results have been processed:
+                {tool_results_text}
 
+                **Your next step:**
+                - If you have enough information to answer the user's request, you MUST call the `direct_response` tool with the final answer.
+                - If you need more information, call the next required tool.
+                - Do not provide a final answer as plain text. Always use the `direct_response` tool to finish."""
+
+                conversation_history.append({"role": "user", "content": next_prompt})
                 # Update variable manager with tool results
                 self._update_variables_with_results(tool_results, prep_res["variable_manager"])
 
@@ -4177,6 +4189,13 @@ class LLMReasonerNode(AsyncNode):
             # Auto-context management
             await self._manage_context_size()
 
+            # AUTO-CLEAN: Reasoning scope compression every 10 loops
+            if self.current_loop_count % 10 == 0 and self.variable_manager:
+                rprint(f"🔄 Auto-compressing reasoning scope at loop {self.current_loop_count}")
+                compression_result = await self.variable_manager.auto_compress_reasoning_scope()
+                if compression_result.get('compressed'):
+                    rprint(f"✅ Reasoning compressed: {compression_result['stats']['compression_ratio']}x reduction")
+
             # Progress tracking
             if progress_tracker:
                 await progress_tracker.emit_event(ProgressEvent(
@@ -4803,6 +4822,10 @@ Create the outline now:"""
                 "timestamp": datetime.now().isoformat()
             }
             summaries = self.variable_manager.get("reasoning.context_summaries", [])
+            # Ensure summaries is a list
+            if not isinstance(summaries, list):
+                print(f"WARNING: summaries is not a list, but a {type(summaries)}", summaries)
+                summaries = [summaries]
             summaries.append(summary_data)
             self.variable_manager.set("reasoning.context_summaries", summaries[-10:])  # Keep last 10
 
@@ -4953,6 +4976,7 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Purpose: Manage your high-level to-do list
 - Actions: "add", "remove", "complete", "get_current"
 - Example: META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research competitor analysis data")
+- ACTIONS ONL AVALABLE ACTIONS ("add", "remove", "complete", "get_current")
 
 **META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
 - Purpose: Delegate specific, self-contained tasks requiring external tools
@@ -5390,33 +5414,148 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
         return False
 
-    async def _trigger_auto_recovery(self, prep_res):
-        """Trigger auto-recovery mechanism"""
-        self.auto_recovery_attempts += 1
 
-        # Store failure pattern
+    def _log_recovery_action(self, strategy: str, details: str):
+        """Protokolliert eine Wiederherstellungsaktion im Reasoning-Kontext für Transparenz."""
+        eprint(f"Auto-Recovery (Attempt {self.auto_recovery_attempts}): {strategy} - {details}")
+        self.reasoning_context.append({
+            "type": "auto_recovery",
+            "content": f"AUTO-RECOVERY TRIGGERED (Attempt {self.auto_recovery_attempts}). Strategy: {strategy}. Details: {details}",
+            "recovery_attempt": self.auto_recovery_attempts,
+            "strategy": strategy,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    def _analyze_failure_pattern(self) -> dict:
+        """Analysiert die letzten Aktionen und Fehler, um das Fehlermuster zu bestimmen."""
+        analysis = {
+            "is_repetitive_action": False,
+            "last_error": None,
+            "is_persistent_error": False
+        }
+
+        # 1. Repetitive Aktionen prüfen
+        if len(self.last_action_signatures) >= 3:
+            recent_actions = self.last_action_signatures[-3:]
+            if len(set(recent_actions)) == 1:
+                analysis["is_repetitive_action"] = True
+                analysis["repeated_action"] = recent_actions[0]
+
+        # 2. Letzten Fehler prüfen
+        error_entries = [e for e in self.reasoning_context if e.get("type") == "error"]
+        if error_entries:
+            last_error = error_entries[-1]
+            analysis["last_error"] = {
+                "message": last_error.get("content"),
+                "type": last_error.get("error_type")
+            }
+            # Prüfen, ob derselbe Fehler mehrmals hintereinander aufgetreten ist
+            if len(error_entries) >= 2 and error_entries[-1].get("error_type") == error_entries[-2].get(
+                "error_type"):
+                analysis["is_persistent_error"] = True
+
+        return analysis
+
+    async def _trigger_auto_recovery(self, prep_res: dict):
+        """
+        Mehrstufige Auto-Recovery, um aus Endlosschleifen oder Sackgassen auszubrechen.
+        Eskaliert von sanften Eingriffen bis hin zu drastischen Maßnahmen.
+        """
+        self.auto_recovery_attempts += 1
+        failure_analysis = self._analyze_failure_pattern()
+
+        strategy = "None"
+        details = "Starting recovery process..."
+
+        # Strategie 1 & 2: Sanfter Eingriff - Kontext-Injektion
+        if self.auto_recovery_attempts <= 2:
+            strategy = "Context Injection"
+            details = "Injecting a strong warning into the context to force a change in LLM strategy."
+            self._log_recovery_action(strategy, details)
+
+            error_info = f"Last error was: {failure_analysis['last_error']['message']}" if failure_analysis[
+                'last_error'] else "Repetitive actions were detected."
+
+            self.reasoning_context.append({
+                "type": "system_warning",
+                "content": f"CRITICAL WARNING: Loop detected. {error_info} You MUST change your approach now. Do not repeat the last action. Try a different meta-tool or analyze the problem from a new perspective.",
+                "timestamp": datetime.now().isoformat()
+            })
+            # Gibt dem Loop-Detektor eine neue Chance
+            self.last_action_signatures.clear()
+
+        # Strategie 3 & 4: Mittlerer Eingriff - Task-Stack bereinigen
+        elif self.auto_recovery_attempts <= 4:
+            strategy = "Task Stack Cleanup"
+            current_task = self._get_current_stack_task()
+            if current_task and current_task.get("description"):
+                details = f"The current task '{current_task['description'][:50]}...' seems to be causing a loop. Marking it as failed and skipping."
+                self._log_recovery_action(strategy, details)
+                # Finde und aktualisiere die Aufgabe im Stack
+                for task in self.internal_task_stack:
+                    if task.get("status") == "pending":
+                        task["status"] = "failed_and_skipped"
+                        task["error"] = "Skipped by auto-recovery due to persistent failure."
+                        break
+            else:
+                details = "No pending task found to clean up. Proceeding to next recovery level."
+                self._log_recovery_action(strategy, details)
+                # Wenn kein Task da ist, direkt zur nächsten Stufe
+                self.auto_recovery_attempts = 5
+                await self._trigger_auto_recovery(prep_res)  # Ruft sich selbst für die nächste Stufe auf
+
+        # Strategie 5 & 6: Harter Eingriff - Outline-Schritt überspringen
+        elif self.auto_recovery_attempts <= 6:
+            strategy = "Skip Outline Step"
+            if self.outline and self.current_outline_step < len(self.outline["steps"]):
+                current_step_desc = self.outline["steps"][self.current_outline_step].get("description", "N/A")
+                details = f"Skipping the entire outline step '{current_step_desc[:50]}...' as it seems fundamentally flawed."
+                self._log_recovery_action(strategy, details)
+                await self._emergency_step_skip(prep_res)
+            else:
+                details = "Cannot skip step, already at the end of the outline."
+                self._log_recovery_action(strategy, details)
+                self.auto_recovery_attempts = 7
+                await self._trigger_auto_recovery(prep_res)
+
+        # Strategie 7: Drastischer Eingriff - Komplette Neuplanung
+        elif self.auto_recovery_attempts == 7:
+            strategy = "Full Re-Plan"
+            details = "The current plan seems unrecoverable. Attempting to create a new outline from scratch with failure context."
+            self._log_recovery_action(strategy, details)
+
+            # Füge expliziten Fehlerkontext für die Neuplanung hinzu
+            self.reasoning_context.append({
+                "type": "system_event",
+                "content": "REPLANNING INITIATED. The previous plan failed repeatedly. You must create a different plan to achieve the original query.",
+                "timestamp": datetime.now().isoformat()
+            })
+            self.outline = None  # Erzwingt die Neuerstellung
+            self.internal_task_stack.clear()  # Leert den alten Task-Stack
+            await self._create_initial_outline(prep_res)
+
+        # Letzter Ausweg: Notfall-Abschluss
+        else:
+            strategy = "Emergency Completion"
+            details = "Maximum recovery attempts reached. Forcing termination and generating a summary of the partial progress."
+            self._log_recovery_action(strategy, details)
+            await self._emergency_completion(prep_res)
+
+        # Speichere das Fehlermuster für zukünftiges Lernen
         if self.variable_manager:
             failure_data = {
                 "timestamp": datetime.now().isoformat(),
                 "loop_count": self.current_loop_count,
                 "outline_step": self.current_outline_step,
                 "last_actions": self.last_action_signatures[-5:],
-                "recovery_attempt": self.auto_recovery_attempts
+                "recovery_attempt": self.auto_recovery_attempts,
+                "recovery_strategy": strategy,
+                "failure_analysis": failure_analysis
             }
             failures = self.variable_manager.get("reasoning.failure_patterns", [])
+            if not isinstance(failures, list): failures = []  # Sicherheitsabfrage
             failures.append(failure_data)
-            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])  # Keep last 20
-
-        # Recovery strategies
-        if self.auto_recovery_attempts == 1:
-            # Force outline step advancement
-            await self._force_outline_advancement(prep_res)
-        elif self.auto_recovery_attempts == 2:
-            # Skip current step and move to next
-            await self._emergency_step_skip(prep_res)
-        else:
-            # Final emergency: force completion
-            await self._emergency_completion(prep_res)
+            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])
 
     async def _force_outline_advancement(self, prep_res):
         """Force advancement to next outline step"""
@@ -6078,6 +6217,15 @@ DELEGATION END
             # Mark outline step completion if specified
             if outline_step_completion:
                 await self._mark_step_completion(prep_res, "delegation_complete", context_addition)
+
+            # AUTO-CLEAN: Deduplicate results and archive large variables after delegation
+            if self.variable_manager:
+                rprint("🔄 Auto-cleaning after delegation...")
+
+                # 1. Deduplicate file operations
+                dedup_result = await self.variable_manager.auto_deduplicate_results_scope()
+                if dedup_result.get('deduplicated') and dedup_result['stats']['files_deduplicated'] > 0:
+                    rprint(f"✅ Deduplicated {dedup_result['stats']['files_deduplicated']} files")
 
             return {"context_addition": context_addition}
 
@@ -7290,9 +7438,13 @@ class VariableManager:
             'results': {},
             'tasks': {},
             'user': {},
-            'system': {}
+            'system': {},
+            'reasoning': {},  # For reasoning scope compression
+            'files': {},  # For file operation deduplication
+            'session_archive': {}  # For large data archiving
         }
         self._cache = {}
+        self.agent_instance = None  # Will be set by FlowAgent
 
     def register_scope(self, name: str, data: dict):
         """Register a new variable scope"""
@@ -7747,6 +7899,350 @@ class VariableManager:
         ])
 
         return "\n".join(context_parts)
+
+    # ===== AUTO-CLEAN FUNCTIONS =====
+
+    async def auto_compress_reasoning_scope(self) -> dict[str, Any]:
+        """
+        AUTO-CLEAN FUNCTION 1: LLM-basierte Komprimierung des Reasoning Context
+
+        Analysiert und komprimiert reasoning_context aus LLMReasonerNode:
+        - Was hat funktioniert und was nicht
+        - Minimale Zusammenfassung und Akkumulation
+        - Speichert komprimierte Version und referenziert sie
+        - Wird automatisch nach jeder 10. Loop in LLMReasonerNode aufgerufen
+
+        Returns:
+            dict mit compression_stats und compressed_data
+        """
+        try:
+            # Zugriff auf reasoning_context aus LLMReasonerNode
+            if not self.agent_instance:
+                return {"compressed": False, "reason": "no_agent_instance"}
+
+            if not hasattr(self.agent_instance, 'task_flow'):
+                return {"compressed": False, "reason": "no_task_flow"}
+
+            if not hasattr(self.agent_instance.task_flow, 'llm_reasoner'):
+                return {"compressed": False, "reason": "no_llm_reasoner"}
+
+            llm_reasoner = self.agent_instance.task_flow.llm_reasoner
+            if not hasattr(llm_reasoner, 'reasoning_context'):
+                return {"compressed": False, "reason": "no_reasoning_context"}
+
+            reasoning_context = llm_reasoner.reasoning_context
+
+            if not reasoning_context or len(reasoning_context) < 10:
+                return {"compressed": False, "reason": "context_too_small"}
+
+            # Sammle alle reasoning-relevanten Daten aus der Liste
+            raw_data = {
+                "reasoning_entries": [e for e in reasoning_context if e.get("type") == "reasoning"],
+                "meta_tool_results": [e for e in reasoning_context if e.get("type") == "meta_tool_result"],
+                "errors": [e for e in reasoning_context if e.get("type") == "error"],
+                "context_summaries": [e for e in reasoning_context if e.get("type") == "context_summary"],
+                "total_entries": len(reasoning_context)
+            }
+
+            # Berechne Größe vor Komprimierung
+            size_before = len(json.dumps(raw_data, default=str))
+
+            # LLM-basierte Analyse und Komprimierung
+            if self.agent_instance and LITELLM_AVAILABLE:
+                analysis_prompt = f"""Analyze and compress the following reasoning session data.
+
+Raw Data:
+{json.dumps(raw_data, indent=2, default=str)[:3000]}...
+
+Create a minimal summary that captures:
+1. What worked (successful patterns)
+2. What didn't work (failure patterns)
+3. Key learnings and insights
+4. Important results to keep
+
+Format as JSON:
+{{
+    "summary": "Brief overall summary",
+    "successes": ["pattern1", "pattern2"],
+    "failures": ["pattern1", "pattern2"],
+    "key_learnings": ["learning1", "learning2"],
+    "important_results": {{"key": "value"}}
+}}"""
+
+                try:
+                    compressed_response = await self.agent_instance.a_llm_call(
+                        model=self.agent_instance.amd.fast_llm_model,
+                        messages=[{"role": "user", "content": analysis_prompt}],
+                        temperature=0.1,
+                        node_name="ReasoningCompressor"
+                    )
+
+                    # Parse LLM response
+                    import re
+                    json_match = re.search(r'\{.*\}', compressed_response, re.DOTALL)
+                    if json_match:
+                        compressed_data = json.loads(json_match.group(0))
+                    else:
+                        compressed_data = {"summary": compressed_response[:500]}
+
+                except Exception as e:
+                    rprint(f"LLM compression failed, using fallback: {e}")
+                    compressed_data = self._fallback_reasoning_compression(raw_data)
+            else:
+                compressed_data = self._fallback_reasoning_compression(raw_data)
+
+            # Speichere komprimierte Version
+            timestamp = datetime.now().isoformat()
+            compression_entry = {
+                "timestamp": timestamp,
+                "compressed_data": compressed_data,
+                "size_before": size_before,
+                "size_after": len(json.dumps(compressed_data, default=str)),
+                "compression_ratio": round(len(json.dumps(compressed_data, default=str)) / size_before, 2)
+            }
+
+            # Archiviere alte Daten
+            archive_key = f"reasoning_archive_{timestamp}"
+            self.scopes['session_archive'][archive_key] = {
+                "type": "reasoning_compression",
+                "original_data": raw_data,
+                "compressed_data": compressed_data,
+                "metadata": compression_entry
+            }
+
+            # Ersetze reasoning_context mit komprimierter Version
+            # Behalte nur die letzten 5 Einträge + komprimierte Summary
+            recent_entries = reasoning_context[-5:] if len(reasoning_context) > 5 else reasoning_context
+
+            compressed_entry = {
+                "type": "compressed_summary",
+                "timestamp": timestamp,
+                "summary": compressed_data,
+                "archive_reference": archive_key,
+                "original_entries_count": len(reasoning_context),
+                "compression_ratio": compression_entry['compression_ratio']
+            }
+
+            # Setze neuen reasoning_context
+            llm_reasoner.reasoning_context = [compressed_entry] + recent_entries
+
+            # Speichere auch im reasoning scope für Referenz
+            self.scopes['reasoning'] = {
+                "compressed": True,
+                "last_compression": timestamp,
+                "summary": compressed_data,
+                "archive_reference": archive_key,
+                "entries_before": len(reasoning_context),
+                "entries_after": len(llm_reasoner.reasoning_context)
+            }
+
+            rprint(f"✅ Reasoning context compressed: {len(reasoning_context)} -> {len(llm_reasoner.reasoning_context)} entries ({compression_entry['compression_ratio']}x size reduction)")
+
+            return {
+                "compressed": True,
+                "stats": compression_entry,
+                "archive_key": archive_key,
+                "entries_before": len(reasoning_context),
+                "entries_after": len(llm_reasoner.reasoning_context)
+            }
+
+        except Exception as e:
+            eprint(f"Reasoning compression failed: {e}")
+            return {"compressed": False, "error": str(e)}
+
+    def _fallback_reasoning_compression(self, raw_data: dict) -> dict:
+        """Fallback compression without LLM"""
+        return {
+            "summary": f"Compressed {len(raw_data.get('failure_patterns', []))} failures, {len(raw_data.get('successful_patterns', []))} successes",
+            "successes": [p.get("query", "")[:50] for p in raw_data.get("successful_patterns", [])[-5:]],
+            "failures": [p.get("reason", "")[:50] for p in raw_data.get("failure_patterns", [])[-5:]],
+            "key_learnings": ["See archive for details"],
+            "important_results": raw_data.get("latest_results", {})
+        }
+
+    async def auto_clean(self):
+        await asyncio.gather(*
+                       [asyncio.create_task(self.auto_compress_reasoning_scope()),
+                        asyncio.create_task(self.auto_deduplicate_results_scope())]
+                    )
+
+    async def auto_deduplicate_results_scope(self) -> dict[str, Any]:
+        """
+        AUTO-CLEAN FUNCTION 2: Deduplizierung des Results Scope
+
+        Vereinheitlicht File-Operationen (read_file, write_file, list_dir):
+        - Wenn zweimal von derselben Datei gelesen wurde, nur aktuellste Version behalten
+        - Beim Schreiben immer nur aktuellste Version im 'files' scope
+        - Agent hat immer nur die aktuellste Version
+        - Wird nach jeder Delegation aufgerufen
+
+        Returns:
+            dict mit deduplication_stats
+        """
+        try:
+            results_scope = self.scopes.get('results', {})
+            files_scope = self.scopes.get('files', {})
+
+            if not results_scope:
+                return {"deduplicated": False, "reason": "no_results"}
+
+            # Tracking für File-Operationen
+            file_operations = {
+                'read': {},  # filepath -> [result_ids]
+                'write': {},  # filepath -> [result_ids]
+                'list': {}   # dirpath -> [result_ids]
+            }
+
+            # Analysiere alle Results nach File-Operationen
+            for result_id, result_data in results_scope.items():
+                if not isinstance(result_data, dict):
+                    continue
+
+                # Erkenne File-Operationen
+                data = result_data.get('data', {})
+                if isinstance(data, dict):
+                    # read_file detection
+                    if 'content' in data and 'path' in data:
+                        filepath = data.get('path', '')
+                        if filepath:
+                            if filepath not in file_operations['read']:
+                                file_operations['read'][filepath] = []
+                            file_operations['read'][filepath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+                    # write_file detection
+                    elif 'written' in data or 'file_path' in data:
+                        filepath = data.get('file_path', data.get('path', ''))
+                        if filepath:
+                            if filepath not in file_operations['write']:
+                                file_operations['write'][filepath] = []
+                            file_operations['write'][filepath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+                    # list_dir detection
+                    elif 'files' in data or 'directories' in data:
+                        dirpath = data.get('directory', data.get('path', ''))
+                        if dirpath:
+                            if dirpath not in file_operations['list']:
+                                file_operations['list'][dirpath] = []
+                            file_operations['list'][dirpath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+            # Deduplizierung: Nur aktuellste Version behalten
+            dedup_stats = {
+                'files_deduplicated': 0,
+                'results_removed': 0,
+                'files_unified': 0
+            }
+
+            # Dedupliziere read operations
+            for filepath, operations in file_operations['read'].items():
+                if len(operations) > 1:
+                    # Sortiere nach Timestamp, behalte neueste
+                    operations.sort(key=lambda x: x['timestamp'], reverse=True)
+                    latest = operations[0]
+
+                    # Speichere im files scope
+                    files_scope[filepath] = {
+                        'type': 'file_content',
+                        'content': latest['data'].get('content', ''),
+                        'last_read': latest['timestamp'],
+                        'result_id': latest['result_id'],
+                        'path': filepath
+                    }
+
+                    # Entferne alte Results
+                    for old_op in operations[1:]:
+                        if old_op['result_id'] in results_scope:
+                            # Archiviere statt löschen
+                            archive_key = f"archived_read_{old_op['result_id']}"
+                            self.scopes['session_archive'][archive_key] = results_scope[old_op['result_id']]
+                            del results_scope[old_op['result_id']]
+                            dedup_stats['results_removed'] += 1
+
+                    dedup_stats['files_deduplicated'] += 1
+
+            # Dedupliziere write operations
+            for filepath, operations in file_operations['write'].items():
+                if len(operations) > 1:
+                    operations.sort(key=lambda x: x['timestamp'], reverse=True)
+                    latest = operations[0]
+
+                    # Update files scope
+                    if filepath in files_scope:
+                        files_scope[filepath]['last_write'] = latest['timestamp']
+                        files_scope[filepath]['write_result_id'] = latest['result_id']
+
+                    # Entferne alte write results
+                    for old_op in operations[1:]:
+                        if old_op['result_id'] in results_scope:
+                            archive_key = f"archived_write_{old_op['result_id']}"
+                            self.scopes['session_archive'][archive_key] = results_scope[old_op['result_id']]
+                            del results_scope[old_op['result_id']]
+                            dedup_stats['results_removed'] += 1
+
+                    dedup_stats['files_deduplicated'] += 1
+
+            # Update scopes
+            self.scopes['results'] = results_scope
+            self.scopes['files'] = files_scope
+            dedup_stats['files_unified'] = len(files_scope)
+
+            if dedup_stats['files_deduplicated'] > 0:
+                rprint(f"✅ Results deduplicated: {dedup_stats['files_deduplicated']} files, {dedup_stats['results_removed']} old results archived")
+
+            return {
+                "deduplicated": True,
+                "stats": dedup_stats
+            }
+
+        except Exception as e:
+            eprint(f"Results deduplication failed: {e}")
+            return {"deduplicated": False, "error": str(e)}
+
+    def get_archived_variable(self, archive_key: str) -> Any:
+        """
+        Hilfsfunktion zum Abrufen archivierter Variablen
+
+        Args:
+            archive_key: Der Archive-Key (z.B. "results.large_file_content")
+
+        Returns:
+            Der vollständige Wert der archivierten Variable
+        """
+        archive_entry = self.scopes.get('session_archive', {}).get(archive_key)
+        if archive_entry and isinstance(archive_entry, dict):
+            return archive_entry.get('value')
+        return None
+
+    def list_archived_variables(self) -> list[dict]:
+        """
+        Liste alle archivierten Variablen mit Metadaten
+
+        Returns:
+            Liste von Dictionaries mit Archive-Informationen
+        """
+        archived = []
+        for key, entry in self.scopes.get('session_archive', {}).items():
+            if isinstance(entry, dict) and entry.get('type') == 'large_variable':
+                archived.append({
+                    'archive_key': key,
+                    'original_scope': entry.get('original_scope'),
+                    'original_key': entry.get('original_key'),
+                    'size': entry.get('size'),
+                    'archived_at': entry.get('archived_at'),
+                    'preview': str(entry.get('value', ''))[:100] + '...'
+                })
+        return archived
 
 
 class UnifiedContextManager:
@@ -8311,6 +8807,7 @@ class FlowAgent:
         }
         self.context_manager = UnifiedContextManager(self)
         self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+        self.variable_manager.agent_instance = self  # Set agent reference for auto-clean functions
         self.context_manager.variable_manager = self.variable_manager# Register default scopes
 
         self.shared["context_manager"] = self.context_manager
@@ -8326,6 +8823,12 @@ class FlowAgent:
         self.is_running = False
         self.is_paused = False
         self.last_checkpoint = None
+
+        # Token and cost tracking (persistent across runs)
+        self.total_tokens_in = 0
+        self.total_tokens_out = 0
+        self.total_cost_accumulated = 0.0
+        self.total_llm_calls = 0
         self.checkpoint_data = {}
         self.ac_cost = 0
 
@@ -8482,6 +8985,13 @@ class FlowAgent:
             call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
                                                             output_tokens, response) if self.progress_tracker else 0.0
             self.ac_cost += call_cost
+
+            # Accumulate total tokens and cost
+            self.total_tokens_in += input_tokens
+            self.total_tokens_out += output_tokens
+            self.total_cost_accumulated += call_cost
+            self.total_llm_calls += 1
+
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="llm_call",
@@ -8620,6 +9130,8 @@ class FlowAgent:
             self.shared['complex_llm_model'] = self.amd.complex_llm_model
             self.shared['persona_config'] = self.amd.persona
             self.shared['use_fast_response'] = self.amd.use_fast_response
+
+            await self.variable_manager.auto_clean()
 
             # Set system status
             self.shared["system_status"] = "running"
@@ -9394,7 +9906,12 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                     "is_paused": self.is_paused,
                     "amd_data": amd_data,
                     "active_session": self.active_session,
-                    "system_status": self.shared.get("system_status", "idle")
+                    "system_status": self.shared.get("system_status", "idle"),
+                    # Token and cost tracking
+                    "total_tokens_in": self.total_tokens_in,
+                    "total_tokens_out": self.total_tokens_out,
+                    "total_cost_accumulated": self.total_cost_accumulated,
+                    "total_llm_calls": self.total_llm_calls
                 },
                 task_state={
                     task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
@@ -9555,6 +10072,13 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             if checkpoint.agent_state:
                 self.is_paused = checkpoint.agent_state.get("is_paused", False)
                 self.active_session = checkpoint.agent_state.get("active_session")
+
+                # Token and cost tracking wiederherstellen
+                self.total_tokens_in = checkpoint.agent_state.get("total_tokens_in", 0)
+                self.total_tokens_out = checkpoint.agent_state.get("total_tokens_out", 0)
+                self.total_cost_accumulated = checkpoint.agent_state.get("total_cost_accumulated", 0.0)
+                self.total_llm_calls = checkpoint.agent_state.get("total_llm_calls", 0)
+
                 # AMD-Daten selektiv wiederherstellen
                 amd_data = checkpoint.agent_state.get("amd_data", {})
                 if amd_data:
@@ -10596,7 +11120,10 @@ Respond in YAML format only:
 
     @property
     def total_cost(self) -> float:
-        """Get total cost if budget manager available"""
+        """Get total accumulated cost from LLM calls"""
+        # Return accumulated cost from tracking, fallback to budget manager if available
+        if self.total_cost_accumulated > 0:
+            return self.total_cost_accumulated
         if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
             return getattr(self.amd.budget_manager, 'total_cost', 0.0)
         return 0.0
