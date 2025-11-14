@@ -35,6 +35,8 @@ from .agent import (
 # Framework imports
 if LITELLM_AVAILABLE:
     from litellm import BudgetManager
+else:
+    BudgetManager = object
 
 if OTEL_AVAILABLE:
     try:
@@ -52,9 +54,19 @@ if OTEL_AVAILABLE:
         BatchSpanProcessor = None
         ConsoleSpanExporter = None
         OTLPSpanExporter = None
+else:
+    print("WARN: opentelemetry-api, opentelemetry-sdk not found. Observability disabled.")
+    OTEL_AVAILABLE = False
+    trace = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+    ConsoleSpanExporter = None
+    OTLPSpanExporter = None
 
 if MCP_AVAILABLE:
     from mcp import ClientSession
+else:
+    ClientSession = object
 
 if A2A_AVAILABLE:
     pass

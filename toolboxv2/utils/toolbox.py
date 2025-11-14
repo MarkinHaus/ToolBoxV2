@@ -796,6 +796,7 @@ class App(AppType, metaclass=Singleton):
         Run a function with support for SSE streaming in both
         threaded and non-threaded contexts.
         """
+        print(f"run called with {args} {kwargs}")
         if running_function_coro is None:
             mn, fn = args[0]
             if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
@@ -1961,11 +1962,32 @@ class App(AppType, metaclass=Singleton):
 
         version = self.version if version is None else self.version + ':' + version
 
+
+
         def a_additional_process(func):
 
+            def args_kwargs_helper(args_, kwargs_):
+                module_name = mod_name if mod_name else func.__module__.split('.')[-1]
+                func_name = name if name else func.__name__
+                if request_as_kwarg and 'request' in kwargs_:
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
+                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
+                        del kwargs_['data']
+                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
+                                                                                                               []):
+                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
+                        del kwargs_['form_data']
+
+                if not request_as_kwarg and 'request' in kwargs_:
+                    del kwargs_['request']
+
+                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
+                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
+                return args_, kwargs_
+
             async def executor(*args, **kwargs):
-                args += (kwargs.pop('args_'),) if 'args_' in kwargs else ()
-                args += (kwargs.pop('args'),) if 'args' in kwargs else ()
+                args, kwargs = args_kwargs_helper(args, kwargs)
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
                 if asyncio.iscoroutinefunction(func):
@@ -2016,7 +2038,29 @@ class App(AppType, metaclass=Singleton):
 
         def additional_process(func):
 
+            def args_kwargs_helper(args_, kwargs_):
+                module_name = mod_name if mod_name else func.__module__.split('.')[-1]
+                func_name = name if name else func.__name__
+                if request_as_kwarg and 'request' in kwargs_:
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
+                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
+                        del kwargs_['data']
+                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
+                                                                                                               []):
+                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
+                        del kwargs_['form_data']
+
+                if not request_as_kwarg and 'request' in kwargs_:
+                    del kwargs_['request']
+
+                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
+                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
+                return args_, kwargs_
+
             def executor(*args, **kwargs):
+
+                args, kwargs = args_kwargs_helper(args, kwargs)
 
                 if pre_compute is not None:
                     args, kwargs = pre_compute(*args, **kwargs)
