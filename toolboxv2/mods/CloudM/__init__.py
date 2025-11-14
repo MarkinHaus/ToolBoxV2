@@ -1,6 +1,9 @@
 from .AdminDashboard import Name as AdminDashboard
+from .AuthManager import Name as AuthManagerName
+from .email_services import Name as EmailServicesName
 from .extras import login
 from .mini import *
+from .ModManager import Name as ModManagerName
 from .ModManager_tests import run_mod_manager_tests
 from .module import Tools
 from .types import User

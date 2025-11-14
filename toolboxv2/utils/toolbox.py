@@ -389,10 +389,14 @@ class App(AppType, metaclass=Singleton):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name, spec=spec, delete=False)
 
-        if (os.path.exists(self.start_dir + '/mods/' + mod_name) or os.path.exists(
-            self.start_dir + '/mods/' + mod_name + '.py')) and (
-            os.path.isdir(self.start_dir + '/mods/' + mod_name) or os.path.isfile(
-            self.start_dir + '/mods/' + mod_name + '.py')):
+        # Convert dotted module name to file path for existence check
+        # e.g., "CloudM.AuthManager" -> "CloudM/AuthManager"
+        mod_path = mod_name.replace('.', '/')
+
+        if (os.path.exists(self.start_dir + '/mods/' + mod_path) or os.path.exists(
+            self.start_dir + '/mods/' + mod_path + '.py')) and (
+            os.path.isdir(self.start_dir + '/mods/' + mod_path) or os.path.isfile(
+            self.start_dir + '/mods/' + mod_path + '.py')):
             try:
                 if mfo is None:
                     modular_file_object = import_module(loc + mod_name)
@@ -1960,7 +1964,8 @@ class App(AppType, metaclass=Singleton):
         def a_additional_process(func):
 
             async def executor(*args, **kwargs):
-
+                args += (kwargs.pop('args_'),) if 'args_' in kwargs else ()
+                args += (kwargs.pop('args'),) if 'args' in kwargs else ()
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
                 if asyncio.iscoroutinefunction(func):

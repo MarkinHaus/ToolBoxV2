@@ -41,6 +41,8 @@ pub struct NuitkaClient {
 pub enum NuitkaClientError {
     #[error("Python error: {0}")]
     PyError(String),
+    #[error("Python error: {0}")]
+    PythonError(String),
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
     #[error("Operation timeout")]
@@ -112,13 +114,23 @@ impl NuitkaClient {
             // Mark as initialized
             *self.app_initialized.lock().unwrap() = true;
 
-            // Load modules into this instance
-            for module in modules {
-                info!("Preloading module: {}", module);
-                if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
-                    error!("Failed to preload module {}: {}", module, e);
-                }
+            // Enable WebSocket bridge
+            info!("Enabling Rust WebSocket bridge...");
+            if let Err(e) = self.enable_ws_bridge().await {
+                error!("Failed to enable WebSocket bridge: {}", e);
+            } else {
+                info!("WebSocket bridge enabled successfully");
             }
+
+            // TEMPORARILY DISABLED: Load modules into this instance
+            // TODO: Fix event loop deadlock issue in call_module_function
+            info!("Module preloading DISABLED - modules will be loaded on-demand");
+            // for module in modules {
+            //     info!("Preloading module: {}", module);
+            //     if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
+            //         error!("Failed to preload module {}: {}", module, e);
+            //     }
+            // }
         } else {
             info!("App already initialized - using existing instance");
             drop(app_init);
@@ -126,13 +138,15 @@ impl NuitkaClient {
             // Get existing instance
             let instance_id = self.instances.lock().unwrap()[0].id.clone();
 
-            // Load modules into existing instance
-            for module in modules {
-                info!("Preloading module: {}", module);
-                if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
-                    error!("Failed to preload module {}: {}", module, e);
-                }
-            }
+            // TEMPORARILY DISABLED: Load modules into existing instance
+            // TODO: Fix event loop deadlock issue in call_module_function
+            info!("Module preloading DISABLED - modules will be loaded on-demand");
+            // for module in modules {
+            //     info!("Preloading module: {}", module);
+            //     if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
+            //         error!("Failed to preload module {}: {}", module, e);
+            //     }
+            // }
         }
 
         Ok(())
@@ -256,8 +270,10 @@ impl NuitkaClient {
             None => self.create_python_instance().await?,
         };
 
-        // Load module
-        self.load_module_into_instance(&instance_id, &module_name, None).await?;
+        // TEMPORARILY DISABLED: Load module
+        // TODO: Fix event loop deadlock issue in call_module_function
+        info!("On-demand module loading DISABLED - assuming module is already available");
+        // self.load_module_into_instance(&instance_id, &module_name, None).await?;
 
         Ok(instance_id)
     }
@@ -325,6 +341,19 @@ impl NuitkaClient {
                 })
             }).collect::<Vec<_>>(),
         })
+    }
+
+    /// Aktiviert die Rust WebSocket Bridge in der Python App.
+    async fn enable_ws_bridge(&self) -> Result<(), NuitkaClientError> {
+        info!("Enabling Rust WebSocket bridge in Python App...");
+
+        // Rufe enable_rust_ws_bridge() in app_singleton.py auf
+        let app_singleton = self.app_singleton.lock().unwrap();
+        let result = app_singleton.call_function_json("enable_rust_ws_bridge", &serde_json::json!({}))
+            .map_err(|e| NuitkaClientError::PythonError(format!("Failed to enable WebSocket bridge: {}", e)))?;
+
+        info!("WebSocket bridge enabled: {:?}", result);
+        Ok(())
     }
 }
 

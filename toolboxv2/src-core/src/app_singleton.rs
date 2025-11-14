@@ -10,7 +10,8 @@ use tracing::{debug, info};
 /// Wrapper für den global App Singleton
 pub struct AppSingleton {
     ffi: Arc<PythonFFI>,
-    module_name: String, // Name des Moduls (wird bei Bedarf re-importiert)
+    module_name: String, // Name des Moduls
+    module_obj: Option<*mut std::ffi::c_void>, // CACHED PyObject für das Modul (WICHTIG: Nicht neu importieren!)
     app_instance: Option<*mut std::ffi::c_void>, // PyObject für App instance
 }
 
@@ -22,15 +23,16 @@ impl AppSingleton {
     pub fn new(ffi: Arc<PythonFFI>) -> Result<Self> {
         info!("Loading app_singleton module...");
 
-        // Verify module can be imported (but don't store the PyObject)
-        info!("Verifying app_singleton module can be imported...");
-        let _module = ffi.import_module("app_singleton")?;
-        info!("app_singleton module verified successfully!");
+        // Import module ONCE and cache it (WICHTIG: Nicht neu importieren!)
+        info!("Importing app_singleton module (will be cached)...");
+        let module = ffi.import_module("app_singleton")?;
+        info!("app_singleton module imported and cached successfully!");
 
         info!("Creating AppSingleton struct...");
         let app_singleton = Self {
             ffi,
             module_name: "app_singleton".to_string(),
+            module_obj: Some(module), // Cache the module PyObject
             app_instance: None,
         };
         info!("AppSingleton struct created successfully!");
@@ -43,10 +45,9 @@ impl AppSingleton {
     pub fn init_app(&mut self, instance_id: &str) -> Result<Value> {
         info!("Initializing App singleton with instance_id: {}", instance_id);
 
-        // Re-import module to get a fresh PyObject
-        info!("Re-importing {} module...", self.module_name);
-        let module = self.ffi.import_module(&self.module_name)?;
-        info!("Module re-imported successfully");
+        // Use cached module (NICHT neu importieren!)
+        let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
+        info!("Using cached {} module", self.module_name);
 
         // Hole init_app Funktion
         info!("Getting init_app function from module...");
@@ -88,8 +89,8 @@ impl AppSingleton {
 
         debug!("Getting App singleton instance...");
 
-        // Re-import module to get a fresh PyObject
-        let module = self.ffi.import_module(&self.module_name)?;
+        // Use cached module (NICHT neu importieren!)
+        let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
 
         // Hole get_app Funktion
         let get_app_fn = self.ffi.get_attr(module, "get_app")?;
@@ -114,38 +115,91 @@ impl AppSingleton {
     ) -> Result<Value> {
         info!("Calling module function: {}::{}", module, function);
 
-        // Re-import module to get a fresh PyObject
-        let app_singleton_module = self.ffi.import_module(&self.module_name)?;
+        // Use cached module (NICHT neu importieren!)
+        let app_singleton_module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
 
-        // Hole call_module_function
-        let call_fn = self.ffi.get_attr(app_singleton_module, "call_module_function")?;
+        // Hole json_call Funktion (einfacher als manuelle Konvertierung!)
+        let json_call_fn = self.ffi.get_attr(app_singleton_module, "json_call")?;
 
-        // Erstelle Args tuple (module, function)
-        let args = self.ffi.create_tuple(2)?;
-        // TODO: Setze args[0] = module, args[1] = function
-
-        // Erstelle kwargs dict
-        let kwargs_dict = self.ffi.create_dict()?;
-        // TODO: Konvertiere JSON kwargs zu Python dict
-
-        // Rufe call_module_function(module, function, **kwargs) auf
-        let result = self.ffi.call_function(call_fn, args, Some(kwargs_dict))?;
-
-        // TODO: Konvertiere Result zu JSON
-
-        Ok(serde_json::json!({
-            "status": "success",
+        // Erstelle JSON-String mit {"module": ..., "function": ..., "kwargs": ...}
+        let request_json = serde_json::json!({
             "module": module,
-            "function": function
-        }))
+            "function": function,
+            "kwargs": kwargs
+        });
+        let request_str = serde_json::to_string(&request_json)?;
+
+        // Konvertiere zu Python-String
+        let py_request_str = self.ffi.string_from_str(&request_str)?;
+
+        // Erstelle Args tuple mit (json_str,)
+        let args = self.ffi.create_tuple(1)?;
+        self.ffi.tuple_set_item(args, 0, py_request_str)?;
+
+        // Rufe json_call(json_str) auf
+        let py_result = self.ffi.call_function(json_call_fn, args, None)?;
+
+        // Konvertiere Python-String zurück zu Rust-String
+        let result_str = self.ffi.unicode_as_utf8(py_result)?;
+
+        // Parse JSON-String zu Value
+        let result: Value = serde_json::from_str(&result_str)?;
+
+        Ok(result)
+    }
+
+    /// Ruft eine Funktion im app_singleton Modul auf (ohne Module/Function-Routing).
+    ///
+    /// Args:
+    ///     function_name: Name der Funktion in app_singleton.py
+    ///     kwargs: JSON-Argumente für die Funktion
+    pub fn call_function_json(&self, function_name: &str, kwargs: &Value) -> Result<Value> {
+        info!("Calling app_singleton function: {}", function_name);
+
+        // Use cached module
+        let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
+
+        // Hole die Funktion
+        let function = self.ffi.get_attr(module, function_name)?;
+
+        // Erstelle Args tuple (leer, da wir nur kwargs verwenden)
+        let args = self.ffi.create_tuple(0)?;
+
+        // Konvertiere kwargs zu Python-Dict
+        let kwargs_str = serde_json::to_string(kwargs)?;
+        let py_kwargs_str = self.ffi.string_from_str(&kwargs_str)?;
+
+        // Parse JSON-String zu Python-Dict
+        let json_module = self.ffi.import_module("json")?;
+        let json_loads = self.ffi.get_attr(json_module, "loads")?;
+        let loads_args = self.ffi.create_tuple(1)?;
+        self.ffi.tuple_set_item(loads_args, 0, py_kwargs_str)?;
+        let py_kwargs = self.ffi.call_function(json_loads, loads_args, None)?;
+
+        // Rufe Funktion auf
+        let py_result = self.ffi.call_function(function, args, Some(py_kwargs))?;
+
+        // Konvertiere Ergebnis zu JSON
+        let json_dumps = self.ffi.get_attr(json_module, "dumps")?;
+        let dumps_args = self.ffi.create_tuple(1)?;
+        self.ffi.tuple_set_item(dumps_args, 0, py_result)?;
+        let py_result_str = self.ffi.call_function(json_dumps, dumps_args, None)?;
+
+        // Konvertiere zu Rust-String
+        let result_str = self.ffi.unicode_as_utf8(py_result_str)?;
+
+        // Parse JSON
+        let result: Value = serde_json::from_str(&result_str)?;
+
+        Ok(result)
     }
 
     /// Health Check
     pub fn health_check(&self) -> Result<Value> {
         debug!("Running health check...");
 
-        // Re-import module to get a fresh PyObject
-        let module = self.ffi.import_module(&self.module_name)?;
+        // Use cached module (NICHT neu importieren!)
+        let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
 
         // Hole health_check Funktion
         let health_fn = self.ffi.get_attr(module, "health_check")?;
@@ -204,4 +258,3 @@ mod tests {
         assert!(result.is_ok(), "Health check should succeed");
     }
 }
-

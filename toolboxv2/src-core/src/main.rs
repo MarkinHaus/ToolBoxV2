@@ -329,10 +329,20 @@ async fn websocket_handler(
     stream: web::Payload,
     path: web::Path<(String, String)>,
     session: Session,
-    // Annahme: Open Modules und ToolboxClient sind als App-Daten verfügbar
     open_modules: web::Data<Arc<Vec<String>>>,
+    client: web::Data<Arc<NuitkaClient>>, // Add NuitkaClient from app_data
+    init_modules: web::Data<Arc<Vec<String>>>, // Add init_modules for lazy initialization
+    watch_modules: web::Data<Arc<Vec<String>>>, // Add watch_modules for lazy initialization
 ) -> Result<HttpResponse, Error> {
     let (module_name, function_name) = path.into_inner();
+
+    // Lazy initialization: Ensure Python backend is initialized in this worker
+    // Combine init_modules and watch_modules into a single list to avoid multiple initialize() calls
+    let mut all_modules: Vec<String> = init_modules.as_ref().as_ref().clone();
+    all_modules.extend(watch_modules.as_ref().as_ref().iter().cloned());
+    if let Err(e) = client.initialize(all_modules, Some("init_mod")).await {
+        error!("Failed to initialize Python backend: {:?}", e);
+    }
 
     // Berechtigungsprüfung
     let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
@@ -343,13 +353,8 @@ async fn websocket_handler(
         }
     }
 
-    let client = get_nuitka_client().map_err(|e| {
-        error!("Could not get NuitkaClient for WebSocket: {:?}", e);
-        actix_web::error::ErrorInternalServerError("Backend service unavailable")
-    })?;
-
     ws::WsResponseBuilder::new(
-        WebSocketActor::new(client, session, &module_name, &function_name),
+        WebSocketActor::new(Arc::clone(&client), session, &module_name, &function_name),
         &req,
         stream,
     )
@@ -2010,6 +2015,89 @@ fn streaming_response(_data: Value) -> HttpResponse {
         .body("Streaming responses are not yet implemented with NuitkaClient")
 }
 
+// --- WebSocket Bridge Endpoints ---
+
+#[derive(Debug, Deserialize)]
+struct WsSendRequest {
+    conn_id: String,
+    payload: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WsBroadcastRequest {
+    channel_id: String,
+    payload: String,
+    #[serde(default = "default_source_conn_id")]
+    source_conn_id: String,
+}
+
+fn default_source_conn_id() -> String {
+    "python_broadcast".to_string()
+}
+
+/// Internal endpoint for Python to send WebSocket messages to a single connection
+async fn ws_send_internal(
+    req_body: web::Json<WsSendRequest>,
+) -> HttpResponse {
+    let conn_id = &req_body.conn_id;
+    let payload = &req_body.payload;
+
+    info!("ws_send_internal: conn_id={}, payload_len={}", conn_id, payload.len());
+
+    if let Some(conn) = ACTIVE_CONNECTIONS.get(conn_id) {
+        conn.value().do_send(WsMessage {
+            source_conn_id: "python_direct".to_string(),
+            content: payload.clone(),
+            target_conn_id: Some(conn_id.clone()),
+            target_channel_id: None,
+        });
+        info!("Message sent to connection: {}", conn_id);
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": format!("Message sent to connection {}", conn_id)
+        }))
+    } else {
+        warn!("Connection ID '{}' not found for sending.", conn_id);
+        HttpResponse::NotFound().json(serde_json::json!({
+            "status": "error",
+            "message": format!("Connection ID '{}' not found", conn_id)
+        }))
+    }
+}
+
+/// Internal endpoint for Python to broadcast WebSocket messages to a channel
+async fn ws_broadcast_internal(
+    req_body: web::Json<WsBroadcastRequest>,
+) -> HttpResponse {
+    let channel_id = &req_body.channel_id;
+    let payload = &req_body.payload;
+    let source_conn_id = &req_body.source_conn_id;
+
+    info!("ws_broadcast_internal: channel_id={}, source_conn_id={}, payload_len={}",
+          channel_id, source_conn_id, payload.len());
+
+    let msg = WsMessage {
+        source_conn_id: source_conn_id.clone(),
+        content: payload.clone(),
+        target_conn_id: None,
+        target_channel_id: Some(channel_id.clone()),
+    };
+
+    if let Err(e) = GLOBAL_WS_BROADCASTER.send(msg) {
+        error!("Failed to send broadcast message to channel {}: {}", channel_id, e);
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": format!("Failed to send broadcast message: {}", e)
+        }))
+    } else {
+        info!("Broadcast message sent to channel: {}", channel_id);
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": format!("Broadcast message sent to channel {}", channel_id)
+        }))
+    }
+}
+
 
 async fn api_handler(
     req: HttpRequest,
@@ -2018,9 +2106,21 @@ async fn api_handler(
     mut payload: web::Payload,
     session: Session,
     open_modules: web::Data<Arc<Vec<String>>>,
+    client: web::Data<Arc<NuitkaClient>>, // Add NuitkaClient from app_data
+    init_modules: web::Data<Arc<Vec<String>>>, // Add init_modules for lazy initialization
+    watch_modules: web::Data<Arc<Vec<String>>>, // Add watch_modules for lazy initialization
 ) -> HttpResponse {
     let (module_name, function_name) = path.into_inner();
     let request_method = req.method().clone();
+
+    // Lazy initialization: Ensure Python backend is initialized in this worker
+    // This is called on every request, but initialize() is idempotent (only runs once per worker)
+    // Combine init_modules and watch_modules into a single list to avoid multiple initialize() calls
+    let mut all_modules: Vec<String> = init_modules.as_ref().as_ref().clone();
+    all_modules.extend(watch_modules.as_ref().as_ref().iter().cloned());
+    if let Err(e) = client.initialize(all_modules, Some("init_mod")).await {
+        error!("Failed to initialize Python backend: {:?}", e);
+    }
 
     // Session validation (unchanged)
     let session_id = match session.get::<String>("ID") {
@@ -2234,17 +2334,8 @@ async fn api_handler(
     kwargs.insert("args".to_string(), serde_json::json!(args));
     info!("Final kwargs keys before sending to Python: {:?}", kwargs.keys());
 
-    // Process API request with Nuitka
-    let client_result = get_nuitka_client();
-    if client_result.is_err() {
-        error!("Failed to get nuitka client: {:?}", client_result.err());
-        return HttpResponse::InternalServerError().json(ApiResult {
-            error: Some("Internal Server Error: Cannot access backend service.".to_string()),
-            origin: None, result: None, info: None,
-        });
-    }
-
-    let client = client_result.unwrap();
+    // Process API request with Nuitka - client is now from app_data parameter
+    // No need to call get_nuitka_client() anymore!
 
     match client.call_module(module_name.clone(), function_name.clone(), serde_json::json!(kwargs)).await {
         Ok(response_value) => {
@@ -2353,28 +2444,25 @@ async fn main() -> std::io::Result<()> {
     info!("Configuration loaded: {:?}", config);
 
 
-    let client = match initialize_and_get_nuitka_client(
+    // Create NuitkaClient but DON'T initialize it yet!
+    // Initialization will happen in each worker via on_worker_start hook
+    let client = match NuitkaClient::new(
         config.toolbox.max_instances as usize,
         config.toolbox.timeout_seconds,
-        config.toolbox.client_prifix,
-    ).await {
-        Ok(client_instance) => client_instance,
+        config.toolbox.client_prifix.clone(),
+    ) {
+        Ok(client_instance) => Arc::new(client_instance),
         Err(e) => {
-            error!("FATAL: NuitkaClient initialization failed: {:?}", e);
+            error!("FATAL: NuitkaClient creation failed: {:?}", e);
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to initialize Python backend: {:?}", e),
+                format!("Failed to create Python backend: {:?}", e),
             ));
         }
     };
 
-    // Initialisiere die Module NACHDEM der Client erfolgreich erstellt wurde.
-    if let Err(e) = client.initialize(config.server.init_modules.clone(), Some("init_mod")).await {
-        warn!("Errors occurred during initial module loading: {:?}", e);
-    }
-    if let Err(e) = client.initialize(config.server.watch_modules.clone(), Some("watch_mod")).await {
-        warn!("Errors occurred during watched module loading: {:?}", e);
-    }
+    // NOTE: Module initialization moved to on_worker_start hook
+    // This ensures each worker process has its own Python interpreter instance
 
     // Create session manager
     let session_manager = web::Data::new(SessionManager::new(
@@ -2390,11 +2478,28 @@ async fn main() -> std::io::Result<()> {
     let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
     let open_modules = Arc::new(config.server.open_modules.clone());
 
+    // Clone module lists for lazy initialization in workers
+    let init_modules = Arc::new(config.server.init_modules.clone());
+    let watch_modules = Arc::new(config.server.watch_modules.clone());
+
+    // NOTE: Python backend initialization moved to lazy initialization in api_handler
+    // This ensures each worker process initializes its own Python interpreter instance
+    info!("Python backend will be initialized lazily in each worker on first API request");
+
     let server_handle: Server = {
         let mut http_server  = HttpServer::new(move || {
+        // This closure is called once per worker process
+        // Python backend will be initialized lazily on first API request
+
         let dist_path = dist_path.clone(); // Move the cloned dist_path into the closure
         let open_modules = Arc::clone(&open_modules);
+        let client_clone = Arc::clone(&client); // Clone the NuitkaClient for this worker
+        let init_modules_clone = Arc::clone(&init_modules);
+        let watch_modules_clone = Arc::clone(&watch_modules);
         App::new()
+            .app_data(web::Data::new(client_clone)) // Add NuitkaClient to app_data
+            .app_data(web::Data::new(init_modules_clone)) // Add init_modules for lazy initialization
+            .app_data(web::Data::new(watch_modules_clone)) // Add watch_modules for lazy initialization
             .wrap(middleware::Logger::default())
             .wrap(middleware::Compress::default())
             .wrap(SessionMiddleware::new(
@@ -2477,6 +2582,11 @@ async fn main() -> std::io::Result<()> {
                     )
             )
             .service(
+                web::scope("/internal/ws")
+                    .route("/send", web::post().to(ws_send_internal))
+                    .route("/broadcast", web::post().to(ws_broadcast_internal))
+            )
+            .service(
                 web::scope("/sse")
                     .route("/{module_name}/{function_name}", web::get().to(sse_handler))
             )
@@ -2510,7 +2620,10 @@ async fn main() -> std::io::Result<()> {
                     }
                 })
             )
-    });
+    })
+        .workers(1);  // Use 1 worker to avoid multi-process Python initialization issues
+                      // Each worker needs its own Python interpreter, which is complex with Nuitka
+                      // TODO: Implement proper per-worker initialization or use thread-based workers
 
         let bind_addr = format!("{}:{}", config.server.ip, config.server.port);
         info!("[Manual Bind] No inherited listener was successfully acquired. Binding to new TCP listener on {}.", bind_addr);

@@ -24,7 +24,9 @@ from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
 from toolboxv2.utils.clis.tbx_core_v3_cli import cli_tbx_core
-from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+# TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
+# from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+interactive_user_dashboard = None  # Placeholder to prevent NameError
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
@@ -2054,9 +2056,9 @@ def server_helper(instance_id:str="main", db_mode=None):
     if db_mode is None:
         db_mode = os.getenv("DB_MODE_KEY", "LC")
     app.is_server = True
-    db = app.get_mod("DB")
-    db.edit_cli(db_mode)
-    db.initialize_database()
+    # db = app.get_mod("DB")
+    # db.edit_cli(db_mode)
+    # db.initialize_database()
     # execute all flows starting with server as bg tasks
     def task():
         flows_dict = flows_dict_func(remote=False)
@@ -2066,7 +2068,7 @@ def server_helper(instance_id:str="main", db_mode=None):
                 print(f"Starting server flow: {flow}")
 
                 app.run_bg_task_advanced(app.run_flows,flow)
-    app.run_bg_task_advanced(task)
+    # app.run_bg_task_advanced(task)
     return app
 
 if __name__ == "__main__":
