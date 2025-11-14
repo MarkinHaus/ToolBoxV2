@@ -227,12 +227,37 @@ def call_module_function(
     """
     print(f"[app_singleton] call_module_function CALLED: module={module_name}, function={function_name}")
     try:
+        # Auto-initialize app if not already initialized (redundant safety check)
+        global _GLOBAL_APP
+        if _GLOBAL_APP is None:
+            print(f"[app_singleton] call_module_function: App not initialized, calling init_app()...")
+            init_result = init_app()
+            print(f"[app_singleton] call_module_function: init_app() returned: {init_result}")
+
+            if init_result.get("status") not in ["success", "already_initialized"]:
+                error_msg = f"Failed to auto-initialize app: {init_result.get('error', 'Unknown error')}"
+                print(f"[app_singleton] ERROR: {error_msg}")
+                return {
+                    "error": "InternalError",
+                    "origin": [module_name, function_name],
+                    "result": {
+                        "data_to": "REMOTE",
+                        "data_info": "App initialization failed",
+                        "data": None,
+                        "data_type": "NoneType"
+                    },
+                    "info": {
+                        "exec_code": 500,
+                        "help_text": error_msg
+                    }
+                }
+
         print(f"[app_singleton] call_module_function: Getting app...")
         app = get_app()
         print(f"[app_singleton] call_module_function: Got app successfully")
 
         # Konvertiere args/kwargs
-        args = args or []
+        args = args or ()
         kwargs = kwargs or {}
 
         # Rufe Funktion auf
@@ -240,33 +265,48 @@ def call_module_function(
         # Daher können wir NICHT run_coroutine_threadsafe verwenden (Deadlock!)
         # Stattdessen rufen wir die Funktion SYNCHRON auf
 
-        # Prüfe, ob app.run_any async ist
+        if "args" in kwargs:
+            args_ = kwargs.pop("args")
 
-        result = app.run(*[module_name, function_name]+args,request=kwargs.pop('request') if 'request' in kwargs else None, **kwargs)
-        # if asyncio.iscoroutinefunction(app.run_any):
-        #     # Async call - wir müssen einen neuen Event Loop erstellen
-        #     # NICHT den existierenden Loop verwenden (Deadlock!)
-        #     print(f"[app_singleton] call_module_function: app.run_any is async, creating new event loop")
-        #     loop = asyncio.new_event_loop()
-        #     asyncio.set_event_loop(loop)
-        #     try:
-        #         result = loop.run_until_complete(
-        #             app.run_any((module_name, function_name), *args, **kwargs)
-        #         )
-        #     finally:
-        #         loop.close()
-        #         asyncio.set_event_loop(None)
-        # else:
-        #     # Sync call
-        #     print(f"[app_singleton] call_module_function: app.run_any is sync")
-        #     result = app.run_any(
-        #         (module_name, function_name),
-        #         *args,
-        #         **kwargs
-        #     )
+            if args_ and args:
+                args += args_
+            if args_ and not args:
+                args = args_
+
+            if 'spec' in kwargs:
+                kwargs['tb_run_with_specification'] = kwargs.pop('spec')
+        # result = app.run(*args, mod_function_name=(module_name, function_name), request=kwargs.pop('request') if 'request' in kwargs else None, **kwargs)
+        if asyncio.iscoroutinefunction(app.a_run_any):
+            # Async call - wir müssen einen neuen Event Loop erstellen
+            # NICHT den existierenden Loop verwenden (Deadlock!)
+            print(f"[app_singleton] call_module_function: app.a_run_any is async, creating new event loop")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # WICHTIG: get_results=True damit wir das vollständige Result-Objekt bekommen
+                # Ohne get_results=True gibt a_run_any nur res.get() zurück (extrahierte Daten)
+                result = loop.run_until_complete(
+                    app.a_run_any((module_name, function_name), *args, get_results=True, **kwargs)
+                )
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
+        else:
+            # Sync call
+            print(f"[app_singleton] call_module_function: app.a_run_any is sync")
+            # WICHTIG: get_results=True damit wir das vollständige Result-Objekt bekommen
+            result = app.a_run_any(
+                (module_name, function_name),
+                *args,
+                get_results=True,
+                **kwargs
+            )
 
         # Konvertiere Result zu ApiResult-kompatiblem Format
-        return _convert_result_to_api_result(result, module_name, function_name)
+        print(f"Result: {str(result)}")
+        res = _convert_result_to_api_result(result, module_name, function_name)
+        print(f"ApiResult: {str(res)}")
+        return res
 
     except Exception as e:
         error_msg = f"Error calling {module_name}.{function_name}: {e}"

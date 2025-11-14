@@ -791,14 +791,15 @@ class App(AppType, metaclass=Singleton):
     def __call__(self, *args, **kwargs):
         return self.run(*args, **kwargs)
 
-    def run(self, *args, request=None, running_function_coro=None, **kwargs):
+    def run(self, *args, mod_function_name=None, request=None, running_function_coro=None, **kwargs):
         """
         Run a function with support for SSE streaming in both
         threaded and non-threaded contexts.
         """
-        print(f"run called with {args} {kwargs}")
+        if mod_function_name is None:
+            mod_function_name = args[0]
         if running_function_coro is None:
-            mn, fn = args[0]
+            mn, fn = mod_function_name
             if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
                 kwargs["request"] = RequestData.from_dict(request)
                 if 'data' in kwargs and 'data' not in self.functions.get(mn, {}).get(fn, {}).get('params', []):
@@ -827,8 +828,15 @@ class App(AppType, metaclass=Singleton):
                             kwargs[k] = data[k]
                             del data[k]
 
+            if 'spec' in kwargs and 'spec' not in self.functions.get(mn, {}).get(fn, {}).get('params',
+                                                                                                   []):
+                if "tb_run_with_specification" in kwargs:
+                    kwargs.pop('spec')
+                else:
+                    kwargs['tb_run_with_specification'] = kwargs.pop('spec')
+
         # Create the coroutine
-        coro = running_function_coro or self.a_run_any(*args, **kwargs)
+        coro = running_function_coro or self.a_run_any(*args,mod_function_name=mod_function_name, **kwargs)
 
         # Get or create an event loop
         try:
@@ -1990,6 +1998,7 @@ class App(AppType, metaclass=Singleton):
                 args, kwargs = args_kwargs_helper(args, kwargs)
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
+                print("running with", args, kwargs)
                 if asyncio.iscoroutinefunction(func):
                     result = await func(*args, **kwargs)
                 else:
