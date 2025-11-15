@@ -44,51 +44,8 @@ fn convert_tb_to_json(val: &Value) -> serde_json::Value {
 // FILE I/O BUILT-INS
 // ============================================================================
 
-/// open(path: str, mode: str, key: str = None, encoding: str = "utf-8") -> FileHandle
-pub fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.is_empty() || args.len() > 5 {
-        return Err(TBError::runtime_error("open() takes 1-4 arguments: path, mode, key, encoding"));
-    }
-
-    let path = match &args[0] {
-        Value::String(s) => s.to_string(),
-        _ => return Err(TBError::runtime_error("open() path must be a string")),
-    };
-
-    let mode = if args.len() > 1 {
-        match &args[1] {
-            Value::String(s) => s.to_string(),
-            _ => "r".to_string(),
-        }
-    } else {
-        "r".to_string()
-    };
-
-    let key = if args.len() > 2 { // Korrigiert: 3 -> 2
-        match &args[2] { // Korrigiert: 3 -> 2
-            Value::String(s) => Some(s.to_string()),
-            Value::None => None,
-            _ => return Err(TBError::runtime_error("open() key must be a string or None")),
-        }
-    } else {
-        None
-    };
-
-    let encoding = if args.len() > 3 { // Korrigiert: 4 -> 3
-        match &args[3] { // Korrigiert: 4 -> 3
-            Value::String(s) => s.to_string(),
-            _ => "utf-8".to_string(),
-        }
-    } else {
-        "utf-8".to_string()
-    };
-
-    let handle = RUNTIME.block_on(async {
-        file_io::open_file(path, mode, key, encoding).await
-    })?;
-
-    Ok(Value::String(Arc::new(handle)))
-}
+// ✅ PHASE 1.3: builtin_open removed - no usable functionality
+// pub fn builtin_open(args: Vec<Value>) -> Result<Value, TBError> { ... }
 
 /// read_file(path: str) -> str
 pub fn builtin_read_file(args: Vec<Value>) -> Result<Value, TBError> {
@@ -101,8 +58,9 @@ pub fn builtin_read_file(args: Vec<Value>) -> Result<Value, TBError> {
         _ => return Err(TBError::runtime_error("read_file() path must be a string")),
     };
 
+    // ✅ PHASE 1.1: Removed false parameter - blob storage not implemented
     let content = RUNTIME.block_on(async {
-        file_io::read_file(path, false).await
+        file_io::read_file(path).await
     })?;
 
     Ok(Value::String(Arc::new(content)))
@@ -124,8 +82,9 @@ pub fn builtin_write_file(args: Vec<Value>) -> Result<Value, TBError> {
         _ => return Err(TBError::runtime_error("write_file() content must be a string")),
     };
 
+    // ✅ PHASE 1.1: Removed false parameter - blob storage not implemented
     RUNTIME.block_on(async {
-        file_io::write_file(path, content, false).await
+        file_io::write_file(path, content).await
     })?;
 
     Ok(Value::None)
@@ -142,8 +101,9 @@ pub fn builtin_file_exists(args: Vec<Value>) -> Result<Value, TBError> {
         _ => return Err(TBError::runtime_error("file_exists() path must be a string")),
     };
 
+    // ✅ PHASE 1.1: Removed false parameter - blob storage not implemented
     let exists = RUNTIME.block_on(async {
-        file_io::file_exists(path, false).await
+        file_io::file_exists(path).await
     })?;
 
     Ok(Value::Bool(exists))
@@ -250,8 +210,9 @@ pub fn builtin_delete_file(args: Vec<Value>) -> Result<Value, TBError> {
         _ => return Err(TBError::runtime_error("path must be a string")),
     };
 
+    // ✅ PHASE 1.1: Removed false parameter - blob storage not implemented
     RUNTIME.block_on(async {
-        file_io::delete_file(path, false).await
+        file_io::delete_file(path).await
     })?;
 
     Ok(Value::None)
@@ -447,36 +408,29 @@ pub fn builtin_plugin_info(args: Vec<Value>) -> Result<Value, TBError> {
 // ============================================================================
 
 /// spawn(func: fn, args: list) -> task_id
+/// ✅ PHASE 1.2: This builtin is deprecated. spawn() is now implemented natively in the JIT executor.
+/// This function is kept for backwards compatibility with await_task/cancel_task.
 pub fn builtin_spawn(args: Vec<Value>) -> Result<Value, TBError> {
     if args.len() != 2 {
         return Err(TBError::runtime_error("spawn() takes 2 arguments: function, args_list"));
     }
 
-    let func = match &args[0] {
+    let _func = match &args[0] {
         Value::Function(f) => Arc::clone(f),
         _ => return Err(TBError::runtime_error("First argument to spawn() must be a function")),
     };
 
-    let func_args = match &args[1] {
+    let _func_args = match &args[1] {
         Value::List(l) => (**l).clone(),
         _ => return Err(TBError::runtime_error("Second argument to spawn() must be a list")),
     };
 
-    // Clone the current environment for the spawned task
-    let env = TASK_ENVIRONMENT.read().clone();
-
-    let handle = RUNTIME.spawn(async move {
-        // Execute the function in a new task with the cloned environment
-        use crate::task_runtime::TaskExecutor;
-
-        let mut executor = TaskExecutor::new(env);
-        executor.execute_function(&func, func_args)
-    });
-
-    let task_id = uuid::Uuid::new_v4().to_string();
-    ACTIVE_TASKS.insert(task_id.clone(), handle);
-
-    Ok(Value::String(Arc::new(task_id)))
+    // ✅ PHASE 1.2: spawn() is now implemented natively in the JIT executor
+    // This builtin version is no longer used
+    Err(TBError::runtime_error(
+        "spawn() builtin is deprecated. The native implementation in the JIT executor should be used instead.\n\
+         This error should not occur in normal usage."
+    ))
 }
 
 
@@ -1455,116 +1409,8 @@ pub fn builtin_import(args: Vec<Value>) -> Result<Value, TBError> {
 // ============================================================================
 // HIGHER-ORDER FUNCTIONS
 // ============================================================================
+// ✅ PHASE 1.2: These functions are now implemented natively in the JIT executor
+// See: tb-jit/src/executor.rs - builtin_map_native, builtin_filter_native, etc.
+// They are kept here for backwards compatibility but are no longer registered as builtins.
 
-/// map(fn, list) -> list
-/// Applies a function to each element of a list and returns a new list
-pub fn builtin_map(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::runtime_error("map() takes exactly 2 arguments: function, list"));
-    }
 
-    let func = match &args[0] {
-        Value::Function(f) => f.clone(),
-        Value::NativeFunction(_) => return Err(TBError::runtime_error("map() does not support native functions yet")),
-        _ => return Err(TBError::runtime_error("map() first argument must be a function")),
-    };
-
-    let list = match &args[1] {
-        Value::List(l) => l.clone(),
-        _ => return Err(TBError::runtime_error("map() second argument must be a list")),
-    };
-
-    let mut result = Vec::new();
-    for item in list.iter() {
-        let mapped = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
-            .execute_function(&func, vec![item.clone()])?;
-        result.push(mapped);
-    }
-
-    Ok(Value::List(Arc::new(result)))
-}
-
-/// filter(fn, list) -> list
-/// Filters a list based on a predicate function
-pub fn builtin_filter(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::runtime_error("filter() takes exactly 2 arguments: function, list"));
-    }
-
-    let func = match &args[0] {
-        Value::Function(f) => f.clone(),
-        Value::NativeFunction(_) => return Err(TBError::runtime_error("filter() does not support native functions yet")),
-        _ => return Err(TBError::runtime_error("filter() first argument must be a function")),
-    };
-
-    let list = match &args[1] {
-        Value::List(l) => l.clone(),
-        _ => return Err(TBError::runtime_error("filter() second argument must be a list")),
-    };
-
-    let mut result = Vec::new();
-    for item in list.iter() {
-        let keep = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
-            .execute_function(&func, vec![item.clone()])?;
-
-        if keep.is_truthy() {
-            result.push(item.clone());
-        }
-    }
-
-    Ok(Value::List(Arc::new(result)))
-}
-
-/// reduce(fn, list, initial) -> value
-/// Reduces a list to a single value using an accumulator function
-pub fn builtin_reduce(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 3 {
-        return Err(TBError::runtime_error("reduce() takes exactly 3 arguments: function, list, initial"));
-    }
-
-    let func = match &args[0] {
-        Value::Function(f) => f.clone(),
-        Value::NativeFunction(_) => return Err(TBError::runtime_error("reduce() does not support native functions yet")),
-        _ => return Err(TBError::runtime_error("reduce() first argument must be a function")),
-    };
-
-    let list = match &args[1] {
-        Value::List(l) => l.clone(),
-        _ => return Err(TBError::runtime_error("reduce() second argument must be a list")),
-    };
-
-    let mut accumulator = args[2].clone();
-
-    for item in list.iter() {
-        accumulator = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
-            .execute_function(&func, vec![accumulator, item.clone()])?;
-    }
-
-    Ok(accumulator)
-}
-
-/// forEach(fn, list) -> None
-/// Executes a function for each element in a list (side effects only)
-pub fn builtin_for_each(args: Vec<Value>) -> Result<Value, TBError> {
-    if args.len() != 2 {
-        return Err(TBError::runtime_error("forEach() takes exactly 2 arguments: function, list"));
-    }
-
-    let func = match &args[0] {
-        Value::Function(f) => f.clone(),
-        Value::NativeFunction(_) => return Err(TBError::runtime_error("forEach() does not support native functions yet")),
-        _ => return Err(TBError::runtime_error("forEach() first argument must be a function")),
-    };
-
-    let list = match &args[1] {
-        Value::List(l) => l.clone(),
-        _ => return Err(TBError::runtime_error("forEach() second argument must be a list")),
-    };
-
-    for item in list.iter() {
-        let _ = crate::task_runtime::TaskExecutor::new(crate::TASK_ENVIRONMENT.read().clone())
-            .execute_function(&func, vec![item.clone()])?;
-    }
-
-    Ok(Value::None)
-}

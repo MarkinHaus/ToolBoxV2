@@ -23,7 +23,10 @@ from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+from toolboxv2.utils.clis.tbx_core_v3_cli import cli_tbx_core
+# TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
+# from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
+interactive_user_dashboard = None  # Placeholder to prevent NameError
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
@@ -303,7 +306,7 @@ def setup_service_linux():
 RUNNER_KEYS = [
     "venv", "api", "ipy", "db", "gui", "p2p",
     "status", "browser", "mcp", "login", "logout",
-    "run", "mods", "flow"
+    "run", "mods", "flow", "core"
 ]
 
 DEFAULT_MODI = "cli"
@@ -1966,6 +1969,7 @@ def runner_setup():
         "flow": run_c,
         "mods": mods_manager,
         "run": cli_tbx_main,
+        "core": cli_tbx_core,
         "default": interactive_user_dashboard
     }
     return runner
@@ -2052,9 +2056,9 @@ def server_helper(instance_id:str="main", db_mode=None):
     if db_mode is None:
         db_mode = os.getenv("DB_MODE_KEY", "LC")
     app.is_server = True
-    db = app.get_mod("DB")
-    db.edit_cli(db_mode)
-    db.initialize_database()
+    # db = app.get_mod("DB")
+    # db.edit_cli(db_mode)
+    # db.initialize_database()
     # execute all flows starting with server as bg tasks
     def task():
         flows_dict = flows_dict_func(remote=False)
@@ -2064,7 +2068,7 @@ def server_helper(instance_id:str="main", db_mode=None):
                 print(f"Starting server flow: {flow}")
 
                 app.run_bg_task_advanced(app.run_flows,flow)
-    app.run_bg_task_advanced(task)
+    # app.run_bg_task_advanced(task)
     return app
 
 if __name__ == "__main__":

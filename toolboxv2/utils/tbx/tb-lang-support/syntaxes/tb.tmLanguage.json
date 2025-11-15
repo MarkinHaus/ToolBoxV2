@@ -1,0 +1,122 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "TB Language",
+  "scopeName": "source.tb",
+  "fileTypes": ["tbx", "tb"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#types" },
+    { "include": "#operators" },
+    { "include": "#constants" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.tb",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.tb",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.tb",
+          "match": "\\b(if|else|while|for|in|break|continue|return|match)\\b"
+        },
+        {
+          "name": "keyword.declaration.tb",
+          "match": "\\b(let|fn|import|from|as|export|plugin)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.tb",
+          "match": "\\b(and|or|not)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.tb",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.tb",
+              "match": "\\\\(n|r|t|\\\\|\"|')"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.tb",
+          "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.tb",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.tb",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+        },
+        {
+          "name": "entity.name.function.definition.tb",
+          "match": "(?<=fn\\s+)([a-zA-Z_][a-zA-Z0-9_]*)"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.tb",
+          "match": "\\b(int|float|string|bool|list|dict|function)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.tb",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.tb",
+          "match": "(\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.assignment.tb",
+          "match": "="
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.tb",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.tb",
+          "match": "\\bnone\\b"
+        }
+      ]
+    }
+  }
+}

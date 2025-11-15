@@ -34,13 +34,57 @@ class Chunk:
     cluster_id: int | None = None
 
 
-@dataclass
+@dataclass(slots=True)
+class Chunk:
+    """Represents a chunk of text with its embedding and metadata"""
+    text: str
+    embedding: np.ndarray
+    metadata: dict[str, Any]
+    content_hash: str
+    cluster_id: int | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Chunk):
+            return NotImplemented
+        # Zwei Chunks gelten als gleich, wenn sie denselben content_hash haben
+        return self.content_hash == other.content_hash
+
+    def __hash__(self) -> int:
+        # Verwende nur content_hash, da embedding & metadata nicht hashbar sind
+        return hash(self.content_hash)
+
+
+
+@dataclass(slots=True)
 class RetrievalResult:
     """Structure for organizing retrieval results"""
-    overview: list[dict[str, any]]  # List of topic summaries
-    details: list[Chunk]  # Detailed chunks
-    cross_references: dict[str, list[Chunk]]  # Related chunks by topic
+    overview: list[dict[str, Any]]          # List of topic summaries
+    details: list["Chunk"]                  # Detailed chunks
+    cross_references: dict[str, list["Chunk"]]  # Related chunks by topic
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a JSON-serializable dictionary"""
+        def chunk_to_dict(chunk):
+            return {
+                "text": chunk.text,
+                "embedding": chunk.embedding.tolist() if isinstance(chunk.embedding, np.ndarray) else chunk.embedding,
+                "metadata": chunk.metadata,
+                "content_hash": chunk.content_hash,
+                "cluster_id": chunk.cluster_id,
+            }
+
+        return {
+            "overview": self.overview,
+            "details": [chunk_to_dict(c) for c in self.details],
+            "cross_references": {
+                key: [chunk_to_dict(c) for c in val]
+                for key, val in self.cross_references.items()
+            }
+        }
+
+    def to_json(self, indent: int = 2) -> str:
+        """Convert the result to a JSON string"""
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
 
 class TopicSummary(NamedTuple):
     topic_id: int
@@ -321,19 +365,18 @@ class ConceptExtractor:
         async def process_single_request(idx: int, prompt: str, system_prompt: str, metadata: dict[str, Any]):
             """Process a single request with rate limiting"""
             try:
-                from toolboxv2.mods.isaa.extras.adapter import litellm_complete
                 # Wait for rate limit
                 await rate_limiter.acquire()
                 i__[1] += 1
                 # Make API call without awaiting the response
-                response_future = litellm_complete(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    response_format=Concepts,
-                    model_name=self.kb.model_name,
-                    fallbacks=["groq/gemma2-9b-it"] +
-                              [m for m in os.getenv("FALLBACKS_MODELS_PREM", '').split(',') if m]
-                )
+
+
+                from toolboxv2 import get_app
+                response_future = await get_app().get_mod("isaa").mini_task_completion_format(
+                    mini_task=system_prompt,
+                    user_task=prompt,
+                    format_schema=Concepts,
+                    agent_name="summary")
 
                 return idx, response_future
 
@@ -341,18 +384,17 @@ class ConceptExtractor:
                 print(f"Error initiating request {idx}: {str(e)}")
                 return idx, None
 
-        async def process_response(idx: int, response_future) -> list[Concept]:
-            """Process the response once it's ready"""
-            try:
-                if response_future is None:
+        async def process_response(idx: int, response) -> list[Concept]:
+                """Process the response once it's ready"""
+            #try:
+                if response is None:
                     return []
 
-                response = await response_future
                 return await self._process_response(response, metadatas[idx])
 
-            except Exception as e:
-                print(f"Error processing response {idx}: {str(e)}")
-                return []
+            #except Exception as e:
+            #    print(f"Error processing response {idx}: {str(e)}")
+            #    return []
 
         # Create tasks for all requests
         request_tasks = []
@@ -389,27 +431,10 @@ class ConceptExtractor:
 
         return sorted_results
 
-    async def _process_response(self, response: Any, metadata: dict[str, Any]) -> list[Concept]:
+    async def _process_response(self, concept_data: dict[str, Any], metadata: dict[str, Any]) -> list[Concept]:
         """Helper method to process a single response and convert it to Concepts"""
         try:
-            # Extract content from response
-            if hasattr(response, 'choices'):
-                content = response.choices[0].message.content
-                if content is None:
-                    content = response.choices[0].message.tool_calls[0].function.arguments
-                if content is None:
-                    return []
-            elif isinstance(response, str):
-                content = response
-            else:
-                print(f"Unexpected response type: {type(response)}")
-                return []
-
-            from toolboxv2.mods.isaa.extras.filter import after_format
-            # Parse JSON and create concepts
-            concept_data = after_format(content)
             concepts = []
-
             for concept_info in concept_data.get("concepts", []):
                 concept = Concept(
                     name=concept_info["name"],
@@ -472,15 +497,15 @@ class ConceptExtractor:
         """
 
         try:
-            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-            response = await litellm_complete(
-                model_name=self.kb.model_name,
-                prompt=prompt,
-                system_prompt=system_prompt,
-                response_format=TConcept
-            )
 
-            query_params = json.loads(response)
+            from toolboxv2 import get_app
+            response = await get_app().get_mod("isaa").mini_task_completion_format(
+                mini_task=system_prompt,
+                user_task=prompt,
+                format_schema=TConcept,
+                agent_name="summary")
+
+            query_params = response
 
             results = {
                 "concepts": {},
@@ -704,7 +729,196 @@ class KnowledgeBase:
             get_logger().error(f"Error generating embeddings: {str(e)}")
             raise
 
+    async def graph_enhanced_retrieve(
+        self,
+        query: str,
+        k: int = 5,
+        graph_hops: int = 2,
+        relation_weight: float = 0.3,
+        min_similarity: float = 0.2
+    ) -> dict[str, Any]:
+        """
+        Kombiniert Vector-Search mit Graph-Traversierung
 
+        Args:
+            query: Suchanfrage
+            k: Anzahl initial zu findender Chunks
+            graph_hops: Tiefe der Graph-Traversierung
+            relation_weight: Gewichtung Graph vs Vector (0-1)
+            min_similarity: Minimale Ähnlichkeit für Vector-Suche
+
+        Returns:
+            Dict mit erweiterten Ergebnissen und Scores
+        """
+        # 1. Standard Vector-Suche
+        query_embedding = (await self._get_embeddings([query]))[0]
+        initial_chunks = await self.retrieve(
+            query_embedding=query_embedding,
+            k=k,
+            min_similarity=min_similarity
+        )
+
+        if not initial_chunks:
+            return {
+                "chunks": [],
+                "graph_expansion": {},
+                "scores": {}
+            }
+
+        # 2. Graph-Expansion über Konzepte
+        expanded_chunks = await self._expand_via_concepts(
+            initial_chunks,
+            hops=graph_hops
+        )
+
+        # 3. Hybrid-Scoring
+        scored_results = self._hybrid_score(
+            chunks=expanded_chunks,
+            query_embedding=query_embedding,
+            initial_chunks=initial_chunks,
+            relation_weight=relation_weight
+        )
+
+        return scored_results
+
+    async def _expand_via_concepts(
+        self,
+        chunks: list[Chunk],
+        hops: int
+    ) -> list[Chunk]:
+        """
+        Erweitert Chunks über Konzept-Relationen im Graph
+
+        Args:
+            chunks: Initial gefundene Chunks
+            hops: Anzahl der Traversierungs-Schritte
+
+        Returns:
+            Liste erweiterter Chunks
+        """
+        expanded = set(chunks)
+        current_concepts = set()
+
+        # Sammle alle Konzepte aus initial chunks
+        for chunk in chunks:
+            current_concepts.update(chunk.metadata.get("concepts", []))
+
+        # Traversiere Graph
+        visited_concepts = set()
+        for hop in range(hops):
+            next_concepts = set()
+
+            for concept_name in current_concepts:
+                if concept_name in visited_concepts:
+                    continue
+                visited_concepts.add(concept_name)
+
+                if concept_name.lower() in self.concept_extractor.concept_graph.concepts:
+                    concept = self.concept_extractor.concept_graph.concepts[concept_name.lower()]
+
+                    # Hole verwandte Konzepte aus allen Relationstypen
+                    for rel_type, related in concept.relationships.items():
+                        next_concepts.update(related)
+
+            if not next_concepts:
+                break
+
+            # Finde Chunks mit diesen Konzepten
+            for chunk in self.vdb.chunks:
+                chunk_concepts = set(chunk.metadata.get("concepts", []))
+                if chunk_concepts & next_concepts:
+                    expanded.add(chunk)
+
+            current_concepts = next_concepts
+
+        return list(expanded)
+
+    def _hybrid_score(
+        self,
+        chunks: list[Chunk],
+        query_embedding: np.ndarray,
+        initial_chunks: list[Chunk],
+        relation_weight: float = 0.3
+    ) -> dict[str, Any]:
+        """
+        Kombiniert Vector-Similarity mit Graph-basierten Scores
+
+        Args:
+            chunks: Alle zu scorenden Chunks
+            query_embedding: Query-Embedding für Vector-Similarity
+            initial_chunks: Initial gefundene Chunks (für Boost)
+            relation_weight: Gewichtung Graph-Score (0-1)
+
+        Returns:
+            Dict mit gescorten Chunks und Metadaten
+        """
+        scored = []
+        initial_chunk_ids = {id(chunk) for chunk in initial_chunks}
+
+        for chunk in chunks:
+            # 1. Vector Similarity
+            vec_sim = float(np.dot(chunk.embedding, query_embedding))
+
+            # 2. Graph Score: Anzahl und Qualität von Konzept-Verbindungen
+            chunk_concepts = set(chunk.metadata.get("concepts", []))
+            graph_score = 0.0
+            relation_details = {}
+
+            for concept_name in chunk_concepts:
+                concept_name_lower = concept_name.lower()
+                if concept_name_lower in self.concept_extractor.concept_graph.concepts:
+                    concept = self.concept_extractor.concept_graph.concepts[concept_name_lower]
+
+                    # Gewichte verschiedene Relationstypen unterschiedlich
+                    weights = {
+                        "depends_on": 2.0,
+                        "uses": 1.5,
+                        "part_of": 1.3,
+                        "similar_to": 1.0,
+                        "related_to": 0.8
+                    }
+
+                    for rel_type, related in concept.relationships.items():
+                        weight = weights.get(rel_type, 1.0)
+                        graph_score += len(related) * weight
+                        relation_details[concept_name] = {
+                            rel_type: list(related) for rel_type, related in concept.relationships.items()
+                        }
+
+            # Normalisiere Graph-Score
+            graph_score = min(graph_score / 10.0, 1.0)
+
+            # 3. Initial Chunk Boost
+            initial_boost = 1.2 if id(chunk) in initial_chunk_ids else 1.0
+
+            # 4. Hybrid Score berechnen
+            final_score = (
+                              (1 - relation_weight) * vec_sim +
+                              relation_weight * graph_score
+                          ) * initial_boost
+
+            scored.append({
+                "chunk": chunk,
+                "score": final_score,
+                "vec_similarity": vec_sim,
+                "graph_score": graph_score,
+                "is_initial": id(chunk) in initial_chunk_ids,
+                "concepts": list(chunk_concepts),
+                "relations": relation_details
+            })
+
+        # Sortiere nach Score
+        scored.sort(key=lambda x: x["score"], reverse=True)
+
+        return {
+            "chunks": [item["chunk"] for item in scored],
+            "detailed_scores": scored,
+            "expansion_stats": {
+                "initial_count": len(initial_chunks),
+                "expanded_count": len(chunks),
+                "expansion_ratio": len(chunks) / len(initial_chunks) if initial_chunks else 0
+            }
+        }
 
     def _remove_similar_chunks(self, threshold: float = None) -> int:
         """Remove chunks that are too similar to each other"""
@@ -1244,35 +1458,64 @@ class KnowledgeBase:
         min_similarity: float = 0.2,
         max_sentences: int = 5,
         cross_ref_depth: int = 2,
-        max_cross_refs: int = 10  # New parameter to control cross-reference count
+        max_cross_refs: int = 10,
+        use_graph_expansion: bool = True,  # NEU
+        graph_hops: int = 2,  # NEU
+        relation_weight: float = 0.3  # NEU
     ) -> RetrievalResult:
-        """Enhanced retrieval with better cross-reference handling"""
+        """
+        Enhanced retrieval mit Graph-Awareness und better cross-reference handling
+
+        Args:
+            use_graph_expansion: Nutze Graph-basierte Expansion (empfohlen)
+            graph_hops: Tiefe der Graph-Traversierung
+            relation_weight: Gewichtung Graph vs Vector (0-1)
+        """
         # Get initial results with query embedding
         if query_embedding is None:
             query_embedding = (await self._get_embeddings([query]))[0]
-        initial_results = await self.retrieve(query_embedding=query_embedding, k=k, min_similarity=min_similarity)
 
-        if not initial_results:
-            return RetrievalResult([], [], {})
-
-        # Find cross-references with similarity scoring
-        initial_ids = {self.vdb.chunks.index(chunk) for chunk in initial_results}
-        related_ids = self._find_cross_references(
-            initial_ids,
-            depth=cross_ref_depth,
-            query_embedding=query_embedding  # Pass query embedding for relevance scoring
-        )
-
-        # Get all relevant chunks with smarter filtering
-        all_chunks = self.vdb.chunks
-        all_relevant_chunks = initial_results + [
-            chunk for i, chunk in enumerate(all_chunks)
-            if i in related_ids and self._is_relevant_cross_ref(
-                chunk,
-                query_embedding,
-                initial_results
+        # ========== NEU: Wähle Retrieval-Methode ==========
+        if use_graph_expansion:
+            # Nutze Graph-Enhanced Retrieval
+            graph_results = await self.graph_enhanced_retrieve(
+                query=query,
+                k=k,
+                graph_hops=graph_hops,
+                relation_weight=relation_weight,
+                min_similarity=min_similarity
             )
-        ]
+            initial_results = graph_results["chunks"][:k * 2]
+            all_relevant_chunks = graph_results["chunks"]
+        else:
+            # Standard Vector-Retrieval
+            initial_results = await self.retrieve(
+                query_embedding=query_embedding,
+                k=k,
+                min_similarity=min_similarity
+            )
+
+            if not initial_results:
+                return RetrievalResult([], [], {})
+
+            # Find cross-references (alte Methode)
+            initial_ids = {self.vdb.chunks.index(chunk) for chunk in initial_results}
+            related_ids = self._find_cross_references(
+                initial_ids,
+                depth=cross_ref_depth,
+                query_embedding=query_embedding
+            )
+
+            all_chunks = self.vdb.chunks
+            all_relevant_chunks = initial_results + [
+                chunk for i, chunk in enumerate(all_chunks)
+                if i in related_ids and self._is_relevant_cross_ref(
+                    chunk,
+                    query_embedding,
+                    initial_results
+                )
+            ]
+        # ========== ENDE NEU ==========
 
         # Enhanced clustering with dynamic cluster size
         clusters = self._cluster_chunks(
@@ -1293,7 +1536,7 @@ class KnowledgeBase:
             summary = self._generate_topic_summary(
                 cluster_chunks,
                 query_embedding,
-                max_sentences=max_sentences  # Increased for more context
+                max_sentences=max_sentences
             )
 
             # Enhanced chunk sorting with combined scoring
@@ -1304,7 +1547,7 @@ class KnowledgeBase:
             )
 
             # Separate direct matches and cross-references
-            direct_matches_ = [{'text':c.text, 'metadata':c.metadata} for c in sorted_chunks if c in initial_results]
+            direct_matches_ = [{'text': c.text, 'metadata': c.metadata} for c in sorted_chunks if c in initial_results]
             direct_matches = []
             for match in direct_matches_:
                 if match in direct_matches:
@@ -1316,6 +1559,7 @@ class KnowledgeBase:
                 if match in cross_refs:
                     continue
                 cross_refs.append(match)
+
             # Limit cross-references while maintaining diversity
             selected_cross_refs = self._select_diverse_cross_refs(
                 cross_refs,
@@ -1496,29 +1740,59 @@ class KnowledgeBase:
         min_similarity: float = 0.2,
         cross_ref_depth: int = 2,
         max_cross_refs: int = 10,
-        max_sentences: int = 10
+        max_sentences: int = 10,
+        use_graph_expansion: bool = True,
+        graph_hops: int = 2,
+        relation_weight: float = 0.3
     ) -> dict[str, Any]:
         """
-        Unified retrieval function that combines concept querying, retrieval with overview,
-        and basic retrieval, then generates a comprehensive summary using LLM.
+        Unified retrieval mit optionaler Graph-Expansion
 
         Args:
-            query: Search query string
-            k: Number of primary results to retrieve
-            min_similarity: Minimum similarity threshold for retrieval
-            cross_ref_depth: Depth for cross-reference search
-            max_cross_refs: Maximum number of cross-references per topic
-            max_sentences: Maximum number Sentences in the main summary text
+            query: Suchanfrage
+            k: Anzahl Primär-Ergebnisse
+            min_similarity: Min. Ähnlichkeit für Vector-Suche
+            cross_ref_depth: Tiefe für Cross-References
+            max_cross_refs: Max. Cross-References pro Topic
+            max_sentences: Max. Sentences im Summary
+            use_graph_expansion: Nutze Graph-Expansion (NEU)
+            graph_hops: Graph-Traversierungs-Tiefe (NEU)
+            relation_weight: Graph vs Vector Gewichtung (NEU)
 
         Returns:
-            Dictionary containing comprehensive results including summary and details
+            Dict mit umfassenden Ergebnissen
         """
         # Get concept information
         concept_results = await self.concept_extractor.query_concepts(query)
 
-        # Get retrieval overview
-
         query_embedding = (await self._get_embeddings([query]))[0]
+
+        # Wähle Retrieval-Methode
+        if use_graph_expansion:
+            graph_results = await self.graph_enhanced_retrieve(
+                query=query,
+                k=k,
+                graph_hops=graph_hops,
+                relation_weight=relation_weight,
+                min_similarity=min_similarity
+            )
+            basic_results = graph_results["chunks"][:k * 2]
+            expansion_stats = graph_results.get("expansion_stats", {})
+        else:
+            basic_results = await self.retrieve(
+                query_embedding=query_embedding,
+                k=k,
+                min_similarity=min_similarity
+            )
+            expansion_stats = {}
+
+        if len(basic_results) == 0:
+            return {}
+        if len(basic_results) == 1 and isinstance(basic_results[0], str) and basic_results[0].endswith(
+            '[]\n - []\n - []'):
+            return {}
+
+        # Get retrieval overview
         overview_results = await self.retrieve_with_overview(
             query=query,
             query_embedding=query_embedding,
@@ -1528,17 +1802,6 @@ class KnowledgeBase:
             max_cross_refs=max_cross_refs,
             max_sentences=max_sentences
         )
-
-        # Get basic retrieval results
-        basic_results = await self.retrieve(
-            query_embedding=query_embedding,
-            k=k,
-            min_similarity=min_similarity
-        )
-        if len(basic_results) == 0:
-            return {}
-        if len(basic_results) == 1 and isinstance(basic_results[0], str) and basic_results[0].endswith('[]\n - []\n - []'):
-            return {}
 
         # Prepare context for LLM summary
         context = {
@@ -1561,8 +1824,9 @@ class KnowledgeBase:
                     "text": chunk.text,
                     "metadata": chunk.metadata
                 }
-                for chunk in basic_results
-            ]
+                for chunk in basic_results[:k]
+            ],
+            "graph_expansion": expansion_stats
         }
 
         # Generate comprehensive summary using LLM
@@ -1588,21 +1852,20 @@ class KnowledgeBase:
         """
 
         try:
-            from toolboxv2.mods.isaa.extras.adapter import litellm_complete
-            # await asyncio.sleep(0.25)
-            llm_response = await litellm_complete(
-                model_name=self.model_name,
-                prompt=prompt,
-                system_prompt=system_prompt,
-                response_format=DataModel,
-            )
-            summary_analysis = json.loads(llm_response)
+            from toolboxv2 import get_app
+            llm_response = await get_app().get_mod("isaa").mini_task_completion_format(
+                mini_task=system_prompt,
+                user_task=prompt,
+                format_schema=DataModel,
+                agent_name="summary")
+            summary_analysis = llm_response
         except Exception as e:
             get_logger().error(f"Error generating summary: {str(e)}")
             summary_analysis = {
                 "main_summary": "Error generating summary",
                 "error": str(e)
             }
+            raise e
 
         # Compile final results
         return {
@@ -1619,7 +1882,7 @@ class KnowledgeBase:
                         "metadata": chunk.metadata,
                         "cluster_id": chunk.cluster_id
                     }
-                    for chunk in basic_results
+                    for chunk in basic_results[:k * 2]
                 ]
             },
             "metadata": {
@@ -1629,8 +1892,12 @@ class KnowledgeBase:
                     "k": k,
                     "min_similarity": min_similarity,
                     "cross_ref_depth": cross_ref_depth,
-                    "max_cross_refs": max_cross_refs
-                }
+                    "max_cross_refs": max_cross_refs,
+                    "use_graph_expansion": use_graph_expansion,
+                    "graph_hops": graph_hops,
+                    "relation_weight": relation_weight
+                },
+                "expansion_stats": expansion_stats
             }
         }
 
@@ -1921,38 +2188,256 @@ async def main():
 
     kb.save("bas.pkl")
 
-async def rgen():
-    kb = KnowledgeBase.load("mem.plk")
-    #res =await kb.concept_extractor.extract_concepts(["hallo das ist ein test", "wie geht es dir", "nicht", "Phiskik ist sehr wichtig"], [{}]*4)
-    #print(res)
-    print(await kb.forget_irrelevant(["lazy dog", "unimportant"], 0.51))
-    print(await kb.query_concepts("AI"))
-    print(await kb.retrieve("Evaluation metrics for assessing AI Agent performance"))
-    print(kb.concept_extractor.concept_graph.concepts.keys())
-    #GraphVisualizer.visualize(kb.concept_extractor.concept_graph.convert_to_networkx(), output_file="concept_graph2.html")
-
+    return kb
 
 text = "test 123".encode("utf-8", errors="replace").decode("utf-8")
 
-async def math():
-    kb = KnowledgeBase(n_clusters=3, model_name="openrouter/mistralai/mistral-7b-instruct", requests_per_second=10, batch_size=20, chunk_size=36000, chunk_overlap=300)
 
-    r = await kb.add_data([text], metadata=None)
-    print(r)
-    GraphVisualizer.visualize(kb.concept_extractor.concept_graph.convert_to_networkx(), output_file="Mathe_graph.html")
+async def test_graph_enhanced_retrieval():
+    """
+    Umfassender Test für Graph-Enhanced Retrieval
+    """
+    print("=" * 80)
+    print("TEST: Graph-Enhanced Retrieval System")
+    print("=" * 80)
 
-    kb.save("mathe.pkl")
+    # Initialize Knowledge Base
+    kb = KnowledgeBase(
+        n_clusters=3,
+        model_name=os.getenv("SUMMARYMODEL", "openrouter/mistralai/mistral-7b-instruct"),
+        batch_size=12,
+        requests_per_second=85.
+    )
 
-    while u := input("User"):
-        if u.startswith("C"):
-            print("A:", await kb.query_concepts(u[1:]))
-        if u.startswith("R"):
-            print("A:", await kb.retrieve_with_overview(u[1:]))
-        if u.startswith("U"):
-            print("A:", await kb.unified_retrieve(u[1:]))
+    # Test Data mit klaren Konzept-Beziehungen
+    test_data = [
+        """
+        Machine Learning is a subset of Artificial Intelligence.
+        It uses algorithms to learn patterns from data.
+        Deep Learning is a specialized form of Machine Learning.
+        """,
+        """
+        Neural Networks are the foundation of Deep Learning.
+        They consist of layers of interconnected nodes.
+        Each layer transforms the input data progressively.
+        """,
+        """
+        Training Neural Networks requires large datasets.
+        GPUs accelerate the training process significantly.
+        Backpropagation is used to update network weights.
+        """,
+        """
+        Natural Language Processing uses Machine Learning techniques.
+        Transformers are a type of Neural Network architecture.
+        BERT and GPT are popular Transformer models.
+        """,
+        """
+        Computer Vision applies Deep Learning to image analysis.
+        Convolutional Neural Networks excel at image tasks.
+        Object detection and segmentation are common applications.
+        """,
+        """
+        Reinforcement Learning trains agents through rewards.
+        It differs from supervised learning approaches.
+        Q-Learning and Policy Gradients are key algorithms.
+        """
+    ]
 
+    metadata = [{"source": f"doc_{i}", "topic": "AI"} for i in range(len(test_data))]
+
+    print("\n" + "─" * 80)
+    print("PHASE 1: Adding Data")
+    print("─" * 80)
+
+    added, duplicates = await kb.add_data(test_data, metadata, direct=True)
+    print(f"✓ Added: {added} chunks")
+    print(f"✓ Duplicates filtered: {duplicates}")
+    print(f"✓ Total chunks in KB: {len(kb.vdb.chunks)}")
+    print(f"✓ Total concepts: {len(kb.concept_extractor.concept_graph.concepts)}")
+
+    # Test Queries
+    test_queries = [
+        "How does Deep Learning work?",
+        "GPU acceleration in AI",
+        "Transformer architecture"
+    ]
+
+    print("\n" + "─" * 80)
+    print("PHASE 2: Comparing Standard vs Graph-Enhanced Retrieval")
+    print("─" * 80)
+
+    for query in test_queries:
+        print(f"\n{'=' * 80}")
+        print(f"Query: '{query}'")
+        print(f"{'=' * 80}")
+
+        # Standard Retrieval
+        print("\n[STANDARD RETRIEVAL]")
+        standard_results = await kb.retrieve(query, k=3, min_similarity=0.1)
+        print(f"  Found: {len(standard_results)} chunks")
+        for i, chunk in enumerate(standard_results[:2], 1):
+            print(f"  {i}. Concepts: {chunk.metadata.get('concepts', [])[:3]}")
+            print(f"     Text: {chunk.text[:80]}...")
+
+        # Graph-Enhanced Retrieval
+        print("\n[GRAPH-ENHANCED RETRIEVAL]")
+        graph_results = await kb.graph_enhanced_retrieve(
+            query=query,
+            k=3,
+            graph_hops=2,
+            relation_weight=0.3,
+            min_similarity=0.1
+        )
+
+        print(f"  Initial: {graph_results['expansion_stats']['initial_count']} chunks")
+        print(f"  Expanded: {graph_results['expansion_stats']['expanded_count']} chunks")
+        print(f"  Expansion ratio: {graph_results['expansion_stats']['expansion_ratio']:.2f}x")
+
+        print(f"\n  Top 3 Results (by hybrid score):")
+        for i, item in enumerate(graph_results['detailed_scores'][:3], 1):
+            chunk = item['chunk']
+            print(f"\n  {i}. Score: {item['score']:.3f} "
+                  f"(Vec: {item['vec_similarity']:.3f}, Graph: {item['graph_score']:.3f})")
+            print(f"     Initial Match: {'✓' if item['is_initial'] else '✗'}")
+            print(f"     Concepts: {item['concepts'][:3]}")
+            print(f"     Text: {chunk.text[:80]}...")
+
+    print("\n" + "─" * 80)
+    print("PHASE 3: Unified Retrieval Comparison")
+    print("─" * 80)
+
+    query = "Explain Neural Networks and their training"
+
+    # Without Graph Expansion
+    print("\n[WITHOUT Graph Expansion]")
+    results_without = await kb.unified_retrieve(
+        query=query,
+        k=3,
+        use_graph_expansion=False
+    )
+
+    if results_without:
+        chunk_count_without = len(results_without.get('raw_results', {}).get('relevant_chunks', []))
+        print(f"  Chunks returned: {chunk_count_without}")
+        print(f"  results_without: {results_without}")
+
+    # With Graph Expansion
+    print("\n[WITH Graph Expansion]")
+    results_with = await kb.unified_retrieve(
+        query=query,
+        k=3,
+        use_graph_expansion=True,
+        graph_hops=2,
+        relation_weight=0.3
+    )
+
+    if results_with:
+        chunk_count_with = len(results_with.get('raw_results', {}).get('relevant_chunks', []))
+        expansion_stats = results_with.get('metadata', {}).get('expansion_stats', {})
+        print(f"  Chunks returned: {chunk_count_with}")
+        print(f"  Expansion ratio: {expansion_stats.get('expansion_ratio', 0):.2f}x")
+
+        summary = results_with.get('summary', {})
+        print(f"\n  Summary Preview:")
+        print(f"  {summary.get('main_summary', 'N/A')[:200]}...")
+
+    print("\n" + "─" * 80)
+    print("PHASE 4: Concept Graph Visualization")
+    print("─" * 80)
+
+    nx_graph = kb.concept_extractor.concept_graph.convert_to_networkx()
+    print(f"  Nodes: {nx_graph.number_of_nodes()}")
+    print(f"  Edges: {nx_graph.number_of_edges()}")
+
+    # Save visualization
+    html_output = await kb.vis(output_file="test_graph_enhanced.html", get_output_html=True)
+    if html_output:
+        print(f"  ✓ Graph visualization saved")
+
+    print("\n" + "=" * 80)
+    print("TEST COMPLETED SUCCESSFULLY")
+    print("=" * 80)
+
+    return kb
+
+
+async def test_edge_cases():
+    """Test edge cases und error handling"""
+    print("\n" + "=" * 80)
+    print("EDGE CASE TESTS")
+    print("=" * 80)
+
+    kb = KnowledgeBase(n_clusters=3, model_name=os.getenv("SUMMARYMODEL"))
+
+    # Test 1: Empty query
+    print("\n[TEST 1: Empty Knowledge Base]")
+    try:
+        results = await kb.graph_enhanced_retrieve("test query", k=3)
+        print(f"  ✓ Handled empty KB: {len(results['chunks'])} chunks returned")
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+
+    # Add minimal data
+    await kb.add_data(["Test document about AI"], direct=True)
+
+    # Test 2: No concepts extracted
+    print("\n[TEST 2: Query with no matching concepts]")
+    try:
+        results = await kb.graph_enhanced_retrieve(
+            "completely unrelated topic xyz123",
+            k=5,
+            min_similarity=0.0
+        )
+        print(f"  ✓ Handled: {len(results['chunks'])} chunks, "
+              f"expansion: {results['expansion_stats']['expansion_ratio']:.2f}x")
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+
+    # Test 3: High graph_hops
+    print("\n[TEST 3: Very high graph_hops value]")
+    try:
+        results = await kb.graph_enhanced_retrieve(
+            "AI",
+            k=3,
+            graph_hops=10
+        )
+        print(f"  ✓ Handled: {results['expansion_stats']['expanded_count']} chunks expanded")
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+
+    print("\n" + "=" * 80)
+
+
+# Main test runner - ERSETZE die bestehende main() falls gewünscht
+async def run_all_tests():
+    """Run alle Tests"""
+    try:
+        # Haupt-Test
+        kb = await test_graph_enhanced_retrieval()
+
+        # Edge Cases
+        await test_edge_cases()
+
+        print("\n" + "=" * 80)
+        print("ALL TESTS PASSED ✓")
+        print("=" * 80)
+
+        return kb
+
+    except Exception as e:
+        print(f"\n❌ TEST FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+# Wenn du die Tests ausführen willst:
 if __name__ == "__main__":
-    get_app(name="main2")
+    get_app(name="test_graph_enhanced")
+    asyncio.run(run_all_tests())
 
-    asyncio.run(main())
+#if __name__ == "__main__":
+#    get_app(name="main2")
+#
+#    asyncio.run(main())
 

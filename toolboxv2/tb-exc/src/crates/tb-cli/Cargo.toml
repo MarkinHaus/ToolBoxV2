@@ -2,9 +2,10 @@
 name = "tb-cli"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"  # ✅ PHASE 3.1: Build script to find tb-runtime path
 
 [[bin]]
-name = "tb"
+name = "tbx"
 path = "src/main.rs"
 
 [dependencies]

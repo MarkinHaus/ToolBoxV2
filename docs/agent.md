@@ -122,6 +122,22 @@ response = await agent.a_run(
 agent.set_variable("user.name", "John")
 agent.set_variable("project.name", "FlowAgent Demo")
 response = await agent.a_run("Hello {{ user.name }}! How is {{ project.name }} going?")
+
+# Fast run mode - skips detailed outline creation for quick responses
+response = await agent.a_run(
+    query="What's the weather like?",
+    fast_run=True  # Uses generic adaptive outline for faster execution
+)
+
+# Callback mode - inject real-time context for proactive responses
+def my_callback():
+    """Callback function that provides context"""
+    pass
+
+response = await agent.a_run(
+    query="Process this event",
+    as_callback=my_callback  # Injects callback context into agent execution
+)
 ```
 
 #### Advanced Features
@@ -154,6 +170,85 @@ context_stats = agent.get_context_statistics()
 
 # Lifecycle
 await agent.close() # Saves a final checkpoint and shuts down gracefully
+```
+
+#### Fast Run Mode
+
+The `fast_run` parameter allows the agent to skip the detailed outline creation phase and use a generic, adaptive outline instead. This is ideal for simple queries that need quick responses, especially in voice interfaces or real-time applications.
+
+**When to use `fast_run=True`:**
+- Simple, straightforward queries that don't require complex planning
+- Voice interface interactions where speed is critical
+- Real-time responses in chat applications
+- Tool-based queries that can be answered with a single tool call
+
+**How it works:**
+1. Instead of creating a detailed, query-specific outline, the agent uses a pre-defined 2-step outline
+2. Step 1: Immediate tool usage or direct analysis
+3. Step 2: Synthesize and respond
+4. This reduces latency by eliminating the outline creation LLM call
+
+```python
+# Example: Fast run for simple queries
+response = await agent.a_run(
+    query="What's 2+2?",
+    fast_run=True
+)
+
+# Example: Fast run with tool usage
+response = await agent.a_run(
+    query="Search for the latest news on AI",
+    fast_run=True  # Will use tools immediately without detailed planning
+)
+```
+
+#### Callback Mode
+
+The `as_callback` parameter enables the agent to be invoked within a callback context, providing real-time, context-specific information. This is useful for event-driven architectures where the agent needs to respond proactively to events.
+
+**When to use `as_callback`:**
+- Event-driven systems where the agent responds to external triggers
+- Real-time monitoring and alerting systems
+- Webhook handlers that need intelligent processing
+- Proactive assistance based on system events
+
+**How it works:**
+1. When `as_callback` is provided, the agent injects callback context into the shared state
+2. The context includes: callback timestamp, callback name, and the initial query
+3. The LLMReasonerNode can access this context to tailor its responses
+4. This enables the agent to understand it's operating in a reactive/proactive mode
+
+```python
+# Example: Using the agent in a callback
+def on_file_uploaded(file_path: str):
+    """Callback triggered when a file is uploaded"""
+    pass
+
+async def handle_upload_event(file_path: str):
+    response = await agent.a_run(
+        query=f"A new file was uploaded: {file_path}. Analyze and summarize it.",
+        as_callback=on_file_uploaded,
+        session_id="upload_handler"
+    )
+    return response
+
+# Example: Webhook handler
+async def webhook_handler(event_data: dict):
+    response = await agent.a_run(
+        query=f"Process this webhook event: {event_data}",
+        as_callback=webhook_handler,
+        fast_run=True  # Combine with fast_run for quick event processing
+    )
+    return response
+```
+
+**Callback Context Structure:**
+```python
+{
+    'callback_timestamp': '2024-01-15T10:30:00.123456',
+    'callback_name': 'on_file_uploaded',
+    'initial_query': 'A new file was uploaded: /path/to/file.txt'
+}
 ```
 
 ---
@@ -678,3 +773,6 @@ async def health_check(agent: FlowAgent):
 *   **Enable Checkpointing**: For any long-running or critical tasks, enable checkpointing to ensure reliability.
 *   **Monitor Performance**: Regularly check `agent.status()` and enable telemetry in production to monitor costs and performance.
 *   **Secure API Keys**: Always load API keys from environment variables (`.with_api_config(api_key_env_var=...)`) and never hard-code them.
+*   **Use `fast_run` Wisely**: Enable `fast_run=True` for simple queries in voice interfaces or real-time applications, but use the default detailed planning for complex, multi-step tasks.
+*   **Combine Features**: You can combine `fast_run=True` with `as_callback` for ultra-fast event processing in reactive systems.
+*   **Callback Context**: When using `as_callback`, ensure the callback function has a meaningful `__name__` attribute for better debugging and context tracking.

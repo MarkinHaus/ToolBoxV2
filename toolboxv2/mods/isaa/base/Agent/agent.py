@@ -106,6 +106,46 @@ TASK_TYPES = ["llm_call", "tool_call", "analysis", "generic"]
 
 import functools
 
+import json
+import pickle
+from typing import Any
+
+def _is_json_serializable(obj: Any) -> bool:
+    """Prüft, ob ein Objekt sicher nach JSON serialisiert werden kann."""
+    if obj is None or isinstance(obj, (str, int, float, bool, list, dict)):
+        try:
+            # Der schnellste und sicherste Test
+            json.dumps(obj)
+            return True
+        except (TypeError, OverflowError):
+            return False
+    return False
+
+def _clean_data_for_serialization(data: Any) -> Any:
+    """
+    Bereinigt rekursiv Dictionaries und Listen, um nur sicher serialisierbare
+    Werte beizubehalten.
+    """
+    if isinstance(data, dict):
+        clean_dict = {}
+        for k, v in data.items():
+            # Überspringe bekanntermaßen nicht serialisierbare Schlüssel und Instanzen
+            if isinstance(v, (types.FunctionType, types.ModuleType, threading.Thread, FlowAgent, AsyncNode, VariableManager, UnifiedContextManager)):
+                continue
+            if _is_json_serializable(v):
+                clean_dict[k] = _clean_data_for_serialization(v)
+        return clean_dict
+    elif isinstance(data, list):
+        clean_list = []
+        for item in data:
+            if isinstance(item, (types.FunctionType, types.ModuleType, threading.Thread, FlowAgent, AsyncNode, VariableManager, UnifiedContextManager)):
+                continue
+            if _is_json_serializable(item):
+                clean_list.append(_clean_data_for_serialization(item))
+        return clean_list
+    else:
+        return data
+
 # Annahme: Die folgenden Klassen sind bereits definiert
 # from your_project import AsyncNode, ProgressEvent, NodeStatus
 
@@ -2387,7 +2427,6 @@ class LLMToolNode(AsyncNode):
                     final_response = "I encountered an error while processing your request."
                     break
 
-
                 # Check for tool calls
                 tool_calls = self._extract_tool_calls(llm_response)
 
@@ -2399,6 +2438,13 @@ class LLMToolNode(AsyncNode):
                     # No more tool calls, this is the final response
                     final_response = llm_response
                     break
+                direct_response_call = next(
+                    (call for call in tool_calls if call.get("tool_name") == "direct_response"), None)
+                if direct_response_call:
+                    final_response = direct_response_call.get("arguments", {}).get("final_answer",
+                                                                                   "Task completed successfully.")
+                    tool_call_count += 1
+                    break
 
                 # Execute tool calls
                 tool_results = await self._execute_tool_calls(tool_calls, prep_res)
@@ -2407,9 +2453,15 @@ class LLMToolNode(AsyncNode):
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
                 final_response = tool_results_text
-                conversation_history.append({"role": "user",
-                                             "content": f"Tool results:\n{tool_results_text}\n\nPlease continue with the next action do nor repeat or provide your final response."})
+                next_prompt = f"""Tool results have been processed:
+                {tool_results_text}
 
+                **Your next step:**
+                - If you have enough information to answer the user's request, you MUST call the `direct_response` tool with the final answer.
+                - If you need more information, call the next required tool.
+                - Do not provide a final answer as plain text. Always use the `direct_response` tool to finish."""
+
+                conversation_history.append({"role": "user", "content": next_prompt})
                 # Update variable manager with tool results
                 self._update_variables_with_results(tool_results, prep_res["variable_manager"])
 
@@ -4063,6 +4115,7 @@ class LLMReasonerNode(AsyncNode):
             "llm_tool_node": shared.get("llm_tool_node_instance"),
             "task_planner": shared.get("task_planner_instance"),
             "task_executor": shared.get("task_executor_instance"),
+            "fast_run": shared.get("fast_run", False),  # Das fast_run Flag übergeben
         }
 
     async def exec_async(self, prep_res):
@@ -4073,37 +4126,50 @@ class LLMReasonerNode(AsyncNode):
         original_query = prep_res["original_query"]
         agent_instance = prep_res["agent_instance"]
         progress_tracker = prep_res.get("progress_tracker")
+        fast_run = prep_res.get("fast_run", False)  # fast_run-Flag abrufen
 
         # Initialize enhanced reasoning context
         await self._initialize_reasoning_session(prep_res, original_query)
 
-        # STEP 1: MANDATORY OUTLINE CREATION
+        # STEP 1: BEDINGTE GLIEDERUNGSERSTELLUNG
         if not self.outline:
-            with Spinner("Creating initial outline..."):
-                outline_result = await self._create_initial_outline(prep_res)
-            if self.outline and len(self.outline.get("steps", [])) == 1:
-                # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
-                print("Fast direct response triggered")
-                response = await self.agent_instance.a_run_llm_completion(
-                    model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
-                    messages=[{"role": "user", "content": prep_res["original_query"]}],
-                    temperature=0.3,
-                    max_tokens=2048,
-                    node_name="LLMReasonerNode",
-                    task_id="fast_direct_response"
-                )
-                return {
-                        "final_result": response,
-                        "reasoning_loops": self.current_loop_count,
-                        "reasoning_context": self.reasoning_context.copy(),
-                        "internal_task_stack": self.internal_task_stack.copy(),
-                        "outline": self.outline,
-                        "outline_completion": self.current_outline_step,
-                        "performance_metrics": self.performance_metrics,
-                        "auto_recovery_attempts": self.auto_recovery_attempts
-                    }
-            elif not outline_result:
-                return await self._fallback_direct_response(prep_res)
+            # --- Neu: Bedingte Gliederungserstellung ---
+            if fast_run:
+                self.outline = self._create_generic_adaptive_outline()
+                self.reasoning_context.append({
+                    "type": "outline_created",
+                    "content": "Using generic adaptive outline for fast run.",
+                    "outline": self.outline,
+                    "timestamp": datetime.now().isoformat()
+                })
+                rprint("Fast run mode: Using generic adaptive outline")
+            else:
+                with Spinner("Creating initial outline..."):
+                    outline_result = await self._create_initial_outline(prep_res)
+                if self.outline and len(self.outline.get("steps", [])) == 1:
+                    # fast llm respose on the input metoning tis is a direct respose and evalute if the input dosent need an outline
+                    print("Fast direct response triggered")
+                    response = await self.agent_instance.a_run_llm_completion(
+                        model=prep_res.get("fast_llm_model", "openrouter/anthropic/claude-3-haiku"),
+                        messages=[{"role": "user", "content": prep_res["original_query"]}],
+                        temperature=0.3,
+                        max_tokens=2048,
+                        node_name="LLMReasonerNode",
+                        task_id="fast_direct_response"
+                    )
+                    return {
+                            "final_result": response,
+                            "reasoning_loops": self.current_loop_count,
+                            "reasoning_context": self.reasoning_context.copy(),
+                            "internal_task_stack": self.internal_task_stack.copy(),
+                            "outline": self.outline,
+                            "outline_completion": self.current_outline_step,
+                            "performance_metrics": self.performance_metrics,
+                            "auto_recovery_attempts": self.auto_recovery_attempts
+                        }
+                elif not outline_result:
+                    return await self._fallback_direct_response(prep_res)
+            # -----------------------------------------
 
         final_result = None
         consecutive_no_progress = 0
@@ -4122,6 +4188,13 @@ class LLMReasonerNode(AsyncNode):
 
             # Auto-context management
             await self._manage_context_size()
+
+            # AUTO-CLEAN: Reasoning scope compression every 10 loops
+            if self.current_loop_count % 10 == 0 and self.variable_manager:
+                rprint(f"🔄 Auto-compressing reasoning scope at loop {self.current_loop_count}")
+                compression_result = await self.variable_manager.auto_compress_reasoning_scope()
+                if compression_result.get('compressed'):
+                    rprint(f"✅ Reasoning compressed: {compression_result['stats']['compression_ratio']}x reduction")
 
             # Progress tracking
             if progress_tracker:
@@ -4571,6 +4644,39 @@ Create the outline now:"""
             "total_steps": len(steps)
         }
 
+    def _create_generic_adaptive_outline(self) -> dict:
+        """Erstellt eine generische Gliederung für schnelle, werkzeugbasierte Antworten.
+
+        Diese Methode wird verwendet, wenn fast_run=True ist, um die detaillierte
+        Outline-Erstellung zu überspringen und stattdessen eine vordefinierte,
+        adaptive Gliederung zu verwenden, die sofortige Werkzeugnutzung fördert.
+
+        Returns:
+            dict: Eine generische Outline-Struktur mit 2 Schritten
+        """
+        return {
+            "steps": [
+                {
+                    "description": "Initiale Analyse und sofortige Werkzeugnutzung für eine schnelle Antwort.",
+                    "method": "delegate_to_llm_tool_node",
+                    "expected_outcome": "Eine direkte Antwort oder das Ergebnis einer einzelnen Werkzeugausführung.",
+                    "success_criteria": "Ein Werkzeug wurde aufgerufen oder eine direkte Antwort wurde formuliert.",
+                    "status": "pending"
+                },
+                {
+                    "description": "Ergebnisse zusammenfassen und eine umfassende Antwort geben.",
+                    "method": "direct_response",
+                    "expected_outcome": "Eine vollständige Antwort auf die Benutzeranfrage.",
+                    "success_criteria": "Die Benutzeranfrage ist vollständig beantwortet.",
+                    "is_final": True,
+                    "status": "pending"
+                }
+            ],
+            "created_at": datetime.now().isoformat(),
+            "total_steps": 2,
+            "fast_run_mode": True
+        }
+
     def _build_enhanced_system_context(self, shared) -> str:
         """Build comprehensive system context with variable system info"""
         context_parts = []
@@ -4716,6 +4822,10 @@ Create the outline now:"""
                 "timestamp": datetime.now().isoformat()
             }
             summaries = self.variable_manager.get("reasoning.context_summaries", [])
+            # Ensure summaries is a list
+            if not isinstance(summaries, list):
+                print(f"WARNING: summaries is not a list, but a {type(summaries)}", summaries)
+                summaries = [summaries]
             summaries.append(summary_data)
             self.variable_manager.set("reasoning.context_summaries", summaries[-10:])  # Keep last 10
 
@@ -4866,6 +4976,7 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Purpose: Manage your high-level to-do list
 - Actions: "add", "remove", "complete", "get_current"
 - Example: META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research competitor analysis data")
+- ACTIONS ONL AVALABLE ACTIONS ("add", "remove", "complete", "get_current")
 
 **META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
 - Purpose: Delegate specific, self-contained tasks requiring external tools
@@ -5303,33 +5414,148 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
         return False
 
-    async def _trigger_auto_recovery(self, prep_res):
-        """Trigger auto-recovery mechanism"""
-        self.auto_recovery_attempts += 1
 
-        # Store failure pattern
+    def _log_recovery_action(self, strategy: str, details: str):
+        """Protokolliert eine Wiederherstellungsaktion im Reasoning-Kontext für Transparenz."""
+        eprint(f"Auto-Recovery (Attempt {self.auto_recovery_attempts}): {strategy} - {details}")
+        self.reasoning_context.append({
+            "type": "auto_recovery",
+            "content": f"AUTO-RECOVERY TRIGGERED (Attempt {self.auto_recovery_attempts}). Strategy: {strategy}. Details: {details}",
+            "recovery_attempt": self.auto_recovery_attempts,
+            "strategy": strategy,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    def _analyze_failure_pattern(self) -> dict:
+        """Analysiert die letzten Aktionen und Fehler, um das Fehlermuster zu bestimmen."""
+        analysis = {
+            "is_repetitive_action": False,
+            "last_error": None,
+            "is_persistent_error": False
+        }
+
+        # 1. Repetitive Aktionen prüfen
+        if len(self.last_action_signatures) >= 3:
+            recent_actions = self.last_action_signatures[-3:]
+            if len(set(recent_actions)) == 1:
+                analysis["is_repetitive_action"] = True
+                analysis["repeated_action"] = recent_actions[0]
+
+        # 2. Letzten Fehler prüfen
+        error_entries = [e for e in self.reasoning_context if e.get("type") == "error"]
+        if error_entries:
+            last_error = error_entries[-1]
+            analysis["last_error"] = {
+                "message": last_error.get("content"),
+                "type": last_error.get("error_type")
+            }
+            # Prüfen, ob derselbe Fehler mehrmals hintereinander aufgetreten ist
+            if len(error_entries) >= 2 and error_entries[-1].get("error_type") == error_entries[-2].get(
+                "error_type"):
+                analysis["is_persistent_error"] = True
+
+        return analysis
+
+    async def _trigger_auto_recovery(self, prep_res: dict):
+        """
+        Mehrstufige Auto-Recovery, um aus Endlosschleifen oder Sackgassen auszubrechen.
+        Eskaliert von sanften Eingriffen bis hin zu drastischen Maßnahmen.
+        """
+        self.auto_recovery_attempts += 1
+        failure_analysis = self._analyze_failure_pattern()
+
+        strategy = "None"
+        details = "Starting recovery process..."
+
+        # Strategie 1 & 2: Sanfter Eingriff - Kontext-Injektion
+        if self.auto_recovery_attempts <= 2:
+            strategy = "Context Injection"
+            details = "Injecting a strong warning into the context to force a change in LLM strategy."
+            self._log_recovery_action(strategy, details)
+
+            error_info = f"Last error was: {failure_analysis['last_error']['message']}" if failure_analysis[
+                'last_error'] else "Repetitive actions were detected."
+
+            self.reasoning_context.append({
+                "type": "system_warning",
+                "content": f"CRITICAL WARNING: Loop detected. {error_info} You MUST change your approach now. Do not repeat the last action. Try a different meta-tool or analyze the problem from a new perspective.",
+                "timestamp": datetime.now().isoformat()
+            })
+            # Gibt dem Loop-Detektor eine neue Chance
+            self.last_action_signatures.clear()
+
+        # Strategie 3 & 4: Mittlerer Eingriff - Task-Stack bereinigen
+        elif self.auto_recovery_attempts <= 4:
+            strategy = "Task Stack Cleanup"
+            current_task = self._get_current_stack_task()
+            if current_task and current_task.get("description"):
+                details = f"The current task '{current_task['description'][:50]}...' seems to be causing a loop. Marking it as failed and skipping."
+                self._log_recovery_action(strategy, details)
+                # Finde und aktualisiere die Aufgabe im Stack
+                for task in self.internal_task_stack:
+                    if task.get("status") == "pending":
+                        task["status"] = "failed_and_skipped"
+                        task["error"] = "Skipped by auto-recovery due to persistent failure."
+                        break
+            else:
+                details = "No pending task found to clean up. Proceeding to next recovery level."
+                self._log_recovery_action(strategy, details)
+                # Wenn kein Task da ist, direkt zur nächsten Stufe
+                self.auto_recovery_attempts = 5
+                await self._trigger_auto_recovery(prep_res)  # Ruft sich selbst für die nächste Stufe auf
+
+        # Strategie 5 & 6: Harter Eingriff - Outline-Schritt überspringen
+        elif self.auto_recovery_attempts <= 6:
+            strategy = "Skip Outline Step"
+            if self.outline and self.current_outline_step < len(self.outline["steps"]):
+                current_step_desc = self.outline["steps"][self.current_outline_step].get("description", "N/A")
+                details = f"Skipping the entire outline step '{current_step_desc[:50]}...' as it seems fundamentally flawed."
+                self._log_recovery_action(strategy, details)
+                await self._emergency_step_skip(prep_res)
+            else:
+                details = "Cannot skip step, already at the end of the outline."
+                self._log_recovery_action(strategy, details)
+                self.auto_recovery_attempts = 7
+                await self._trigger_auto_recovery(prep_res)
+
+        # Strategie 7: Drastischer Eingriff - Komplette Neuplanung
+        elif self.auto_recovery_attempts == 7:
+            strategy = "Full Re-Plan"
+            details = "The current plan seems unrecoverable. Attempting to create a new outline from scratch with failure context."
+            self._log_recovery_action(strategy, details)
+
+            # Füge expliziten Fehlerkontext für die Neuplanung hinzu
+            self.reasoning_context.append({
+                "type": "system_event",
+                "content": "REPLANNING INITIATED. The previous plan failed repeatedly. You must create a different plan to achieve the original query.",
+                "timestamp": datetime.now().isoformat()
+            })
+            self.outline = None  # Erzwingt die Neuerstellung
+            self.internal_task_stack.clear()  # Leert den alten Task-Stack
+            await self._create_initial_outline(prep_res)
+
+        # Letzter Ausweg: Notfall-Abschluss
+        else:
+            strategy = "Emergency Completion"
+            details = "Maximum recovery attempts reached. Forcing termination and generating a summary of the partial progress."
+            self._log_recovery_action(strategy, details)
+            await self._emergency_completion(prep_res)
+
+        # Speichere das Fehlermuster für zukünftiges Lernen
         if self.variable_manager:
             failure_data = {
                 "timestamp": datetime.now().isoformat(),
                 "loop_count": self.current_loop_count,
                 "outline_step": self.current_outline_step,
                 "last_actions": self.last_action_signatures[-5:],
-                "recovery_attempt": self.auto_recovery_attempts
+                "recovery_attempt": self.auto_recovery_attempts,
+                "recovery_strategy": strategy,
+                "failure_analysis": failure_analysis
             }
             failures = self.variable_manager.get("reasoning.failure_patterns", [])
+            if not isinstance(failures, list): failures = []  # Sicherheitsabfrage
             failures.append(failure_data)
-            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])  # Keep last 20
-
-        # Recovery strategies
-        if self.auto_recovery_attempts == 1:
-            # Force outline step advancement
-            await self._force_outline_advancement(prep_res)
-        elif self.auto_recovery_attempts == 2:
-            # Skip current step and move to next
-            await self._emergency_step_skip(prep_res)
-        else:
-            # Final emergency: force completion
-            await self._emergency_completion(prep_res)
+            self.variable_manager.set("reasoning.failure_patterns", failures[-20:])
 
     async def _force_outline_advancement(self, prep_res):
         """Force advancement to next outline step"""
@@ -5991,6 +6217,15 @@ DELEGATION END
             # Mark outline step completion if specified
             if outline_step_completion:
                 await self._mark_step_completion(prep_res, "delegation_complete", context_addition)
+
+            # AUTO-CLEAN: Deduplicate results and archive large variables after delegation
+            if self.variable_manager:
+                rprint("🔄 Auto-cleaning after delegation...")
+
+                # 1. Deduplicate file operations
+                dedup_result = await self.variable_manager.auto_deduplicate_results_scope()
+                if dedup_result.get('deduplicated') and dedup_result['stats']['files_deduplicated'] > 0:
+                    rprint(f"✅ Deduplicated {dedup_result['stats']['files_deduplicated']} files")
 
             return {"context_addition": context_addition}
 
@@ -7203,9 +7438,13 @@ class VariableManager:
             'results': {},
             'tasks': {},
             'user': {},
-            'system': {}
+            'system': {},
+            'reasoning': {},  # For reasoning scope compression
+            'files': {},  # For file operation deduplication
+            'session_archive': {}  # For large data archiving
         }
         self._cache = {}
+        self.agent_instance = None  # Will be set by FlowAgent
 
     def register_scope(self, name: str, data: dict):
         """Register a new variable scope"""
@@ -7660,6 +7899,350 @@ class VariableManager:
         ])
 
         return "\n".join(context_parts)
+
+    # ===== AUTO-CLEAN FUNCTIONS =====
+
+    async def auto_compress_reasoning_scope(self) -> dict[str, Any]:
+        """
+        AUTO-CLEAN FUNCTION 1: LLM-basierte Komprimierung des Reasoning Context
+
+        Analysiert und komprimiert reasoning_context aus LLMReasonerNode:
+        - Was hat funktioniert und was nicht
+        - Minimale Zusammenfassung und Akkumulation
+        - Speichert komprimierte Version und referenziert sie
+        - Wird automatisch nach jeder 10. Loop in LLMReasonerNode aufgerufen
+
+        Returns:
+            dict mit compression_stats und compressed_data
+        """
+        try:
+            # Zugriff auf reasoning_context aus LLMReasonerNode
+            if not self.agent_instance:
+                return {"compressed": False, "reason": "no_agent_instance"}
+
+            if not hasattr(self.agent_instance, 'task_flow'):
+                return {"compressed": False, "reason": "no_task_flow"}
+
+            if not hasattr(self.agent_instance.task_flow, 'llm_reasoner'):
+                return {"compressed": False, "reason": "no_llm_reasoner"}
+
+            llm_reasoner = self.agent_instance.task_flow.llm_reasoner
+            if not hasattr(llm_reasoner, 'reasoning_context'):
+                return {"compressed": False, "reason": "no_reasoning_context"}
+
+            reasoning_context = llm_reasoner.reasoning_context
+
+            if not reasoning_context or len(reasoning_context) < 10:
+                return {"compressed": False, "reason": "context_too_small"}
+
+            # Sammle alle reasoning-relevanten Daten aus der Liste
+            raw_data = {
+                "reasoning_entries": [e for e in reasoning_context if e.get("type") == "reasoning"],
+                "meta_tool_results": [e for e in reasoning_context if e.get("type") == "meta_tool_result"],
+                "errors": [e for e in reasoning_context if e.get("type") == "error"],
+                "context_summaries": [e for e in reasoning_context if e.get("type") == "context_summary"],
+                "total_entries": len(reasoning_context)
+            }
+
+            # Berechne Größe vor Komprimierung
+            size_before = len(json.dumps(raw_data, default=str))
+
+            # LLM-basierte Analyse und Komprimierung
+            if self.agent_instance and LITELLM_AVAILABLE:
+                analysis_prompt = f"""Analyze and compress the following reasoning session data.
+
+Raw Data:
+{json.dumps(raw_data, indent=2, default=str)[:3000]}...
+
+Create a minimal summary that captures:
+1. What worked (successful patterns)
+2. What didn't work (failure patterns)
+3. Key learnings and insights
+4. Important results to keep
+
+Format as JSON:
+{{
+    "summary": "Brief overall summary",
+    "successes": ["pattern1", "pattern2"],
+    "failures": ["pattern1", "pattern2"],
+    "key_learnings": ["learning1", "learning2"],
+    "important_results": {{"key": "value"}}
+}}"""
+
+                try:
+                    compressed_response = await self.agent_instance.a_llm_call(
+                        model=self.agent_instance.amd.fast_llm_model,
+                        messages=[{"role": "user", "content": analysis_prompt}],
+                        temperature=0.1,
+                        node_name="ReasoningCompressor"
+                    )
+
+                    # Parse LLM response
+                    import re
+                    json_match = re.search(r'\{.*\}', compressed_response, re.DOTALL)
+                    if json_match:
+                        compressed_data = json.loads(json_match.group(0))
+                    else:
+                        compressed_data = {"summary": compressed_response[:500]}
+
+                except Exception as e:
+                    rprint(f"LLM compression failed, using fallback: {e}")
+                    compressed_data = self._fallback_reasoning_compression(raw_data)
+            else:
+                compressed_data = self._fallback_reasoning_compression(raw_data)
+
+            # Speichere komprimierte Version
+            timestamp = datetime.now().isoformat()
+            compression_entry = {
+                "timestamp": timestamp,
+                "compressed_data": compressed_data,
+                "size_before": size_before,
+                "size_after": len(json.dumps(compressed_data, default=str)),
+                "compression_ratio": round(len(json.dumps(compressed_data, default=str)) / size_before, 2)
+            }
+
+            # Archiviere alte Daten
+            archive_key = f"reasoning_archive_{timestamp}"
+            self.scopes['session_archive'][archive_key] = {
+                "type": "reasoning_compression",
+                "original_data": raw_data,
+                "compressed_data": compressed_data,
+                "metadata": compression_entry
+            }
+
+            # Ersetze reasoning_context mit komprimierter Version
+            # Behalte nur die letzten 5 Einträge + komprimierte Summary
+            recent_entries = reasoning_context[-5:] if len(reasoning_context) > 5 else reasoning_context
+
+            compressed_entry = {
+                "type": "compressed_summary",
+                "timestamp": timestamp,
+                "summary": compressed_data,
+                "archive_reference": archive_key,
+                "original_entries_count": len(reasoning_context),
+                "compression_ratio": compression_entry['compression_ratio']
+            }
+
+            # Setze neuen reasoning_context
+            llm_reasoner.reasoning_context = [compressed_entry] + recent_entries
+
+            # Speichere auch im reasoning scope für Referenz
+            self.scopes['reasoning'] = {
+                "compressed": True,
+                "last_compression": timestamp,
+                "summary": compressed_data,
+                "archive_reference": archive_key,
+                "entries_before": len(reasoning_context),
+                "entries_after": len(llm_reasoner.reasoning_context)
+            }
+
+            rprint(f"✅ Reasoning context compressed: {len(reasoning_context)} -> {len(llm_reasoner.reasoning_context)} entries ({compression_entry['compression_ratio']}x size reduction)")
+
+            return {
+                "compressed": True,
+                "stats": compression_entry,
+                "archive_key": archive_key,
+                "entries_before": len(reasoning_context),
+                "entries_after": len(llm_reasoner.reasoning_context)
+            }
+
+        except Exception as e:
+            eprint(f"Reasoning compression failed: {e}")
+            return {"compressed": False, "error": str(e)}
+
+    def _fallback_reasoning_compression(self, raw_data: dict) -> dict:
+        """Fallback compression without LLM"""
+        return {
+            "summary": f"Compressed {len(raw_data.get('failure_patterns', []))} failures, {len(raw_data.get('successful_patterns', []))} successes",
+            "successes": [p.get("query", "")[:50] for p in raw_data.get("successful_patterns", [])[-5:]],
+            "failures": [p.get("reason", "")[:50] for p in raw_data.get("failure_patterns", [])[-5:]],
+            "key_learnings": ["See archive for details"],
+            "important_results": raw_data.get("latest_results", {})
+        }
+
+    async def auto_clean(self):
+        await asyncio.gather(*
+                       [asyncio.create_task(self.auto_compress_reasoning_scope()),
+                        asyncio.create_task(self.auto_deduplicate_results_scope())]
+                    )
+
+    async def auto_deduplicate_results_scope(self) -> dict[str, Any]:
+        """
+        AUTO-CLEAN FUNCTION 2: Deduplizierung des Results Scope
+
+        Vereinheitlicht File-Operationen (read_file, write_file, list_dir):
+        - Wenn zweimal von derselben Datei gelesen wurde, nur aktuellste Version behalten
+        - Beim Schreiben immer nur aktuellste Version im 'files' scope
+        - Agent hat immer nur die aktuellste Version
+        - Wird nach jeder Delegation aufgerufen
+
+        Returns:
+            dict mit deduplication_stats
+        """
+        try:
+            results_scope = self.scopes.get('results', {})
+            files_scope = self.scopes.get('files', {})
+
+            if not results_scope:
+                return {"deduplicated": False, "reason": "no_results"}
+
+            # Tracking für File-Operationen
+            file_operations = {
+                'read': {},  # filepath -> [result_ids]
+                'write': {},  # filepath -> [result_ids]
+                'list': {}   # dirpath -> [result_ids]
+            }
+
+            # Analysiere alle Results nach File-Operationen
+            for result_id, result_data in results_scope.items():
+                if not isinstance(result_data, dict):
+                    continue
+
+                # Erkenne File-Operationen
+                data = result_data.get('data', {})
+                if isinstance(data, dict):
+                    # read_file detection
+                    if 'content' in data and 'path' in data:
+                        filepath = data.get('path', '')
+                        if filepath:
+                            if filepath not in file_operations['read']:
+                                file_operations['read'][filepath] = []
+                            file_operations['read'][filepath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+                    # write_file detection
+                    elif 'written' in data or 'file_path' in data:
+                        filepath = data.get('file_path', data.get('path', ''))
+                        if filepath:
+                            if filepath not in file_operations['write']:
+                                file_operations['write'][filepath] = []
+                            file_operations['write'][filepath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+                    # list_dir detection
+                    elif 'files' in data or 'directories' in data:
+                        dirpath = data.get('directory', data.get('path', ''))
+                        if dirpath:
+                            if dirpath not in file_operations['list']:
+                                file_operations['list'][dirpath] = []
+                            file_operations['list'][dirpath].append({
+                                'result_id': result_id,
+                                'timestamp': result_data.get('timestamp', ''),
+                                'data': data
+                            })
+
+            # Deduplizierung: Nur aktuellste Version behalten
+            dedup_stats = {
+                'files_deduplicated': 0,
+                'results_removed': 0,
+                'files_unified': 0
+            }
+
+            # Dedupliziere read operations
+            for filepath, operations in file_operations['read'].items():
+                if len(operations) > 1:
+                    # Sortiere nach Timestamp, behalte neueste
+                    operations.sort(key=lambda x: x['timestamp'], reverse=True)
+                    latest = operations[0]
+
+                    # Speichere im files scope
+                    files_scope[filepath] = {
+                        'type': 'file_content',
+                        'content': latest['data'].get('content', ''),
+                        'last_read': latest['timestamp'],
+                        'result_id': latest['result_id'],
+                        'path': filepath
+                    }
+
+                    # Entferne alte Results
+                    for old_op in operations[1:]:
+                        if old_op['result_id'] in results_scope:
+                            # Archiviere statt löschen
+                            archive_key = f"archived_read_{old_op['result_id']}"
+                            self.scopes['session_archive'][archive_key] = results_scope[old_op['result_id']]
+                            del results_scope[old_op['result_id']]
+                            dedup_stats['results_removed'] += 1
+
+                    dedup_stats['files_deduplicated'] += 1
+
+            # Dedupliziere write operations
+            for filepath, operations in file_operations['write'].items():
+                if len(operations) > 1:
+                    operations.sort(key=lambda x: x['timestamp'], reverse=True)
+                    latest = operations[0]
+
+                    # Update files scope
+                    if filepath in files_scope:
+                        files_scope[filepath]['last_write'] = latest['timestamp']
+                        files_scope[filepath]['write_result_id'] = latest['result_id']
+
+                    # Entferne alte write results
+                    for old_op in operations[1:]:
+                        if old_op['result_id'] in results_scope:
+                            archive_key = f"archived_write_{old_op['result_id']}"
+                            self.scopes['session_archive'][archive_key] = results_scope[old_op['result_id']]
+                            del results_scope[old_op['result_id']]
+                            dedup_stats['results_removed'] += 1
+
+                    dedup_stats['files_deduplicated'] += 1
+
+            # Update scopes
+            self.scopes['results'] = results_scope
+            self.scopes['files'] = files_scope
+            dedup_stats['files_unified'] = len(files_scope)
+
+            if dedup_stats['files_deduplicated'] > 0:
+                rprint(f"✅ Results deduplicated: {dedup_stats['files_deduplicated']} files, {dedup_stats['results_removed']} old results archived")
+
+            return {
+                "deduplicated": True,
+                "stats": dedup_stats
+            }
+
+        except Exception as e:
+            eprint(f"Results deduplication failed: {e}")
+            return {"deduplicated": False, "error": str(e)}
+
+    def get_archived_variable(self, archive_key: str) -> Any:
+        """
+        Hilfsfunktion zum Abrufen archivierter Variablen
+
+        Args:
+            archive_key: Der Archive-Key (z.B. "results.large_file_content")
+
+        Returns:
+            Der vollständige Wert der archivierten Variable
+        """
+        archive_entry = self.scopes.get('session_archive', {}).get(archive_key)
+        if archive_entry and isinstance(archive_entry, dict):
+            return archive_entry.get('value')
+        return None
+
+    def list_archived_variables(self) -> list[dict]:
+        """
+        Liste alle archivierten Variablen mit Metadaten
+
+        Returns:
+            Liste von Dictionaries mit Archive-Informationen
+        """
+        archived = []
+        for key, entry in self.scopes.get('session_archive', {}).items():
+            if isinstance(entry, dict) and entry.get('type') == 'large_variable':
+                archived.append({
+                    'archive_key': key,
+                    'original_scope': entry.get('original_scope'),
+                    'original_key': entry.get('original_key'),
+                    'size': entry.get('size'),
+                    'archived_at': entry.get('archived_at'),
+                    'preview': str(entry.get('value', ''))[:100] + '...'
+                })
+        return archived
 
 
 class UnifiedContextManager:
@@ -8206,6 +8789,7 @@ class FlowAgent:
         self.verbose = verbose
         self.enable_pause_resume = enable_pause_resume
         self.checkpoint_interval = checkpoint_interval
+        self.checkpoint_config = CheckpointConfig()
         self.max_parallel_tasks = max_parallel_tasks
         self.progress_tracker = ProgressTracker(progress_callback, agent_name=amd.name)
 
@@ -8223,6 +8807,7 @@ class FlowAgent:
         }
         self.context_manager = UnifiedContextManager(self)
         self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+        self.variable_manager.agent_instance = self  # Set agent reference for auto-clean functions
         self.context_manager.variable_manager = self.variable_manager# Register default scopes
 
         self.shared["context_manager"] = self.context_manager
@@ -8238,6 +8823,12 @@ class FlowAgent:
         self.is_running = False
         self.is_paused = False
         self.last_checkpoint = None
+
+        # Token and cost tracking (persistent across runs)
+        self.total_tokens_in = 0
+        self.total_tokens_out = 0
+        self.total_cost_accumulated = 0.0
+        self.total_llm_calls = 0
         self.checkpoint_data = {}
         self.ac_cost = 0
 
@@ -8394,6 +8985,13 @@ class FlowAgent:
             call_cost = self.progress_tracker.calculate_llm_cost(kwargs["model"], input_tokens,
                                                             output_tokens, response) if self.progress_tracker else 0.0
             self.ac_cost += call_cost
+
+            # Accumulate total tokens and cost
+            self.total_tokens_in += input_tokens
+            self.total_tokens_out += output_tokens
+            self.total_cost_accumulated += call_cost
+            self.total_llm_calls += 1
+
             if self.progress_tracker:
                 await self.progress_tracker.emit_event(ProgressEvent(
                     event_type="llm_call",
@@ -8445,9 +9043,22 @@ class FlowAgent:
         user_id: str = None,
         stream_callback: Callable = None,
         remember: bool = True,
+        as_callback: Callable = None,
+        fast_run: bool = False,
         **kwargs
     ) -> str:
-        """Main entry point für Agent-Ausführung mit UnifiedContextManager"""
+        """Main entry point für Agent-Ausführung mit UnifiedContextManager
+
+        Args:
+            query: Die Benutzeranfrage
+            session_id: Session-ID für Kontext-Management
+            user_id: Benutzer-ID
+            stream_callback: Callback für Streaming-Antworten
+            remember: Ob die Interaktion gespeichert werden soll
+            as_callback: Optional - Callback-Funktion für Echtzeit-Kontext-Injektion
+            fast_run: Optional - Überspringt detaillierte Outline-Phase für schnelle Antworten
+            **kwargs: Zusätzliche Argumente
+        """
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
@@ -8458,7 +9069,7 @@ class FlowAgent:
             status=NodeStatus.RUNNING,
             node_name="FlowAgent",
             session_id=session_id,
-            metadata={"query": query, "user_id": user_id}
+            metadata={"query": query, "user_id": user_id, "fast_run": fast_run, "has_callback": as_callback is not None}
         ))
 
         try:
@@ -8501,14 +9112,26 @@ class FlowAgent:
                 "remember": remember,
                 # CENTRAL: Context Manager ist die primäre Context-Quelle
                 "context_manager": self.context_manager,
-                "variable_manager": self.variable_manager
+                "variable_manager": self.variable_manager,
+                "fast_run": fast_run,  # fast_run-Flag übergeben
             })
+
+            # --- Neu: as_callback behandeln ---
+            if as_callback:
+                self.shared['callback_context'] = {
+                    'callback_timestamp': datetime.now().isoformat(),
+                    'callback_name': getattr(as_callback, '__name__', 'unnamed_callback'),
+                    'initial_query': query
+                }
+            # --------------------------------
 
             # Set LLM models in shared context
             self.shared['fast_llm_model'] = self.amd.fast_llm_model
             self.shared['complex_llm_model'] = self.amd.complex_llm_model
             self.shared['persona_config'] = self.amd.persona
             self.shared['use_fast_response'] = self.amd.use_fast_response
+
+            await self.variable_manager.auto_clean()
 
             # Set system status
             self.shared["system_status"] = "running"
@@ -9014,7 +9637,7 @@ class FlowAgent:
         else:
             wprint("No persona configured to update")
 
-    def get_available_variables(self) -> dict[str, str]:
+    def get_available_variables(self) -> dict[str, dict]:
         """Get available variables for dynamic formatting"""
         return self.variable_manager.get_available_variables()
 
@@ -9124,7 +9747,8 @@ class FlowAgent:
             "task_types_used": {},
             "tools_used": [],
             "adaptations": self.shared.get("plan_adaptations", 0),
-            "execution_timeline": []
+            "execution_timeline": [],
+            "results_store": results_store
         }
 
         for task_id, task in tasks.items():
@@ -9238,65 +9862,43 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
     # ===== CHECKPOINT MANAGEMENT =====
 
     async def _create_checkpoint(self) -> AgentCheckpoint:
-        """Vereinfachte Checkpoint-Erstellung - fokussiert auf wesentliche Daten"""
+        """
+        Erstellt einen robusten, serialisierbaren Checkpoint, der nur reine Daten enthält.
+        Laufzeitobjekte und nicht-serialisierbare Elemente werden explizit ausgeschlossen.
+        """
         try:
-            # Budget Manager Daten vor Checkpoint speichern
+            rprint("Starte Erstellung eines Daten-Checkpoints...")
             if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
                 self.amd.budget_manager.save_data()
 
-            # Bereite AMD-Daten vor (ohne budget_manager für Serialisierung)
             amd_data = self.amd.model_dump()
-            amd_data['budget_manager'] = None
+            amd_data['budget_manager'] = None  # Explizit entfernen, da es nicht serialisierbar ist
 
-            # Sammle wesentliche Session-Daten (vereinfacht)
+            # 1. Bereinige die Variable-Scopes: Dies ist der wichtigste Schritt.
+            cleaned_variable_scopes = {}
+            if self.variable_manager:
+                # Wir erstellen eine tiefe Kopie, um den laufenden Zustand nicht zu verändern
+                # import copy
+                scopes_copy = self.variable_manager.scopes.copy()
+                cleaned_variable_scopes = _clean_data_for_serialization(scopes_copy)
+
+            # 2. Bereinige Session-Daten
             session_data = {}
             if self.context_manager and self.context_manager.session_managers:
                 for session_id, session in self.context_manager.session_managers.items():
-                    try:
-                        if hasattr(session, 'history') and session.history:
-                            # Nur die letzten 20 Nachrichten pro Session für Checkpoint
-                            recent_history = session.history[-20:]
-                            session_data[session_id] = {
-                                "history": recent_history,
-                                "session_type": "chatsession",
-                                "message_count": len(session.history)
-                            }
-                        elif isinstance(session, dict) and session.get('history'):
-                            session_data[session_id] = {
-                                "history": session['history'][-20:],
-                                "session_type": "fallback",
-                                "message_count": len(session['history'])
-                            }
-                    except Exception as e:
-                        rprint(f"Skipping session {session_id} in checkpoint: {e}")
+                    history = []
+                    # Greife sicher auf die History zu
+                    if hasattr(session, 'history') and session.history:
+                        history = session.history[-50:]  # Nur die letzten 50 Interaktionen speichern
+                    elif isinstance(session, dict) and 'history' in session:
+                        history = session.get('history', [])[-50:]
 
-            # Sammle serialisierbare Variable-Scopes
-            variable_scopes = {}
-            if self.variable_manager:
-                NON_SERIALIZABLE_KEYS = {
-                    "tool_registry", "variable_manager", "context_manager", "agent_instance",
-                    "llm_tool_node_instance", "task_planner_instance", "task_executor_instance",
-                    "progress_tracker", "session_managers", "stream_callback"
-                }
+                    session_data[session_id] = {
+                        "history": history,
+                        "session_type": "chatsession" if hasattr(session, 'history') else "fallback"
+                    }
 
-                for scope_name, scope_data in self.variable_manager.scopes.items():
-                    if isinstance(scope_data, dict):
-                        # Filtere nicht-serialisierbare Objekte heraus
-                        clean_scope = {
-                            k: v for k, v in scope_data.items()
-                            if k not in NON_SERIALIZABLE_KEYS
-                        }
-                        variable_scopes[scope_name] = clean_scope
-                    else:
-                        try:
-                            # Teste Serialisierbarkeit
-                            pickle.dumps(scope_data)
-                            variable_scopes[scope_name] = scope_data
-                        except:
-                            # Überspringe nicht-serialisierbare Scopes
-                            pass
-
-            # Erstelle konsolidierten Checkpoint
+            # 3. Erstelle den Checkpoint nur mit den bereinigten, reinen Daten
             checkpoint = AgentCheckpoint(
                 timestamp=datetime.now(),
                 agent_state={
@@ -9304,7 +9906,12 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                     "is_paused": self.is_paused,
                     "amd_data": amd_data,
                     "active_session": self.active_session,
-                    "system_status": self.shared.get("system_status", "idle")
+                    "system_status": self.shared.get("system_status", "idle"),
+                    # Token and cost tracking
+                    "total_tokens_in": self.total_tokens_in,
+                    "total_tokens_out": self.total_tokens_out,
+                    "total_cost_accumulated": self.total_cost_accumulated,
+                    "total_llm_calls": self.total_llm_calls
                 },
                 task_state={
                     task_id: asdict(task) for task_id, task in self.shared.get("tasks", {}).items()
@@ -9314,22 +9921,23 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 metadata={
                     "session_id": self.shared.get("session_id", "default"),
                     "last_query": self.shared.get("current_query", ""),
-                    "checkpoint_version": "3.0_simplified",
+                    "checkpoint_version": "4.1_data_only",
                     "agent_name": self.amd.name
                 },
-                # Konsolidierte Zusatzdaten
+                # Die bereinigten Zusatzdaten
                 session_data=session_data,
-                variable_scopes=variable_scopes,
+                variable_scopes=cleaned_variable_scopes,
                 results_store=self.shared.get("results", {}),
-                conversation_history=self.shared.get("conversation_history", [])[-50:],  # Letzte 50 Nachrichten
+                conversation_history=self.shared.get("conversation_history", [])[-100:],
                 tool_capabilities=self._tool_capabilities.copy()
             )
 
-            rprint(f"Vereinfachter Checkpoint erstellt mit {len(session_data)} Sessions")
+            rprint(
+                f"Daten-Checkpoint erfolgreich erstellt. {len(cleaned_variable_scopes)} Scopes bereinigt und gespeichert.")
             return checkpoint
 
         except Exception as e:
-            eprint(f"Checkpoint-Erstellung fehlgeschlagen: {e}")
+            eprint(f"FEHLER bei der Checkpoint-Erstellung: {e}")
             import traceback
             print(traceback.format_exc())
             raise
@@ -9424,6 +10032,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             with open(latest_checkpoint_path, 'rb') as f:
                 checkpoint: AgentCheckpoint = pickle.load(f)
 
+                print("Loaded Checkpoint: ", f.__sizeof__())
             # Stelle Agent-Status wieder her
             restore_stats = await self._restore_from_checkpoint_simplified(checkpoint, auto_restore_history)
 
@@ -9446,25 +10055,29 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             return {"success": False, "error": str(e)}
 
     async def _restore_from_checkpoint_simplified(self, checkpoint: AgentCheckpoint, auto_restore_history: bool) -> \
-    dict[
-        str, Any]:
-        """Vereinfachte Checkpoint-Wiederherstellung"""
+    dict[str, Any]:
+        """
+        Stellt den Agentenzustand aus einem bereinigten Daten-Checkpoint wieder her, indem Laufzeitobjekte
+        neu initialisiert und mit den geladenen Daten hydriert werden.
+        """
         restore_stats = {
-            "agent_state_restored": False,
-            "world_model_restored": False,
-            "tasks_restored": 0,
-            "sessions_restored": 0,
-            "variables_restored": 0,
-            "conversation_restored": 0,
-            "errors": []
+            "agent_state_restored": False, "world_model_restored": False,
+            "tasks_restored": 0, "sessions_restored": 0, "variables_restored": 0,
+            "conversation_restored": 0, "errors": []
         }
+        rprint("Starte Wiederherstellung aus Daten-Checkpoint...")
 
         try:
-            # 1. Agent-Status wiederherstellen
+            # 1. Agent-Status wiederherstellen (einfache Daten)
             if checkpoint.agent_state:
-                self.is_running = checkpoint.agent_state.get("is_running", False)
                 self.is_paused = checkpoint.agent_state.get("is_paused", False)
                 self.active_session = checkpoint.agent_state.get("active_session")
+
+                # Token and cost tracking wiederherstellen
+                self.total_tokens_in = checkpoint.agent_state.get("total_tokens_in", 0)
+                self.total_tokens_out = checkpoint.agent_state.get("total_tokens_out", 0)
+                self.total_cost_accumulated = checkpoint.agent_state.get("total_cost_accumulated", 0.0)
+                self.total_llm_calls = checkpoint.agent_state.get("total_llm_calls", 0)
 
                 # AMD-Daten selektiv wiederherstellen
                 amd_data = checkpoint.agent_state.get("amd_data", {})
@@ -9489,33 +10102,10 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 2. World Model wiederherstellen
             if checkpoint.world_model:
                 self.shared["world_model"] = checkpoint.world_model.copy()
-                self.world_model = checkpoint.world_model.copy()
+                self.world_model = self.shared["world_model"]
                 restore_stats["world_model_restored"] = True
 
-            # 3. Variable System wiederherstellen
-            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
-                # Variable Manager neu initialisieren
-                self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
-
-                # Basis-Scopes einrichten
-                self._setup_variable_scopes()
-
-                # Gespeicherte Scopes wiederherstellen
-                for scope_name, scope_data in checkpoint.variable_scopes.items():
-                    try:
-                        self.variable_manager.register_scope(scope_name, scope_data)
-                        restore_stats["variables_restored"] += 1
-                    except Exception as e:
-                        restore_stats["errors"].append(f"Variable scope {scope_name}: {e}")
-
-                # Runtime-Objekte wieder einsetzen
-                self.variable_manager.set("shared", "variable_manager", self.variable_manager)
-                self.variable_manager.set("shared", "context_manager", self.context_manager)
-                self.variable_manager.set("shared", "agent_instance", self)
-
-                self.shared["variable_manager"] = self.variable_manager
-
-            # 4. Tasks wiederherstellen
+            # 3. Tasks wiederherstellen
             if checkpoint.task_state:
                 restored_tasks = {}
                 for task_id, task_data in checkpoint.task_state.items():
@@ -9536,13 +10126,38 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
                 self.shared["tasks"] = restored_tasks
 
-            # 5. Results Store wiederherstellen
+            # 4. Results Store wiederherstellen
             if hasattr(checkpoint, 'results_store') and checkpoint.results_store:
                 self.shared["results"] = checkpoint.results_store
                 if self.variable_manager:
                     self.variable_manager.set_results_store(checkpoint.results_store)
 
-            # 6. Sessions und Conversation wiederherstellen (falls gewünscht)
+            # 5. Variable System wiederherstellen (KRITISCHER TEIL)
+            if hasattr(checkpoint, 'variable_scopes') and checkpoint.variable_scopes:
+                # A. Der VariableManager wird mit dem geladenen World Model neu erstellt.
+                self.variable_manager = VariableManager(self.shared["world_model"], self.shared)
+                self._setup_variable_scopes()
+
+                # B. Stellen Sie die bereinigten Daten-Scopes wieder her.
+                for scope_name, scope_data in checkpoint.variable_scopes.items():
+                    self.variable_manager.register_scope(scope_name, scope_data)
+                restore_stats["variables_restored"] = len(checkpoint.variable_scopes)
+
+                # C. WICHTIG: Fügen Sie jetzt die Laufzeitobjekte wieder in den 'shared' Scope ein.
+                # Diese werden nicht aus dem Checkpoint geladen, sondern neu zugewiesen.
+                self.shared["variable_manager"] = self.variable_manager
+                self.shared["context_manager"] = self.context_manager
+                self.shared["agent_instance"] = self
+                self.shared["progress_tracker"] = self.progress_tracker
+                self.shared["llm_tool_node_instance"] = self.task_flow.llm_tool_node
+                self.shared["task_planner_instance"] = self.task_flow.planner_node
+                self.shared["task_executor_instance"] = self.task_flow.executor_node
+                # Verbinde den Executor wieder mit der Agent-Instanz
+                self.task_flow.executor_node.agent_instance = self
+
+                rprint("Variablen-System aus Daten wiederhergestellt und Laufzeitobjekte neu verknüpft.")
+
+            # 6. Sessions und Conversation wiederherstellen
             if auto_restore_history:
                 await self._restore_sessions_and_conversation_simplified(checkpoint, restore_stats)
 
@@ -9550,19 +10165,18 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
 
-            # Status setzen
             self.shared["system_status"] = "restored"
             restore_stats["restoration_timestamp"] = datetime.now().isoformat()
 
             rprint(
-                f"Checkpoint wiederhergestellt: {restore_stats['tasks_restored']} Tasks, {restore_stats['sessions_restored']} Sessions, {len(restore_stats['errors'])} Fehler")
+                f"Checkpoint-Wiederherstellung abgeschlossen: {restore_stats['tasks_restored']} Tasks, {restore_stats['sessions_restored']} Sessions, {len(restore_stats['errors'])} Fehler.")
             return restore_stats
 
         except Exception as e:
-            eprint(f"Checkpoint-Wiederherstellung fehlgeschlagen: {e}")
+            eprint(f"FEHLER bei der Checkpoint-Wiederherstellung: {e}")
             import traceback
             print(traceback.format_exc())
-            restore_stats["errors"].append(f"Critical restore error: {e}")
+            restore_stats["errors"].append(f"Kritischer Fehler bei der Wiederherstellung: {e}")
             return restore_stats
 
     async def _restore_sessions_and_conversation_simplified(self, checkpoint: AgentCheckpoint, restore_stats: dict):
@@ -9616,242 +10230,10 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
             try:
                 checkpoint = await self._create_checkpoint()
+                await self.delete_old_checkpoints(keep_count=self.checkpoint_config.max_checkpoints)
                 await self._save_checkpoint(checkpoint)
             except Exception as e:
                 eprint(f"Automatic checkpoint failed: {e}")
-
-
-    async def save_context_to_session(self, session_id: str = None, context_type: str = "full") -> bool:
-        """Save current context to ChatSession for persistent storage"""
-        try:
-            session_id = session_id or self.shared.get("session_id", "default")
-
-            if not self.context_manager:
-                eprint("Context manager not available")
-                return False
-
-            # Build comprehensive context
-            unified_context = await self.context_manager.build_unified_context(session_id, None, context_type)
-
-            # Create context message for session storage
-            context_message = {
-                "role": "system",
-                "content": f"[CONTEXT_SNAPSHOT_{context_type.upper()}] " + json.dumps(unified_context, default=str),
-                "timestamp": datetime.now().isoformat(),
-                "context_type": context_type,
-                "metadata": {
-                    "is_context_snapshot": True,
-                    "context_version": "2.0",
-                    "agent_name": self.amd.name,
-                    "session_stats": unified_context.get("session_stats", {}),
-                    "variables_count": len(unified_context.get("variables", {}).get("recent_results", [])),
-                    "execution_state": unified_context.get("execution_state", {}).get("system_status", "unknown")
-                }
-            }
-
-            # Store in session
-            await self.context_manager.add_interaction(
-                session_id,
-                "system",
-                context_message["content"],
-                metadata=context_message["metadata"]
-            )
-
-            rprint(f"Context snapshot saved to session {session_id} (type: {context_type})")
-            return True
-
-        except Exception as e:
-            eprint(f"Failed to save context to session: {e}")
-            return False
-
-    async def load_context_from_session(self, session_id: str, context_type: str = "full") -> dict[str, Any]:
-        """Load context from ChatSession storage"""
-        try:
-            if not self.context_manager:
-                return {"error": "Context manager not available"}
-
-            session = self.context_manager.session_managers.get(session_id)
-            if not session:
-                return {"error": f"Session {session_id} not found"}
-
-            # Search for context snapshots in session history
-            context_snapshots = []
-
-            if hasattr(session, 'history'):
-                for message in reversed(session.history):  # Search from newest
-                    if (message.get("role") == "system" and
-                        message.get("metadata", {}).get("is_context_snapshot") and
-                        message.get("metadata", {}).get("context_type") == context_type):
-
-                        try:
-                            # Extract context data
-                            content = message.get("content", "")
-                            if content.startswith(f"[CONTEXT_SNAPSHOT_{context_type.upper()}]"):
-                                json_data = content.replace(f"[CONTEXT_SNAPSHOT_{context_type.upper()}] ", "")
-                                context_data = json.loads(json_data)
-                                context_snapshots.append({
-                                    "context": context_data,
-                                    "timestamp": message.get("timestamp"),
-                                    "metadata": message.get("metadata", {})
-                                })
-                        except Exception as e:
-                            wprint(f"Failed to parse context snapshot: {e}")
-
-            if context_snapshots:
-                # Return most recent context snapshot
-                latest_context = context_snapshots[0]
-                rprint(f"Loaded context snapshot from session {session_id} (timestamp: {latest_context['timestamp']})")
-                return latest_context["context"]
-            else:
-                return {"error": f"No context snapshots of type '{context_type}' found in session {session_id}"}
-
-        except Exception as e:
-            eprint(f"Failed to load context from session: {e}")
-            return {"error": str(e)}
-
-    async def cleanup_session_context(self, session_id: str = None, keep_count: int = 100,
-                                      remove_old_snapshots: bool = True) -> dict[str, Any]:
-        """Cleanup session context by removing old snapshots and entries"""
-        try:
-            session_id = session_id or self.shared.get("session_id", "default")
-
-            if not self.context_manager:
-                return {"error": "Context manager not available"}
-
-            session = self.context_manager.session_managers.get(session_id)
-            if not session or not hasattr(session, 'history'):
-                return {"error": f"Session {session_id} not found or has no history"}
-
-            cleanup_stats = {
-                "original_message_count": len(session.history),
-                "context_snapshots_removed": 0,
-                "context_entries_removed": 0,
-                "regular_messages_kept": 0,
-                "cleanup_performed": False
-            }
-
-            if len(session.history) <= keep_count:
-                return {**cleanup_stats, "message": "No cleanup needed"}
-
-            # Separate different types of messages
-            regular_messages = []
-            context_snapshots = []
-            context_entries = []
-
-            for message in session.history:
-                metadata = message.get("metadata", {})
-
-                if metadata.get("is_context_snapshot"):
-                    context_snapshots.append(message)
-                elif metadata.get("is_context_entry"):
-                    context_entries.append(message)
-                else:
-                    regular_messages.append(message)
-
-            # Keep most recent regular messages
-            messages_to_keep = regular_messages[-keep_count:]
-            cleanup_stats["regular_messages_kept"] = len(messages_to_keep)
-
-            # Keep most recent context snapshots (if not removing)
-            if not remove_old_snapshots:
-                recent_snapshots = context_snapshots[-5:]  # Keep last 5 snapshots
-                messages_to_keep.extend(recent_snapshots)
-            else:
-                cleanup_stats["context_snapshots_removed"] = len(context_snapshots)
-
-            # Keep persistent context entries
-            persistent_entries = [
-                entry for entry in context_entries
-                if entry.get("persistent", True)
-            ]
-            messages_to_keep.extend(persistent_entries)
-            cleanup_stats["context_entries_removed"] = len(context_entries) - len(persistent_entries)
-
-            # Sort by timestamp and update session
-            messages_to_keep.sort(key=lambda x: x.get("timestamp", ""))
-            session.history = messages_to_keep
-
-            cleanup_stats.update({
-                "final_message_count": len(session.history),
-                "cleanup_performed": True,
-                "messages_removed": cleanup_stats["original_message_count"] - len(session.history)
-            })
-
-            rprint(f"Session cleanup completed: {cleanup_stats['messages_removed']} messages removed")
-            return cleanup_stats
-
-        except Exception as e:
-            eprint(f"Failed to cleanup session context: {e}")
-            return {"error": str(e)}
-
-    def get_session_storage_stats(self) -> dict[str, Any]:
-        """Get comprehensive session storage statistics"""
-        try:
-            stats = {
-                "context_manager_active": bool(self.context_manager),
-                "total_sessions": 0,
-                "session_details": {},
-                "storage_summary": {
-                    "total_messages": 0,
-                    "context_snapshots": 0,
-                    "context_entries": 0,
-                    "regular_messages": 0
-                }
-            }
-
-            if not self.context_manager:
-                return stats
-
-            stats["total_sessions"] = len(self.context_manager.session_managers)
-
-            for session_id, session in self.context_manager.session_managers.items():
-                session_stats = {
-                    "session_type": "chatsession" if hasattr(session, 'history') else "fallback",
-                    "message_count": 0,
-                    "context_snapshots": 0,
-                    "context_entries": 0,
-                    "regular_messages": 0,
-                    "storage_size_estimate": 0
-                }
-
-                if hasattr(session, 'history'):
-                    session_stats["message_count"] = len(session.history)
-
-                    for message in session.history:
-                        content_size = len(str(message))
-                        session_stats["storage_size_estimate"] += content_size
-
-                        metadata = message.get("metadata", {})
-                        if metadata.get("is_context_snapshot"):
-                            session_stats["context_snapshots"] += 1
-                        elif metadata.get("is_context_entry"):
-                            session_stats["context_entries"] += 1
-                        else:
-                            session_stats["regular_messages"] += 1
-
-                elif isinstance(session, dict) and 'history' in session:
-                    session_stats["message_count"] = len(session['history'])
-                    session_stats["regular_messages"] = len(session['history'])
-                    session_stats["storage_size_estimate"] = sum(len(str(msg)) for msg in session['history'])
-
-                stats["session_details"][session_id] = session_stats
-
-                # Update totals
-                stats["storage_summary"]["total_messages"] += session_stats["message_count"]
-                stats["storage_summary"]["context_snapshots"] += session_stats["context_snapshots"]
-                stats["storage_summary"]["context_entries"] += session_stats["context_entries"]
-                stats["storage_summary"]["regular_messages"] += session_stats["regular_messages"]
-
-            # Estimate total storage size
-            stats["storage_summary"]["estimated_total_size_kb"] = sum(
-                details["storage_size_estimate"] for details in stats["session_details"].values()
-            ) / 1024
-
-            return stats
-
-        except Exception as e:
-            eprint(f"Failed to get session storage stats: {e}")
-            return {"error": str(e)}
 
     def list_available_checkpoints(self, max_age_hours: int = 168) -> list[dict[str, Any]]:  # Default 1 week
         """List all available checkpoints with metadata"""
@@ -10738,7 +11120,10 @@ Respond in YAML format only:
 
     @property
     def total_cost(self) -> float:
-        """Get total cost if budget manager available"""
+        """Get total accumulated cost from LLM calls"""
+        # Return accumulated cost from tracking, fallback to budget manager if available
+        if self.total_cost_accumulated > 0:
+            return self.total_cost_accumulated
         if hasattr(self.amd, 'budget_manager') and self.amd.budget_manager:
             return getattr(self.amd.budget_manager, 'total_cost', 0.0)
         return 0.0

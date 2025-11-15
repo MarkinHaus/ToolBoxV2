@@ -448,19 +448,122 @@ def show_server_status(use_posix_zdt: bool):
     print_box_footer()
 
 
-def handle_build():
-    """Build the Rust project"""
-    print_box_header("Building Rust API Server", "🔨")
+def build_nuitka_module(tb_root_dir):
+    """Build app_singleton.py with Nuitka"""
+    print_separator("═")
+    print("  Building Python Module with Nuitka")
+    print_separator("═")
+    print()
+
+    src_core_path = tb_root_dir / "src-core"
+    app_singleton_py = src_core_path / "app_singleton.py"
+    build_dir = src_core_path / "build"
+
+    if not app_singleton_py.exists():
+        print_status(f"app_singleton.py not found at {app_singleton_py}", "warning")
+        print_status("Skipping Nuitka build", "info")
+        return False
+
+    print_status(f"Source: {app_singleton_py}", "info")
+    print_status(f"Output: {build_dir}", "info")
+    print()
+
+    try:
+        with Spinner("Compiling with Nuitka", symbols="t", time_in_s=120) as s:
+            result = subprocess.run(
+                [
+                    "python", "-m", "nuitka",
+                    "--module",
+                    "app_singleton.py",
+                    "--output-dir=./build",
+                    "--remove-output"
+                ],
+                cwd=src_core_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+
+        print()
+        print_status("Nuitka compilation successful", "success")
+
+        # Find the compiled .pyd file
+        pyd_files = list(build_dir.glob("app_singleton*.pyd"))
+        if pyd_files:
+            pyd_file = pyd_files[0]
+            print_status(f"Created: {pyd_file.name}", "success")
+
+            # Copy to bin/build directory
+            bin_build_dir = tb_root_dir / "bin" / "build"
+            bin_build_dir.mkdir(parents=True, exist_ok=True)
+
+            dest_pyd = bin_build_dir / pyd_file.name
+            shutil.copy(pyd_file, dest_pyd)
+            print_status(f"Copied to: {dest_pyd}", "success")
+
+            # Also copy DLL files if they exist
+            dll_files = list(build_dir.glob("*.dll"))
+            for dll_file in dll_files:
+                dest_dll = bin_build_dir / dll_file.name
+                shutil.copy(dll_file, dest_dll)
+                print_status(f"Copied DLL: {dll_file.name}", "info")
+
+            return True
+        else:
+            print_status("Warning: No .pyd file found after compilation", "warning")
+            return False
+
+    except subprocess.CalledProcessError as e:
+        print()
+        print_status("Nuitka compilation failed", "error")
+        if e.stderr:
+            print("\nError output:")
+            print(e.stderr)
+        return False
+    except FileNotFoundError:
+        print()
+        print_status("Nuitka not found - install with: pip install nuitka", "warning")
+        print_status("Skipping Nuitka build", "info")
+        return False
+
+
+def handle_build(mode="release", skip_nuitka=False):
+    """Build the Rust project
+
+    Args:
+        mode: Build mode - "debug" or "release" (default: "release")
+        skip_nuitka: Skip Nuitka compilation step (default: False)
+    """
+    mode_display = mode.capitalize()
+    print_box_header(f"Building Rust API Server ({mode_display})", "🔨")
     print_box_content("Compiler: Cargo (Rust)", "info")
-    print_box_content("Mode: Release", "info")
+    print_box_content(f"Mode: {mode_display}", "info")
     print_box_footer()
 
     from toolboxv2 import tb_root_dir
 
+    # Step 1: Build Nuitka module (if not skipped)
+    if not skip_nuitka:
+        print()
+        nuitka_success = build_nuitka_module(tb_root_dir)
+        if nuitka_success:
+            print()
+
+    # Step 2: Build Rust server
+    print_separator("═")
+    print(f"  Building Rust Server ({mode_display})")
+    print_separator("═")
+    print()
+
     try:
-        with Spinner("Compiling Rust project", symbols="t") as s:
+        # Determine cargo command based on mode
+        cargo_cmd = ["cargo", "build"]
+        if mode == "release":
+            cargo_cmd.append("--release")
+
+        with Spinner(f"Compiling Rust project ({mode})", symbols="t", time_in_s=180) as s:
             result = subprocess.run(
-                ["cargo", "build", "--release"],
+                cargo_cmd,
                 cwd=tb_root_dir / "src-core",
                 check=True,
                 capture_output=True,
@@ -471,28 +574,43 @@ def handle_build():
         print_status("Build completed successfully", "success")
 
         # Copy executable
-        exe_path = get_executable_path()
-        if exe_path:
+        src_core_path = tb_root_dir / "src-core"
+        exe_name = get_executable_name_with_extension()
+
+        # Determine source path based on mode
+        if mode == "release":
+            exe_source = src_core_path / "target" / "release" / exe_name
+        else:
+            exe_source = src_core_path / "target" / "debug" / exe_name
+
+        if exe_source.exists():
             bin_dir = tb_root_dir / "bin"
             bin_dir.mkdir(exist_ok=True)
 
             try:
-                dest_path = bin_dir / exe_path.name
-                shutil.copy(exe_path, dest_path)
+                dest_path = bin_dir / exe_name
+                shutil.copy(exe_source, dest_path)
                 print_status(f"Executable copied to: {dest_path}", "success")
+
+                # Show file size
+                size_mb = dest_path.stat().st_size / (1024 * 1024)
+                print_status(f"Size: {size_mb:.2f} MB", "info")
+
             except Exception as e:
                 print_status(f"Warning: Failed to copy to bin: {e}", "warning")
 
                 # Fallback to ubin
                 ubin_dir = tb_root_dir / "ubin"
                 ubin_dir.mkdir(exist_ok=True)
-                dest_path = ubin_dir / exe_path.name
+                dest_path = ubin_dir / exe_name
 
                 try:
-                    shutil.copy(exe_path, dest_path)
+                    shutil.copy(exe_source, dest_path)
                     print_status(f"Copied to fallback location: {dest_path}", "info")
                 except Exception as e_ubin:
                     print_status(f"Error copying to ubin: {e_ubin}", "error")
+        else:
+            print_status(f"Warning: Executable not found at {exe_source}", "warning")
 
     except subprocess.CalledProcessError as e:
         print()
@@ -711,7 +829,9 @@ def cli_api_runner():
 ╠════════════════════════════════════════════════════════════════════════════╣
 ║                                                                            ║
 ║  Build & Development:                                                      ║
-║    $ tb api build                    # Build release executable            ║
+║    $ tb api build                    # Build release (with Nuitka)         ║
+║    $ tb api build --mode debug       # Build debug version                 ║
+║    $ tb api build --skip-nuitka      # Build without Nuitka step           ║
 ║    $ tb api debug                    # Run with hot reload                 ║
 ║    $ tb api clean                    # Clean build artifacts               ║
 ║    $ tb api remove-exe               # Remove compiled executable          ║
@@ -748,7 +868,20 @@ Zero-Downtime Updates:
     subparsers = parser.add_subparsers(dest="action", required=False, help="Available actions")
 
     # Build commands
-    subparsers.add_parser('build', help='Build the Rust project in release mode')
+    build_parser = subparsers.add_parser('build', help='Build the Rust project')
+    build_parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['debug', 'release'],
+        default='release',
+        help='Build mode: debug or release (default: release)'
+    )
+    build_parser.add_argument(
+        '--skip-nuitka',
+        action='store_true',
+        help='Skip Nuitka compilation of Python modules'
+    )
+
     subparsers.add_parser('debug', help='Run in debug mode with hot reload')
     subparsers.add_parser('clean', help='Clean build artifacts')
     subparsers.add_parser('remove-exe', help='Remove release executable')
@@ -789,7 +922,9 @@ Zero-Downtime Updates:
 
     # Handle simple actions
     if args.action == 'build':
-        handle_build()
+        mode = getattr(args, 'mode', 'release')
+        skip_nuitka = getattr(args, 'skip_nuitka', False)
+        handle_build(mode=mode, skip_nuitka=skip_nuitka)
         return
 
     if args.action == 'clean':

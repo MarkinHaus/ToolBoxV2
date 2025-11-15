@@ -14,11 +14,11 @@ pub enum BuiltinError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 
-    #[error("Blob storage error: {0}")]
-    BlobStorage(String),
-
-    #[error("Encryption error: {0}")]
-    Encryption(String),
+    // ✅ PHASE 1.1: Blob Storage and Encryption removed - not implemented
+    // #[error("Blob storage error: {0}")]
+    // BlobStorage(String),
+    // #[error("Encryption error: {0}")]
+    // Encryption(String),
 
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),

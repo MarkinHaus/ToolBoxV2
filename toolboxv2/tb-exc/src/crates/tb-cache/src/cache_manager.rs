@@ -102,6 +102,14 @@ impl CacheManager {
         *self.current_hot_cache_bytes.write() = 0;
     }
 
+    /// ✅ PHASE 3.3: Clear all caches (import, artifact, hot cache)
+    pub fn clear(&self) -> Result<()> {
+        self.import_cache.clear()?;
+        self.artifact_cache.clear()?;
+        self.clear_hot_cache();
+        Ok(())
+    }
+
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             hot_cache_entries: self.hot_cache.len(),

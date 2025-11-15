@@ -38,10 +38,16 @@ pub fn run_file(
     let mut parser = Parser::new_with_source_and_path(tokens, source.clone(), file.to_path_buf());
     let mut program = parser.parse()?;
 
-    // Load imports before type checking
+    // Load imports before type checking (track dependencies)
     let file_dir = file.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded_modules = HashSet::new();
     load_imports(&mut program, file_dir, Arc::clone(&interner), &mut loaded_modules)?;
+
+    // Convert loaded modules to Vec for dependency tracking
+    let dependencies: Vec<PathBuf> = loaded_modules.iter()
+        .filter(|p| *p != file)  // Don't include self as dependency
+        .cloned()
+        .collect();
 
     // Type check (with source context for better error messages)
     let mut type_checker = TypeChecker::new_with_source(source.clone(), Some(file.to_path_buf()));
@@ -87,8 +93,8 @@ pub fn run_file(
                 });
             }
 
-            // Cache the result
-            cache_manager.import_cache().put(file, &program)?;
+            // Cache the result with dependencies
+            cache_manager.import_cache().put_with_dependencies(file, &program, dependencies)?;
 
             // Execute
             let output = Command::new(&output).output()?;
@@ -141,6 +147,12 @@ pub fn compile_file(
     // ═══════════════════════════════════════════════════════════════════════════
     let uses_networking = detect_networking_usage(&program.statements) || config_networking;
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AUTO-DETECT PLUGIN USAGE
+    // ═══════════════════════════════════════════════════════════════════════════
+    let uses_plugins = detect_plugin_usage(&program.statements);
+    let uses_python_plugins = detect_python_plugin_usage(&program.statements);
+
     // Determine runtime configuration
     let (runtime_config, worker_threads, use_multi_thread) = if uses_networking {
         eprintln!("[TB Compiler] ✓ Auto-detected networking usage - enabling networking features");
@@ -190,7 +202,7 @@ pub fn compile_file(
 
     if use_fast_compile {
         let required_crates_refs: Vec<&str> = required_crates.iter().map(|s| s.as_str()).collect();
-        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, config_optimize);
+        return compile_with_rustc(file, output, &rust_code, &required_crates_refs, uses_networking, use_multi_thread, uses_plugins, uses_python_plugins, config_optimize);
     }
 
     // FALLBACK: Old Cargo-based compilation (slow but more compatible)
@@ -200,49 +212,10 @@ pub fn compile_file(
     // Build dependencies section dynamically based on required crates
     let mut dependencies = String::new();
 
-    // ALWAYS add tb_runtime as it contains DictValue and built-in functions
-    // Use path dependency to the local tb-runtime crate
-
-    // First, try environment variable TB_RUNTIME_PATH
-    let tb_runtime_path = if let Ok(env_path) = std::env::var("TB_RUNTIME_PATH") {
-        std::path::PathBuf::from(env_path)
-    } else {
-        // Try to find tb-runtime relative to the binary
-        let exe_path = std::env::current_exe().ok();
-
-        let mut candidates = Vec::new();
-
-        // PRIORITY 1: Relative to binary (most reliable)
-        if let Some(exe) = exe_path {
-            if let Some(parent) = exe.parent() {
-                // ✅ FIX: Added correct path for ToolBoxV2 structure
-                // From target/release/tb.exe -> ../../../toolboxv2/tb-exc/src/crates/tb-runtime
-                candidates.push(parent.join("../../../toolboxv2/tb-exc/src/crates/tb-runtime"));
-                candidates.push(parent.join("../../toolboxv2/tb-exc/src/crates/tb-runtime"));
-                // Legacy paths (for backward compatibility)
-                candidates.push(parent.join("../../crates/tb-runtime"));
-                candidates.push(parent.join("../../../crates/tb-runtime"));
-                candidates.push(parent.join("../crates/tb-runtime"));
-            }
-        }
-
-        // PRIORITY 2: Relative to current directory
-        if let Ok(cwd) = std::env::current_dir() {
-            // ✅ FIX: Prioritize correct ToolBoxV2 structure
-            candidates.push(cwd.join("toolboxv2/tb-exc/src/crates/tb-runtime"));
-            candidates.push(cwd.join("tb-exc/src/crates/tb-runtime"));
-            candidates.push(cwd.join("crates/tb-runtime"));
-        }
-
-        // Find first existing path and canonicalize it
-        candidates.into_iter()
-            .find(|path| path.exists())
-            .and_then(|p| p.canonicalize().ok())
-            .unwrap_or_else(|| {
-                // Last resort: use a default path
-                std::path::PathBuf::from("crates/tb-runtime")
-            })
-    };
+    // ✅ PHASE 3.1: Use TB_RUNTIME_PATH from build.rs (set at compile time)
+    // This makes the build process robust and independent of directory structure
+    let tb_runtime_path_str = env!("TB_RUNTIME_PATH");
+    let tb_runtime_path = std::path::PathBuf::from(tb_runtime_path_str);
 
     // Convert Windows backslashes to forward slashes for TOML compatibility
     let mut tb_runtime_path_str = tb_runtime_path.display().to_string().replace('\\', "/");
@@ -391,6 +364,10 @@ fn load_imports(
 
         // Skip if already loaded (prevent circular imports)
         if loaded.contains(&canonical_path) {
+            eprintln!(
+                "\x1b[33m[WARNING]\x1b[0m Circular import detected: '{}' is already loaded. Skipping to prevent infinite loop.",
+                canonical_path.display()
+            );
             continue;
         }
 
@@ -449,24 +426,14 @@ fn compile_with_rustc(
     required_crates: &[&str],
     uses_networking: bool,
     use_multi_thread: bool,
+    uses_plugins: bool,
+    uses_python_plugins: bool,
     optimize: bool,
 ) -> Result<()> {
 
-    // Find workspace root (going up from exe location)
-    let exe_path = env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
-
-    // ✅ FIX: Calculate correct path to tb-runtime
-    // exe is at: toolboxv2/tb-exc/src/target/release/tb.exe
-    // tb-runtime is at: toolboxv2/tb-exc/src/crates/tb-runtime
-    // So from exe_dir (target/release), go up 2 levels to src, then to crates/tb-runtime
-    let tb_runtime_path = exe_dir
-        .parent()  // target
-        .and_then(|p| p.parent())  // src
-        .map(|p| p.join("crates/tb-runtime"))
-        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot calculate tb-runtime path"))?;
+    // ✅ PHASE 3.1: Use TB_RUNTIME_PATH from build.rs (set at compile time)
+    let tb_runtime_path_str = env!("TB_RUNTIME_PATH");
+    let tb_runtime_path = std::path::PathBuf::from(tb_runtime_path_str);
 
     // Verify tb-runtime exists
     if !tb_runtime_path.join("Cargo.toml").exists() {
@@ -475,6 +442,12 @@ fn compile_with_rustc(
             tb_runtime_path.display()
         )));
     }
+
+    // Find workspace root (going up from exe location)
+    let exe_path = env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| tb_core::TBError::runtime_error("Cannot find exe parent"))?;
 
     // Calculate workspace root for compile cache (3 levels up from exe)
     let workspace_root = exe_dir
@@ -504,6 +477,14 @@ fn compile_with_rustc(
     }
     if required_crates.contains(&"serde_yaml") {
         features.push("yaml");
+    }
+    // ✅ FIX: Add plugins feature if plugins are used
+    if uses_plugins {
+        features.push("plugins");
+    }
+    // ✅ FIX: Add python feature if Python plugins are used
+    if uses_python_plugins {
+        features.push("python");
     }
 
     let features_str = if features.is_empty() {
@@ -560,9 +541,10 @@ panic = {}
     fs::write(&main_rs, rust_code)?;
 
     // Compile with Cargo (uses cached dependencies)
+    // ALWAYS compile in DEBUG mode for better error messages and debugging
     let mut cmd = Command::new("cargo");
     cmd.arg("build")
-        .arg("--release")
+        // .arg("--release")  // DISABLED: Always use debug mode
         .arg("--manifest-path")
         .arg(&cargo_toml)
         .env("CARGO_TARGET_DIR", compile_cache.join("target"));
@@ -583,7 +565,8 @@ panic = {}
     #[cfg(not(target_os = "windows"))]
     let binary_name = "tb-compiled";
 
-    let compiled_binary = compile_cache.join("target").join("release").join(binary_name);
+    // Use debug folder since we're compiling in debug mode
+    let compiled_binary = compile_cache.join("target").join("debug").join(binary_name);
 
     // Ensure output has .exe extension on Windows
     #[cfg(target_os = "windows")]
@@ -692,6 +675,30 @@ fn detect_networking_usage(statements: &[Statement]) -> bool {
     for stmt in statements {
         if statement_uses_networking(stmt) {
             return true;
+        }
+    }
+    false
+}
+
+/// Auto-detect plugin usage from statements
+fn detect_plugin_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if matches!(stmt, Statement::Plugin { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Auto-detect Python plugin usage from statements
+fn detect_python_plugin_usage(statements: &[Statement]) -> bool {
+    for stmt in statements {
+        if let Statement::Plugin { definitions, .. } = stmt {
+            for def in definitions {
+                if matches!(def.language, tb_core::PluginLanguage::Python) {
+                    return true;
+                }
+            }
         }
     }
     false

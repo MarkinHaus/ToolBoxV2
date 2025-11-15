@@ -79,6 +79,9 @@ impl JitExecutor {
                 tb_debug_jit!("Statement {} result: {:?}", i, last);
             }
 
+            // ✅ PHASE 3.2: Process pending callback events after each statement
+            self.process_pending_callbacks()?;
+
             if self.return_value.is_some() {
                 tb_debug_jit!("Early return with value: {:?}", self.return_value);
                 return Ok(self.return_value.take().unwrap());
@@ -248,14 +251,28 @@ impl JitExecutor {
             Statement::If { condition, then_block, else_block, .. } => {
                 let cond = self.eval_expression(condition)?;
 
-                // ✅ FIX: Create new scope for if blocks to prevent variable leaking
-                if cond.is_truthy() {
-                    self.eval_block_with_scope(then_block)
+                // ✅ FIX 16: if blocks should allow modifications to existing variables
+                // but remove new variables declared with 'let'
+                use std::collections::HashSet;
+
+                // Track variables before if block
+                let keys_before: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+
+                let result = if cond.is_truthy() {
+                    self.eval_block(then_block)
                 } else if let Some(else_stmts) = else_block {
-                    self.eval_block_with_scope(else_stmts)
+                    self.eval_block(else_stmts)
                 } else {
                     Ok(Value::None)
+                };
+
+                // Remove any new variables created in the if block
+                let keys_after: HashSet<Arc<String>> = self.env.keys().cloned().collect();
+                for new_key in keys_after.difference(&keys_before) {
+                    self.env.remove(new_key);
                 }
+
+                result
             }
 
             Statement::For { variable, iterable, body, span } => {
@@ -418,11 +435,12 @@ impl JitExecutor {
                     let module_name = Arc::clone(&def.name);
                     let language = def.language.clone();
                     let mode = def.mode.clone();
+                    let requires = def.requires.clone();
 
                     // Create module dict with plugin functions
                     let module = match &def.source {
                         PluginSource::Inline(code) => {
-                            self.create_plugin_module_inline(&language, &mode, code)?
+                            self.create_plugin_module_inline(&language, &mode, code, &requires)?
                         }
                         PluginSource::File(path) => {
                             self.create_plugin_module_file(&language, &mode, path)?
@@ -501,12 +519,26 @@ impl JitExecutor {
                 }
             }
 
-            Expression::Unary { op, operand, .. } => {
+            Expression::Unary { op, operand, span } => {
                 let val = self.eval_expression(operand)?;
-                self.eval_unary_op(*op, val)
+                self.eval_unary_op(*op, val, *span)
             }
 
             Expression::Call { callee, args, span } => {
+                // ✅ PHASE 2.1: Native implementation of map, filter, reduce, forEach, spawn
+                // Check if this is a call to one of these special functions
+                if let Expression::Ident(func_name, _) = callee.as_ref() {
+                    match func_name.as_str() {
+                        "map" => return self.builtin_map_native(args, *span),
+                        "filter" => return self.builtin_filter_native(args, *span),
+                        "reduce" => return self.builtin_reduce_native(args, *span),
+                        "forEach" => return self.builtin_foreach_native(args, *span),
+                        "spawn" => return self.builtin_spawn_native(args, *span),
+                        _ => {} // Fall through to normal function call
+                    }
+                }
+
+                // Normal function call
                 let func = self.eval_expression(callee)?;
                 let arg_values: Result<Vec<_>> = args.iter()
                     .map(|arg| self.eval_expression(arg))
@@ -572,7 +604,7 @@ impl JitExecutor {
                 }
             }
 
-            Expression::Match { value, arms, .. } => {
+            Expression::Match { value, arms, span } => {
                 let val = self.eval_expression(value)?;
 
                 for arm in arms {
@@ -596,7 +628,10 @@ impl JitExecutor {
                     }
                 }
 
-                Err(TBError::invalid_operation("No matching pattern in match expression".to_string()))
+                Err(self.runtime_error_with_context(
+                    format!("No matching pattern in match expression for value: {}", val.type_name()),
+                    Some(*span)
+                ))
             }
 
             Expression::If { condition, then_branch, else_branch, .. } => {
@@ -744,6 +779,10 @@ impl JitExecutor {
 
 
     fn eval_binary_op(&self, op: BinaryOp, left: Value, right: Value, span: Span) -> Result<Value> {
+        // Store type names before moving values
+        let left_type = left.type_name();
+        let right_type = right.type_name();
+
         match op {
             BinaryOp::Add => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -753,7 +792,10 @@ impl JitExecutor {
                 (Value::String(a), Value::String(b)) => {
                     Ok(Value::String(Arc::new(format!("{}{}", a, b))))
                 }
-                _ => Err(TBError::invalid_operation("Invalid addition".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot add {} and {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Sub => match (left, right) {
@@ -761,7 +803,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 - b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid subtraction".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot subtract {} from {}", right_type, left_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Mul => match (left, right) {
@@ -769,7 +814,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 * b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid multiplication".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot multiply {} and {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Div => match (left, right) {
@@ -782,8 +830,12 @@ impl JitExecutor {
             },
 
             BinaryOp::Mod => match (left, right) {
+                // ✅ FIX 15: Support float modulo operation
                 (Value::Int(a), Value::Int(b)) if b != 0 => Ok(Value::Int(a % b)),
-                _ => Err(self.runtime_error_with_context("Invalid modulo operation".to_string(), Some(span))),
+                (Value::Float(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float(a % b)),
+                (Value::Int(a), Value::Float(b)) if b != 0.0 => Ok(Value::Float((a as f64) % b)),
+                (Value::Float(a), Value::Int(b)) if b != 0 => Ok(Value::Float(a % (b as f64))),
+                _ => Err(self.runtime_error_with_context("Invalid modulo operation or division by zero".to_string(), Some(span))),
             },
 
             BinaryOp::Eq => Ok(Value::Bool(self.values_equal(&left, &right))),
@@ -794,7 +846,10 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a < b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} < {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::Gt => match (left, right) {
@@ -802,19 +857,28 @@ impl JitExecutor {
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
                 (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
                 (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a > b as f64)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} > {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::LtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} <= {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             BinaryOp::GtEq => match (left, right) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                 (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err(TBError::invalid_operation("Invalid comparison".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot compare {} >= {}", left_type, right_type),
+                    Some(span)
+                )),
             },
 
             // ✅ NOTE: AND/OR are now handled with short-circuit evaluation in eval_expression
@@ -837,20 +901,24 @@ impl JitExecutor {
                     (Value::String(key), Value::Dict(dict)) => {
                         Ok(Value::Bool(dict.contains_key(key)))
                     }
-                    _ => Err(TBError::invalid_operation(
-                        format!("'in' operator not supported for {} in {}", left.type_name(), right.type_name())
+                    _ => Err(self.invalid_operation_with_context(
+                        format!("'in' operator not supported for {} in {}", left_type, right_type),
+                        Some(span)
                     )),
                 }
             }
         }
     }
 
-    fn eval_unary_op(&self, op: UnaryOp, operand: Value) -> Result<Value> {
+    fn eval_unary_op(&self, op: UnaryOp, operand: Value, span: Span) -> Result<Value> {
         match op {
             UnaryOp::Neg => match operand {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
-                _ => Err(TBError::invalid_operation("Cannot negate non-numeric value".to_string())),
+                _ => Err(self.invalid_operation_with_context(
+                    format!("Cannot negate {} value", operand.type_name()),
+                    Some(span)
+                )),
             },
             UnaryOp::Not => Ok(Value::Bool(!operand.is_truthy())),
         }
@@ -985,6 +1053,7 @@ impl JitExecutor {
         language: &PluginLanguage,
         mode: &PluginMode,
         source_code: &str,
+        requires: &[Arc<String>],
     ) -> Result<Value> {
         tb_debug_plugin!("Creating inline plugin module for {:?} in {:?} mode", language, mode);
         tb_debug_plugin!("Source code length: {} bytes", source_code.len());
@@ -1003,6 +1072,7 @@ impl JitExecutor {
             let source_clone = source_code.to_string();
             let language_clone = language.clone();
             let mode_clone = mode.clone();
+            let requires_clone = requires.to_vec();
             let loader = Arc::clone(&self.plugin_loader);
 
             tb_debug_plugin!("Registering function: {}", func_name);
@@ -1018,6 +1088,7 @@ impl JitExecutor {
                         &source_clone,
                         &func_name,
                         args,
+                        &requires_clone,
                     )
                 }),
             }));
@@ -1045,7 +1116,30 @@ impl JitExecutor {
 
         tb_debug_plugin!("Resolved path: {}", canonical_path.display());
 
-        // Read the file content
+        // ✅ PHASE 4: FFI mode - precompiled libraries don't need function extraction
+        // For FFI mode, we return an empty module since functions are called dynamically
+        if matches!(mode, PluginMode::Ffi) {
+            tb_debug_plugin!("FFI mode: Skipping function extraction for precompiled library");
+
+            // Store minimal metadata
+            let plugin_name = canonical_path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let metadata = tb_plugin::PluginMetadata {
+                path: canonical_path.to_string_lossy().to_string(),
+                language: format!("{:?}", language),
+                functions: Vec::new(), // No functions extracted for FFI mode
+            };
+
+            self.plugin_loader.store_metadata(plugin_name, metadata);
+
+            // Return empty module - functions will be called via dynamic lookup
+            return Ok(Value::Dict(Arc::new(ImHashMap::new())));
+        }
+
+        // Read the file content (only for non-FFI modes)
         let source_code = std::fs::read_to_string(&canonical_path)
             .map_err(|e| TBError::plugin_error(format!("Failed to read plugin file '{}': {}", canonical_path.display(), e)))?;
 
@@ -1218,7 +1312,31 @@ impl JitExecutor {
     }
 
     /// Create an undefined variable error with source context and span
+    /// Enhanced with debugging information about available variables and imports
     fn undefined_variable_with_context(&self, name: String, span: Option<Span>) -> TBError {
+        #[cfg(debug_assertions)]
+        {
+            // Debug output: Show available variables in current scope
+            eprintln!("\n[TB DEBUG] Undefined variable '{}' detected", name);
+            eprintln!("[TB DEBUG] Available variables in current scope:");
+            let mut var_names: Vec<_> = self.env.keys().map(|k| k.as_ref()).collect();
+            var_names.sort();
+            for var_name in var_names.iter().take(20) {  // Show first 20 to avoid spam
+                eprintln!("  - {}", var_name);
+            }
+            if var_names.len() > 20 {
+                eprintln!("  ... and {} more", var_names.len() - 20);
+            }
+
+            // Check if it might be from an import
+            if let Some(ctx) = &self.source_context {
+                if ctx.source.contains("@import") {
+                    eprintln!("[TB DEBUG] Note: This file contains @import statements.");
+                    eprintln!("[TB DEBUG] Make sure imported modules are loaded correctly.");
+                }
+            }
+        }
+
         if let Some(ctx) = &self.source_context {
             TBError::UndefinedVariable {
                 name,
@@ -1227,6 +1345,32 @@ impl JitExecutor {
             }
         } else {
             TBError::undefined_variable(name)
+        }
+    }
+
+    /// Create an invalid operation error with source context and span
+    fn invalid_operation_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::InvalidOperation {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::invalid_operation(message)
+        }
+    }
+
+    /// Create a plugin error with source context and span
+    fn plugin_error_with_context(&self, message: String, span: Option<Span>) -> TBError {
+        if let Some(ctx) = &self.source_context {
+            TBError::PluginError {
+                message,
+                span,
+                source_context: Some(ctx.clone()),
+            }
+        } else {
+            TBError::plugin_error(message)
         }
     }
 
@@ -1290,6 +1434,241 @@ impl JitExecutor {
             Statement::Config { .. } => "config",
             Statement::Plugin { .. } => "plugin",
         }
+    }
+
+    // ============================================================================
+    // PHASE 2.1: Native implementation of map, filter, reduce, forEach, spawn
+    // ============================================================================
+    // These functions are implemented directly in the JIT executor to replace
+    // the task_runtime.rs mini-interpreter. This ensures proper scope handling
+    // and allows access to &mut self for calling functions.
+
+    /// map(fn, list) -> list
+    /// Applies a function to each element of a list and returns a new list
+    fn builtin_map_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "map() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "map() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Apply the function to each element
+        let mut result = Vec::new();
+        for item in list_items.iter() {
+            let mapped = self.call_function(func.clone(), vec![item.clone()], span)?;
+            result.push(mapped);
+        }
+
+        Ok(Value::List(Arc::new(result)))
+    }
+
+    /// filter(fn, list) -> list
+    /// Filters a list based on a predicate function
+    fn builtin_filter_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "filter() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "filter() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Filter the list based on the predicate
+        let mut result = Vec::new();
+        for item in list_items.iter() {
+            let predicate_result = self.call_function(func.clone(), vec![item.clone()], span)?;
+
+            // Check if the result is truthy
+            let keep = match predicate_result {
+                Value::Bool(b) => b,
+                Value::Int(i) => i != 0,
+                Value::None => false,
+                _ => true, // Non-empty strings, lists, etc. are truthy
+            };
+
+            if keep {
+                result.push(item.clone());
+            }
+        }
+
+        Ok(Value::List(Arc::new(result)))
+    }
+
+    /// reduce(fn, list, initial) -> value
+    /// Reduces a list to a single value using an accumulator function
+    fn builtin_reduce_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 3 {
+            return Err(self.runtime_error_with_context(
+                "reduce() takes exactly 3 arguments: function, list, initial".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "reduce() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Evaluate the initial value (third argument)
+        let mut accumulator = self.eval_expression(&args[2])?;
+
+        // Reduce the list
+        for item in list_items.iter() {
+            accumulator = self.call_function(
+                func.clone(),
+                vec![accumulator, item.clone()],
+                span
+            )?;
+        }
+
+        Ok(accumulator)
+    }
+
+    /// forEach(fn, list) -> None
+    /// Executes a function for each element in a list (side effects only)
+    fn builtin_foreach_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(self.runtime_error_with_context(
+                "forEach() takes exactly 2 arguments: function, list".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the list (second argument)
+        let list = self.eval_expression(&args[1])?;
+        let list_items = match list {
+            Value::List(ref items) => items.clone(),
+            _ => return Err(self.runtime_error_with_context(
+                "forEach() second argument must be a list".to_string(),
+                Some(span)
+            )),
+        };
+
+        // Execute the function for each element
+        for item in list_items.iter() {
+            self.call_function(func.clone(), vec![item.clone()], span)?;
+        }
+
+        Ok(Value::None)
+    }
+
+    /// spawn(fn, args...) -> None
+    /// Spawns an asynchronous task to execute a function
+    fn builtin_spawn_native(&mut self, args: &[Expression], span: Span) -> Result<Value> {
+        if args.is_empty() {
+            return Err(self.runtime_error_with_context(
+                "spawn() requires at least 1 argument: function".to_string(),
+                Some(span)
+            ));
+        }
+
+        // Evaluate the function (first argument)
+        let func = self.eval_expression(&args[0])?;
+
+        // Evaluate the remaining arguments
+        let func_args: Result<Vec<_>> = args[1..].iter()
+            .map(|arg| self.eval_expression(arg))
+            .collect();
+        let func_args = func_args?;
+
+        // Clone the current environment for the spawned task
+        let captured_env = self.env.clone();
+
+        // Spawn the task asynchronously
+        match func {
+            Value::Function(f) => {
+                // Use the task_executor module to spawn the task
+                use crate::task_executor::execute_function_in_task;
+
+                tokio::spawn(async move {
+                    match execute_function_in_task(f, func_args, captured_env) {
+                        Ok(_) => {},
+                        Err(e) => eprintln!("[TB Spawn Error] {}", e),
+                    }
+                });
+
+                Ok(Value::None)
+            }
+            _ => Err(self.runtime_error_with_context(
+                "spawn() first argument must be a function".to_string(),
+                Some(span)
+            )),
+        }
+    }
+
+    /// ✅ PHASE 3.2: Process pending callback events from networking
+    /// This is called after each statement to execute queued TB callbacks
+    fn process_pending_callbacks(&mut self) -> Result<Value> {
+        // Get all pending callbacks
+        let events = tb_builtins::get_pending_callbacks();
+
+        if events.is_empty() {
+            return Ok(Value::None);
+        }
+
+        tb_debug_jit!("Processing {} pending callback events", events.len());
+
+        // Execute each callback
+        for event in events {
+            tb_debug_jit!("Executing callback with {} args", event.args.len());
+
+            // Call the function with the provided arguments
+            // Wrap the Function in a Value::Function (needs Arc)
+            let func_value = Value::Function(Arc::new(event.callback));
+            let span = Span { start: 0, end: 0, line: 0, column: 0 }; // Dummy span for callbacks
+
+            match self.call_function(func_value, event.args, span) {
+                Ok(result) => {
+                    tb_debug_jit!("Callback executed successfully: {:?}", result);
+                }
+                Err(e) => {
+                    eprintln!("Callback execution error: {}", e);
+                    // Don't propagate callback errors - just log them
+                }
+            }
+        }
+
+        // Clear the queue after processing
+        tb_builtins::clear_pending_callbacks();
+
+        Ok(Value::None)
     }
 }
 

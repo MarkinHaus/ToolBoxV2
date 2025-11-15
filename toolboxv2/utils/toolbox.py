@@ -389,10 +389,14 @@ class App(AppType, metaclass=Singleton):
             self.logger.info(f"Reloading mod from : {loc + mod_name}")
             self.remove_mod(mod_name, spec=spec, delete=False)
 
-        if (os.path.exists(self.start_dir + '/mods/' + mod_name) or os.path.exists(
-            self.start_dir + '/mods/' + mod_name + '.py')) and (
-            os.path.isdir(self.start_dir + '/mods/' + mod_name) or os.path.isfile(
-            self.start_dir + '/mods/' + mod_name + '.py')):
+        # Convert dotted module name to file path for existence check
+        # e.g., "CloudM.AuthManager" -> "CloudM/AuthManager"
+        mod_path = mod_name.replace('.', '/')
+
+        if (os.path.exists(self.start_dir + '/mods/' + mod_path) or os.path.exists(
+            self.start_dir + '/mods/' + mod_path + '.py')) and (
+            os.path.isdir(self.start_dir + '/mods/' + mod_path) or os.path.isfile(
+            self.start_dir + '/mods/' + mod_path + '.py')):
             try:
                 if mfo is None:
                     modular_file_object = import_module(loc + mod_name)
@@ -787,13 +791,15 @@ class App(AppType, metaclass=Singleton):
     def __call__(self, *args, **kwargs):
         return self.run(*args, **kwargs)
 
-    def run(self, *args, request=None, running_function_coro=None, **kwargs):
+    def run(self, *args, mod_function_name=None, request=None, running_function_coro=None, **kwargs):
         """
         Run a function with support for SSE streaming in both
         threaded and non-threaded contexts.
         """
+        if mod_function_name is None:
+            mod_function_name = args[0]
         if running_function_coro is None:
-            mn, fn = args[0]
+            mn, fn = mod_function_name
             if self.functions.get(mn, {}).get(fn, {}).get('request_as_kwarg', False):
                 kwargs["request"] = RequestData.from_dict(request)
                 if 'data' in kwargs and 'data' not in self.functions.get(mn, {}).get(fn, {}).get('params', []):
@@ -822,8 +828,15 @@ class App(AppType, metaclass=Singleton):
                             kwargs[k] = data[k]
                             del data[k]
 
+            if 'spec' in kwargs and 'spec' not in self.functions.get(mn, {}).get(fn, {}).get('params',
+                                                                                                   []):
+                if "tb_run_with_specification" in kwargs:
+                    kwargs.pop('spec')
+                else:
+                    kwargs['tb_run_with_specification'] = kwargs.pop('spec')
+
         # Create the coroutine
-        coro = running_function_coro or self.a_run_any(*args, **kwargs)
+        coro = running_function_coro or self.a_run_any(*args,mod_function_name=mod_function_name, **kwargs)
 
         # Get or create an event loop
         try:
@@ -1796,6 +1809,8 @@ class App(AppType, metaclass=Singleton):
         flush = kwargs.pop('flush', True)
         if self.sprint(None):
             print(Style.CYAN(f"System${self.id}:"), end=" ", flush=flush)
+        if 'color' in kwargs:
+            text = Style.style_dic[kwargs.pop('color')] + text + Style.style_dic["END"]
         print(text, *args, **kwargs, flush=flush)
 
     def sprint(self, text="", show_system=True, *args, **kwargs):
@@ -1955,12 +1970,35 @@ class App(AppType, metaclass=Singleton):
 
         version = self.version if version is None else self.version + ':' + version
 
+
+
         def a_additional_process(func):
 
-            async def executor(*args, **kwargs):
+            def args_kwargs_helper(args_, kwargs_):
+                module_name = mod_name if mod_name else func.__module__.split('.')[-1]
+                func_name = name if name else func.__name__
+                if request_as_kwarg and 'request' in kwargs_:
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
+                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
+                        del kwargs_['data']
+                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
+                                                                                                               []):
+                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
+                        del kwargs_['form_data']
 
+                if not request_as_kwarg and 'request' in kwargs_:
+                    del kwargs_['request']
+
+                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
+                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
+                return args_, kwargs_
+
+            async def executor(*args, **kwargs):
+                args, kwargs = args_kwargs_helper(args, kwargs)
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
+                print("running with", args, kwargs)
                 if asyncio.iscoroutinefunction(func):
                     result = await func(*args, **kwargs)
                 else:
@@ -2009,7 +2047,29 @@ class App(AppType, metaclass=Singleton):
 
         def additional_process(func):
 
+            def args_kwargs_helper(args_, kwargs_):
+                module_name = mod_name if mod_name else func.__module__.split('.')[-1]
+                func_name = name if name else func.__name__
+                if request_as_kwarg and 'request' in kwargs_:
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
+                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
+                        del kwargs_['data']
+                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
+                                                                                                               []):
+                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
+                        del kwargs_['form_data']
+
+                if not request_as_kwarg and 'request' in kwargs_:
+                    del kwargs_['request']
+
+                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
+                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
+                return args_, kwargs_
+
             def executor(*args, **kwargs):
+
+                args, kwargs = args_kwargs_helper(args, kwargs)
 
                 if pre_compute is not None:
                     args, kwargs = pre_compute(*args, **kwargs)

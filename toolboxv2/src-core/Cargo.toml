@@ -19,8 +19,14 @@ config = { version = "0.15.11", features = ["toml"] }
 chrono = { version = "0.4.31", features = ["serde"] }
 log = "0.4.20"
 env_logger =  "0.11.8"
-pyo3 = { version = "0.20.3", features = ["auto-initialize"] }
-pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+# PyO3 ENTFERNT - Verwende stattdessen C-API FFI
+# pyo3 = { version = "0.20.3", features = ["auto-initialize"] }
+# pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
+libloading = "0.8"  # Für C-API FFI
+libc = "0.2"        # Für C-Typen
+anyhow = "1.0"      # Für Error Handling
+sha2 = "0.10"       # Für SHA256 Hashing (Nuitka Builder)
+toml = "0.8"        # Für config.toml Parsing (Nuitka Builder)
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
 rand = "0.9.0"
 thiserror = "2.0.11"
@@ -48,3 +54,4 @@ strip = true
 actix-web =  { version = "4.10.2", features = ["macros"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 actix-rt = "2"
+tempfile = "3.8"  # Für Tests

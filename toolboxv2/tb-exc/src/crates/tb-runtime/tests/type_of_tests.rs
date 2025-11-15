@@ -59,35 +59,35 @@ fn test_type_of_hashmap() {
 #[test]
 fn test_type_of_option() {
     let value: Option<i64> = None;
-    assert_eq!(type_of_option(&value), "none");
-    
+    assert_eq!(type_of_option(&value), "None");
+
     let value: Option<i64> = Some(42);
-    assert_eq!(type_of_option(&value), "none");
+    assert_eq!(type_of_option(&value), "None");
 }
 
 #[test]
 fn test_type_of_unit() {
     let value = ();
-    assert_eq!(type_of_unit(&value), "none");
+    assert_eq!(type_of_unit(&value), "None");
 }
 
 #[test]
 fn test_type_of_dict_value() {
     let value = DictValue::Int(42);
     assert_eq!(type_of_dict_value(&value), "int");
-    
+
     let value = DictValue::String("hello".to_string());
     assert_eq!(type_of_dict_value(&value), "string");
-    
+
     let value = DictValue::Bool(true);
     assert_eq!(type_of_dict_value(&value), "bool");
-    
+
     let value = DictValue::Float(3.14);
     assert_eq!(type_of_dict_value(&value), "float");
-    
+
     let value = DictValue::List(vec![]);
     assert_eq!(type_of_dict_value(&value), "list");
-    
+
     let value = DictValue::Dict(HashMap::new());
     assert_eq!(type_of_dict_value(&value), "dict");
 }

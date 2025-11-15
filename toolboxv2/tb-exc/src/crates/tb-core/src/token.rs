@@ -16,6 +16,7 @@ pub enum TokenKind {
     String(Arc<String>),
     True,
     False,
+    None,
 
     // Identifiers
     Ident(Arc<String>),
@@ -104,6 +105,7 @@ impl TokenKind {
             "continue" => Some(TokenKind::Continue),
             "true" => Some(TokenKind::True),
             "false" => Some(TokenKind::False),
+            "None" => Some(TokenKind::None),
             "import" => Some(TokenKind::Import),
             "plugin" => Some(TokenKind::Plugin),
             "config" => Some(TokenKind::Config),

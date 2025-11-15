@@ -9,6 +9,15 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+class CheckpointConfig(BaseModel):
+    """Checkpoint configuration"""
+    enabled: bool = True
+    interval_seconds: int = 300  # 5 minutes
+    max_checkpoints: int = 10
+    checkpoint_dir: str = "./checkpoints"
+    auto_save_on_exit: bool = True
+    auto_load_on_start: bool = True
+    max_age_hours: int = 24
 
 class ResponseFormat(Enum):
     FREE_TEXT = "free-text"

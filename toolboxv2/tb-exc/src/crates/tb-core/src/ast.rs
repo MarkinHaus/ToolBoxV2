@@ -143,6 +143,7 @@ pub enum PluginLanguage {
 pub enum PluginMode {
     Jit,
     Compile,
+    Ffi,  // Load precompiled .dll/.so/.dylib directly without compilation
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

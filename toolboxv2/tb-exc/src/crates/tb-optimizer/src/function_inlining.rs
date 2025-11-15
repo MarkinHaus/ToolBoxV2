@@ -124,6 +124,14 @@ impl FunctionInlining {
                     }
                 }
             }
+            Expression::Match { value, arms, .. } => {
+                // Substitute in the match value
+                self.substitute_params(value, params, args);
+                // Substitute in all match arm bodies
+                for arm in arms.iter_mut() {
+                    self.substitute_params(&mut arm.body, params, args);
+                }
+            }
             _ => {}
         }
     }

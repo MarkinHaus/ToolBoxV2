@@ -1,11 +1,14 @@
 <!-- file: tb-lang-pycharm/src/main/resources/fileTypes/TB.xml -->
+<!-- TB Language File Type Definition for PyCharm -->
+<!-- Version: 1.0.1 - Updated 2025-11-10 -->
 
-<filetype binary="false" default_extension="tbx" description="TB Language file" name="TB Language">
+<filetype binary="false" default_extension="tbx" description="TB Language file (.tbx, .tb)" name="TB Language">
     <highlighting>
         <options>
-            <option name="LINE_COMMENT" value="#"/>
-            <option name="COMMENT_START" value=""/>
-            <option name="COMMENT_END" value=""/>
+            <!-- TB Language uses C-style comments: // and /* */ -->
+            <option name="LINE_COMMENT" value="//"/>
+            <option name="COMMENT_START" value="/*"/>
+            <option name="COMMENT_END" value="*/"/>
             <option name="HEX_PREFIX" value=""/>
             <option name="NUM_POSTFIXES" value=""/>
             <option name="HAS_BRACES" value="true"/>
@@ -13,9 +16,14 @@
             <option name="HAS_PARENS" value="true"/>
             <option name="HAS_STRING_ESCAPES" value="true"/>
         </options>
-        <keywords keywords="fn;let;mut;if;else;match;loop;while;for;in;return;break;continue;async;await;parallel;true;false;None;Some;Ok;Err" ignore_case="false"/>
-        <keywords2 keywords="int;float;bool;string;list;dict;type"/>
-        <keywords3 keywords="echo;print"/>
-        <keywords4 keywords="@config;@shared"/>
+        <!-- Control flow and declarations -->
+        <keywords keywords="fn;let;if;else;while;for;in;return;break;continue;match;import;from;as;export;plugin;true;false;none" ignore_case="false"/>
+        <!-- Type keywords -->
+        <keywords2 keywords="int;float;bool;string;list;dict;function"/>
+        <!-- Built-in functions -->
+        <keywords3 keywords="print;len;type_of;str;int;float;range;push;pop;get;set;keys;values;items"/>
+        <!-- Reserved for future use -->
+        <keywords4 keywords="and;or;not"/>
     </highlighting>
+    <extensions>tbx;tb</extensions>
 </filetype>

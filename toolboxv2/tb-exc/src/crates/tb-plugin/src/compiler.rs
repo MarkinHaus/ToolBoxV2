@@ -112,19 +112,35 @@ impl PluginCompiler {
                 // Compile: Use Nuitka
                 self.compile_python_nuitka(&source_file, name)
             }
+            PluginMode::Ffi => {
+                // FFI mode doesn't use compiler - precompiled libraries are loaded directly
+                Err(TBError::plugin_error("FFI mode does not require compilation - use precompiled library path directly"))
+            }
         }
     }
 
     pub fn install_python_deps(&self, requires: &[String]) -> Result<()> {
         for dep in requires {
-            println!("Installing Python dependency: {}", dep);
+            // Silent installation - no output
 
-            let status = Command::new("pip")
-                .args(&["install", "--quiet", dep])
-                .status()
-                .map_err(|e| TBError::plugin_error(format!("Failed to install {}: {}", dep, e)))?;
+            // Try uv pip first (faster), then fall back to python -m pip
+            let mut cmd = Command::new("uv");
+            cmd.args(&["pip", "install", "--quiet", dep]);
 
-            if !status.success() {
+            let status = cmd.status();
+
+            let success = if let Ok(status) = status {
+                status.success()
+            } else {
+                // Fall back to python -m pip
+                let status = Command::new("python")
+                    .args(&["-m", "pip", "install", "--quiet", dep])
+                    .status()
+                    .map_err(|e| TBError::plugin_error(format!("Failed to install {}: {}", dep, e)))?;
+                status.success()
+            };
+
+            if !success {
                 return Err(TBError::plugin_error(format!("Failed to install dependency: {}", dep)));
             }
         }
@@ -181,6 +197,10 @@ impl PluginCompiler {
             PluginMode::Compile => {
                 // Compile: Use esbuild for bundling
                 self.compile_javascript_esbuild(&source_file, name)
+            }
+            PluginMode::Ffi => {
+                // FFI mode doesn't use compiler - precompiled libraries are loaded directly
+                Err(TBError::plugin_error("FFI mode does not require compilation - use precompiled library path directly"))
             }
         }
     }

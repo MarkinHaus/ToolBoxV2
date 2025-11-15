@@ -12,7 +12,8 @@ pub mod networking;
 pub mod utils;
 pub mod error;
 pub mod builtins_impl;
-pub mod task_runtime;
+// ✅ PHASE 1.2: task_runtime.rs removed - functionality moved to tb-jit/src/executor.rs
+// pub mod task_runtime;
 
 use std::sync::Arc;
 use tb_core::{Value, TBError};
@@ -24,6 +25,9 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 
 pub use error::{BuiltinError, BuiltinResult};
+
+// ✅ PHASE 3.2: Export callback event handling functions
+pub use networking::{CallbackEvent, get_pending_callbacks, clear_pending_callbacks};
 
 // Import all built-in functions
 use crate::builtins_impl::*;
@@ -85,7 +89,8 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("import", builtins_impl::builtin_import as BuiltinFn));
 
     // File I/O
-    builtins.push(("open", builtin_open as BuiltinFn));
+    // ✅ PHASE 1.3: open() removed - no usable functionality
+    // builtins.push(("open", builtin_open as BuiltinFn));
     builtins.push(("read_file", builtin_read_file as BuiltinFn));
     builtins.push(("write_file", builtin_write_file as BuiltinFn));
     builtins.push(("file_exists", builtin_file_exists as BuiltinFn));
@@ -139,11 +144,9 @@ pub fn register_all_builtins() -> Vec<(&'static str, BuiltinFn)> {
     builtins.push(("bincode_deserialize", builtins_impl::builtin_bincode_deserialize as BuiltinFn));
     builtins.push(("hash", builtins_impl::builtin_hash as BuiltinFn));
 
-    // Higher-Order Functions
-    builtins.push(("map", builtins_impl::builtin_map as BuiltinFn));
-    builtins.push(("filter", builtins_impl::builtin_filter as BuiltinFn));
-    builtins.push(("reduce", builtins_impl::builtin_reduce as BuiltinFn));
-    builtins.push(("forEach", builtins_impl::builtin_for_each as BuiltinFn));
+    // ✅ PHASE 2.1: Higher-Order Functions are now implemented natively in the JIT executor
+    // They are no longer registered as builtins to avoid conflicts
+    // See: tb-jit/src/executor.rs - builtin_map_native, builtin_filter_native, etc.
 
     builtins
 }

@@ -30,7 +30,7 @@ pub mod ffi;
 
 // Re-export built-in functions only when "full" feature is enabled
 #[cfg(feature = "full")]
-use tb_core::Value;
+pub use tb_core::Value;
 
 #[cfg(feature = "full")]
 pub use tb_builtins::builtins_impl::{
@@ -60,11 +60,11 @@ pub use tb_builtins::builtins_impl::{
     builtin_yaml_stringify as yaml_stringify_from_value,
     builtin_time as time_from_value,
 
-    // Higher-order functions
-    builtin_map as map_from_value,
-    builtin_filter as filter_from_value,
-    builtin_reduce as reduce_from_value,
-    builtin_for_each as forEach_from_value,
+    // ✅ PHASE 1.2: Higher-order functions removed - now implemented natively in JIT executor
+    // builtin_map as map_from_value,
+    // builtin_filter as filter_from_value,
+    // builtin_reduce as reduce_from_value,
+    // builtin_for_each as forEach_from_value,
 };
 
 // Plugin support (only when "plugins" feature is enabled)
@@ -75,7 +75,7 @@ use tb_core::PluginLanguage;
 
 /// Global plugin loader instance (only with "plugins" feature)
 #[cfg(feature = "plugins")]
-static PLUGIN_LOADER: once_cell::sync::Lazy<Arc<PluginLoader>> =
+pub static PLUGIN_LOADER: once_cell::sync::Lazy<Arc<PluginLoader>> =
     once_cell::sync::Lazy::new(|| Arc::new(PluginLoader::new()));
 
 /// Global plugin function cache: (module_name, function_name) -> function_id (only with "plugins" feature)
@@ -338,7 +338,8 @@ pub extern "C" fn tb_plugin_call_python_jit(
 
     // Execute Python function
     let args = vec![Value::Int(arg)];
-    match PLUGIN_LOADER.execute_python_jit_inline(source, func_name, args) {
+    let requires = &[]; // No dependencies for this FFI call
+    match PLUGIN_LOADER.execute_python_jit_inline(source, func_name, args, requires) {
         Ok(Value::Int(result)) => result,
         _ => 0, // Error fallback
     }
@@ -392,6 +393,63 @@ pub fn print_value<T: fmt::Display>(value: &T) {
 // Alias for print_value to avoid conflict with Rust's print! macro
 pub fn print<T: fmt::Display>(value: &T) {
     println!("{}", value);
+}
+
+/// ✅ FIX 18: Print multiple values with space separator - for multi-argument print()
+pub fn print_multi(values: Vec<String>) {
+    for (i, value) in values.iter().enumerate() {
+        if i > 0 {
+            print!(" ");
+        }
+        print!("{}", value);
+    }
+    println!();
+}
+
+/// ✅ FIX 18: Convert values to String for multi-argument print()
+pub fn to_string_unit(_value: &()) -> String {
+    "None".to_string()
+}
+
+pub fn to_string_vec_dictvalue(vec: &Vec<DictValue>) -> String {
+    let mut result = String::from("[");
+    for (i, item) in vec.iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&to_string_dictvalue(item));
+    }
+    result.push(']');
+    result
+}
+
+pub fn to_string_hashmap_dictvalue(map: &HashMap<String, DictValue>) -> String {
+    let mut result = String::from("{");
+    for (i, (k, v)) in map.iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        result.push_str(&format!("{}: {}", k, to_string_dictvalue(v)));
+    }
+    result.push('}');
+    result
+}
+
+pub fn to_string_dictvalue(value: &DictValue) -> String {
+    match value {
+        DictValue::Int(i) => i.to_string(),
+        DictValue::Float(f) => {
+            if f.fract() == 0.0 && f.is_finite() {
+                format!("{:.1}", f)
+            } else {
+                f.to_string()
+            }
+        }
+        DictValue::String(s) => s.clone(),
+        DictValue::Bool(b) => b.to_string(),
+        DictValue::List(l) => to_string_vec_dictvalue(l),
+        DictValue::Dict(d) => to_string_hashmap_dictvalue(d),
+    }
 }
 
 pub fn print_hashmap_i64(map: HashMap<String, i64>) {
@@ -471,6 +529,53 @@ pub fn print_vec_bool(vec: Vec<bool>) {
     println!("]");
 }
 
+/// ✅ NEW: Print function for Vec<DictValue> - used for heterogeneous lists and pop() results
+pub fn print_vec_dictvalue(vec: &Vec<DictValue>) {
+    print!("[");
+    for (i, item) in vec.iter().enumerate() {
+        if i > 0 {
+            print!(", ");
+        }
+        match item {
+            DictValue::Int(n) => print!("{}", n),
+            DictValue::Float(f) => {
+                if f.fract() == 0.0 && f.is_finite() {
+                    print!("{:.1}", f);
+                } else {
+                    print!("{}", f);
+                }
+            }
+            DictValue::String(s) => print!("{}", s),
+            DictValue::Bool(b) => print!("{}", b),
+            DictValue::List(items) => {
+                // Print nested list
+                print!("[");
+                for (j, nested_item) in items.iter().enumerate() {
+                    if j > 0 {
+                        print!(", ");
+                    }
+                    match nested_item {
+                        DictValue::Int(n) => print!("{}", n),
+                        DictValue::Float(f) => {
+                            if f.fract() == 0.0 && f.is_finite() {
+                                print!("{:.1}", f);
+                            } else {
+                                print!("{}", f);
+                            }
+                        }
+                        DictValue::String(s) => print!("{}", s),
+                        DictValue::Bool(b) => print!("{}", b),
+                        _ => print!("[...]"),
+                    }
+                }
+                print!("]");
+            }
+            DictValue::Dict(_) => print!("{{...}}"),
+        }
+    }
+    println!("]");
+}
+
 /// Print function for Option types
 pub fn print_option<T: fmt::Display>(opt: &Option<T>) {
     match opt {
@@ -487,6 +592,82 @@ pub fn print_unit(_value: &()) {
 /// Generic print_debug for types that don't implement Display
 pub fn print_debug<T: fmt::Debug>(value: &T) {
     println!("{:?}", value);
+}
+
+/// ✅ NEW: Print function for DictValue - properly prints lists and dicts
+pub fn print_dictvalue(value: &DictValue) {
+    match value {
+        DictValue::Int(i) => println!("{}", i),
+        DictValue::Float(f) => {
+            if f.fract() == 0.0 && f.is_finite() {
+                println!("{:.1}", f);
+            } else {
+                println!("{}", f);
+            }
+        }
+        DictValue::String(s) => println!("{}", s),
+        DictValue::Bool(b) => println!("{}", b),
+        DictValue::List(items) => {
+            print!("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    print!(", ");
+                }
+                match item {
+                    DictValue::Int(n) => print!("{}", n),
+                    DictValue::Float(f) => {
+                        if f.fract() == 0.0 && f.is_finite() {
+                            print!("{:.1}", f);
+                        } else {
+                            print!("{}", f);
+                        }
+                    }
+                    DictValue::String(s) => print!("{}", s),
+                    DictValue::Bool(b) => print!("{}", b),
+                    DictValue::List(_) => print!("[...]"),
+                    DictValue::Dict(_) => print!("{{...}}"),
+                }
+            }
+            println!("]");
+        }
+        DictValue::Dict(map) => {
+            print!("{{");
+            for (i, (k, v)) in map.iter().enumerate() {
+                if i > 0 {
+                    print!(", ");
+                }
+                print!("{}: ", k);
+                match v {
+                    DictValue::Int(n) => print!("{}", n),
+                    DictValue::Float(f) => {
+                        if f.fract() == 0.0 && f.is_finite() {
+                            print!("{:.1}", f);
+                        } else {
+                            print!("{}", f);
+                        }
+                    }
+                    DictValue::String(s) => print!("{}", s),
+                    DictValue::Bool(b) => print!("{}", b),
+                    DictValue::List(_) => print!("[...]"),
+                    DictValue::Dict(_) => print!("{{...}}"),
+                }
+            }
+            println!("}}");
+        }
+    }
+}
+
+/// Print function for tuple (Vec<i64>, i64) - used by pop()
+pub fn print_tuple_vec_i64_i64(value: &(Vec<i64>, i64)) {
+    print!("[[");
+    for (i, item) in value.0.iter().enumerate() {
+        if i > 0 {
+            print!(", ");
+        }
+        print!("{}", item);
+    }
+    print!("], {}]", value.1);
+    println!();
 }
 
 // ============================================================================
@@ -620,6 +801,13 @@ impl<T> IsTruthy for Option<T> {
     }
 }
 
+/// ✅ FIX: Unit type () is falsy (represents None in TB Language)
+impl IsTruthy for () {
+    fn is_truthy(&self) -> bool {
+        false
+    }
+}
+
 pub fn is_truthy<T: IsTruthy>(value: &T) -> bool {
     value.is_truthy()
 }
@@ -743,16 +931,21 @@ pub fn type_of_hashmap<K, V>(_value: &HashMap<K, V>) -> String {
 }
 
 pub fn type_of_option<T>(_value: &Option<T>) -> String {
-    "none".to_string()
+    "None".to_string()
 }
 
 pub fn type_of_unit(_value: &()) -> String {
-    "none".to_string()
+    "None".to_string()
 }
 
 // Generic type_of for any type
 pub fn type_of<T>(_value: &T) -> String {
     std::any::type_name::<T>().to_string()
+}
+
+// ✅ FIX 11: type_of for Vec<DictValue>
+pub fn type_of_vec_dictvalue(_value: &Vec<DictValue>) -> String {
+    "list".to_string()
 }
 
 // type_of for DictValue
@@ -804,10 +997,24 @@ pub fn push<T>(mut vec: Vec<T>, item: T) -> Vec<T> {
     vec
 }
 
-/// Pop function
-pub fn pop<T: Clone>(mut vec: Vec<T>) -> Vec<T> {
-    vec.pop();
-    vec
+/// Pop function - returns Vec<DictValue> containing [new_list, popped_value]
+/// Example: pop([1, 2, 3, 4]) -> [[1, 2, 3], 4]
+/// This matches the JIT mode behavior where pop() returns a list, not a tuple
+pub fn pop_i64(mut vec: Vec<i64>) -> Vec<DictValue> {
+    let popped = vec.pop().expect("Cannot pop from empty list");
+    vec![
+        DictValue::List(vec.into_iter().map(DictValue::Int).collect()),
+        DictValue::Int(popped),
+    ]
+}
+
+/// Pop function for generic types - returns Vec<T> containing [new_list, popped_value]
+pub fn pop_generic<T: Clone + Into<DictValue>>(mut vec: Vec<T>) -> Vec<DictValue> {
+    let popped = vec.pop().expect("Cannot pop from empty list");
+    vec![
+        DictValue::List(vec.into_iter().map(|v| v.into()).collect()),
+        popped.into(),
+    ]
 }
 
 /// Keys function

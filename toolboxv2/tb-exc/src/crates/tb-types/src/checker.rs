@@ -56,10 +56,11 @@ impl TypeChecker {
                 ],
                 return_type: Box::new(Type::List(Box::new(Type::Generic(Arc::new("T".to_string()))))),
             }),
-            // pop: List<T> -> T
+            // pop: List<T> -> List<Any>
+            // Returns [[new_list], popped_value] to match JIT mode behavior
             ("pop", Type::Function {
                 params: vec![Type::List(Box::new(Type::Generic(Arc::new("T".to_string()))))],
-                return_type: Box::new(Type::Generic(Arc::new("T".to_string()))),
+                return_type: Box::new(Type::List(Box::new(Type::Any))),
             }),
             ("keys", Type::Function {
                 params: vec![Type::Any],
@@ -274,21 +275,43 @@ impl TypeChecker {
                 params: vec![Type::Any],
                 return_type: Box::new(Type::String),  // SHA-256 hash
             }),
-            // Higher-order functions (use Any for flexibility)
-            // map: (fn, list) -> list
+            // Higher-order functions with proper type signatures
+            // map: ( (T -> U), List<T> ) -> List<U>
             ("map", Type::Function {
-                params: vec![Type::Any, Type::Any],
-                return_type: Box::new(Type::Any),
+                params: vec![
+                    Type::Function {
+                        params: vec![Type::Generic(Arc::new("T".to_string()))],
+                        return_type: Box::new(Type::Generic(Arc::new("U".to_string()))),
+                    },
+                    Type::List(Box::new(Type::Generic(Arc::new("T".to_string())))),
+                ],
+                return_type: Box::new(Type::List(Box::new(Type::Generic(Arc::new("U".to_string()))))),
             }),
-            // filter: (fn, list) -> list
+            // filter: ( (T -> bool), List<T> ) -> List<T>
             ("filter", Type::Function {
-                params: vec![Type::Any, Type::Any],
-                return_type: Box::new(Type::Any),
+                params: vec![
+                    Type::Function {
+                        params: vec![Type::Generic(Arc::new("T".to_string()))],
+                        return_type: Box::new(Type::Bool),
+                    },
+                    Type::List(Box::new(Type::Generic(Arc::new("T".to_string())))),
+                ],
+                return_type: Box::new(Type::List(Box::new(Type::Generic(Arc::new("T".to_string()))))),
             }),
-            // reduce: (fn, list, initial) -> value
+            // reduce: ( (A, B -> A), List<B>, A ) -> A
             ("reduce", Type::Function {
-                params: vec![Type::Any, Type::Any, Type::Any],
-                return_type: Box::new(Type::Any),
+                params: vec![
+                    Type::Function {
+                        params: vec![
+                            Type::Generic(Arc::new("A".to_string())),
+                            Type::Generic(Arc::new("B".to_string())),
+                        ],
+                        return_type: Box::new(Type::Generic(Arc::new("A".to_string()))),
+                    },
+                    Type::List(Box::new(Type::Generic(Arc::new("B".to_string())))),
+                    Type::Generic(Arc::new("A".to_string())),
+                ],
+                return_type: Box::new(Type::Generic(Arc::new("A".to_string()))),
             }),
             // forEach: (fn, list) -> None
             ("forEach", Type::Function {
@@ -430,11 +453,29 @@ impl TypeChecker {
             }
 
             Statement::Function { name, params, return_type, body, span } => {
-                // Create function type
+                // ✅ FIX 7: Infer parameter types from usage in function body
+                // This handles recursive functions where params are Generic("n") etc.
                 let param_types: Vec<Type> = params
                     .iter()
-                    .map(|p| p.type_annotation.clone().unwrap_or(Type::Generic(Arc::clone(&p.name))))
+                    .map(|p| {
+                        if let Some(ty) = &p.type_annotation {
+                            ty.clone()
+                        } else {
+                            // ✅ FIX 7: Infer from usage in function body
+                            self.infer_param_type_from_body(&p.name, body)
+                                .unwrap_or(Type::Generic(Arc::clone(&p.name)))
+                        }
+                    })
                     .collect();
+
+                // ✅ FIX 7: Register function in environment FIRST (before type inference)
+                // This is critical for recursive functions to be able to call themselves
+                // Use Int as placeholder return type for recursive functions
+                let placeholder_func_type = Type::Function {
+                    params: param_types.clone(),
+                    return_type: Box::new(return_type.clone().unwrap_or(Type::Int)),
+                };
+                self.env.define(Arc::clone(name), placeholder_func_type);
 
                 // ✅ FIX: Infer return type from function body if not explicitly specified
                 // First, we need to check the body to infer the return type
@@ -442,6 +483,13 @@ impl TypeChecker {
 
                 // Create a temporary checker with a child environment for type inference
                 let mut temp_env = self.env.child();
+
+                // ✅ FIX 7: Register function in temp environment for recursive calls
+                temp_env.define(Arc::clone(name), Type::Function {
+                    params: param_types.clone(),
+                    return_type: Box::new(return_type.clone().unwrap_or(Type::Int)),
+                });
+
                 for (param, ty) in params.iter().zip(param_types.iter()) {
                     temp_env.define(Arc::clone(&param.name), ty.clone());
                 }
@@ -471,7 +519,7 @@ impl TypeChecker {
                     return_type: Box::new(final_return_type),
                 };
 
-                // Register function in environment FIRST
+                // Update function in environment with final type
                 self.env.define(Arc::clone(name), func_type);
 
                 // Now check the function body in a proper child scope for validation
@@ -688,7 +736,26 @@ impl TypeChecker {
             Expression::Ident(name, _span) => {
                 self.env.lookup(name.as_ref())
                     .cloned()
-                    .ok_or_else(|| TBError::undefined_variable(name.to_string()))
+                    .ok_or_else(|| {
+                        #[cfg(debug_assertions)]
+                        {
+                            // Debug output: Show available types in current scope
+                            eprintln!("\n[TB TYPE CHECK] Undefined variable '{}' during type checking", name);
+                            eprintln!("[TB TYPE CHECK] Available variables in type environment:");
+                            let bindings = self.env.bindings();
+                            let mut var_names: Vec<_> = bindings.keys().map(|k| k.as_ref()).collect();
+                            var_names.sort();
+                            for var_name in var_names.iter().take(20) {
+                                if let Some(ty) = bindings.get(&Arc::new(var_name.to_string())) {
+                                    eprintln!("  - {}: {:?}", var_name, ty);
+                                }
+                            }
+                            if var_names.len() > 20 {
+                                eprintln!("  ... and {} more", var_names.len() - 20);
+                            }
+                        }
+                        TBError::undefined_variable(name.to_string())
+                    })
             }
 
             Expression::Binary { op, left, right, .. } => {
@@ -943,12 +1010,14 @@ impl TypeChecker {
                 let old_env = self.env.clone();
                 self.env = self.env.child();
 
-                // Add parameters to the environment with generic types
-                for param in params {
-                    self.env.define(
-                        Arc::clone(&param.name),
-                        Type::Generic(Arc::new("T".to_string())),
-                    );
+                // ✅ FIX: Give each parameter a unique generic type (T0, T1, T2, ...)
+                // This allows type inference to work correctly for each parameter
+                let mut param_types = Vec::new();
+                for (i, param) in params.iter().enumerate() {
+                    let param_type = param.type_annotation.clone()
+                        .unwrap_or_else(|| Type::Generic(Arc::new(format!("T{}", i))));
+                    self.env.define(Arc::clone(&param.name), param_type.clone());
+                    param_types.push(param_type);
                 }
 
                 // Check the body
@@ -957,8 +1026,7 @@ impl TypeChecker {
                 // Restore the old environment
                 self.env = old_env;
 
-                // Return a function type with generic parameters
-                let param_types = vec![Type::Generic(Arc::new("T".to_string())); params.len()];
+                // Return a function type with unique generic parameters
                 Ok(Type::Function {
                     params: param_types,
                     return_type: Box::new(return_type),
@@ -1074,6 +1142,170 @@ impl TypeChecker {
 
     pub fn environment(&self) -> &TypeEnvironment {
         &self.env
+    }
+
+
+    /// ✅ FIX 7: Infer parameter type from usage in function body
+    /// This handles recursive functions where params need type inference
+    fn infer_param_type_from_body(&self, param_name: &Arc<String>, body: &[Statement]) -> Option<Type> {
+        for stmt in body {
+            if let Some(ty) = self.infer_param_type_from_stmt(param_name, stmt) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
+    /// Helper to infer parameter type from statement
+    fn infer_param_type_from_stmt(&self, param_name: &Arc<String>, stmt: &Statement) -> Option<Type> {
+        match stmt {
+            Statement::Expression { expr, .. } => self.infer_param_type_from_expr(param_name, expr),
+            Statement::Return { value: Some(expr), .. } => self.infer_param_type_from_expr(param_name, expr),
+            Statement::If { condition, then_block, else_block, .. } => {
+                self.infer_param_type_from_expr(param_name, condition)
+                    .or_else(|| {
+                        for stmt in then_block {
+                            if let Some(ty) = self.infer_param_type_from_stmt(param_name, stmt) {
+                                return Some(ty);
+                            }
+                        }
+                        None
+                    })
+                    .or_else(|| {
+                        if let Some(else_stmts) = else_block {
+                            for stmt in else_stmts {
+                                if let Some(ty) = self.infer_param_type_from_stmt(param_name, stmt) {
+                                    return Some(ty);
+                                }
+                            }
+                        }
+                        None
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    /// Helper to infer parameter type from expression
+    fn infer_param_type_from_expr(&self, param_name: &Arc<String>, expr: &Expression) -> Option<Type> {
+        match expr {
+            // ✅ FIX 10: Index access suggests List type
+            Expression::Index { object, index, .. } => {
+                // If parameter is being indexed, it's a List
+                if let Expression::Ident(name, _) = object.as_ref() {
+                    if name == param_name {
+                        // lst[idx] means lst is a List
+                        // We can't infer element type without more context, default to Int
+                        return Some(Type::List(Box::new(Type::Int)));
+                    }
+                }
+                // Recursively check object and index
+                self.infer_param_type_from_expr(param_name, object)
+                    .or_else(|| self.infer_param_type_from_expr(param_name, index))
+            }
+
+            // Binary operations give us type hints
+            Expression::Binary { op, left, right, .. } => {
+                use tb_core::BinaryOp;
+
+                // Check if parameter is used in this binary operation
+                let left_is_param = matches!(left.as_ref(), Expression::Ident(name, _) if name == param_name);
+                let right_is_param = matches!(right.as_ref(), Expression::Ident(name, _) if name == param_name);
+
+                if left_is_param || right_is_param {
+                    // Infer type from operation
+                    match op {
+                        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+                            return Some(Type::Int);
+                        }
+                        BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
+                            return Some(Type::Int);
+                        }
+                        BinaryOp::Eq | BinaryOp::NotEq => {
+                            // Could be any type, check the other operand
+                            if left_is_param {
+                                if let Expression::Literal(lit, _) = right.as_ref() {
+                                    return Some(Self::type_from_literal(lit));
+                                }
+                            } else if right_is_param {
+                                if let Expression::Literal(lit, _) = left.as_ref() {
+                                    return Some(Self::type_from_literal(lit));
+                                }
+                            }
+                        }
+                        BinaryOp::And | BinaryOp::Or => {
+                            return Some(Type::Bool);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Recursively check both sides
+                self.infer_param_type_from_expr(param_name, left)
+                    .or_else(|| self.infer_param_type_from_expr(param_name, right))
+            }
+
+            // ✅ FIX 10: Function calls - check for len(), which suggests List type
+            Expression::Call { callee, args, .. } => {
+                // Check if the parameter itself is being called as a function
+                if let Expression::Ident(func_name, _) = callee.as_ref() {
+                    if func_name == param_name {
+                        // param(x) means param is a Function
+                        // Use Any for parameter types since we can't infer them without full type checking
+                        let param_types: Vec<Type> = args.iter()
+                            .map(|_| Type::Any)
+                            .collect();
+                        return Some(Type::Function {
+                            params: param_types,
+                            return_type: Box::new(Type::Any),
+                        });
+                    }
+
+                    // Check if this is len(param) - suggests param is a List
+                    if func_name.as_str() == "len" && args.len() == 1 {
+                        if let Expression::Ident(arg_name, _) = &args[0] {
+                            if arg_name == param_name {
+                                // len(lst) means lst is a List
+                                return Some(Type::List(Box::new(Type::Int)));
+                            }
+                        }
+                    }
+                }
+
+                // Recursively check arguments
+                for arg in args {
+                    if let Some(ty) = self.infer_param_type_from_expr(param_name, arg) {
+                        return Some(ty);
+                    }
+                }
+                None
+            }
+
+            // ✅ FIX 10: Match expression - infer from value
+            Expression::Match { value, .. } => {
+                // If parameter is the match value, check pattern types
+                if let Expression::Ident(name, _) = value.as_ref() {
+                    if name == param_name {
+                        // Match on parameter suggests it's an Int (for range patterns)
+                        return Some(Type::Int);
+                    }
+                }
+                self.infer_param_type_from_expr(param_name, value)
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Helper to get type from literal
+    fn type_from_literal(lit: &Literal) -> Type {
+        match lit {
+            Literal::Int(_) => Type::Int,
+            Literal::Float(_) => Type::Float,
+            Literal::String(_) => Type::String,
+            Literal::Bool(_) => Type::Bool,
+            Literal::None => Type::None,
+        }
     }
 
     /// Create a type error with source context and span

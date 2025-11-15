@@ -29,6 +29,22 @@ pub static TCP_CLIENTS: Lazy<DashMap<String, Arc<TcpClient>>> = Lazy::new(DashMa
 pub static UDP_CLIENTS: Lazy<DashMap<String, Arc<UdpClient>>> = Lazy::new(DashMap::new);
 
 // ============================================================================
+// ✅ PHASE 3.2: EVENT QUEUE FOR TB CALLBACKS
+// ============================================================================
+
+/// Event to be processed by the JIT executor
+#[derive(Debug, Clone)]
+pub struct CallbackEvent {
+    pub callback: tb_core::Function,
+    pub args: Vec<tb_core::Value>,
+}
+
+/// Global event queue for TB callbacks
+/// This allows async Rust code to queue TB function calls that will be
+/// executed in the JIT executor's main thread
+pub static EVENT_QUEUE: Lazy<DashMap<String, Vec<CallbackEvent>>> = Lazy::new(DashMap::new);
+
+// ============================================================================
 // HTTP/HTTPS SESSION
 // ============================================================================
 
@@ -255,18 +271,45 @@ async fn handle_tcp_client(
     Ok(())
 }
 
-/// Helper function to call TB callbacks from Rust
+/// ✅ PHASE 3.2: Helper function to call TB callbacks from Rust
+/// Queues callback events to be processed by the JIT executor
+/// This allows async Rust code to trigger TB function calls safely
 fn call_tb_callback(callback: &tb_core::Function, args: Vec<tb_core::Value>) -> Result<tb_core::Value, tb_core::TBError> {
-    use crate::task_runtime::TaskExecutor;
+    // Generate a unique event ID based on the callback
+    let event_id = format!("callback_{:p}", callback as *const _);
 
-    // Get the global task environment
-    let env = crate::TASK_ENVIRONMENT.read().clone();
+    // Create callback event
+    let event = CallbackEvent {
+        callback: callback.clone(),
+        args,
+    };
 
-    // Create a task executor
-    let mut executor = TaskExecutor::new(env);
+    // Queue the event
+    EVENT_QUEUE.entry(event_id.clone())
+        .or_insert_with(Vec::new)
+        .push(event);
 
-    // Execute the callback
-    executor.execute_function(callback, args)
+    // Return success - the actual callback will be executed by the JIT executor
+    Ok(tb_core::Value::None)
+}
+
+/// ✅ PHASE 3.2: Get all pending callback events
+/// This is called by the JIT executor to process queued callbacks
+pub fn get_pending_callbacks() -> Vec<CallbackEvent> {
+    let mut all_events = Vec::new();
+
+    // Collect all events from all queues
+    for mut entry in EVENT_QUEUE.iter_mut() {
+        all_events.append(&mut entry.value_mut());
+    }
+
+    all_events
+}
+
+/// ✅ PHASE 3.2: Clear all pending callback events
+/// This is called after the JIT executor has processed all events
+pub fn clear_pending_callbacks() {
+    EVENT_QUEUE.clear();
 }
 
 // ============================================================================

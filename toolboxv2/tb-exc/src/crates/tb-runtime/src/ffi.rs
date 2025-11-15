@@ -84,7 +84,8 @@ pub extern "C" fn tb_call_builtin(
 
             // I/O
             "print" => tb_builtins::builtins_impl::builtin_print(args),
-            "open" => tb_builtins::builtins_impl::builtin_open(args),
+            // ✅ PHASE 1.3: open() removed - no usable functionality
+            // "open" => tb_builtins::builtins_impl::builtin_open(args),
             "read_file" => tb_builtins::builtins_impl::builtin_read_file(args),
             "write_file" => tb_builtins::builtins_impl::builtin_write_file(args),
             "file_exists" => tb_builtins::builtins_impl::builtin_file_exists(args),
@@ -143,11 +144,12 @@ pub extern "C" fn tb_call_builtin(
             "bincode_deserialize" => tb_builtins::builtins_impl::builtin_bincode_deserialize(args),
             "hash" => tb_builtins::builtins_impl::builtin_hash(args),
 
-            // Higher-order functions
-            "map" => tb_builtins::builtins_impl::builtin_map(args),
-            "filter" => tb_builtins::builtins_impl::builtin_filter(args),
-            "reduce" => tb_builtins::builtins_impl::builtin_reduce(args),
-            "forEach" => tb_builtins::builtins_impl::builtin_for_each(args),
+            // ✅ PHASE 1.2: Higher-order functions removed - now implemented natively in JIT executor
+            // These functions are not available in FFI mode
+            // "map" => tb_builtins::builtins_impl::builtin_map(args),
+            // "filter" => tb_builtins::builtins_impl::builtin_filter(args),
+            // "reduce" => tb_builtins::builtins_impl::builtin_reduce(args),
+            // "forEach" => tb_builtins::builtins_impl::builtin_for_each(args),
 
             _ => Err(tb_core::TBError::runtime_error(format!("Unknown built-in function: {}", name))),
         };
