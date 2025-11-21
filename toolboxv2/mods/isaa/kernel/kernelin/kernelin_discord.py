@@ -151,10 +151,13 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
 
     def wants_opus(self) -> bool:
         """We want decoded PCM audio, not Opus"""
+        print(f"🎤 [DEBUG] wants_opus() called, returning False (want PCM)")
         return False
 
     def write(self, user, data):
         """Receive audio data from Discord"""
+        print(f"🎤 [DEBUG] write() called - user: {user.display_name if user else 'None'}, data: {type(data)}")
+
         if not user:
             print(f"🎤 [DEBUG] write() called with no user")
             return
@@ -356,6 +359,41 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                         else:
                             print(f"🎤 [DEBUG] WARNING: No text channel found for responses")
 
+                    # Determine output mode (TTS or Text)
+                    guild_id = user.guild.id if hasattr(user, 'guild') else None
+                    tts_enabled = guild_id and guild_id in self.output_router.tts_enabled and self.output_router.tts_enabled[guild_id]
+                    in_voice = guild_id and guild_id in self.output_router.voice_clients and self.output_router.voice_clients[guild_id].is_connected()
+                    output_mode = "tts" if (tts_enabled and in_voice) else "text"
+
+                    print(f"🎤 [DEBUG] Output mode: {output_mode} (TTS: {tts_enabled}, In Voice: {in_voice})")
+
+                    # Inject output mode into agent's variable system
+                    if hasattr(self.kernel.agent, 'variable_manager'):
+                        self.kernel.agent.variable_manager.set(
+                            f'discord.output_mode.{str(user.id)}',
+                            output_mode
+                        )
+
+                        # Set formatting instructions based on output mode
+                        if output_mode == "tts":
+                            formatting_instructions = (
+                                "IMPORTANT: You are responding via Text-to-Speech (TTS). "
+                                "Use ONLY plain text. NO emojis, NO formatting, NO abbreviations like 'etc.', 'usw.', 'z.B.'. "
+                                "Write out everything fully. Keep responses natural and conversational for speech."
+                            )
+                        else:
+                            formatting_instructions = (
+                                "You are responding via Discord text chat. "
+                                "Use Discord markdown formatting, emojis, code blocks, and rich formatting to enhance readability. "
+                                "Make your responses visually appealing and well-structured."
+                            )
+
+                        self.kernel.agent.variable_manager.set(
+                            f'discord.formatting_instructions.{str(user.id)}',
+                            formatting_instructions
+                        )
+                        print(f"🎤 [DEBUG] Output mode and formatting instructions injected into agent")
+
                     # Send transcription to kernel with enhanced metadata
                     print(f"🎤 [DEBUG] Creating kernel signal for user {user.id}")
                     signal = KernelSignal(
@@ -368,7 +406,9 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                             "user_display_name": user.display_name,
                             "transcription": True,
                             "language": language,
-                            "discord_context": discord_context
+                            "discord_context": discord_context,
+                            "output_mode": output_mode,
+                            "formatting_instructions": formatting_instructions
                         }
                     )
                     print(f"🎤 [DEBUG] Sending signal to kernel...")
@@ -397,6 +437,11 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
         self.last_audio_time.clear()
 
     @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f
+    def on_voice_member_connect(self, member: discord.Member):
+        """Handle member connect"""
+        print(f"🎤 [DEBUG] {member.display_name} connected to voice")
+
+    @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f
     def on_voice_member_disconnect(self, member: discord.Member, ssrc: int):
         """Handle member disconnect"""
         user_id = str(member.id)
@@ -415,7 +460,7 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
     def on_voice_member_speaking_start(self, member: discord.Member):
         """Handle speaking start (VAD)"""
         user_id = str(member.id)
-        print(f"🎤 {member.display_name} started speaking")
+        print(f"🎤 [DEBUG] {member.display_name} started speaking")
         self.speaking_state[user_id] = True
 
     @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f

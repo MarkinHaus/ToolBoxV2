@@ -369,6 +369,15 @@ class Kernel(IProAKernel):
                     memory_context
                 )
 
+        # Get formatting instructions from metadata (set by Discord voice input)
+        formatting_instructions = signal.metadata.get("formatting_instructions", "")
+
+        # Temporarily inject formatting instructions into system prompt
+        original_system_message = None
+        if formatting_instructions and hasattr(self.agent, 'amd'):
+            original_system_message = self.agent.amd.system_message
+            self.agent.amd.system_message = original_system_message + f"\n\n{formatting_instructions}"
+
         try:
             # Run agent
             response = await self.agent.a_run(
@@ -395,6 +404,9 @@ class Kernel(IProAKernel):
             )
 
         except Exception as e:
+            # Restore original system message on error
+            if original_system_message is not None and hasattr(self.agent, 'amd'):
+                self.agent.amd.system_message = original_system_message
             error_msg = f"Error: {str(e)}"
             await self.output_router.send_response(
                 user_id=user_id,
