@@ -151,13 +151,10 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
 
     def wants_opus(self) -> bool:
         """We want decoded PCM audio, not Opus"""
-        print(f"🎤 [DEBUG] wants_opus() called, returning False (want PCM)")
         return False
 
     def write(self, user, data):
         """Receive audio data from Discord"""
-        print(f"🎤 [DEBUG] write() called - user: {user.display_name if user else 'None'}, data: {type(data)}")
-
         if not user:
             print(f"🎤 [DEBUG] write() called with no user")
             return
@@ -773,6 +770,64 @@ class DiscordOutputRouter(IOutputRouter):
         self.tts_enabled: Dict[int, bool] = {}  # guild_id -> tts enabled
         self.tts_mode: Dict[int, str] = {}  # guild_id -> "elevenlabs" or "piper"
 
+    def _split_message(self, content: str, max_length: int = 1900) -> List[str]:
+        """
+        Split a long message into chunks that fit Discord's limits.
+        Uses smart splitting at sentence/paragraph boundaries.
+
+        Args:
+            content: The message to split
+            max_length: Maximum length per chunk (default 1900 to leave room for formatting)
+
+        Returns:
+            List of message chunks
+        """
+        if len(content) <= max_length:
+            return [content]
+
+        chunks = []
+        current_chunk = ""
+
+        # Try to split at paragraph boundaries first
+        paragraphs = content.split('\n\n')
+
+        for para in paragraphs:
+            # If paragraph itself is too long, split at sentence boundaries
+            if len(para) > max_length:
+                sentences = para.replace('. ', '.|').replace('! ', '!|').replace('? ', '?|').split('|')
+
+                for sentence in sentences:
+                    # If sentence itself is too long, split at word boundaries
+                    if len(sentence) > max_length:
+                        words = sentence.split(' ')
+                        for word in words:
+                            if len(current_chunk) + len(word) + 1 > max_length:
+                                if current_chunk:
+                                    chunks.append(current_chunk.strip())
+                                current_chunk = word + ' '
+                            else:
+                                current_chunk += word + ' '
+                    else:
+                        if len(current_chunk) + len(sentence) + 1 > max_length:
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                            current_chunk = sentence + ' '
+                        else:
+                            current_chunk += sentence + ' '
+            else:
+                if len(current_chunk) + len(para) + 2 > max_length:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = para + '\n\n'
+                else:
+                    current_chunk += para + '\n\n'
+
+        # Add remaining chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
     def _create_embed(
         self,
         content: str,
@@ -781,6 +836,10 @@ class DiscordOutputRouter(IOutputRouter):
         fields: List[dict] = None
     ) -> discord.Embed:
         """Create a Discord embed"""
+        # Discord embed description limit is 4096 characters
+        if len(content) > 4096:
+            content = content[:4093] + "..."
+
         embed = discord.Embed(
             title=title,
             description=content,
@@ -842,6 +901,7 @@ class DiscordOutputRouter(IOutputRouter):
                 use_embed = metadata and metadata.get("use_embed", True)
 
                 if use_embed:
+                    # Embed description limit is 4096, but we use _create_embed which handles truncation
                     embed = self._create_embed(
                         content=content,
                         title=metadata.get("title") if metadata else None,
@@ -849,7 +909,26 @@ class DiscordOutputRouter(IOutputRouter):
                     )
                     await channel.send(embed=embed)
                 else:
-                    await channel.send(content)
+                    # Plain text mode - split if too long (2000 char limit)
+                    if len(content) > 2000:
+                        print(f"💬 [DEBUG] Message too long ({len(content)} chars), splitting into chunks")
+                        chunks = self._split_message(content, max_length=1900)
+
+                        for i, chunk in enumerate(chunks, 1):
+                            if i == 1:
+                                # First message
+                                await channel.send(chunk)
+                            else:
+                                # Subsequent messages with continuation indicator
+                                await channel.send(f"*...continued ({i}/{len(chunks)})*\n\n{chunk}")
+
+                            # Small delay between messages to avoid rate limiting
+                            if i < len(chunks):
+                                await asyncio.sleep(0.5)
+
+                        print(f"💬 [DEBUG] Sent message in {len(chunks)} chunks")
+                    else:
+                        await channel.send(content)
 
         except Exception as e:
             print(f"❌ Error sending Discord response to user {user_id}: {e}")
@@ -2012,11 +2091,8 @@ class DiscordKernel:
 
                     # Get max tokens for models
                     try:
-                        from toolboxv2.mods.isaa.base.Agent.utils import get_max_tokens
-                        fast_model = self.kernel.agent.amd.fast_llm_model.split('/')[-1]
-                        complex_model = self.kernel.agent.amd.complex_llm_model.split('/')[-1]
-                        max_tokens_fast = get_max_tokens(fast_model)
-                        max_tokens_complex = get_max_tokens(complex_model)
+                        max_tokens_fast = self.kernel.agent.amd.max_input_tokens
+                        max_tokens_complex = self.kernel.agent.amd.max_input_tokens
                     except:
                         max_tokens_fast = self.kernel.agent.amd.max_tokens if hasattr(self.kernel.agent.amd, 'max_tokens') else 128000
                         max_tokens_complex = max_tokens_fast
@@ -2054,7 +2130,13 @@ class DiscordKernel:
                     embed.add_field(name="📊 Context Distribution", value=context_text, inline=False)
 
                 # Get user-specific data counts
-                user_memories = self.kernel.memory_store.user_memories.get(user_id, [])
+                # user_memories contains memory IDs, not Memory objects - need to fetch the actual objects
+                user_memory_ids = self.kernel.memory_store.user_memories.get(user_id, [])
+                user_memories = [
+                    self.kernel.memory_store.memories[mid]
+                    for mid in user_memory_ids
+                    if mid in self.kernel.memory_store.memories
+                ]
                 user_learning = [r for r in self.kernel.learning_engine.records if r.user_id == user_id]
                 user_prefs = self.kernel.learning_engine.preferences.get(user_id)
                 user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
@@ -2278,6 +2360,224 @@ class DiscordKernel:
 
             except Exception as e:
                 await ctx.send(f"❌ Error retrieving context: {e}")
+
+        # Variables management command
+        @self.bot.command(name="vars")
+        async def vars_command(ctx: commands.Context, action: str = None, path: str = None, *, value: str = None):
+            """
+            Manage agent variables interactively.
+
+            Usage:
+                !vars                    - List all variables
+                !vars list [path]        - List variables (optionally filtered by path)
+                !vars get <path>         - Get a specific variable
+                !vars set <path> <value> - Set a variable
+                !vars delete <path>      - Delete a variable
+
+            Examples:
+                !vars
+                !vars list discord
+                !vars get discord.output_mode.268830485889810432
+                !vars set user.preferences.theme dark
+                !vars delete user.temp.data
+            """
+            user_id = str(ctx.author.id)
+
+            if not hasattr(self.kernel.agent, 'variable_manager'):
+                await ctx.send("❌ Variable manager not available!")
+                return
+
+            var_manager = self.kernel.agent.variable_manager
+
+            # Default action is list
+            if action is None:
+                action = "list"
+
+            action = action.lower()
+
+            try:
+                if action == "list":
+                    # List all variables or filter by path
+                    # Try to get all variables - check if get_all() exists
+                    if hasattr(var_manager, 'get_all'):
+                        all_vars = var_manager.get_all()
+                    elif hasattr(var_manager, 'variables'):
+                        # If variables are stored in a dict attribute
+                        all_vars = var_manager.variables
+                    elif hasattr(var_manager, '_variables'):
+                        all_vars = var_manager._variables
+                    else:
+                        # Fallback: try to access internal storage
+                        await ctx.send("❌ Cannot list variables - variable manager doesn't support listing!")
+                        return
+
+                    if not all_vars:
+                        await ctx.send("📝 No variables stored yet!")
+                        return
+
+                    # Filter by path if provided
+                    if path:
+                        filtered_vars = {k: v for k, v in all_vars.items() if k.startswith(path)}
+                        if not filtered_vars:
+                            await ctx.send(f"📝 No variables found matching path: `{path}`")
+                            return
+                        all_vars = filtered_vars
+
+                    # Create interactive view
+                    embed = discord.Embed(
+                        title="🔧 Agent Variables",
+                        description=f"Total: {len(all_vars)} variable(s)" + (f" (filtered by `{path}`)" if path else ""),
+                        color=discord.Color.blue(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    # Group variables by prefix
+                    from collections import defaultdict
+                    grouped = defaultdict(list)
+                    for var_path, var_value in all_vars.items():
+                        prefix = var_path.split('.')[0] if '.' in var_path else 'root'
+                        grouped[prefix].append((var_path, var_value))
+
+                    # Add fields for each group (max 25 fields per embed)
+                    field_count = 0
+                    for prefix, vars_list in sorted(grouped.items()):
+                        if field_count >= 25:
+                            break
+
+                        # Show first 5 variables in each group
+                        var_text = ""
+                        for var_path, var_value in sorted(vars_list)[:5]:
+                            # Truncate long values
+                            value_str = str(var_value)
+                            if len(value_str) > 100:
+                                value_str = value_str[:97] + "..."
+                            var_text += f"`{var_path}`\n└─ {value_str}\n\n"
+
+                        if len(vars_list) > 5:
+                            var_text += f"... and {len(vars_list) - 5} more\n"
+
+                        embed.add_field(
+                            name=f"📁 {prefix.upper()} ({len(vars_list)})",
+                            value=var_text or "Empty",
+                            inline=False
+                        )
+                        field_count += 1
+
+                    # Create interactive buttons
+                    view = discord.ui.View(timeout=300)
+
+                    # Button: Refresh
+                    refresh_button = discord.ui.Button(
+                        label="🔄 Refresh",
+                        style=discord.ButtonStyle.primary,
+                        custom_id=f"vars_refresh_{user_id}"
+                    )
+
+                    async def refresh_callback(interaction: discord.Interaction):
+                        if str(interaction.user.id) != user_id:
+                            await interaction.response.send_message("❌ This is not your command!", ephemeral=True)
+                            return
+
+                        # Re-run the list command
+                        await interaction.response.defer()
+                        await vars_command.callback(ctx, "list", path)
+
+                    refresh_button.callback = refresh_callback
+                    view.add_item(refresh_button)
+
+                    await ctx.send(embed=embed, view=view)
+
+                elif action == "get":
+                    if not path:
+                        await ctx.send("❌ Usage: `!vars get <path>`")
+                        return
+
+                    var_value = var_manager.get(path)
+
+                    if var_value is None:
+                        await ctx.send(f"❌ Variable not found: `{path}`")
+                        return
+
+                    # Format value nicely
+                    import json
+                    try:
+                        if isinstance(var_value, (dict, list)):
+                            value_str = json.dumps(var_value, indent=2)
+                        else:
+                            value_str = str(var_value)
+                    except:
+                        value_str = str(var_value)
+
+                    embed = discord.Embed(
+                        title=f"🔧 Variable: {path}",
+                        description=f"```json\n{value_str[:4000]}\n```" if len(value_str) < 4000 else f"```\n{value_str[:4000]}...\n```",
+                        color=discord.Color.green(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    await ctx.send(embed=embed)
+
+                elif action == "set":
+                    if not path or value is None:
+                        await ctx.send("❌ Usage: `!vars set <path> <value>`")
+                        return
+
+                    # Try to parse value as JSON first
+                    import json
+                    try:
+                        parsed_value = json.loads(value)
+                    except:
+                        # If not JSON, use as string
+                        parsed_value = value
+
+                    var_manager.set(path, parsed_value)
+
+                    embed = discord.Embed(
+                        title="✅ Variable Set",
+                        description=f"**Path:** `{path}`\n**Value:** `{parsed_value}`",
+                        color=discord.Color.green(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    await ctx.send(embed=embed)
+
+                elif action == "delete":
+                    if not path:
+                        await ctx.send("❌ Usage: `!vars delete <path>`")
+                        return
+
+                    # Check if variable exists
+                    if var_manager.get(path) is None:
+                        await ctx.send(f"❌ Variable not found: `{path}`")
+                        return
+
+                    # Delete variable - check if delete() exists
+                    if hasattr(var_manager, 'delete'):
+                        var_manager.delete(path)
+                    elif hasattr(var_manager, 'remove'):
+                        var_manager.remove(path)
+                    else:
+                        # Fallback: set to None
+                        var_manager.set(path, None)
+                        await ctx.send(f"⚠️ Variable set to None (delete not supported): `{path}`")
+                        return
+
+                    embed = discord.Embed(
+                        title="✅ Variable Deleted",
+                        description=f"**Path:** `{path}`",
+                        color=discord.Color.orange(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    await ctx.send(embed=embed)
+
+                else:
+                    await ctx.send(f"❌ Unknown action: `{action}`\n\nValid actions: list, get, set, delete")
+
+            except Exception as e:
+                await ctx.send(f"❌ Error managing variables: {e}")
+                import traceback
+                traceback.print_exc()
 
     async def _dispatch_progress_event(self, event: ProgressEvent):
         """Dispatch progress events to all enabled progress printers"""
