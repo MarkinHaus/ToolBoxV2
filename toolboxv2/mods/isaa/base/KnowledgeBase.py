@@ -21,9 +21,6 @@ from toolboxv2 import Spinner, get_app, get_logger
 from toolboxv2.mods.isaa.base.VectorStores import AbstractVectorStore
 from toolboxv2.mods.isaa.base.VectorStores.FaissVectorStore import FaissVectorStore
 
-
-i__ = [0, 0, 0]
-
 @dataclass(slots=True)
 class Chunk:
     """Represents a chunk of text with its embedding and metadata"""
@@ -324,6 +321,7 @@ class ConceptExtractor:
     def __init__(self, knowledge_base, requests_per_second = 85.):
         self.kb = knowledge_base
         self.concept_graph = ConceptGraph()
+        self._results_lock = asyncio.Lock()
         self.requests_per_second = requests_per_second
 
     async def extract_concepts(self, texts: list[str], metadatas: list[dict[str, Any]]) -> list[list[Concept]]:
@@ -367,7 +365,7 @@ class ConceptExtractor:
             try:
                 # Wait for rate limit
                 await rate_limiter.acquire()
-                i__[1] += 1
+                self.kb.stats['concept_calls'] += 1
                 # Make API call without awaiting the response
 
 
@@ -427,7 +425,9 @@ class ConceptExtractor:
         # Sort results by original index
         sorted_results = [[] for _ in texts]
         for idx, concepts in enumerate(all_results):
-            sorted_results[idx] = concepts
+
+            async with self._results_lock:
+                sorted_results[idx] = concepts
 
         return sorted_results
 
@@ -450,7 +450,7 @@ class ConceptExtractor:
             return concepts
 
         except Exception:
-            i__[2] +=1
+            self.kb.stats['concept_errors'] += 1
             return []
 
     async def process_chunks(self, chunks: list[Chunk]) -> None:
@@ -655,6 +655,13 @@ class KnowledgeBase:
         self.model_name = model_name
         self.sto: list = []
 
+        # Statistics tracking (replaces global i__ variable)
+        self.stats = {
+            'embeddings_generated': 0,
+            'concept_calls': 0,
+            'concept_errors': 0
+        }
+
         self.text_splitter = TextSplitter(chunk_size=chunk_size,chunk_overlap=chunk_overlap, separator=separator)
         self.similarity_graph = {}
         self.concept_extractor = ConceptExtractor(self, requests_per_second)
@@ -663,6 +670,9 @@ class KnowledgeBase:
         self.vis_kwargs = None
         self.vdb = None
         self.init_vis(vis_class, vis_kwargs)
+
+        self.llm_rate_limiter = DynamicRateLimiter()
+        self.llm_rate_limiter.update_rate(requests_per_second / 2)
 
     def init_vis(self, vis_class, vis_kwargs):
         if vis_class is None:
@@ -723,7 +733,7 @@ class KnowledgeBase:
                 tasks.append(process_batch(batch))
 
             embeddings = await asyncio.gather(*tasks)
-            i__[0] += len(texts)
+            self.stats['embeddings_generated'] += len(texts)
             return np.vstack(embeddings)
         except Exception as e:
             get_logger().error(f"Error generating embeddings: {str(e)}")
@@ -920,8 +930,20 @@ class KnowledgeBase:
             }
         }
 
-    def _remove_similar_chunks(self, threshold: float = None) -> int:
-        """Remove chunks that are too similar to each other"""
+    def _remove_similar_chunks(self, threshold: float = None, batch_size: int = 1000) -> int:
+        """
+        Remove chunks that are too similar to each other using batch processing.
+
+        This optimized version processes chunks in batches to avoid O(n²) memory usage.
+        For large datasets (>10k chunks), this prevents memory exhaustion.
+
+        Args:
+            threshold: Similarity threshold for deduplication (default: self.deduplication_threshold)
+            batch_size: Number of chunks to process at once (default: 1000)
+
+        Returns:
+            Number of chunks removed
+        """
         if len(self.vdb.chunks) < 2:
             return 0
 
@@ -929,27 +951,51 @@ class KnowledgeBase:
             threshold = self.deduplication_threshold
 
         try:
-            # Get all embeddings
-            embeddings = np.vstack([c.embedding for c in self.vdb.chunks])
-            n = len(embeddings)
+            n = len(self.vdb.chunks)
 
-            # Compute similarity matrix
-            similarities = np.dot(embeddings, embeddings.T)
+            # For small datasets, use the original fast method
+            if n <= batch_size:
+                embeddings = np.vstack([c.embedding for c in self.vdb.chunks])
+                similarities = np.dot(embeddings, embeddings.T)
+                keep_mask = np.ones(n, dtype=bool)
 
-            # Create mask for chunks to keep
-            keep_mask = np.ones(n, dtype=bool)
+                for i in range(n):
+                    if not keep_mask[i]:
+                        continue
+                    similar_indices = similarities[i] >= threshold
+                    similar_indices[i] = False
+                    keep_mask[similar_indices] = False
+            else:
+                # For large datasets, use batch processing to save memory
+                embeddings = np.vstack([c.embedding for c in self.vdb.chunks])
+                keep_mask = np.ones(n, dtype=bool)
 
-            # Iterate through chunks
-            for i in range(n):
-                if not keep_mask[i]:
-                    continue
+                # Process in batches to avoid full similarity matrix
+                for i in range(0, n, batch_size):
+                    if not any(keep_mask[i:i+batch_size]):
+                        continue  # Skip if all in batch are already marked for removal
 
-                # Find chunks that are too similar to current chunk
-                similar_indices = similarities[i] >= threshold
-                similar_indices[i] = False  # Don't count self-similarity
+                    batch_end = min(i + batch_size, n)
+                    batch_embeddings = embeddings[i:batch_end]
 
-                # Mark similar chunks for removal
-                keep_mask[similar_indices] = False
+                    # Only compute similarities for this batch vs all chunks
+                    batch_similarities = np.dot(batch_embeddings, embeddings.T)
+
+                    # Process each chunk in the batch
+                    for j in range(batch_end - i):
+                        global_idx = i + j
+                        if not keep_mask[global_idx]:
+                            continue
+
+                        # Find similar chunks
+                        similar_indices = batch_similarities[j] >= threshold
+                        similar_indices[global_idx] = False  # Don't count self-similarity
+
+                        # Mark similar chunks for removal
+                        keep_mask[similar_indices] = False
+
+                    # Free memory
+                    del batch_similarities
 
             # Keep only unique chunks
             unique_chunks = [chunk for chunk, keep in zip(self.vdb.chunks, keep_mask, strict=False) if keep]
@@ -963,7 +1009,6 @@ class KnowledgeBase:
             if removed_count > 0:
                 self.vdb.rebuild_index()
 
-
             return removed_count
 
         except Exception as e:
@@ -976,7 +1021,13 @@ class KnowledgeBase:
         metadata: list[dict[str, Any]] | None= None,
     ) -> tuple[int, int]:
         """
-        Process and add new data to the knowledge base
+        Process and add new data to the knowledge base.
+
+        Optimized to avoid memory leaks:
+        - Embeddings are computed only once for unique texts
+        - Proper cleanup of intermediate data structures
+        - Batch processing for large datasets
+
         Returns: Tuple of (added_count, duplicate_count)
         """
         if len(texts) == 0:
@@ -985,8 +1036,11 @@ class KnowledgeBase:
             # Compute hashes and filter exact duplicates
             hashes = [self.compute_hash(text) for text in texts]
             unique_data = []
+            duplicate_count = 0
+
             for t, m, h in zip(texts, metadata, hashes, strict=False):
                 if h in self.existing_hashes:
+                    duplicate_count += 1
                     continue
                 # Update existing hashes
                 self.existing_hashes.add(h)
@@ -995,54 +1049,63 @@ class KnowledgeBase:
             if not unique_data:
                 return 0, len(texts)
 
-            # Get embeddings
-            embeddings = await self._get_embeddings(texts)
+            # Get embeddings ONLY for unique texts (FIX: avoid double computation)
+            unique_texts = [t for t, m, h in unique_data]
+            unique_embeddings = await self._get_embeddings(unique_texts)
 
-            texts = []
-            metadata = []
-            hashes = []
-            embeddings_final = []
+            # Filter by similarity to existing chunks
+            final_data = []
+            final_embeddings = []
+            similarity_filtered = 0
+
             if len(self.vdb.chunks):
-                for i, d in enumerate(unique_data):
-                    c = self.vdb.search(embeddings[i], 5, self.deduplication_threshold)
-                    if len(c) > 2:
+                # Check each unique chunk against existing chunks
+                for i, (t, m, h) in enumerate(unique_data):
+                    similar_chunks = self.vdb.search(unique_embeddings[i], 5, self.deduplication_threshold)
+                    if len(similar_chunks) > 2:
+                        similarity_filtered += 1
                         continue
-                    t, m, h = d
-                    texts.append(t)
-                    metadata.append(m)
-                    hashes.append(h)
-                    embeddings_final.append(embeddings[i])
-
+                    final_data.append((t, m, h))
+                    final_embeddings.append(unique_embeddings[i])
             else:
-                texts , metadata, hashes = zip(*unique_data, strict=False)
-                embeddings_final = embeddings
+                # No existing chunks, use all unique data
+                final_data = unique_data
+                final_embeddings = unique_embeddings
 
-            if not texts:  # All were similar to existing chunks
-                return 0, len(unique_data)
+            # Clean up to free memory
+            del unique_embeddings
 
-            # Create and add new chunks
+            if not final_data:  # All were similar to existing chunks
+                return 0, duplicate_count + similarity_filtered
+
+            # Create new chunks
             new_chunks = [
                 Chunk(text=t, embedding=e, metadata=m, content_hash=h)
-                for t, e, m, h in zip(texts, embeddings_final, metadata, hashes, strict=False)
+                for (t, m, h), e in zip(final_data, final_embeddings, strict=False)
             ]
 
-            # Add new chunks
-            # Update index
+            # Add new chunks to vector store
             if new_chunks:
-                all_embeddings = np.vstack([c.embedding for c in new_chunks])
+                all_embeddings = np.vstack(final_embeddings)
                 self.vdb.add_embeddings(all_embeddings, new_chunks)
 
             # Remove similar chunks from the entire collection
             removed = self._remove_similar_chunks()
             get_logger().info(f"Removed {removed} similar chunks during deduplication")
-            # Invalidate visualization cache
 
-            if len(new_chunks) - removed > 0:
-                # Process new chunks for concepts
+            # Process new chunks for concepts (only if we have chunks after deduplication)
+            chunks_to_process = len(new_chunks) - removed
+            if chunks_to_process > 0:
                 await self.concept_extractor.process_chunks(new_chunks)
-            print("[total, calls, errors]", i__)
 
-            return len(new_chunks) - removed, len(texts) - len(new_chunks) + removed
+            # Log statistics
+            get_logger().debug(
+                f"Stats - Embeddings: {self.stats['embeddings_generated']}, "
+                f"Concept calls: {self.stats['concept_calls']}, "
+                f"Concept errors: {self.stats['concept_errors']}"
+            )
+
+            return chunks_to_process, duplicate_count + similarity_filtered + removed
 
         except Exception as e:
             get_logger().error(f"Error adding data: {str(e)}")
@@ -1063,6 +1126,24 @@ class KnowledgeBase:
             metadata = [metadata]
         if len(texts) != len(metadata):
             raise ValueError("Length of texts and metadata must match")
+
+        # Filter ungültige Texte
+        valid_texts = []
+        valid_metadata = []
+        for i, text in enumerate(texts):
+            if not text or not text.strip():
+                continue  # Skip leere Texte
+            if len(text) > 1_000_000:
+                raise ValueError(f"Text {i} too long: {len(text)} chars")
+            valid_texts.append(text)
+            valid_metadata.append(metadata[i] if metadata else {})
+
+        if not valid_texts:
+            return 0, 0
+
+
+        texts = valid_texts
+        metadata = valid_metadata
 
         if not direct and len(texts) == 1 and len(texts[0]) < 10_000:
             if len(self.sto) < self.batch_size and len(texts) == 1:
@@ -1853,6 +1934,7 @@ class KnowledgeBase:
 
         try:
             from toolboxv2 import get_app
+            await self.llm_rate_limiter.acquire()
             llm_response = await get_app().get_mod("isaa").mini_task_completion_format(
                 mini_task=system_prompt,
                 user_task=prompt,
@@ -2031,6 +2113,7 @@ class KnowledgeBase:
 
             # Restore core components
             kb.init_vis(data.get('vis_class'), data.get('vis_kwargs'))
+            kb.vdb.load(data['vdb'])
             kb.existing_hashes = data['existing_hashes']
 
             # Restore cache and graph data
@@ -2061,7 +2144,7 @@ class KnowledgeBase:
             # print(f"Knowledge base successfully loaded from {path} with {len(concept_data)} concepts")
             return kb
 
-        except Exception:
+        except Exception as e:
             print(f"Error loading knowledge base: {str(e)}")
             import traceback
             traceback.print_exception(e)
@@ -2181,7 +2264,7 @@ async def main():
 
     print(json.dumps(results, indent=2))
 
-    print ("I / len(T)", i__, len(texts))
+    print ("I / len(T)", kb.stats, len(texts))
 
     nx_graph = kb.concept_extractor.concept_graph.convert_to_networkx()
     GraphVisualizer.visualize(nx_graph, "test_output_file.html")

@@ -291,12 +291,13 @@ class ProgressEvent:
             return self.event_type.replace('_', ' ').title()
 
 class ProgressTracker:
-    """Advanced progress tracking with cost calculation"""
+    """Advanced progress tracking with cost calculation and memory leak prevention"""
 
-    def __init__(self, progress_callback: callable  = None, agent_name="unknown"):
+    def __init__(self, progress_callback: callable  = None, agent_name="unknown", max_events: int = 1000):
         self.progress_callback = progress_callback
         self.events: list[ProgressEvent] = []
         self.active_timers: dict[str, float] = {}
+        self.max_events = max_events  # Sliding window limit to prevent memory leak
 
         # Cost tracking (simplified - would need actual provider pricing)
         self.token_costs = {
@@ -306,9 +307,13 @@ class ProgressTracker:
         self.agent_name = agent_name
 
     async def emit_event(self, event: ProgressEvent):
-        """Emit progress event with callback and storage"""
+        """Emit progress event with callback and storage (sliding window to prevent memory leak)"""
         self.events.append(event)
         event.agent_name = self.agent_name
+
+        # Sliding window: keep only last max_events to prevent memory leak
+        if len(self.events) > self.max_events:
+            self.events = self.events[-self.max_events:]
 
         if self.progress_callback:
             try:

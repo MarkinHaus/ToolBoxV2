@@ -467,6 +467,12 @@ class FlowAgentBuilder:
                     if value is not None or key in required_params:
                         arguments[key] = value
 
+                # P0 - KRITISCH: MCP Circuit Breaker - Check if server is healthy
+                agent_instance = getattr(self, '_agent_instance', None)
+                if agent_instance and hasattr(agent_instance, '_check_mcp_circuit_breaker'):
+                    if not agent_instance._check_mcp_circuit_breaker(server_name):
+                        raise RuntimeError(f"MCP Circuit Breaker OPEN for {server_name} - too many failures")
+
                 # Validate required parameters
                 missing_required = required_params - set(arguments.keys())
                 if missing_required:
@@ -474,6 +480,10 @@ class FlowAgentBuilder:
 
                 # Call the actual MCP tool
                 result = await session.call_tool(tool_name, arguments)
+
+                # P0 - KRITISCH: Record success for circuit breaker
+                if agent_instance and hasattr(agent_instance, '_record_mcp_success'):
+                    agent_instance._record_mcp_success(server_name)
 
                 # Handle structured vs unstructured results
                 if hasattr(result, 'structuredContent') and result.structuredContent:
@@ -502,6 +512,10 @@ class FlowAgentBuilder:
                 return "No content returned"
 
             except Exception as e:
+                # P0 - KRITISCH: Record failure for circuit breaker
+                if agent_instance and hasattr(agent_instance, '_record_mcp_failure'):
+                    agent_instance._record_mcp_failure(server_name)
+
                 eprint(f"MCP tool {server_name}.{tool_name} failed: {e}")
                 raise RuntimeError(f"Error executing {tool_name}: {str(e)}")
 
@@ -1350,6 +1364,9 @@ class FlowAgentBuilder:
                         await self._process_mcp_config()
 
                 # 7. Add MCP tools
+                # P0 - KRITISCH: Set agent reference for circuit breaker
+                self._agent_instance = agent
+
                 for tool_name, tool_info in self._mcp_tools.items():
                     try:
                         await agent.add_tool(

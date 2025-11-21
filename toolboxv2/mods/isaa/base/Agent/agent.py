@@ -98,6 +98,181 @@ asyncio_logger.setLevel(logging.CRITICAL)
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 rprint = print if AGENT_VERBOSE else lambda *a, **k: None
 wprint = print if AGENT_VERBOSE else lambda *a, **k: None
+
+
+# ===== MEDIA PARSING UTILITIES =====
+def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
+    """
+    Parse [media:(path/url)] tags from query and convert to litellm vision format
+
+    Args:
+        query: Text query that may contain [media:(path/url)] tags
+
+    Returns:
+        tuple: (cleaned_query, media_list)
+            - cleaned_query: Query with media tags removed
+            - media_list: List of dicts in litellm vision format
+
+    Examples:
+        >>> parse_media_from_query("Analyze [media:image.jpg] this image")
+        ("Analyze  this image", [{"type": "image_url", "image_url": {"url": "image.jpg", "format": "image/jpeg"}}])
+
+    Note:
+        litellm uses the OpenAI vision format: {"type": "image_url", "image_url": {"url": "...", "format": "..."}}
+        The "format" field is optional but recommended for explicit MIME type specification.
+    """
+    media_pattern = r'\[media:([^\]]+)\]'
+    media_matches = re.findall(media_pattern, query)
+
+    media_list = []
+    for media_path in media_matches:
+        media_path = media_path.strip()
+
+        # Determine media type from extension or URL
+        media_type = _detect_media_type(media_path)
+
+        # litellm uses image_url format for vision models
+        # Format: {"type": "image_url", "image_url": {"url": "...", "format": "image/jpeg"}}
+        if media_type == "image":
+            # Detect image format for explicit MIME type
+            mime_type = _get_image_mime_type(media_path)
+            image_obj = {"url": media_path}
+            if mime_type:
+                image_obj["format"] = mime_type
+
+            media_list.append({
+                "type": "image_url",
+                "image_url": image_obj
+            })
+        elif media_type in ["audio", "video", "pdf"]:
+            # For non-image media, some models may support them
+            # but we use image_url as the standard format
+            # The model will handle or reject based on its capabilities
+            wprint(f"Warning: Media type '{media_type}' detected. Not all models support non-image media.")
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+        else:
+            # Unknown type - try as image
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+
+    # Remove media tags from query
+    cleaned_query = re.sub(media_pattern, '', query).strip()
+    return cleaned_query, media_list
+
+
+def _detect_media_type(path: str) -> str:
+    """Detect media type from file extension or URL"""
+    path_lower = path.lower()
+
+    # Image extensions
+    if any(path_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']):
+        return "image"
+
+    # Audio extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']):
+        return "audio"
+
+    # Video extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']):
+        return "video"
+
+    # PDF
+    if path_lower.endswith('.pdf'):
+        return "pdf"
+
+    return "unknown"
+
+
+def _get_image_mime_type(path: str) -> str:
+    """
+    Get MIME type for image based on file extension
+
+    Args:
+        path: Image file path or URL
+
+    Returns:
+        str: MIME type (e.g., "image/jpeg") or empty string if unknown
+    """
+    path_lower = path.lower()
+
+    mime_map = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.tiff': 'image/tiff',
+        '.tif': 'image/tiff',
+        '.ico': 'image/x-icon'
+    }
+
+    for ext, mime in mime_map.items():
+        if path_lower.endswith(ext):
+            return mime
+
+    return ""
+
+
+# ===== LLM RATE LIMITER =====
+class LLMRateLimiter:
+    """Token bucket rate limiter for LLM API calls to prevent cost explosions"""
+
+    def __init__(self, max_requests_per_minute: int = 60, max_requests_per_second: int = 10):
+        self.max_rpm = max_requests_per_minute
+        self.max_rps = max_requests_per_second
+        self.minute_window = []  # List of timestamps
+        self.second_window = []
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Acquire permission to make an LLM call (blocks if rate limit exceeded)"""
+        async with self.lock:
+            now = time.time()
+
+            # Clean old entries from windows
+            self.minute_window = [t for t in self.minute_window if now - t < 60]
+            self.second_window = [t for t in self.second_window if now - t < 1]
+
+            # Check rate limits
+            while len(self.minute_window) >= self.max_rpm or len(self.second_window) >= self.max_rps:
+                # Wait until we can proceed
+                if len(self.second_window) >= self.max_rps:
+                    wait_time = 1.0 - (now - self.second_window[0])
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
+                elif len(self.minute_window) >= self.max_rpm:
+                    wait_time = 60.0 - (now - self.minute_window[0])
+                    if wait_time > 0:
+                        await asyncio.sleep(min(wait_time, 1.0))  # Max 1s wait per iteration
+
+                # Refresh windows
+                now = time.time()
+                self.minute_window = [t for t in self.minute_window if now - t < 60]
+                self.second_window = [t for t in self.second_window if now - t < 1]
+
+            # Record this request
+            self.minute_window.append(now)
+            self.second_window.append(now)
+
+    def get_stats(self) -> dict:
+        """Get current rate limiter statistics"""
+        now = time.time()
+        self.minute_window = [t for t in self.minute_window if now - t < 60]
+        self.second_window = [t for t in self.second_window if now - t < 1]
+
+        return {
+            "requests_last_minute": len(self.minute_window),
+            "requests_last_second": len(self.second_window),
+            "max_rpm": self.max_rpm,
+            "max_rps": self.max_rps
+        }
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
 iprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
@@ -861,9 +1036,10 @@ Generate the adaptive execution plan:
 class TaskExecutorNode(AsyncNode):
     """Vollständige Task-Ausführung als unabhängige Node mit LLM-unterstützter Planung"""
 
-    def __init__(self, max_parallel: int = 3, **kwargs):
+    def __init__(self, max_parallel: int = 3, task_timeout: float = 300.0, **kwargs):
         super().__init__(**kwargs)
         self.max_parallel = max_parallel
+        self.task_timeout = task_timeout  # P0 - KRITISCH: Global timeout for task execution (default 5 minutes)
         self.results_store = {}  # Für {{ }} Referenzen
         self.execution_history = []  # Für LLM-basierte Optimierung
         self.agent_instance = None  # Wird gesetzt vom FlowAgent
@@ -1367,7 +1543,7 @@ confidence: 0.85
         return getattr(task, 'critical', False) or task.priority == 1
 
     async def _execute_parallel_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks parallel aus"""
+        """Führe Tasks parallel aus mit Timeout-Schutz"""
         if not tasks:
             return []
 
@@ -1377,15 +1553,23 @@ confidence: 0.85
 
         all_results = []
         for batch in batches:
+            # P0 - KRITISCH: Wrap each task with timeout
             batch_results = await asyncio.gather(
-                *[self._execute_single_task(task) for task in batch],
+                *[asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout) for task in batch],
                 return_exceptions=True
             )
 
-            # Handle exceptions
+            # Handle exceptions (including TimeoutError)
             processed_results = []
             for i, result in enumerate(batch_results):
-                if isinstance(result, Exception):
+                if isinstance(result, asyncio.TimeoutError):
+                    eprint(f"Task {batch[i].id} timed out after {self.task_timeout}s")
+                    processed_results.append({
+                        "task_id": batch[i].id,
+                        "status": "failed",
+                        "error": f"Task execution timed out after {self.task_timeout}s"
+                    })
+                elif isinstance(result, Exception):
                     eprint(f"Task {batch[i].id} failed with exception: {result}")
                     processed_results.append({
                         "task_id": batch[i].id,
@@ -1400,17 +1584,29 @@ confidence: 0.85
         return all_results
 
     async def _execute_sequential_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks sequenziell aus"""
+        """Führe Tasks sequenziell aus mit Timeout-Schutz"""
         results = []
 
         for task in tasks:
             try:
-                result = await self._execute_single_task(task)
+                # P0 - KRITISCH: Add timeout to sequential execution
+                result = await asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout)
                 results.append(result)
 
                 # Stoppe bei kritischen Fehlern in sequenzieller Ausführung
                 if result.get("status") == "failed" and getattr(task, 'critical', False):
                     eprint(f"Critical task {task.id} failed, stopping sequential execution")
+                    break
+
+            except asyncio.TimeoutError:
+                eprint(f"Sequential task {task.id} timed out after {self.task_timeout}s")
+                results.append({
+                    "task_id": task.id,
+                    "status": "failed",
+                    "error": f"Task execution timed out after {self.task_timeout}s"
+                })
+
+                if getattr(task, 'critical', False):
                     break
 
             except Exception as e:
@@ -1719,6 +1915,9 @@ confidence: 0.85
         llm_start = time.perf_counter()
 
         try:
+            # P1 - HOCH: LLM Rate Limiting
+            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
+                await self.agent_instance.llm_rate_limiter.acquire()
 
             response = await litellm.acompletion(
                 model=model_to_use,
@@ -1870,6 +2069,10 @@ Your decision:"""
         model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
 
         try:
+            # P1 - HOCH: LLM Rate Limiting
+            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
+                await self.agent_instance.llm_rate_limiter.acquire()
+
             response = await litellm.acompletion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": enhanced_prompt}],
@@ -8849,7 +9052,19 @@ class FlowAgent:
         # Tool analysis file path
         self.tool_analysis_file = self._get_tool_analysis_path()
 
-        self._tool_capabilities.update(self._load_tool_analysis())
+        # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
+        self.llm_rate_limiter = LLMRateLimiter(
+            max_requests_per_minute=kwargs.get('max_llm_rpm', 60),
+            max_requests_per_second=kwargs.get('max_llm_rps', 10)
+        )
+
+        # MCP Session Health Tracking (P0 - KRITISCH: Circuit breaker pattern)
+        self.mcp_session_health = {}  # server_name -> {"failures": int, "last_failure": float, "state": "CLOSED|OPEN|HALF_OPEN"}
+        self.mcp_circuit_breaker_threshold = 3  # Failures before opening circuit
+        self.mcp_circuit_breaker_timeout = 60.0  # Seconds before trying HALF_OPEN
+
+        # Load tool analysis - will be filtered to active tools during setup
+        # self._tool_capabilities.update(self._load_tool_analysis())
         if self.amd.budget_manager:
             self.amd.budget_manager.load_data()
 
@@ -8873,12 +9088,86 @@ class FlowAgent:
     def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, **kwargs) -> str:
+    def _process_media_in_messages(self, messages: list[dict]) -> list[dict]:
+        """
+        Process messages to extract and convert [media:(path/url)] tags to litellm format
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+
+        Returns:
+            list[dict]: Processed messages with media content properly formatted
+        """
+        processed_messages = []
+
+        for msg in messages:
+            if not isinstance(msg.get("content"), str):
+                # Already processed or non-text content
+                processed_messages.append(msg)
+                continue
+
+            content = msg["content"]
+
+            # Check if content contains media tags
+            if "[media:" in content:
+                cleaned_content, media_list = parse_media_from_query(content)
+
+                if media_list:
+                    # Convert to multi-modal message format for litellm
+                    # Format: content becomes a list with text and media items
+                    content_parts = []
+
+                    # Add text part if there's any text left
+                    if cleaned_content.strip():
+                        content_parts.append({
+                            "type": "text",
+                            "text": cleaned_content
+                        })
+
+                    # Add media parts
+                    content_parts.extend(media_list)
+
+                    processed_messages.append({
+                        "role": msg["role"],
+                        "content": content_parts
+                    })
+                else:
+                    # No valid media found, keep original
+                    processed_messages.append(msg)
+            else:
+                # No media tags, keep original
+                processed_messages.append(msg)
+        return processed_messages
+
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, llm_kwargs=None, **kwargs) -> str:
+        """
+        Run LLM completion with support for media inputs and custom kwargs
+
+        Args:
+            node_name: Name of the calling node for tracking
+            task_id: Task identifier for tracking
+            model_preference: "fast" or "complex" model preference
+            with_context: Whether to include session context
+            auto_fallbacks: Whether to use automatic fallback models
+            llm_kwargs: Additional kwargs to pass to litellm (merged with **kwargs)
+            **kwargs: Additional arguments for litellm.acompletion
+
+        Returns:
+            str: LLM response content
+        """
+        # Merge llm_kwargs if provided
+        if llm_kwargs:
+            kwargs.update(llm_kwargs)
+
         if "model" not in kwargs:
             kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
 
         if not 'stream' in kwargs:
             kwargs['stream'] = self.stream
+
+        # Parse media from messages if present
+        if "messages" in kwargs:
+            kwargs["messages"] = self._process_media_in_messages(kwargs["messages"])
 
         llm_start = time.perf_counter()
 
@@ -8932,6 +9221,8 @@ class FlowAgent:
                 fallbacks_dict_list.append({"model": model, "api_key": os.getenv(key, kwargs.get("api_key", None))})
             kwargs['fallbacks'] = fallbacks_dict_list
         try:
+            # P1 - HOCH: LLM Rate Limiting to prevent cost explosions
+            await self.llm_rate_limiter.acquire()
 
             if kwargs.get("stream", False):
                 kwargs["stream_options"] = {"include_usage": True}
@@ -9050,19 +9341,24 @@ class FlowAgent:
         """Main entry point für Agent-Ausführung mit UnifiedContextManager
 
         Args:
-            query: Die Benutzeranfrage
+            query: Die Benutzeranfrage (kann [media:(path/url)] Tags enthalten)
             session_id: Session-ID für Kontext-Management
             user_id: Benutzer-ID
             stream_callback: Callback für Streaming-Antworten
             remember: Ob die Interaktion gespeichert werden soll
             as_callback: Optional - Callback-Funktion für Echtzeit-Kontext-Injektion
             fast_run: Optional - Überspringt detaillierte Outline-Phase für schnelle Antworten
-            **kwargs: Zusätzliche Argumente
+            **kwargs: Zusätzliche Argumente (kann llm_kwargs enthalten)
+
+        Note:
+            Media-Tags im Format [media:(path/url)] werden automatisch geparst und
+            an das LLM als Multi-Modal-Input übergeben.
         """
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
         result = None
+
         await self.progress_tracker.emit_event(ProgressEvent(
             event_type="execution_start",
             timestamp=time.time(),
@@ -9505,18 +9801,38 @@ class FlowAgent:
 
         registered_tools = set(self._tool_registry.keys())
         cached_capabilities = list(self._tool_capabilities.keys())  # Create a copy of
+
+        # Remove capabilities for tools that are no longer registered
         for tool_name in cached_capabilities:
             if tool_name in self._tool_capabilities and tool_name not in registered_tools:
                 del self._tool_capabilities[tool_name]
                 iprint(f"Removed outdated capability for unavailable tool: {tool_name}")
 
-        for tool_name in tqdm(self.shared["available_tools"], desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
+        # Collect tools that need analysis
+        tools_to_analyze = []
+        for tool_name in self.shared["available_tools"]:
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
-                description = tool_info.get("description", "No description")
-                with Spinner(f"Analyzing tool {tool_name}"):
-                    await self._analyze_tool_capabilities(tool_name, description, tool_info.get("args_schema", "()"))
+                tools_to_analyze.append({
+                    "name": tool_name,
+                    "description": tool_info.get("description", "No description"),
+                    "args_schema": tool_info.get("args_schema", "()")
+                })
 
+        # Batch analyze tools if there are any to analyze
+        if tools_to_analyze:
+            if len(tools_to_analyze) <= 3:
+                # For small batches, analyze individually for better quality
+                for tool_data in tqdm(tools_to_analyze, desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green"):
+                    with Spinner(f"Analyzing tool {tool_data['name']}"):
+                        await self._analyze_tool_capabilities(tool_data['name'], tool_data['description'], tool_data['args_schema'])
+            else:
+                # For larger batches, use batch analysis
+                with Spinner(f"Batch analyzing {len(tools_to_analyze)} tools"):
+                    await self._batch_analyze_tool_capabilities(tools_to_analyze)
+
+        # Update args_schema for all registered tools
+        for tool_name in self.shared["available_tools"]:
             if tool_name in self._tool_capabilities:
                 function = self._tool_registry[tool_name]["function"]
                 if not isinstance(self._tool_capabilities[tool_name], dict):
@@ -10456,9 +10772,106 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
         # Intelligent tool analysis
         if is_new:
-            await self._analyze_tool_capabilities(tool_name, tool_description)
+            await self._analyze_tool_capabilities(tool_name, tool_description, get_args_schema(tool_func))
+        else:
+            if res := self._load_tool_analysis([tool_name]):
+                self._tool_capabilities[tool_name] = res.get(tool_name)
+            else:
+                await self._analyze_tool_capabilities(tool_name, tool_description, get_args_schema(tool_func))
 
         rprint(f"Tool added with analysis: {tool_name}")
+
+    async def _batch_analyze_tool_capabilities(self, tools_data: list[dict]):
+        """
+        Batch analyze multiple tools in a single LLM call for efficiency
+
+        Args:
+            tools_data: List of dicts with 'name', 'description', 'args_schema' keys
+        """
+        if not LITELLM_AVAILABLE:
+            # Fallback for each tool
+            for tool_data in tools_data:
+                self._tool_capabilities[tool_data['name']] = {
+                    "use_cases": [tool_data['description']],
+                    "triggers": [tool_data['name'].lower().replace('_', ' ')],
+                    "complexity": "unknown",
+                    "confidence": 0.3
+                }
+            return
+
+        # Build batch analysis prompt
+        tools_section = "\n\n".join([
+            f"Tool {i+1}: {tool['name']}\nArgs: {tool['args_schema']}\nDescription: {tool['description']}"
+            for i, tool in enumerate(tools_data)
+        ])
+
+        prompt = f"""
+Analyze these {len(tools_data)} tools and identify their capabilities in a structured format.
+For EACH tool, provide a complete analysis.
+
+{tools_section}
+
+For each tool, provide:
+1. primary_function: One-sentence description of main purpose
+2. use_cases: List of 3-5 specific use cases
+3. trigger_phrases: List of 5-10 phrases that indicate this tool should be used
+4. confidence_triggers: Dict of phrases with confidence scores (0.0-1.0)
+5. indirect_connections: List of related concepts/tasks
+6. tool_complexity: "simple" | "medium" | "complex"
+7. estimated_execution_time: "fast" | "medium" | "slow"
+
+Respond in YAML format with this structure:
+```yaml
+tools:
+  tool_name_1:
+    primary_function: "..."
+    use_cases: [...]
+    trigger_phrases: [...]
+    confidence_triggers:
+      "phrase": 0.8
+    indirect_connections: [...]
+    tool_complexity: "medium"
+    estimated_execution_time: "fast"
+  tool_name_2:
+    # ... same structure
+```
+"""
+
+        model = os.getenv("BASEMODEL", self.amd.fast_llm_model)
+
+        try:
+            response = await self.a_run_llm_completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                with_context=False,
+                temperature=0.3,
+                max_tokens=2000 + (len(tools_data) * 200),  # Scale with number of tools
+                task_id="batch_tool_analysis"
+            )
+
+            # Extract YAML
+            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", response, re.DOTALL)
+            if yaml_match:
+                yaml_str = yaml_match.group(1)
+            else:
+                yaml_str = response
+
+            analysis_data = yaml.safe_load(yaml_str)
+
+            # Store individual tool analyses
+            if "tools" in analysis_data:
+                for tool_name, analysis in analysis_data["tools"].items():
+                    self._tool_capabilities[tool_name] = analysis
+                    rprint(f"Batch analyzed: {tool_name}")
+
+            # Save to cache
+            await self._save_tool_analysis()
+
+        except Exception as e:
+            eprint(f"Batch tool analysis failed: {e}")
+            # Fallback to individual analysis
+            for tool_data in tools_data:
+                await self._analyze_tool_capabilities(tool_data['name'], tool_data['description'], tool_data['args_schema'])
 
     async def _analyze_tool_capabilities(self, tool_name: str, description: str, tool_args:str):
         """Analyze tool capabilities with LLM for smart usage"""
@@ -10584,12 +10997,25 @@ tool_complexity: low/medium/high
                     "tool_complexity": "medium"
                 }
 
-    def _load_tool_analysis(self) -> dict[str, Any]:
-        """Load tool analysis from cache"""
+    def _load_tool_analysis(self, tool_names: list[str] = None) -> dict[str, Any]:
+        """
+        Load tool analysis from cache - optimized to load only specified tools
+
+        Args:
+            tool_names: Optional list of tool names to load. If None, loads all cached analyses.
+
+        Returns:
+            dict: Tool capabilities for requested tools only
+        """
         try:
             if os.path.exists(self.tool_analysis_file):
                 with open(self.tool_analysis_file) as f:
-                    return json.load(f)
+                    all_analyses = json.load(f)
+
+                # If specific tools requested, filter to only those
+                if tool_names is not None:
+                    return {name: analysis for name, analysis in all_analyses.items() if name in tool_names}
+                return all_analyses
         except Exception as e:
             wprint(f"Could not load tool analysis: {e}")
         return {}
@@ -10681,15 +11107,20 @@ tool_complexity: low/medium/high
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] = None,
-                             max_retries: int = 2, auto_context=True, session_id: str = None, **kwargs) -> dict[str, Any]:
+                             max_retries: int = 2, auto_context=True, session_id: str = None, llm_kwargs=None, **kwargs) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
+        Supports media inputs via [media:(path/url)] tags in the prompt.
 
         Args:
             pydantic_model: The Pydantic model class to structure the response
-            prompt: The main prompt for the LLM
+            prompt: The main prompt for the LLM (can include [media:(path/url)] tags)
             message_context: Optional conversation context messages
             max_retries: Maximum number of retry attempts
+            auto_context: Whether to include session context
+            session_id: Optional session ID
+            llm_kwargs: Additional kwargs to pass to litellm
+            **kwargs: Additional arguments (merged with llm_kwargs)
 
         Returns:
             dict: Validated structured data matching the Pydantic model
@@ -10758,7 +11189,8 @@ Respond in YAML format only:
                     with_context=auto_context,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    task_id=f"format_{model_name.lower()}_{attempt}"
+                    task_id=f"format_{model_name.lower()}_{attempt}",
+                    llm_kwargs=llm_kwargs
                 )
 
                 if not response or not response.strip():
@@ -11117,6 +11549,61 @@ Respond in YAML format only:
             await self._mcp_session_manager.cleanup_all()
 
         rprint("Agent shutdown complete")
+
+    # ===== MCP CIRCUIT BREAKER METHODS (P0 - KRITISCH) =====
+
+    def _check_mcp_circuit_breaker(self, server_name: str) -> bool:
+        """Check if MCP circuit breaker allows requests for this server"""
+        if server_name not in self.mcp_session_health:
+            self.mcp_session_health[server_name] = {
+                "failures": 0,
+                "last_failure": 0.0,
+                "state": "CLOSED"
+            }
+
+        health = self.mcp_session_health[server_name]
+        now = time.time()
+
+        # Check circuit state
+        if health["state"] == "OPEN":
+            # Check if timeout has passed to try HALF_OPEN
+            if now - health["last_failure"] > self.mcp_circuit_breaker_timeout:
+                health["state"] = "HALF_OPEN"
+                rprint(f"MCP Circuit Breaker for {server_name}: OPEN -> HALF_OPEN (retry)")
+                return True
+            else:
+                # Circuit still open
+                return False
+
+        return True  # CLOSED or HALF_OPEN allows requests
+
+    def _record_mcp_success(self, server_name: str):
+        """Record successful MCP call"""
+        if server_name in self.mcp_session_health:
+            health = self.mcp_session_health[server_name]
+            health["failures"] = 0
+            if health["state"] == "HALF_OPEN":
+                health["state"] = "CLOSED"
+                rprint(f"MCP Circuit Breaker for {server_name}: HALF_OPEN -> CLOSED (recovered)")
+
+    def _record_mcp_failure(self, server_name: str):
+        """Record failed MCP call and update circuit breaker state"""
+        if server_name not in self.mcp_session_health:
+            self.mcp_session_health[server_name] = {
+                "failures": 0,
+                "last_failure": 0.0,
+                "state": "CLOSED"
+            }
+
+        health = self.mcp_session_health[server_name]
+        health["failures"] += 1
+        health["last_failure"] = time.time()
+
+        # Open circuit if threshold exceeded
+        if health["failures"] >= self.mcp_circuit_breaker_threshold:
+            if health["state"] != "OPEN":
+                health["state"] = "OPEN"
+                eprint(f"MCP Circuit Breaker for {server_name}: OPENED after {health['failures']} failures")
 
     @property
     def total_cost(self) -> float:

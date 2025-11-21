@@ -89,23 +89,200 @@ pub struct PythonFFI {
     lib: Arc<Library>,
 }
 
+// =================== Python Environment Detection ===================
+
+#[derive(Debug, Clone)]
+struct PythonEnv {
+    python_home: String,
+    python_dll: String,
+    python_exe: String,
+    env_type: String,
+}
+
+impl PythonEnv {
+    /// Detektiert automatisch die Python-Umgebung
+    /// Priorität: CONDA_PREFIX > system python > python_env (fallback)
+    fn detect() -> Result<Self> {
+        // 1. Check CONDA_PREFIX (conda environment)
+        if let Ok(conda_path) = env::var("CONDA_PREFIX") {
+            debug!("Detected CONDA_PREFIX: {}", conda_path);
+            if let Some(env) = Self::try_conda(&conda_path) {
+                debug!("Successfully using Conda Python");
+                return Ok(env);
+            }
+            debug!("Conda Python detection failed, trying next option...");
+        }
+
+        // 2. Try to find python in PATH (system python)
+        debug!("Trying to detect system Python...");
+        if let Some(env) = Self::try_system_python() {
+            debug!("Successfully using system Python");
+            return Ok(env);
+        }
+        debug!("System Python detection failed, trying fallback...");
+
+        // 3. Fallback to hardcoded python_env
+        debug!("Falling back to hardcoded python_env");
+        if let Some(env) = Self::try_fallback_python_env() {
+            debug!("Successfully using fallback python_env");
+            return Ok(env);
+        }
+
+        bail!("Could not detect any Python environment. Tried: CONDA_PREFIX, system python, and fallback python_env.")
+    }
+
+    fn try_fallback_python_env() -> Option<Self> {
+        use std::path::Path;
+
+        // Dynamically find ToolBoxV2 workspace root
+        let cwd = env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+        let workspace_root = cwd.ancestors()
+            .find(|p| p.join(".git").exists() || p.join("Cargo.toml").exists() || p.file_name().and_then(|n| n.to_str()) == Some("ToolBoxV2"))
+            .unwrap_or(&cwd);
+
+        let python_env_path = workspace_root.join("python_env");
+        let python_env_str = python_env_path.to_string_lossy().to_string();
+
+        debug!("Looking for fallback python_env at: {}", python_env_str);
+
+        #[cfg(windows)]
+        {
+            let python_exe = python_env_path.join("python.exe");
+
+            // Try different Python versions
+            for version in &["312", "311", "310", "39", "38"] {
+                let dll_path = python_env_path.join(format!("python{}.dll", version));
+                if dll_path.exists() && python_exe.exists() {
+                    debug!("Found fallback python_env DLL: {}", dll_path.display());
+                    return Some(PythonEnv {
+                        python_home: python_env_str.clone(),
+                        python_dll: dll_path.to_string_lossy().to_string(),
+                        python_exe: python_exe.to_string_lossy().to_string(),
+                        env_type: "fallback_python_env".to_string(),
+                    });
+                }
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            let python_exe = python_env_path.join("bin").join("python");
+            if python_exe.exists() {
+                return Some(PythonEnv {
+                    python_home: python_env_str.clone(),
+                    python_dll: "libpython3.12.so".to_string(),
+                    python_exe: python_exe.to_string_lossy().to_string(),
+                    env_type: "fallback_python_env".to_string(),
+                });
+            }
+        }
+
+        debug!("Fallback python_env not found at: {}", python_env_str);
+        None
+    }
+
+    fn try_conda(conda_path: &str) -> Option<Self> {
+        use std::path::Path;
+
+        #[cfg(windows)]
+        {
+            let python_exe = Path::new(conda_path).join("python.exe");
+
+            // Try different Python versions
+            for version in &["312", "311", "310", "39", "38"] {
+                let dll_path = Path::new(conda_path).join(format!("python{}.dll", version));
+                if dll_path.exists() && python_exe.exists() {
+                    debug!("Found conda Python DLL: {}", dll_path.display());
+                    return Some(PythonEnv {
+                        python_home: conda_path.to_string(),
+                        python_dll: dll_path.to_string_lossy().to_string(),
+                        python_exe: python_exe.to_string_lossy().to_string(),
+                        env_type: "conda".to_string(),
+                    });
+                }
+            }
+        }
+
+        #[cfg(unix)]
+        {
+            let python_exe = Path::new(conda_path).join("bin").join("python");
+            if python_exe.exists() {
+                return Some(PythonEnv {
+                    python_home: conda_path.to_string(),
+                    python_dll: "libpython3.12.so".to_string(),
+                    python_exe: python_exe.to_string_lossy().to_string(),
+                    env_type: "conda".to_string(),
+                });
+            }
+        }
+
+        None
+    }
+
+    fn try_system_python() -> Option<Self> {
+        use std::process::Command;
+
+        // Try to find python executable
+        let python_cmd = if cfg!(windows) { "python" } else { "python3" };
+
+        if let Ok(output) = Command::new(python_cmd)
+            .arg("-c")
+            .arg("import sys; print(sys.prefix)")
+            .output()
+        {
+            if output.status.success() {
+                let prefix = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                debug!("Found system Python prefix: {}", prefix);
+
+                #[cfg(windows)]
+                {
+                    use std::path::Path;
+                    for version in &["312", "311", "310", "39", "38"] {
+                        let dll_path = Path::new(&prefix).join(format!("python{}.dll", version));
+                        if dll_path.exists() {
+                            return Some(PythonEnv {
+                                python_home: prefix.clone(),
+                                python_dll: dll_path.to_string_lossy().to_string(),
+                                python_exe: Path::new(&prefix).join("python.exe").to_string_lossy().to_string(),
+                                env_type: "system".to_string(),
+                            });
+                        }
+                    }
+                }
+
+                #[cfg(unix)]
+                {
+                    return Some(PythonEnv {
+                        python_home: prefix.clone(),
+                        python_dll: "libpython3.12.so".to_string(),
+                        python_exe: format!("{}/bin/python3", prefix),
+                        env_type: "system".to_string(),
+                    });
+                }
+            }
+        }
+
+        None
+    }
+}
+
 impl PythonFFI {
     pub fn new() -> Result<Self> {
         unsafe {
-            // Lade Python DLL aus python_env (Standard-Python-Installation)
-            #[cfg(windows)]
-            let lib_path = "C:\\Users\\Markin\\Workspace\\ToolBoxV2\\python_env\\python312.dll";
+            // Automatische Python-Umgebungs-Erkennung
+            let python_env = PythonEnv::detect()
+                .context("Failed to detect Python environment")?;
 
-            #[cfg(all(unix, not(target_os = "macos")))]
-            let lib_path = "libpython3.12.so";
+            debug!("Detected Python environment:");
+            debug!("  Type: {}", python_env.env_type);
+            debug!("  Home: {}", python_env.python_home);
+            debug!("  DLL: {}", python_env.python_dll);
+            debug!("  Executable: {}", python_env.python_exe);
 
-            #[cfg(target_os = "macos")]
-            let lib_path = "libpython3.12.dylib";
-
-            debug!("Loading Python library: {}", lib_path);
-
-            let lib = Library::new(lib_path)
-                .with_context(|| format!("Failed to load Python library: {}", lib_path))?;
+            let lib = Library::new(&python_env.python_dll)
+                .with_context(|| format!("Failed to load Python library: {}", python_env.python_dll))?;
 
             let ffi = PythonFFI {
                 lib: Arc::new(lib),
@@ -119,26 +296,33 @@ impl PythonFFI {
                 // Setze Python-Pfade BEVOR Py_Initialize() aufgerufen wird
                 #[cfg(windows)]
                 {
-                    // Verwende python_env (Standard-Python-Installation) statt uv-Python
-                    let python_home = String::from("C:\\Users\\Markin\\Workspace\\ToolBoxV2\\python_env");
+                    let python_home = python_env.python_home.clone();
 
                     // Get current working directory for app_singleton module
                     let cwd = env::current_dir()
-                        .unwrap_or_else(|_| std::path::PathBuf::from("C:\\Users\\Markin\\Workspace\\ToolBoxV2\\toolboxv2\\src-core"))
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
                         .to_string_lossy()
                         .to_string();
 
                     let build_dir = format!("{}\\build", cwd);
 
+                    // Find workspace root (ToolBoxV2 directory)
+                    let cwd_path = std::path::PathBuf::from(&cwd);
+                    let workspace_root = cwd_path.ancestors()
+                        .find(|p| p.join(".git").exists() || p.join("Cargo.toml").exists() || p.file_name().and_then(|n| n.to_str()) == Some("ToolBoxV2"))
+                        .unwrap_or(&cwd_path);
+
+                    let workspace_root_str = workspace_root.to_string_lossy().to_string();
+
                     debug!("Using python_home: {}", python_home);
                     debug!("Using cwd: {}", cwd);
+                    debug!("Using workspace_root: {}", workspace_root_str);
                     debug!("Using build dir: {}", build_dir);
 
                     // Erweitere PATH-Umgebungsvariable mit DLL-Verzeichnissen
-                    // Dies ist notwendig, damit Python-Extensions wie cryptography._rust.pyd ihre DLLs finden
                     let python_dlls = format!("{}\\DLLs", python_home);
                     let python_scripts = format!("{}\\Scripts", python_home);
-                    let python_exe = format!("{}\\python.exe", python_home);
+                    let python_exe = python_env.python_exe.clone();
 
                     // Hole aktuelle PATH-Variable
                     let current_path = env::var("PATH").unwrap_or_default();
@@ -166,11 +350,12 @@ impl PythonFFI {
                     debug!("  - python scripts: {}", python_scripts);
                     debug!("  - PYTHON_EXECUTABLE: {}", python_exe);
 
-                    // Setze Py_SetPath mit ALLEN Pfaden: python_home, Lib, site-packages, DLLs, cwd, build
-                    // Reihenfolge: python_home zuerst, dann Lib (für stdlib), dann site-packages, dann DLLs, dann cwd und build (für Nuitka modules)
+                    // Setze Py_SetPath mit ALLEN Pfaden: python_home, Lib, site-packages, DLLs, workspace_root, cwd, build
+                    // WICHTIG: workspace_root muss enthalten sein, damit toolboxv2 gefunden wird!
+                    // Reihenfolge: python_home zuerst, dann Lib (für stdlib), dann site-packages, dann DLLs, dann workspace_root (für toolboxv2), dann cwd und build (für Nuitka modules)
                     let lib_path = format!(
-                        "{};{}\\Lib;{}\\Lib\\site-packages;{}\\DLLs;{};{}",
-                        python_home, python_home, python_home, python_home, cwd, build_dir
+                        "{};{}\\Lib;{}\\Lib\\site-packages;{}\\DLLs;{};{};{}",
+                        python_home, python_home, python_home, python_home, workspace_root_str, cwd, build_dir
                     );
                     let lib_path_wide: Vec<u16> = lib_path
                         .encode_utf16()
@@ -181,6 +366,60 @@ impl PythonFFI {
                         debug!("Setting Python path to: {}", lib_path);
                         set_path(lib_path_wide.as_ptr());
                     }
+                }
+
+                #[cfg(unix)]
+                {
+                    let python_home = python_env.python_home.clone();
+                    let python_exe = python_env.python_exe.clone();
+
+                    // Get current working directory
+                    let cwd = env::current_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .to_string_lossy()
+                        .to_string();
+
+                    let build_dir = format!("{}/build", cwd);
+
+                    // Find workspace root (ToolBoxV2 directory)
+                    let cwd_path = std::path::PathBuf::from(&cwd);
+                    let workspace_root = cwd_path.ancestors()
+                        .find(|p| p.join(".git").exists() || p.join("Cargo.toml").exists() || p.file_name().and_then(|n| n.to_str()) == Some("ToolBoxV2"))
+                        .unwrap_or(&cwd_path);
+
+                    let workspace_root_str = workspace_root.to_string_lossy().to_string();
+
+                    debug!("Using python_home: {}", python_home);
+                    debug!("Using cwd: {}", cwd);
+                    debug!("Using workspace_root: {}", workspace_root_str);
+                    debug!("Using build dir: {}", build_dir);
+
+                    // Set PYTHON_EXECUTABLE
+                    env::set_var("PYTHON_EXECUTABLE", &python_exe);
+                    env::set_var("PYTHONUNBUFFERED", "1");
+
+                    // Add Python lib directories to LD_LIBRARY_PATH (for .so files)
+                    let python_lib = format!("{}/lib", python_home);
+                    if let Ok(current_ld_path) = env::var("LD_LIBRARY_PATH") {
+                        env::set_var("LD_LIBRARY_PATH", format!("{}:{}", python_lib, current_ld_path));
+                    } else {
+                        env::set_var("LD_LIBRARY_PATH", &python_lib);
+                    }
+
+                    debug!("Extended LD_LIBRARY_PATH with: {}", python_lib);
+                    debug!("PYTHON_EXECUTABLE: {}", python_exe);
+
+                    // Set Python path (Unix uses : as separator)
+                    // WICHTIG: workspace_root muss enthalten sein, damit toolboxv2 gefunden wird!
+                    let lib_path = format!(
+                        "{}:{}/lib/python3.12:{}/lib/python3.12/site-packages:{}:{}:{}",
+                        python_home, python_home, python_home, workspace_root_str, cwd, build_dir
+                    );
+
+                    // Note: On Unix, Py_SetPath takes a wchar_t* string
+                    // For simplicity, we'll set PYTHONPATH environment variable instead
+                    env::set_var("PYTHONPATH", &lib_path);
+                    debug!("Set PYTHONPATH to: {}", lib_path);
                 }
 
                 let init: Symbol<Py_Initialize_t> = ffi.lib.get(b"Py_Initialize\0")?;
