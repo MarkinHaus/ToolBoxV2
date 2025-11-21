@@ -54,8 +54,9 @@ Limitations:
 
 import asyncio
 import os
+import sys
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -110,6 +111,7 @@ from toolboxv2 import App, get_app
 from toolboxv2.mods.isaa.kernel.instace import Kernel
 from toolboxv2.mods.isaa.kernel.types import Signal as KernelSignal, SignalType, KernelConfig, IOutputRouter
 from toolboxv2.mods.isaa.kernel.kernelin.tools.discord_tools import DiscordKernelTools
+from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent, NodeStatus
 import io
 import wave
 import tempfile
@@ -310,6 +312,281 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                 # Trigger final transcription
                 asyncio.create_task(self._transcribe_buffer(ssrc))
                 break
+
+
+class DiscordProgressPrinter:
+    """
+    Discord-specific progress printer that updates a single master message
+    instead of spamming multiple messages.
+
+    Features:
+    - Single master message that gets updated
+    - Discord Embeds for structured display
+    - Buttons for expandable sub-sections
+    - Rate-limiting to avoid Discord API limits
+    - Toggleable with !progress command
+    """
+
+    def __init__(self, channel: discord.TextChannel, user_id: str):
+        self.channel = channel
+        self.user_id = user_id
+        self.master_message: Optional[discord.Message] = None
+        self.enabled = False
+
+        # State tracking (similar to terminal version)
+        self.agent_name = "Agent"
+        self.execution_phase = 'initializing'
+        self.start_time = time.time()
+        self.error_count = 0
+        self.llm_calls = 0
+        self.llm_cost = 0.0
+        self.llm_tokens = 0
+        self.tool_history = []
+        self.active_nodes = set()
+        self.current_task = None
+
+        # Rate limiting
+        self.last_update_time = 0
+        self.update_interval = 2.0  # Update at most every 2 seconds
+        self.pending_update = False
+
+        # Expandable sections state
+        self.show_tools = False
+        self.show_llm = False
+        self.show_system = False
+
+    async def progress_callback(self, event: ProgressEvent):
+        """Main entry point for progress events"""
+        if not self.enabled:
+            return
+
+        # Process event
+        await self._process_event(event)
+
+        # Schedule update (rate-limited)
+        current_time = time.time()
+        if current_time - self.last_update_time >= self.update_interval:
+            await self._update_display()
+            self.last_update_time = current_time
+            self.pending_update = False
+        else:
+            self.pending_update = True
+
+    async def _process_event(self, event: ProgressEvent):
+        """Process progress event and update state"""
+        if event.agent_name:
+            self.agent_name = event.agent_name
+
+        # Track execution phase
+        if event.event_type == 'execution_start':
+            self.execution_phase = 'running'
+            self.start_time = time.time()
+        elif event.event_type == 'execution_complete':
+            self.execution_phase = 'completed'
+        elif event.event_type == 'error':
+            self.error_count += 1
+
+        # Track nodes
+        if event.event_type == 'node_enter' and event.node_name:
+            self.active_nodes.add(event.node_name)
+        elif event.event_type == 'node_exit' and event.node_name:
+            self.active_nodes.discard(event.node_name)
+
+        # Track LLM calls
+        if event.event_type == 'llm_call' and event.success:
+            self.llm_calls += 1
+            self.llm_cost += event.llm_cost or 0
+            self.llm_tokens += event.llm_total_tokens or 0
+
+        # Track tools
+        if event.event_type == 'tool_call' and event.status in [NodeStatus.COMPLETED, NodeStatus.FAILED]:
+            self.tool_history.append({
+                'name': event.tool_name,
+                'success': event.success,
+                'duration': event.duration,
+                'is_meta': event.is_meta_tool
+            })
+            if len(self.tool_history) > 5:
+                self.tool_history.pop(0)
+
+        # Track current task
+        if event.event_type == 'task_start':
+            self.current_task = event.metadata.get('task_description', 'Unknown task') if event.metadata else 'Unknown task'
+        elif event.event_type == 'task_complete':
+            self.current_task = None
+
+    async def _update_display(self):
+        """Update the Discord master message"""
+        try:
+            embed = self._create_embed()
+            view = self._create_view()
+
+            if self.master_message is None:
+                # Create new master message
+                self.master_message = await self.channel.send(
+                    content=f"🤖 **Agent Progress** (User: <@{self.user_id}>)",
+                    embed=embed,
+                    view=view
+                )
+            else:
+                # Update existing message
+                await self.master_message.edit(embed=embed, view=view)
+
+        except discord.HTTPException as e:
+            # Handle rate limits gracefully
+            if e.status == 429:  # Too Many Requests
+                print(f"⚠️ Discord rate limit hit, skipping update")
+            else:
+                print(f"❌ Error updating progress message: {e}")
+        except Exception as e:
+            print(f"❌ Error updating progress display: {e}")
+
+    def _create_embed(self) -> discord.Embed:
+        """Create Discord embed with current state"""
+        # Determine color based on phase
+        color_map = {
+            'initializing': discord.Color.blue(),
+            'running': discord.Color.gold(),
+            'completed': discord.Color.green(),
+            'error': discord.Color.red()
+        }
+        color = color_map.get(self.execution_phase, discord.Color.blue())
+
+        # Create embed
+        embed = discord.Embed(
+            title=f"🤖 {self.agent_name}",
+            description=f"**Phase:** {self.execution_phase.upper()}",
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+
+        # Runtime
+        runtime = time.time() - self.start_time
+        runtime_str = self._format_duration(runtime)
+        embed.add_field(name="⏱️ Runtime", value=runtime_str, inline=True)
+
+        # Errors
+        error_emoji = "✅" if self.error_count == 0 else "⚠️"
+        embed.add_field(name=f"{error_emoji} Errors", value=str(self.error_count), inline=True)
+
+        # Active nodes
+        active_count = len(self.active_nodes)
+        embed.add_field(name="🔄 Active Nodes", value=str(active_count), inline=True)
+
+        # Current task
+        if self.current_task:
+            task_preview = self.current_task[:100] + "..." if len(self.current_task) > 100 else self.current_task
+            embed.add_field(name="📋 Current Task", value=task_preview, inline=False)
+
+        # LLM Stats (always visible)
+        llm_stats = f"**Calls:** {self.llm_calls}\n**Cost:** ${self.llm_cost:.4f}\n**Tokens:** {self.llm_tokens:,}"
+        embed.add_field(name="🤖 LLM Statistics", value=llm_stats, inline=True)
+
+        # Tool History (if expanded)
+        if self.show_tools and self.tool_history:
+            tool_text = ""
+            for tool in self.tool_history[-3:]:  # Last 3 tools
+                icon = "✅" if tool['success'] else "❌"
+                duration = self._format_duration(tool['duration']) if tool['duration'] else "N/A"
+                tool_text += f"{icon} `{tool['name']}` ({duration})\n"
+            embed.add_field(name="🛠️ Recent Tools", value=tool_text or "No tools yet", inline=False)
+
+        # System Flow (if expanded)
+        if self.show_system and self.active_nodes:
+            nodes_text = "\n".join([f"🔄 `{node[:30]}`" for node in list(self.active_nodes)[-3:]])
+            embed.add_field(name="🔧 Active Nodes", value=nodes_text or "No active nodes", inline=False)
+
+        embed.set_footer(text=f"Updates every {self.update_interval}s • Toggle sections with buttons")
+
+        return embed
+
+    def _create_view(self) -> discord.ui.View:
+        """Create Discord view with buttons"""
+        view = discord.ui.View(timeout=None)
+
+        # Toggle Tools button
+        tools_button = discord.ui.Button(
+            label="Tools" if not self.show_tools else "Hide Tools",
+            style=discord.ButtonStyle.primary if self.show_tools else discord.ButtonStyle.secondary,
+            custom_id=f"progress_tools_{self.user_id}"
+        )
+        tools_button.callback = self._toggle_tools
+        view.add_item(tools_button)
+
+        # Toggle System button
+        system_button = discord.ui.Button(
+            label="System" if not self.show_system else "Hide System",
+            style=discord.ButtonStyle.primary if self.show_system else discord.ButtonStyle.secondary,
+            custom_id=f"progress_system_{self.user_id}"
+        )
+        system_button.callback = self._toggle_system
+        view.add_item(system_button)
+
+        # Stop button
+        stop_button = discord.ui.Button(
+            label="Stop Updates",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"progress_stop_{self.user_id}"
+        )
+        stop_button.callback = self._stop_updates
+        view.add_item(stop_button)
+
+        return view
+
+    async def _toggle_tools(self, interaction: discord.Interaction):
+        """Toggle tools section"""
+        self.show_tools = not self.show_tools
+        await interaction.response.defer()
+        await self._update_display()
+
+    async def _toggle_system(self, interaction: discord.Interaction):
+        """Toggle system section"""
+        self.show_system = not self.show_system
+        await interaction.response.defer()
+        await self._update_display()
+
+    async def _stop_updates(self, interaction: discord.Interaction):
+        """Stop progress updates"""
+        self.enabled = False
+        await interaction.response.send_message("✅ Progress updates stopped", ephemeral=True)
+        if self.master_message:
+            await self.master_message.edit(view=None)
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Format duration in human-readable format"""
+        if seconds is None:
+            return "N/A"
+        if seconds < 1:
+            return f"{seconds * 1000:.0f}ms"
+        seconds = int(seconds)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, seconds = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {seconds}s"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h {minutes}m"
+
+    async def enable(self):
+        """Enable progress updates"""
+        self.enabled = True
+        self.start_time = time.time()
+        await self._update_display()
+
+    async def disable(self):
+        """Disable progress updates"""
+        self.enabled = False
+        if self.master_message:
+            await self.master_message.edit(view=None)
+
+    async def finalize(self):
+        """Finalize progress display (called when execution completes)"""
+        if self.pending_update:
+            await self._update_display()
+        if self.master_message:
+            # Remove buttons when done
+            await self.master_message.edit(view=None)
 
 
 class DiscordOutputRouter(IOutputRouter):
@@ -633,6 +910,9 @@ class DiscordKernel:
             output_router=self.output_router
         )
 
+        # Progress printers per user
+        self.progress_printers: Dict[str, DiscordProgressPrinter] = {}
+
         # Setup bot events
         self._setup_bot_events()
         self._setup_bot_commands()
@@ -823,6 +1103,13 @@ class DiscordKernel:
 
             await ctx.send(embed=embed)
 
+        @self.bot.command(name="exit")
+        async def help_command(ctx: commands.Context):
+            """Exit the kernel"""
+            await self.stop()
+            await ctx.send("👋 Goodbye!")
+            sys.exit(0)
+
         @self.bot.command(name="info")
         async def help_command(ctx: commands.Context):
             """Show comprehensive help message"""
@@ -833,7 +1120,12 @@ class DiscordKernel:
             )
 
             # Basic Commands
-            basic_commands = "• `!status` - Show kernel status and metrics\n• `!info` - Show this help message"
+            basic_commands = (
+                "• `!status` - Show kernel status and metrics\n"
+                "• `!info` - Show this help message\n"
+                "• `!progress [on|off|toggle]` - Toggle agent progress tracking\n"
+                "• `!context` - Show agent context and user profile"
+            )
             embed.add_field(
                 name="📋 Basic Commands",
                 value=basic_commands,
@@ -1087,6 +1379,173 @@ class DiscordKernel:
             async def join_voice_disabled(ctx: commands.Context):
                 """Voice support not available"""
                 await ctx.send("❌ Voice support is not available. Install PyNaCl: `pip install discord.py[voice]`")
+
+        # Progress tracking command
+        @self.bot.command(name="progress")
+        async def progress_command(ctx: commands.Context, action: str = "toggle"):
+            """Toggle agent progress tracking. Usage: !progress [on|off|toggle]"""
+            user_id = str(ctx.author.id)
+
+            if action.lower() == "on":
+                # Enable progress tracking
+                if user_id not in self.progress_printers:
+                    printer = DiscordProgressPrinter(ctx.channel, user_id)
+                    self.progress_printers[user_id] = printer
+                    # Register with agent
+                    self.kernel.agent.set_progress_callback(printer.progress_callback)
+                    await printer.enable()
+                    await ctx.send("✅ Progress tracking enabled!")
+                else:
+                    await self.progress_printers[user_id].enable()
+                    await ctx.send("✅ Progress tracking re-enabled!")
+
+            elif action.lower() == "off":
+                # Disable progress tracking
+                if user_id in self.progress_printers:
+                    await self.progress_printers[user_id].disable()
+                    await ctx.send("✅ Progress tracking disabled!")
+                else:
+                    await ctx.send("⚠️ Progress tracking is not active!")
+
+            elif action.lower() == "toggle":
+                # Toggle progress tracking
+                if user_id in self.progress_printers:
+                    printer = self.progress_printers[user_id]
+                    if printer.enabled:
+                        await printer.disable()
+                        await ctx.send("✅ Progress tracking disabled!")
+                    else:
+                        await printer.enable()
+                        await ctx.send("✅ Progress tracking enabled!")
+                else:
+                    # Create new printer
+                    printer = DiscordProgressPrinter(ctx.channel, user_id)
+                    self.progress_printers[user_id] = printer
+                    self.kernel.agent.set_progress_callback(printer.progress_callback)
+                    await printer.enable()
+                    await ctx.send("✅ Progress tracking enabled!")
+            else:
+                await ctx.send("❌ Invalid action. Use: !progress [on|off|toggle]")
+
+        # Context overview command
+        @self.bot.command(name="context")
+        async def context_command(ctx: commands.Context):
+            """Show agent context, user profile, and usage statistics"""
+            user_id = str(ctx.author.id)
+
+            try:
+                # Get context overview from agent
+                context_overview = await self.kernel.agent.get_context_overview(display=False)
+
+                # Create embed
+                embed = discord.Embed(
+                    title="🧠 Agent Context & User Profile",
+                    description=f"Context information for <@{user_id}>",
+                    color=discord.Color.blue(),
+                    timestamp= datetime.now(UTC)
+                )
+
+                # Usage Statistics
+                total_tokens = self.kernel.agent.total_tokens_in + self.kernel.agent.total_tokens_out
+                usage_stats = (
+                    f"**Total Cost:** ${self.kernel.agent.total_cost_accumulated:.4f}\n"
+                    f"**Total LLM Calls:** {self.kernel.agent.total_llm_calls}\n"
+                    f"**Tokens In:** {self.kernel.agent.total_tokens_in:,}\n"
+                    f"**Tokens Out:** {self.kernel.agent.total_tokens_out:,}\n"
+                    f"**Total Tokens:** {total_tokens:,}"
+                )
+                embed.add_field(name="💰 Usage Statistics", value=usage_stats, inline=False)
+
+                # Discord Context (if available)
+                if hasattr(self.kernel.agent, 'variable_manager'):
+                    discord_context = self.kernel.agent.variable_manager.get(f'discord.current_context.{user_id}')
+                    if discord_context:
+                        location_info = (
+                            f"**Channel Type:** {discord_context.get('channel_type', 'Unknown')}\n"
+                            f"**Channel:** {discord_context.get('channel_name', 'Unknown')}\n"
+                        )
+                        if discord_context.get('guild_name'):
+                            location_info += f"**Server:** {discord_context['guild_name']}\n"
+
+                        embed.add_field(name="📍 Current Location", value=location_info, inline=False)
+
+                        # Voice Status
+                        bot_voice = discord_context.get('bot_voice_status', {})
+                        if bot_voice.get('in_voice'):
+                            voice_info = (
+                                f"**In Voice:** ✅\n"
+                                f"**Channel:** {bot_voice.get('channel_name', 'Unknown')}\n"
+                                f"**Listening:** {'✅' if bot_voice.get('listening') else '❌'}\n"
+                                f"**TTS:** {'✅' if bot_voice.get('tts_enabled') else '❌'}"
+                            )
+                            embed.add_field(name="🎤 Voice Status", value=voice_info, inline=False)
+
+                # Kernel Status
+                kernel_status = self.kernel.to_dict()
+                kernel_info = (
+                    f"**State:** {kernel_status['state']}\n"
+                    f"**Signals Processed:** {kernel_status['metrics']['signals_processed']}\n"
+                    f"**Memories:** {kernel_status['memory']['total_memories']}\n"
+                    f"**Learning Records:** {kernel_status['learning']['total_records']}"
+                )
+                embed.add_field(name="🤖 Kernel Status", value=kernel_info, inline=False)
+
+                # Context Overview (if available)
+                if context_overview and 'token_summary' in context_overview:
+                    token_summary = context_overview['token_summary']
+                    total_tokens = token_summary.get('total_tokens', 0)
+                    breakdown = token_summary.get('breakdown', {})
+                    percentages = token_summary.get('percentage_breakdown', {})
+
+                    # Get max tokens for models
+                    try:
+                        from toolboxv2.mods.isaa.base.Agent.utils import get_max_tokens
+                        fast_model = self.kernel.agent.amd.fast_llm_model.split('/')[-1]
+                        complex_model = self.kernel.agent.amd.complex_llm_model.split('/')[-1]
+                        max_tokens_fast = get_max_tokens(fast_model)
+                        max_tokens_complex = get_max_tokens(complex_model)
+                    except:
+                        max_tokens_fast = self.kernel.agent.amd.max_tokens if hasattr(self.kernel.agent.amd, 'max_tokens') else 128000
+                        max_tokens_complex = max_tokens_fast
+
+                    # Context Distribution with visual bars
+                    context_text = f"**Total Context:** ~{total_tokens:,} tokens\n\n"
+
+                    # Components with visual bars (Discord-friendly)
+                    components = [
+                        ("System prompt", "system_prompt", "🔧"),
+                        ("Agent tools", "agent_tools", "🛠️"),
+                        ("Meta tools", "meta_tools", "⚡"),
+                        ("Variables", "variables", "📝"),
+                        ("History", "system_history", "📚"),
+                        ("Unified ctx", "unified_context", "🔗"),
+                        ("Reasoning", "reasoning_context", "🧠"),
+                        ("LLM Tools", "llm_tool_context", "🤖"),
+                    ]
+
+                    for name, key, icon in components:
+                        token_count = breakdown.get(key, 0)
+                        if token_count > 0:
+                            percentage = percentages.get(key, 0)
+                            # Create visual bar (Discord-friendly, max 10 chars)
+                            bar_length = int(percentage / 10)  # 10 chars max (100% / 10)
+                            bar = "█" * bar_length + "░" * (10 - bar_length)
+                            context_text += f"{icon} `{name:12s}` {bar} {percentage:4.1f}% ({token_count:,})\n"
+
+                    # Add free space info
+                    usage_fast = (total_tokens / max_tokens_fast * 100) if max_tokens_fast > 0 else 0
+                    usage_complex = (total_tokens / max_tokens_complex * 100) if max_tokens_complex > 0 else 0
+                    context_text += f"\n⬜ `Fast Model  ` {max_tokens_fast:,} tokens | Used: {usage_fast:.1f}%\n"
+                    context_text += f"⬜ `Complex Mdl ` {max_tokens_complex:,} tokens | Used: {usage_complex:.1f}%"
+
+                    embed.add_field(name="📊 Context Distribution", value=context_text, inline=False)
+
+                embed.set_footer(text="ProA Kernel Context System")
+
+                await ctx.send(embed=embed)
+
+            except Exception as e:
+                await ctx.send(f"❌ Error retrieving context: {e}")
 
     async def _auto_save_loop(self):
         """Auto-save kernel state periodically"""
