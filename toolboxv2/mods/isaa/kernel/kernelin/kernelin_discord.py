@@ -104,6 +104,8 @@ except ImportError:
     ELEVENLABS_SUPPORT = False
     print("⚠️ ElevenLabs not installed. TTS disabled. Install with: pip install elevenlabs")
 
+PIPE_SUPPORT = False
+
 from toolboxv2 import App, get_app
 from toolboxv2.mods.isaa.kernel.instace import Kernel
 from toolboxv2.mods.isaa.kernel.types import Signal as KernelSignal, SignalType, KernelConfig, IOutputRouter
@@ -119,13 +121,14 @@ import time
 class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object):
     """Audio sink for receiving and transcribing voice input with Groq Whisper + VAD"""
 
-    def __init__(self, kernel: Kernel, user_id: str, groq_client: 'Groq' = None, output_router=None):
+    def __init__(self, kernel: Kernel, user_id: str, groq_client: 'Groq' = None, output_router=None, discord_kernel=None):
         if VOICE_RECEIVE_SUPPORT:
             super().__init__()
         self.kernel = kernel
         self.user_id = user_id
         self.groq_client = groq_client
         self.output_router = output_router
+        self.discord_kernel = discord_kernel  # Reference to DiscordKernel for context
         self.audio_buffer: Dict[int, List[bytes]] = {}  # ssrc -> audio chunks
         self.user_ssrc_map: Dict[int, discord.Member] = {}  # ssrc -> member
         self.transcription_interval = 3.0  # Transcribe every 3 seconds
@@ -215,7 +218,33 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                 text = transcription.text.strip()
 
                 if text:
-                    # Send transcription to kernel
+                    # Get Discord context if available
+                    discord_context = None
+                    if self.discord_kernel and hasattr(user, 'guild'):
+                        # Create a mock message object for context gathering
+                        class MockMessage:
+                            def __init__(self, author, guild, channel):
+                                self.author = author
+                                self.guild = guild
+                                self.channel = channel
+                                self.id = 0
+                                self.attachments = []
+
+                        # Get voice channel
+                        if hasattr(user, 'voice') and user.voice:
+                            voice_channel = user.voice.channel if user.voice else None
+                            if voice_channel:
+                                mock_msg = MockMessage(user, user.guild, voice_channel)
+                                discord_context = self.discord_kernel._get_discord_context(mock_msg)
+
+                                # Inject context into agent's variable system
+                                if hasattr(self.kernel.agent, 'variable_manager'):
+                                    self.kernel.agent.variable_manager.set(
+                                        f'discord.current_context.{str(user.id)}',
+                                        discord_context
+                                    )
+
+                    # Send transcription to kernel with enhanced metadata
                     signal = KernelSignal(
                         type=SignalType.USER_INPUT,
                         id=str(user.id),
@@ -225,7 +254,8 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                             "user_name": str(user),
                             "user_display_name": user.display_name,
                             "transcription": True,
-                            "language": getattr(transcription, 'language', 'unknown')
+                            "language": getattr(transcription, 'language', 'unknown'),
+                            "discord_context": discord_context
                         }
                     )
                     await self.kernel.process_signal(signal)
@@ -575,11 +605,14 @@ class DiscordKernel:
 
         # Check for Piper TTS
         piper_path = os.getenv('PIPER_PATH', r'C:\Users\Markin\Workspace\piper_w\piper.exe')
+        global PIPER_SUPPORT
         if os.path.exists(piper_path):
             print(f"✓ Piper TTS enabled at {piper_path}")
+            PIPER_SUPPORT = True
         else:
             print(f"⚠️ Piper not found at {piper_path}. Local TTS disabled.")
             piper_path = None
+            PIPER_SUPPORT = False
 
         self.output_router = DiscordOutputRouter(
             self.bot,
@@ -969,12 +1002,13 @@ class DiscordKernel:
                     try:
                         guild_id = ctx.guild.id
 
-                        # Create audio sink
+                        # Create audio sink with Discord context
                         sink = WhisperAudioSink(
                             kernel=self.kernel,
                             user_id=str(ctx.author.id),
                             groq_client=self.output_router.groq_client,
-                            output_router=self.output_router
+                            output_router=self.output_router,
+                            discord_kernel=self  # Pass Discord kernel for context
                         )
 
                         # Start listening
@@ -1062,6 +1096,110 @@ class DiscordKernel:
                 await self.kernel.save_to_file(str(self.save_path))
                 print(f"💾 Auto-saved Discord kernel at {datetime.now().strftime('%H:%M:%S')}")
 
+    def _inject_discord_context_to_agent(self):
+        """
+        Inject Discord-specific context awareness into agent's system prompt
+
+        This makes the agent aware of:
+        - Its Discord environment and capabilities
+        - Voice status and multi-instance awareness
+        - Available Discord tools and commands
+        """
+        try:
+            discord_context_prompt = """
+
+# ========== DISCORD CONTEXT AWARENESS ==========
+
+## Your Discord Environment
+
+You are operating in a Discord environment with full context awareness. You have access to detailed information about your current location and status through the variable system.
+
+### Current Context Variables
+
+You can access the following context information:
+- `discord.current_context.{user_id}` - Full context for the current conversation
+- `discord.location` - Simplified location info (type, name, guild, voice status)
+
+### Context Information Available
+
+**Location Context:**
+- Channel type (DM, Guild Text Channel, Thread)
+- Channel name and ID
+- Guild name and ID (if in a server)
+- Guild member count
+
+**Voice Context:**
+- Are you in a voice channel? (bot_voice_status.connected)
+- Which voice channel? (bot_voice_status.channel_name)
+- Are you listening to voice input? (bot_voice_status.listening)
+- Is TTS enabled? (bot_voice_status.tts_enabled, tts_mode)
+- Who else is in the voice channel? (bot_voice_status.users_in_channel)
+
+**User Voice Context:**
+- Is the user in a voice channel? (user_voice_status.in_voice)
+- Are you in the same voice channel as the user? (user_voice_status.same_channel_as_bot)
+
+**Multi-Instance Awareness:**
+- Total active conversations (active_conversations.total_active_channels)
+- Total active users (active_conversations.total_active_users)
+- Voice connections (active_conversations.voice_connections)
+- Is this a DM? (active_conversations.this_is_dm)
+
+**Capabilities:**
+- Can manage messages, roles, channels (bot_capabilities)
+- Can join voice, transcribe, use TTS (bot_capabilities)
+- 21 Discord tools available (bot_capabilities.has_discord_tools)
+
+### Important Context Rules
+
+1. **Location Awareness**: Always know where you are (DM vs Server, Voice vs Text)
+2. **Voice Awareness**: Know if you're in voice and with whom
+3. **Multi-Instance**: You may have multiple text conversations but only ONE voice connection
+4. **User Awareness**: Know if the user is in voice and if you're together
+5. **Capability Awareness**: Know what you can do in the current context
+
+### Example Context Usage
+
+When responding, consider:
+- "I'm currently in voice with you in {channel_name}" (if in same voice channel)
+- "I see you're in {voice_channel}, would you like me to join?" (if user in voice, you're not)
+- "I'm already in a voice channel in {guild_name}, I can only be in one voice channel at a time" (multi-instance awareness)
+- "I'm in a DM with you, so I have limited server management capabilities" (capability awareness)
+
+### Discord Tools Available
+
+You have 21 Discord-specific tools for:
+- **Server Management**: Get server/channel/user info, list channels
+- **Message Management**: Send, edit, delete, react to messages, pin/unpin
+- **Voice Control**: Join, leave, get status, toggle TTS
+- **Role Management**: Get roles, add/remove roles
+- **Lifetime Management**: Get bot status, kernel metrics
+
+Use these tools to interact with Discord based on your current context!
+
+# ========== END DISCORD CONTEXT ==========
+"""
+
+            if hasattr(self.kernel.agent, 'amd'):
+                current_prompt = self.kernel.agent.amd.system_message or ""
+
+                # Check if already injected
+                if "DISCORD CONTEXT AWARENESS" not in current_prompt:
+                    self.kernel.agent.amd.system_message = current_prompt + "\n" + discord_context_prompt
+                    print("✓ Discord context awareness injected into agent system prompt")
+                else:
+                    # Update existing section
+                    parts = current_prompt.split("# ========== DISCORD CONTEXT AWARENESS ==========")
+                    if len(parts) >= 2:
+                        # Keep everything before the Discord context section
+                        self.kernel.agent.amd.system_message = parts[0] + discord_context_prompt
+                        print("✓ Discord context awareness updated in agent system prompt")
+            else:
+                print("⚠️  Agent does not have AMD - cannot inject Discord context")
+
+        except Exception as e:
+            print(f"❌ Failed to inject Discord context to agent: {e}")
+
     async def start(self):
         """Start the Discord kernel"""
         self.running = True
@@ -1076,6 +1214,9 @@ class DiscordKernel:
 
         # Inject kernel prompt to agent
         self.kernel.inject_kernel_prompt_to_agent()
+
+        # Inject Discord-specific context awareness
+        self._inject_discord_context_to_agent()
 
         # Export Discord-specific tools to agent
         print("🔧 Exporting Discord tools to agent...")
@@ -1108,8 +1249,143 @@ class DiscordKernel:
 
         print("✓ Discord Kernel stopped")
 
+    def _get_discord_context(self, message: discord.Message) -> dict:
+        """
+        Gather comprehensive Discord context for the agent
+
+        Returns detailed information about:
+        - Current location (guild, channel, DM)
+        - User information
+        - Voice status (is bot in voice? is user in voice?)
+        - Active conversations
+        - Bot capabilities in this context
+        """
+        user_id = str(message.author.id)
+        channel_id = message.channel.id
+
+        # Basic context
+        context = {
+            "user_id": user_id,
+            "user_name": str(message.author),
+            "user_display_name": message.author.display_name,
+            "channel_id": channel_id,
+            "message_id": message.id,
+        }
+
+        # Channel type and location
+        if isinstance(message.channel, discord.DMChannel):
+            context["channel_type"] = "DM"
+            context["channel_name"] = f"DM with {message.author.display_name}"
+            context["guild_id"] = None
+            context["guild_name"] = None
+        elif isinstance(message.channel, discord.TextChannel):
+            context["channel_type"] = "Guild Text Channel"
+            context["channel_name"] = message.channel.name
+            context["guild_id"] = message.guild.id
+            context["guild_name"] = message.guild.name
+            context["guild_member_count"] = message.guild.member_count
+        elif isinstance(message.channel, discord.Thread):
+            context["channel_type"] = "Thread"
+            context["channel_name"] = message.channel.name
+            context["parent_channel_name"] = message.channel.parent.name if message.channel.parent else None
+            context["guild_id"] = message.guild.id
+            context["guild_name"] = message.guild.name
+        else:
+            context["channel_type"] = "Unknown"
+            context["channel_name"] = getattr(message.channel, 'name', 'Unknown')
+            context["guild_id"] = message.guild.id if message.guild else None
+            context["guild_name"] = message.guild.name if message.guild else None
+
+        # Voice status - Is the bot in a voice channel?
+        context["bot_voice_status"] = {
+            "connected": False,
+            "channel_id": None,
+            "channel_name": None,
+            "listening": False,
+            "tts_enabled": False,
+            "tts_mode": None,
+            "users_in_channel": []
+        }
+
+        if message.guild:
+            # Check if bot is in voice in this guild
+            voice_client = message.guild.voice_client
+            if voice_client and voice_client.is_connected():
+                context["bot_voice_status"]["connected"] = True
+                context["bot_voice_status"]["channel_id"] = voice_client.channel.id
+                context["bot_voice_status"]["channel_name"] = voice_client.channel.name
+                context["bot_voice_status"]["listening"] = voice_client.is_listening() if hasattr(voice_client, 'is_listening') else False
+
+                # TTS status
+                guild_id = message.guild.id
+                context["bot_voice_status"]["tts_enabled"] = self.output_router.tts_enabled.get(guild_id, False)
+                context["bot_voice_status"]["tts_mode"] = self.output_router.tts_mode.get(guild_id, "piper")
+
+                # Users in voice channel
+                context["bot_voice_status"]["users_in_channel"] = [
+                    {
+                        "id": str(member.id),
+                        "name": member.display_name,
+                        "is_self": member.id == message.author.id
+                    }
+                    for member in voice_client.channel.members
+                    if not member.bot
+                ]
+        elif isinstance(message.channel, discord.DMChannel):
+            # Check if bot is in DM voice channel
+            voice_client = self.output_router.voice_clients.get(message.author.id)
+            if voice_client and voice_client.is_connected():
+                context["bot_voice_status"]["connected"] = True
+                context["bot_voice_status"]["channel_id"] = voice_client.channel.id
+                context["bot_voice_status"]["channel_name"] = "DM Voice Channel"
+                context["bot_voice_status"]["listening"] = voice_client.is_listening() if hasattr(voice_client, 'is_listening') else False
+                context["bot_voice_status"]["tts_enabled"] = self.output_router.tts_enabled.get(message.author.id, False)
+                context["bot_voice_status"]["tts_mode"] = self.output_router.tts_mode.get(message.author.id, "piper")
+
+        # User voice status - Is the user in a voice channel?
+        context["user_voice_status"] = {
+            "in_voice": False,
+            "channel_id": None,
+            "channel_name": None,
+            "same_channel_as_bot": False
+        }
+
+        if hasattr(message.author, 'voice') and message.author.voice and message.author.voice.channel:
+            context["user_voice_status"]["in_voice"] = True
+            context["user_voice_status"]["channel_id"] = message.author.voice.channel.id
+            context["user_voice_status"]["channel_name"] = getattr(message.author.voice.channel, 'name', 'Voice Channel')
+
+            # Check if user is in same voice channel as bot
+            if context["bot_voice_status"]["connected"]:
+                context["user_voice_status"]["same_channel_as_bot"] = (
+                    message.author.voice.channel.id == context["bot_voice_status"]["channel_id"]
+                )
+        else:
+            context["user_voice_status"]["in_voice"] = False
+
+        # Active conversations - Track multi-instance awareness
+        context["active_conversations"] = {
+            "total_active_channels": len(self.output_router.active_channels),
+            "total_active_users": len(self.output_router.user_channels),
+            "voice_connections": len(self.bot.voice_clients),
+            "this_is_dm": isinstance(message.channel, discord.DMChannel)
+        }
+
+        # Bot capabilities in this context
+        context["bot_capabilities"] = {
+            "can_manage_messages": message.channel.permissions_for(message.guild.me).manage_messages if message.guild else False,
+            "can_manage_roles": message.channel.permissions_for(message.guild.me).manage_roles if message.guild else False,
+            "can_manage_channels": message.channel.permissions_for(message.guild.me).manage_channels if message.guild else False,
+            "can_join_voice": VOICE_SUPPORT,
+            "can_transcribe_voice": VOICE_RECEIVE_SUPPORT and GROQ_SUPPORT,
+            "can_use_tts": VOICE_SUPPORT and (ELEVENLABS_SUPPORT or PIPER_SUPPORT),
+            "has_discord_tools": True,  # 21 Discord tools available
+        }
+
+        return context
+
     async def handle_message(self, message: discord.Message):
-        """Handle incoming Discord message"""
+        """Handle incoming Discord message with full context awareness"""
         try:
             user_id = str(message.author.id)
             channel_id = message.channel.id
@@ -1117,6 +1393,28 @@ class DiscordKernel:
             # Register user channel (store channel object directly for this user)
             self.output_router.user_channels[user_id] = message.channel
             self.output_router.active_channels[channel_id] = message.channel
+
+            # Gather comprehensive Discord context
+            discord_context = self._get_discord_context(message)
+
+            # Inject context into agent's variable system
+            if hasattr(self.kernel.agent, 'variable_manager'):
+                self.kernel.agent.variable_manager.set(
+                    f'discord.current_context.{user_id}',
+                    discord_context
+                )
+
+                # Also set a simplified version for easy access
+                self.kernel.agent.variable_manager.set(
+                    'discord.location',
+                    {
+                        "type": discord_context["channel_type"],
+                        "name": discord_context["channel_name"],
+                        "guild": discord_context.get("guild_name"),
+                        "in_voice": discord_context["bot_voice_status"]["connected"],
+                        "voice_channel": discord_context["bot_voice_status"]["channel_name"]
+                    }
+                )
 
             # Extract content
             content = message.content
@@ -1137,7 +1435,7 @@ class DiscordKernel:
 
             # Send typing indicator
             async with message.channel.typing():
-                # Send signal to kernel
+                # Send signal to kernel with enhanced metadata
                 signal = KernelSignal(
                     type=SignalType.USER_INPUT,
                     id=user_id,
@@ -1149,7 +1447,9 @@ class DiscordKernel:
                         "attachments": attachments_info,
                         "guild_id": message.guild.id if message.guild else None,
                         "user_name": str(message.author),
-                        "user_display_name": message.author.display_name
+                        "user_display_name": message.author.display_name,
+                        # Enhanced context
+                        "discord_context": discord_context
                     }
                 )
                 await self.kernel.process_signal(signal)
@@ -1198,7 +1498,7 @@ async def init_kernel_discord(app: App):
     await isaa.register_agent(builder)
     _ = await isaa.get_agent("self")
     agent = await isaa.get_agent("DiscordKernelAssistant")
-    agent.set_progress_callback(ProgressiveTreePrinter().progress_callback)
+    #agent.set_progress_callback(ProgressiveTreePrinter().progress_callback)
     # Create and start kernel
     _kernel_instance = DiscordKernel(agent, app, bot_token=bot_token)
     await _kernel_instance.start()

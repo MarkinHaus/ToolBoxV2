@@ -7779,11 +7779,12 @@ class VariableManager:
         if isinstance(current, list):
             try:
                 key = int(last_part)
-                while len(current) <= key:
-                    current.append(None)
+                if key >= len(current):
+                    raise ValueError(f"Index '{key}' out of range for path '{path}'")
                 current[key] = value
-            except ValueError:
+            except ValueError as e:
                 current.append(value)
+
         elif isinstance(current, dict):
             current[last_part] = value
         elif scope_name == 'tasks' and hasattr(current, 'task_identification_attr'):# from tasks like Tooltask ... model dump and acces

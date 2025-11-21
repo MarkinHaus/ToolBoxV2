@@ -7,6 +7,7 @@ and provides always-on, event-driven, proactive capabilities.
 """
 
 import asyncio
+import random
 import time
 import uuid
 import json
@@ -469,10 +470,6 @@ class Kernel(IProAKernel):
         if hasattr(self.state_monitor, 'user_contexts'):
             for user_id, context in self.state_monitor.user_contexts.items():
                 context.update_state()
-
-        # Periodic learning
-        for user_id in self.learning_engine.preferences.keys():
-            await self.learning_engine.analyze_and_learn(user_id)
 
         # Clean old context
         self.context_store.clear_old_events(max_age_seconds=3600)

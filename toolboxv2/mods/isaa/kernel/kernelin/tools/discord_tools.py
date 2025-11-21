@@ -659,6 +659,161 @@ class DiscordKernelTools:
         else:
             return {"error": f"Invalid TTS mode: {mode}"}
 
+    async def send_tts_message(self, guild_id: int, text: str, mode: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Send a TTS (Text-to-Speech) message in the current voice channel.
+
+        Args:
+            guild_id: Guild ID where the bot is in a voice channel
+            text: Text to speak via TTS
+            mode: TTS mode ('elevenlabs' or 'piper', defaults to current mode)
+
+        Returns:
+            Dict with success status and TTS info
+        """
+        # Check if bot is in voice channel
+        if guild_id not in self.output_router.voice_clients:
+            return {"error": "Not in a voice channel in this guild. Use discord_join_voice first."}
+
+        voice_client = self.output_router.voice_clients[guild_id]
+        if not voice_client.is_connected():
+            return {"error": "Voice client is not connected"}
+
+        # Determine TTS mode
+        tts_mode = mode or self.output_router.tts_mode.get(guild_id, "piper")
+        if tts_mode not in ["elevenlabs", "piper"]:
+            return {"error": f"Invalid TTS mode: {tts_mode}. Use 'elevenlabs' or 'piper'."}
+
+        try:
+            # Enable TTS temporarily if not enabled
+            was_enabled = self.output_router.tts_enabled.get(guild_id, False)
+            original_mode = self.output_router.tts_mode.get(guild_id, "piper")
+
+            self.output_router.tts_enabled[guild_id] = True
+            self.output_router.tts_mode[guild_id] = tts_mode
+
+            # Send TTS message via output router
+            await self.output_router.send_tts(guild_id, text)
+
+            # Restore original TTS settings
+            if not was_enabled:
+                self.output_router.tts_enabled[guild_id] = False
+            self.output_router.tts_mode[guild_id] = original_mode
+
+            return {
+                "success": True,
+                "text": text,
+                "tts_mode": tts_mode,
+                "guild_id": guild_id,
+                "channel_id": voice_client.channel.id,
+                "channel_name": voice_client.channel.name
+            }
+        except Exception as e:
+            return {"error": f"Failed to send TTS message: {str(e)}"}
+
+    async def can_hear_user(self, guild_id: int, user_id: int) -> Dict[str, Any]:
+        """
+        Check if the bot can hear a specific user (voice listening status).
+
+        Args:
+            guild_id: Guild ID
+            user_id: User ID to check
+
+        Returns:
+            Dict with hearing status and details
+        """
+        # Check if bot is in voice channel
+        if guild_id not in self.output_router.voice_clients:
+            return {
+                "can_hear": False,
+                "reason": "Not in a voice channel",
+                "guild_id": guild_id,
+                "user_id": user_id
+            }
+
+        voice_client = self.output_router.voice_clients[guild_id]
+        if not voice_client.is_connected():
+            return {
+                "can_hear": False,
+                "reason": "Voice client not connected",
+                "guild_id": guild_id,
+                "user_id": user_id
+            }
+
+        # Check if listening is enabled
+        is_listening = voice_client.is_listening() if hasattr(voice_client, 'is_listening') else False
+        if not is_listening:
+            return {
+                "can_hear": False,
+                "reason": "Voice listening is not enabled. Use !listen command to start listening.",
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "voice_channel": voice_client.channel.name
+            }
+
+        # Get guild and user
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return {
+                "can_hear": False,
+                "reason": "Guild not found",
+                "guild_id": guild_id,
+                "user_id": user_id
+            }
+
+        member = guild.get_member(user_id)
+        if not member:
+            return {
+                "can_hear": False,
+                "reason": "User not found in guild",
+                "guild_id": guild_id,
+                "user_id": user_id
+            }
+
+        # Check if user is in the same voice channel
+        if not member.voice or not member.voice.channel:
+            return {
+                "can_hear": False,
+                "reason": "User is not in a voice channel",
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "bot_voice_channel": voice_client.channel.name
+            }
+
+        if member.voice.channel.id != voice_client.channel.id:
+            return {
+                "can_hear": False,
+                "reason": "User is in a different voice channel",
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "bot_voice_channel": voice_client.channel.name,
+                "user_voice_channel": member.voice.channel.name
+            }
+
+        # Check if user is muted
+        if member.voice.self_mute or member.voice.mute:
+            return {
+                "can_hear": False,
+                "reason": "User is muted",
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "voice_channel": voice_client.channel.name,
+                "self_mute": member.voice.self_mute,
+                "server_mute": member.voice.mute
+            }
+
+        # All checks passed - can hear user!
+        return {
+            "can_hear": True,
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "user_name": member.display_name,
+            "voice_channel": voice_client.channel.name,
+            "voice_channel_id": voice_client.channel.id,
+            "listening": True,
+            "users_in_channel": [m.display_name for m in voice_client.channel.members if not m.bot]
+        }
+
     # ===== ROLE & PERMISSION MANAGEMENT =====
 
     async def get_member_roles(self, guild_id: int, user_id: int) -> List[Dict[str, Any]]:
@@ -3429,6 +3584,25 @@ class DiscordKernelTools:
                        "Args: guild_id (int), mode (str, optional: 'elevenlabs'/'piper'/'off'/None to toggle). "
                        "Returns: Dict with TTS status. "
                        "Example: discord_toggle_tts(guild_id=123, mode='piper')"
+        )
+
+        await agent.add_tool(
+            self.send_tts_message,
+            "discord_send_tts_message",
+            description="Send a TTS (Text-to-Speech) message in the current voice channel. "
+                       "Args: guild_id (int), text (str), mode (str, optional: 'elevenlabs'/'piper'). "
+                       "Returns: Dict with success status and TTS info. "
+                       "Example: discord_send_tts_message(guild_id=123, text='Hello from voice!', mode='piper')"
+        )
+
+        await agent.add_tool(
+            self.can_hear_user,
+            "discord_can_hear_user",
+            description="Check if the bot can hear a specific user (voice listening status). "
+                       "Verifies: bot in voice, listening enabled, user in same channel, user not muted. "
+                       "Args: guild_id (int), user_id (int). "
+                       "Returns: Dict with can_hear (bool), reason, voice_channel, users_in_channel. "
+                       "Example: discord_can_hear_user(guild_id=123, user_id=456)"
         )
 
         # Role & Permission Tools
