@@ -3496,6 +3496,16 @@ class DiscordKernelTools:
         )
 
         await agent.add_tool(
+            self.output_router.send_media,
+            "discord_send_media",
+            description="Send media (images, files) to a Discord user. "
+                       "Args: user_id (str), file_path (str, optional), url (str, optional), caption (str, optional). "
+                       "Either file_path or url must be provided. "
+                       "Returns: Dict with success status. "
+                       "Example: discord_send_media(user_id='123456789', url='https://example.com/image.png', caption='Check this out!')"
+        )
+
+        await agent.add_tool(
             self.edit_message,
             "discord_edit_message",
             description="Edit an existing message. "

@@ -58,7 +58,7 @@ import sys
 import time
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter
 
@@ -105,7 +105,8 @@ except ImportError:
     ELEVENLABS_SUPPORT = False
     print("⚠️ ElevenLabs not installed. TTS disabled. Install with: pip install elevenlabs")
 
-PIPE_SUPPORT = False
+PIPER_SUPPORT = False
+
 
 from toolboxv2 import App, get_app
 from toolboxv2.mods.isaa.kernel.instace import Kernel
@@ -124,20 +125,29 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
     """Audio sink for receiving and transcribing voice input with Groq Whisper + VAD"""
 
     def __init__(self, kernel: Kernel, user_id: str, groq_client: 'Groq' = None, output_router=None, discord_kernel=None):
+        print(f"🎤 [DEBUG] Initializing WhisperAudioSink for user {user_id}")
+
         if VOICE_RECEIVE_SUPPORT:
             super().__init__()
+            print(f"🎤 [DEBUG] Voice receive support enabled")
+        else:
+            print(f"🎤 [DEBUG] WARNING: Voice receive support NOT enabled!")
+
         self.kernel = kernel
         self.user_id = user_id
         self.groq_client = groq_client
         self.output_router = output_router
         self.discord_kernel = discord_kernel  # Reference to DiscordKernel for context
-        self.audio_buffer: Dict[int, List[bytes]] = {}  # ssrc -> audio chunks
-        self.user_ssrc_map: Dict[int, discord.Member] = {}  # ssrc -> member
+        self.audio_buffer: Dict[str, List[bytes]] = {}  # user_id -> audio chunks
         self.transcription_interval = 3.0  # Transcribe every 3 seconds
-        self.last_transcription: Dict[int, float] = {}  # ssrc -> timestamp
-        self.speaking_state: Dict[int, bool] = {}  # ssrc -> is_speaking
-        self.last_audio_time: Dict[int, float] = {}  # ssrc -> last audio timestamp
+        self.last_transcription: Dict[str, float] = {}  # user_id -> timestamp
+        self.speaking_state: Dict[str, bool] = {}  # user_id -> is_speaking
+        self.last_audio_time: Dict[str, float] = {}  # user_id -> last audio timestamp
         self.silence_threshold = 1.0  # 1 second of silence before stopping transcription
+
+        print(f"🎤 [DEBUG] WhisperAudioSink initialized successfully")
+        print(f"🎤 [DEBUG] - Groq client: {'✅' if groq_client else '❌'}")
+        print(f"🎤 [DEBUG] - Transcription interval: {self.transcription_interval}s")
 
     def wants_opus(self) -> bool:
         """We want decoded PCM audio, not Opus"""
@@ -146,53 +156,97 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
     def write(self, user, data):
         """Receive audio data from Discord"""
         if not user:
+            print(f"🎤 [DEBUG] write() called with no user")
             return
 
-        # Get SSRC (Synchronization Source identifier)
-        ssrc = data.ssrc if hasattr(data, 'ssrc') else None
-        if not ssrc:
-            return
+        user_id = str(user.id)
 
-        # Map SSRC to user
-        if ssrc not in self.user_ssrc_map:
-            self.user_ssrc_map[ssrc] = user
+        # Debug: Print data attributes
+        if user_id not in self.audio_buffer:
+            print(f"🎤 [DEBUG] First audio packet from {user.display_name} (ID: {user_id})")
+            print(f"🎤 [DEBUG] Data type: {type(data)}")
+            print(f"🎤 [DEBUG] Data attributes: {dir(data)}")
+            if hasattr(data, 'pcm'):
+                print(f"🎤 [DEBUG] PCM data size: {len(data.pcm)} bytes")
 
         # Buffer audio data
-        if ssrc not in self.audio_buffer:
-            self.audio_buffer[ssrc] = []
-            self.last_transcription[ssrc] = time.time()
+        if user_id not in self.audio_buffer:
+            self.audio_buffer[user_id] = []
+            self.last_transcription[user_id] = time.time()
+            print(f"🎤 [DEBUG] Created new audio buffer for {user.display_name} (ID: {user_id})")
 
-        self.audio_buffer[ssrc].append(data.pcm)
+        # Append PCM audio data
+        if hasattr(data, 'pcm'):
+            self.audio_buffer[user_id].append(data.pcm)
+        else:
+            print(f"🎤 [DEBUG] WARNING: No PCM data in packet from {user.display_name}")
+            return
+
+        buffer_size = len(self.audio_buffer[user_id])
+
+        # Only print every 10 chunks to avoid spam
+        if buffer_size % 10 == 0:
+            print(f"🎤 [DEBUG] Audio buffer for {user.display_name}: {buffer_size} chunks")
 
         # Check if we should transcribe
         current_time = time.time()
-        if current_time - self.last_transcription[ssrc] >= self.transcription_interval:
-            asyncio.create_task(self._transcribe_buffer(ssrc))
-            self.last_transcription[ssrc] = current_time
+        if current_time - self.last_transcription[user_id] >= self.transcription_interval:
+            time_since_last = current_time - self.last_transcription[user_id]
+            print(f"🎤 [DEBUG] Triggering transcription for {user.display_name} (buffer: {buffer_size} chunks, time since last: {time_since_last:.2f}s)")
 
-    async def _transcribe_buffer(self, ssrc: int):
+            # Schedule transcription in the event loop (write() is called from a different thread)
+            try:
+                from toolboxv2 import get_app
+                get_app().run_bg_task_advanced(self._transcribe_buffer, user_id, user)
+                # loop = asyncio.get_event_loop()
+                # asyncio.run_coroutine_threadsafe(self._transcribe_buffer(user_id, user), loop)
+            except Exception as e:
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.run_coroutine_threadsafe(self._transcribe_buffer(user_id, user), loop)
+                except Exception as e:
+                    print(f"❌ [DEBUG] Error scheduling transcription: {e}")
+
+            self.last_transcription[user_id] = current_time
+
+    async def _transcribe_buffer(self, user_id: str, user):
         """Transcribe buffered audio for a user"""
-        if ssrc not in self.audio_buffer or not self.audio_buffer[ssrc]:
+        print(f"🎤 [DEBUG] _transcribe_buffer called for user {user.display_name} (ID: {user_id})")
+
+        if user_id not in self.audio_buffer or not self.audio_buffer[user_id]:
+            print(f"🎤 [DEBUG] No audio buffer found for user {user_id}")
             return
 
         if not GROQ_SUPPORT or not self.groq_client:
-            print("⚠️ Groq not available for transcription")
+            print("⚠️ [DEBUG] Groq not available for transcription")
             return
 
         try:
-            # Get user
-            user = self.user_ssrc_map.get(ssrc)
-            if not user:
-                return
+            print(f"🎤 [DEBUG] Processing audio for {user.display_name}")
 
             # Combine audio chunks
-            audio_data = b''.join(self.audio_buffer[ssrc])
-            self.audio_buffer[ssrc] = []  # Clear buffer
+            audio_data = b''.join(self.audio_buffer[user_id])
+            chunk_count = len(self.audio_buffer[user_id])
+            self.audio_buffer[user_id] = []  # Clear buffer
 
-            if len(audio_data) < 1600:  # Too short (< 0.1 seconds at 16kHz)
+            print(f"🎤 [DEBUG] Combined {chunk_count} audio chunks, total size: {len(audio_data)} bytes")
+
+            # Calculate audio duration (48kHz stereo, 16-bit = 192000 bytes/second)
+            duration_seconds = len(audio_data) / 192000
+            print(f"🎤 [DEBUG] Audio duration: {duration_seconds:.2f} seconds")
+
+            # Skip if too short (less than 0.5 seconds - likely just noise)
+            if duration_seconds < 0.5:
+                print(f"🎤 [DEBUG] Audio too short ({duration_seconds:.2f}s), skipping transcription")
+                return
+
+            # Skip if too few chunks (less than 5 chunks - likely just background noise)
+            if chunk_count < 5:
+                print(f"🎤 [DEBUG] Too few audio chunks ({chunk_count}), likely background noise, skipping")
                 return
 
             # Create WAV file in memory
+            print(f"🎤 [DEBUG] Creating WAV file (48kHz, stereo, 16-bit)")
             wav_buffer = io.BytesIO()
             with wave.open(wav_buffer, 'wb') as wav_file:
                 wav_file.setnchannels(2)  # Stereo
@@ -201,14 +255,19 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                 wav_file.writeframes(audio_data)
 
             wav_buffer.seek(0)
+            wav_size = len(wav_buffer.getvalue())
+            print(f"🎤 [DEBUG] WAV file created, size: {wav_size} bytes")
 
             # Save to temporary file (Groq API needs file path)
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
                 temp_file.write(wav_buffer.read())
                 temp_path = temp_file.name
 
+            print(f"🎤 [DEBUG] Saved to temp file: {temp_path}")
+
             try:
                 # Transcribe with Groq Whisper
+                print(f"🎤 [DEBUG] Sending to Groq Whisper API (model: whisper-large-v3-turbo)...")
                 with open(temp_path, 'rb') as audio_file:
                     transcription = self.groq_client.audio.transcriptions.create(
                         file=audio_file,
@@ -217,12 +276,40 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                         temperature=0.0
                     )
 
-                text = transcription.text.strip()
+                print(f"🎤 [DEBUG] Groq API response received")
 
-                if text:
+                text = transcription.text.strip()
+                language = getattr(transcription, 'language', 'unknown')
+
+                print(f"🎤 [DEBUG] Transcription result: '{text}' (language: {language})")
+
+                # Filter out common Whisper hallucinations for background noise
+                hallucinations = [
+                    "thank you", "thanks for watching", "thank you for watching",
+                    "bye", "goodbye", "see you", "see you next time",
+                    "subscribe", "like and subscribe",
+                    ".", "..", "...",
+                    "you", "uh", "um", "hmm", "mhm",
+                    "music", "[music]", "(music)",
+                    "applause", "[applause]", "(applause)",
+                    "laughter", "[laughter]", "(laughter)"
+                ]
+
+                text_lower = text.lower()
+                is_hallucination = any(text_lower == h or text_lower.strip('.,!? ') == h for h in hallucinations)
+
+                if is_hallucination:
+                    print(f"🎤 [DEBUG] Detected hallucination/noise: '{text}', skipping")
+                    return
+
+                if text and len(text) > 2:  # At least 3 characters
+                    print(f"🎤 [DEBUG] Text is not empty, processing...")
+
                     # Get Discord context if available
                     discord_context = None
                     if self.discord_kernel and hasattr(user, 'guild'):
+                        print(f"🎤 [DEBUG] Getting Discord context for {user.display_name}")
+
                         # Create a mock message object for context gathering
                         class MockMessage:
                             def __init__(self, author, guild, channel):
@@ -236,6 +323,7 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                         if hasattr(user, 'voice') and user.voice:
                             voice_channel = user.voice.channel if user.voice else None
                             if voice_channel:
+                                print(f"🎤 [DEBUG] User is in voice channel: {voice_channel.name}")
                                 mock_msg = MockMessage(user, user.guild, voice_channel)
                                 discord_context = self.discord_kernel._get_discord_context(mock_msg)
 
@@ -245,8 +333,31 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                                         f'discord.current_context.{str(user.id)}',
                                         discord_context
                                     )
+                                    print(f"🎤 [DEBUG] Discord context injected into agent")
+
+                    # Register user channel for responses (use voice channel's text channel)
+                    if hasattr(user, 'voice') and user.voice and user.voice.channel:
+                        # Find the guild's text channels and use the first one, or system channel
+                        guild = user.guild
+                        text_channel = None
+
+                        # Try to find a general/main text channel
+                        if guild.system_channel:
+                            text_channel = guild.system_channel
+                        else:
+                            # Use first available text channel
+                            text_channels = [ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages]
+                            if text_channels:
+                                text_channel = text_channels[0]
+
+                        if text_channel:
+                            self.output_router.user_channels[str(user.id)] = text_channel
+                            print(f"🎤 [DEBUG] Registered text channel '{text_channel.name}' for user {user.display_name}")
+                        else:
+                            print(f"🎤 [DEBUG] WARNING: No text channel found for responses")
 
                     # Send transcription to kernel with enhanced metadata
+                    print(f"🎤 [DEBUG] Creating kernel signal for user {user.id}")
                     signal = KernelSignal(
                         type=SignalType.USER_INPUT,
                         id=str(user.id),
@@ -256,62 +367,74 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                             "user_name": str(user),
                             "user_display_name": user.display_name,
                             "transcription": True,
-                            "language": getattr(transcription, 'language', 'unknown'),
+                            "language": language,
                             "discord_context": discord_context
                         }
                     )
+                    print(f"🎤 [DEBUG] Sending signal to kernel...")
                     await self.kernel.process_signal(signal)
-                    print(f"🎤 Voice input from {user.display_name}: {text}")
+                    print(f"🎤 ✅ Voice input from {user.display_name}: {text}")
+                else:
+                    print(f"🎤 [DEBUG] Transcription text is empty, skipping")
 
             finally:
                 # Clean up temp file
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
+                    print(f"🎤 [DEBUG] Cleaned up temp file: {temp_path}")
 
         except Exception as e:
-            print(f"❌ Error transcribing audio: {e}")
+            print(f"❌ [DEBUG] Error transcribing audio: {e}")
+            import traceback
+            traceback.print_exc()
 
     def cleanup(self):
         """Cleanup when sink is stopped"""
+        print(f"🎤 [DEBUG] Cleaning up WhisperAudioSink")
         self.audio_buffer.clear()
-        self.user_ssrc_map.clear()
         self.last_transcription.clear()
+        self.speaking_state.clear()
+        self.last_audio_time.clear()
 
     @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f
     def on_voice_member_disconnect(self, member: discord.Member, ssrc: int):
         """Handle member disconnect"""
-        if ssrc in self.audio_buffer:
-            del self.audio_buffer[ssrc]
-        if ssrc in self.user_ssrc_map:
-            del self.user_ssrc_map[ssrc]
-        if ssrc in self.last_transcription:
-            del self.last_transcription[ssrc]
-        if ssrc in self.speaking_state:
-            del self.speaking_state[ssrc]
-        if ssrc in self.last_audio_time:
-            del self.last_audio_time[ssrc]
+        user_id = str(member.id)
+        print(f"🎤 [DEBUG] {member.display_name} disconnected from voice")
+
+        if user_id in self.audio_buffer:
+            del self.audio_buffer[user_id]
+        if user_id in self.last_transcription:
+            del self.last_transcription[user_id]
+        if user_id in self.speaking_state:
+            del self.speaking_state[user_id]
+        if user_id in self.last_audio_time:
+            del self.last_audio_time[user_id]
 
     @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f
     def on_voice_member_speaking_start(self, member: discord.Member):
         """Handle speaking start (VAD)"""
+        user_id = str(member.id)
         print(f"🎤 {member.display_name} started speaking")
-        # Find SSRC for this member
-        for ssrc, m in self.user_ssrc_map.items():
-            if m.id == member.id:
-                self.speaking_state[ssrc] = True
-                break
+        self.speaking_state[user_id] = True
 
     @voice_recv.AudioSink.listener() if VOICE_RECEIVE_SUPPORT else lambda f: f
     def on_voice_member_speaking_stop(self, member: discord.Member):
         """Handle speaking stop (VAD)"""
+        user_id = str(member.id)
         print(f"🔇 {member.display_name} stopped speaking")
-        # Find SSRC for this member
-        for ssrc, m in self.user_ssrc_map.items():
-            if m.id == member.id:
-                self.speaking_state[ssrc] = False
-                # Trigger final transcription
-                asyncio.create_task(self._transcribe_buffer(ssrc))
-                break
+        self.speaking_state[user_id] = False
+
+        # Trigger final transcription if there's buffered audio
+        if user_id in self.audio_buffer and self.audio_buffer[user_id]:
+            print(f"🎤 [DEBUG] Triggering final transcription for {member.display_name}")
+
+            # Schedule transcription in the event loop (listener is called from a different thread)
+            try:
+                from toolboxv2 import get_app
+                get_app().run_bg_task_advanced(self._transcribe_buffer, user_id, member)
+            except Exception as e:
+                print(f"❌ [DEBUG] Error scheduling final transcription: {e}")
 
 
 class DiscordProgressPrinter:
@@ -592,7 +715,7 @@ class DiscordProgressPrinter:
 class DiscordOutputRouter(IOutputRouter):
     """Discord-specific output router with embed, media, voice, and TTS support"""
 
-    def __init__(self, bot: commands.Bot, groq_client: 'Groq' = None, elevenlabs_client: 'ElevenLabs' = None, piper_path: str = None):
+    def __init__(self, bot: commands.Bot, groq_client: 'Groq' = None, elevenlabs_client: 'ElevenLabs' = None, piper_path: str = None, piper_model: str = None):
         self.bot = bot
         self.active_channels: Dict[int, discord.TextChannel] = {}
         self.user_channels: Dict[str, discord.TextChannel] = {}  # user_id -> channel object
@@ -601,6 +724,7 @@ class DiscordOutputRouter(IOutputRouter):
         self.groq_client = groq_client
         self.elevenlabs_client = elevenlabs_client
         self.piper_path = piper_path
+        self.piper_model = piper_model  # Path to .onnx model file
         self.tts_enabled: Dict[int, bool] = {}  # guild_id -> tts enabled
         self.tts_mode: Dict[int, str] = {}  # guild_id -> "elevenlabs" or "piper"
 
@@ -638,22 +762,49 @@ class DiscordOutputRouter(IOutputRouter):
                 print(f"⚠️ No channel found for user {user_id}")
                 return
 
-            # Use embeds for rich formatting
-            use_embed = metadata and metadata.get("use_embed", True)
+            # Fix emoji and umlaut encoding issues
+            import codecs
+            try:
+                # First, try to fix UTF-8 encoding issues (e.g., "fÃ¼r" -> "für")
+                # This happens when UTF-8 bytes are incorrectly interpreted as Latin-1
+                if any(char in content for char in ['Ã', 'â', 'Â']):
+                    # Encode as Latin-1 and decode as UTF-8
+                    content = content.encode('latin-1').decode('utf-8')
+            except Exception as e:
+                # If UTF-8 fix fails, try unicode escape sequences
+                try:
+                    # Decode unicode escape sequences like \u2764 to actual emojis
+                    if '\\u' in content:
+                        content = codecs.decode(content, 'unicode_escape')
+                except Exception as e2:
+                    # If all decoding fails, use original content
+                    print(f"⚠️ Could not decode text: {e}, {e2}")
 
-            if use_embed:
-                embed = self._create_embed(
-                    content=content,
-                    title=metadata.get("title") if metadata else None,
-                    color=discord.Color.green()
-                )
-                await channel.send(embed=embed)
+            # Check if TTS is enabled and bot is in voice channel with user
+            guild_id = channel.guild.id if channel.guild else None
+            tts_enabled = guild_id and guild_id in self.tts_enabled and self.tts_enabled[guild_id]
+            in_voice = guild_id and guild_id in self.voice_clients and self.voice_clients[guild_id].is_connected()
+
+            print(f"🔊 [DEBUG] Response mode - TTS: {tts_enabled}, In Voice: {in_voice}")
+
+            if tts_enabled and in_voice:
+                # TTS Mode: Only voice output, no text message
+                print(f"🔊 [DEBUG] TTS Mode: Sending voice response only")
+                await self._speak_text(guild_id, content)
             else:
-                await channel.send(content)
+                # Text Mode: Send text message (no TTS)
+                print(f"💬 [DEBUG] Text Mode: Sending text response")
+                use_embed = metadata and metadata.get("use_embed", True)
 
-            # TTS if enabled and in voice channel
-            if channel.guild and channel.guild.id in self.tts_enabled and self.tts_enabled[channel.guild.id]:
-                await self._speak_text(channel.guild.id, content)
+                if use_embed:
+                    embed = self._create_embed(
+                        content=content,
+                        title=metadata.get("title") if metadata else None,
+                        color=discord.Color.green()
+                    )
+                    await channel.send(embed=embed)
+                else:
+                    await channel.send(content)
 
         except Exception as e:
             print(f"❌ Error sending Discord response to user {user_id}: {e}")
@@ -749,38 +900,72 @@ class DiscordOutputRouter(IOutputRouter):
     async def _speak_piper(self, voice_client: discord.VoiceClient, text: str):
         """Speak using Piper TTS (local)"""
         try:
-            # Create temporary files
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode='w', encoding='utf-8') as text_file:
-                text_file.write(text)
-                text_path = text_file.name
+            print(f"🔊 [DEBUG] Piper TTS: Starting synthesis for text: '{text[:50]}...'")
 
+            # Create temporary output file
             output_path = tempfile.mktemp(suffix=".wav")
+            print(f"🔊 [DEBUG] Piper TTS: Output file: {output_path}")
+
+            # Build Piper command
+            # Piper reads text from stdin and requires --model and --output_file
+            cmd = [
+                self.piper_path,
+                "--model", self.piper_model,
+                "--output_file", output_path
+            ]
+
+            print(f"🔊 [DEBUG] Piper TTS: Command: {' '.join(cmd)}")
+            print(f"🔊 [DEBUG] Piper TTS: Model: {self.piper_model}")
 
             # Run Piper (reads from stdin)
-            with open(text_path, 'r', encoding='utf-8') as input_file:
-                subprocess.run(
-                    [self.piper_path, "--output_file", output_path],
-                    stdin=input_file,
-                    check=True,
-                    capture_output=True
-                )
+            result = subprocess.run(
+                cmd,
+                input=text.encode('utf-8'),
+                capture_output=True,
+                check=False  # Don't raise exception, we'll check returncode
+            )
+
+            print(f"🔊 [DEBUG] Piper TTS: Return code: {result.returncode}")
+
+            if result.returncode != 0:
+                print(f"❌ [DEBUG] Piper TTS stderr: {result.stderr.decode('utf-8', errors='ignore')}")
+                print(f"❌ [DEBUG] Piper TTS stdout: {result.stdout.decode('utf-8', errors='ignore')}")
+                raise Exception(f"Piper failed with return code {result.returncode}")
+
+            print(f"🔊 [DEBUG] Piper TTS: Audio file created successfully")
+
+            # Check if file exists and has content
+            if not os.path.exists(output_path):
+                raise Exception(f"Output file not created: {output_path}")
+
+            file_size = os.path.getsize(output_path)
+            print(f"🔊 [DEBUG] Piper TTS: Audio file size: {file_size} bytes")
+
+            if file_size == 0:
+                raise Exception("Output file is empty")
 
             # Play audio
+            print(f"🔊 [DEBUG] Piper TTS: Starting playback...")
             audio_source = discord.FFmpegPCMAudio(output_path)
 
             def cleanup(error):
                 try:
                     os.unlink(output_path)
-                    os.unlink(text_path)
-                except:
-                    pass
+                    print(f"🔊 [DEBUG] Piper TTS: Cleaned up output file")
+                except Exception as e:
+                    print(f"⚠️ [DEBUG] Piper TTS: Cleanup error: {e}")
                 if error:
-                    print(f"Error playing audio: {error}")
+                    print(f"❌ [DEBUG] Piper TTS: Playback error: {error}")
+                else:
+                    print(f"🔊 [DEBUG] Piper TTS: Playback completed successfully")
 
             voice_client.play(audio_source, after=cleanup)
+            print(f"🔊 [DEBUG] Piper TTS: Audio source playing")
 
         except Exception as e:
-            print(f"❌ Piper TTS error: {e}")
+            print(f"❌ [DEBUG] Piper TTS error: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def send_media(
         self,
@@ -788,26 +973,52 @@ class DiscordOutputRouter(IOutputRouter):
         file_path: str = None,
         url: str = None,
         caption: str = None
-    ):
+    ) -> Dict[str, Any]:
         """Send media to Discord user"""
         try:
             channel = self.user_channels.get(user_id)
             if not channel:
                 print(f"⚠️ No channel found for user {user_id}")
-                return
+                return {
+                    "success": False,
+                    "error": "No channel found for user"
+                }
 
             if file_path:
                 # Send file attachment
                 file = discord.File(file_path)
-                await channel.send(content=caption, file=file)
+                message = await channel.send(content=caption, file=file)
+                return {
+                    "success": True,
+                    "message_id": message.id,
+                    "type": "file",
+                    "file_path": file_path,
+                    "caption": caption
+                }
             elif url:
                 # Send embed with image
                 embed = discord.Embed(description=caption or "")
                 embed.set_image(url=url)
-                await channel.send(embed=embed)
+                message = await channel.send(embed=embed)
+                return {
+                    "success": True,
+                    "message_id": message.id,
+                    "type": "url",
+                    "url": url,
+                    "caption": caption
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Either file_path or url must be provided"
+                }
 
         except Exception as e:
             print(f"❌ Error sending Discord media to user {user_id}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
 
 class DiscordKernel:
@@ -882,20 +1093,45 @@ class DiscordKernel:
 
         # Check for Piper TTS
         piper_path = os.getenv('PIPER_PATH', r'C:\Users\Markin\Workspace\piper_w\piper.exe')
+        piper_model = os.getenv('PIPER_MODEL', r'C:\Users\Markin\Workspace\piper_w\models\de_DE-thorsten-high.onnx')
+
         global PIPER_SUPPORT
         if os.path.exists(piper_path):
             print(f"✓ Piper TTS enabled at {piper_path}")
-            PIPER_SUPPORT = True
+
+            # Check if model exists
+            if os.path.exists(piper_model):
+                print(f"✓ Piper model found: {piper_model}")
+                PIPER_SUPPORT = True
+            else:
+                print(f"⚠️ Piper model not found at {piper_model}")
+                print(f"⚠️ Set PIPER_MODEL environment variable or place model at default location")
+                print(f"⚠️ Available models should be in: C:\\Users\\Markin\\Workspace\\piper_w\\models\\")
+                piper_path = None
+                piper_model = None
+                PIPER_SUPPORT = False
         else:
             print(f"⚠️ Piper not found at {piper_path}. Local TTS disabled.")
             piper_path = None
+            piper_model = None
             PIPER_SUPPORT = False
 
+        # Print support status
+        print("\n" + "=" * 60)
+        print("🎤 VOICE SYSTEM SUPPORT STATUS")
+        print("=" * 60)
+        print(f"VOICE_SUPPORT:         {'✅' if VOICE_SUPPORT else '❌'}")
+        print(f"VOICE_RECEIVE_SUPPORT: {'✅' if VOICE_RECEIVE_SUPPORT else '❌'}")
+        print(f"GROQ_SUPPORT:          {'✅' if GROQ_SUPPORT else '❌'}")
+        print(f"ELEVENLABS_SUPPORT:    {'✅' if ELEVENLABS_SUPPORT else '❌'}")
+        print(f"PIPER_SUPPORT:         {'✅' if PIPER_SUPPORT else '❌'}")
+        print("=" * 60 + "\n")
         self.output_router = DiscordOutputRouter(
             self.bot,
             groq_client=groq_client,
             elevenlabs_client=elevenlabs_client,
-            piper_path=piper_path
+            piper_path=piper_path,
+            piper_model=piper_model
         )
         self.kernel = Kernel(
             agent=agent,
@@ -916,6 +1152,12 @@ class DiscordKernel:
         # Setup bot events
         self._setup_bot_events()
         self._setup_bot_commands()
+
+        # Print registered commands
+        print(f"\n🎮 Registered Discord Commands:")
+        for cmd in self.bot.commands:
+            print(f"   • !{cmd.name}")
+        print()
 
         print(f"✓ Discord Kernel initialized (instance: {instance_id})")
 
@@ -1106,8 +1348,9 @@ class DiscordKernel:
         @self.bot.command(name="exit")
         async def help_command(ctx: commands.Context):
             """Exit the kernel"""
-            await self.stop()
+
             await ctx.send("👋 Goodbye!")
+            await self.stop()
             sys.exit(0)
 
         @self.bot.command(name="info")
@@ -1124,7 +1367,8 @@ class DiscordKernel:
                 "• `!status` - Show kernel status and metrics\n"
                 "• `!info` - Show this help message\n"
                 "• `!progress [on|off|toggle]` - Toggle agent progress tracking\n"
-                "• `!context` - Show agent context and user profile"
+                "• `!context` - Show agent context and user profile\n"
+                "• `!reset` - Reset user data (memories, preferences, tasks)"
             )
             embed.add_field(
                 name="📋 Basic Commands",
@@ -1202,30 +1446,56 @@ class DiscordKernel:
             @self.bot.command(name="join")
             async def join_voice(ctx: commands.Context):
                 """Join the user's voice channel (Guild or DM)"""
+                print(f"🎤 [DEBUG] !join command called by {ctx.author.display_name}")
+
                 # Check if user is in a voice channel
                 if not ctx.author.voice:
+                    print(f"🎤 [DEBUG] User is not in a voice channel")
                     await ctx.send("❌ You need to be in a voice channel!")
                     return
 
                 channel = ctx.author.voice.channel
+                channel_name = getattr(channel, 'name', 'DM Voice Channel')
+                print(f"🎤 [DEBUG] User is in voice channel: {channel_name}")
 
                 try:
                     if ctx.voice_client:
+                        print(f"🎤 [DEBUG] Bot already in voice, moving to {channel_name}")
                         await ctx.voice_client.move_to(channel)
-                        channel_name = getattr(channel, 'name', 'DM Voice Channel')
                         await ctx.send(f"🔊 Moved to {channel_name}")
+                        print(f"🎤 [DEBUG] Successfully moved to {channel_name}")
                     else:
-                        voice_client = await channel.connect()
+                        print(f"🎤 [DEBUG] Connecting to voice channel {channel_name}...")
+
+                        # Use VoiceRecvClient if voice receive support is available
+                        if VOICE_RECEIVE_SUPPORT:
+                            print(f"🎤 [DEBUG] Using VoiceRecvClient for voice receive support")
+                            voice_client = await channel.connect(cls=voice_recv.VoiceRecvClient)
+                        else:
+                            print(f"🎤 [DEBUG] Using standard VoiceClient (no voice receive)")
+                            voice_client = await channel.connect()
+
+                        print(f"🎤 [DEBUG] Connected successfully")
+                        print(f"🎤 [DEBUG] VoiceClient type: {type(voice_client).__name__}")
+                        print(f"🎤 [DEBUG] Has listen method: {hasattr(voice_client, 'listen')}")
+                        print(f"🎤 [DEBUG] Has is_listening method: {hasattr(voice_client, 'is_listening')}")
 
                         # Store voice client (use guild_id or user_id for DMs)
                         if ctx.guild:
                             self.output_router.voice_clients[ctx.guild.id] = voice_client
+                            print(f"🎤 [DEBUG] Stored voice client for guild {ctx.guild.id}")
                             await ctx.send(f"🔊 Joined {channel.name}")
                         else:
                             # DM Voice Channel
                             self.output_router.voice_clients[ctx.author.id] = voice_client
+                            print(f"🎤 [DEBUG] Stored voice client for user {ctx.author.id}")
                             await ctx.send(f"🔊 Joined DM voice channel")
+
+                        print(f"🎤 [DEBUG] !join command completed successfully")
                 except Exception as e:
+                    print(f"❌ [DEBUG] Error in !join command: {e}")
+                    import traceback
+                    traceback.print_exc()
                     await ctx.send(f"❌ Error joining voice channel: {e}")
 
             @self.bot.command(name="leave")
@@ -1279,22 +1549,35 @@ class DiscordKernel:
                 await ctx.send(embed=embed)
 
             # Voice input commands (only if voice receive support is available)
+            print(f"🎤 [DEBUG] Checking voice input command registration...")
+            print(f"🎤 [DEBUG] VOICE_RECEIVE_SUPPORT: {VOICE_RECEIVE_SUPPORT}")
+            print(f"🎤 [DEBUG] GROQ_SUPPORT: {GROQ_SUPPORT}")
+
             if VOICE_RECEIVE_SUPPORT and GROQ_SUPPORT:
+                print(f"🎤 [DEBUG] ✅ Registering !listen and !stop_listening commands")
+
                 @self.bot.command(name="listen")
                 async def start_listening(ctx: commands.Context):
                     """Start listening to voice input and transcribing with Groq Whisper"""
+                    print(f"🎤 [DEBUG] !listen command called by {ctx.author.display_name}")
+
                     if not ctx.voice_client:
+                        print(f"🎤 [DEBUG] Bot is not in a voice channel")
                         await ctx.send("❌ I'm not in a voice channel! Use `!join` first.")
                         return
 
-                    if ctx.voice_client.is_listening():
+                    # Check if already listening (only if voice_recv is available)
+                    if hasattr(ctx.voice_client, 'is_listening') and ctx.voice_client.is_listening():
+                        print(f"🎤 [DEBUG] Already listening")
                         await ctx.send("⚠️ Already listening!")
                         return
 
                     try:
                         guild_id = ctx.guild.id
+                        print(f"🎤 [DEBUG] Guild ID: {guild_id}")
 
                         # Create audio sink with Discord context
+                        print(f"🎤 [DEBUG] Creating WhisperAudioSink...")
                         sink = WhisperAudioSink(
                             kernel=self.kernel,
                             user_id=str(ctx.author.id),
@@ -1302,36 +1585,72 @@ class DiscordKernel:
                             output_router=self.output_router,
                             discord_kernel=self  # Pass Discord kernel for context
                         )
+                        print(f"🎤 [DEBUG] WhisperAudioSink created successfully")
 
                         # Start listening
+                        print(f"🎤 [DEBUG] Starting voice client listening...")
+
+                        # Check if listen method exists
+                        if not hasattr(ctx.voice_client, 'listen'):
+                            print(f"🎤 [DEBUG] ERROR: listen() method not available on VoiceClient")
+                            print(f"🎤 [DEBUG] This means discord-ext-voice-recv is NOT installed!")
+                            await ctx.send("❌ Voice receive not supported! Install: `pip install discord-ext-voice-recv`")
+                            return
+
                         ctx.voice_client.listen(sink)
                         self.output_router.audio_sinks[guild_id] = sink
+                        print(f"🎤 [DEBUG] Voice client is now listening")
 
                         await ctx.send("🎤 Started listening! Speak and I'll transcribe your voice in real-time.")
+                        print(f"🎤 [DEBUG] !listen command completed successfully")
                     except Exception as e:
+                        print(f"❌ [DEBUG] Error in !listen command: {e}")
+                        import traceback
+                        traceback.print_exc()
                         await ctx.send(f"❌ Error starting voice input: {e}")
 
                 @self.bot.command(name="stop_listening")
                 async def stop_listening(ctx: commands.Context):
                     """Stop listening to voice input"""
+                    print(f"🎤 [DEBUG] !stop_listening command called by {ctx.author.display_name}")
+
                     if not ctx.voice_client:
+                        print(f"🎤 [DEBUG] Bot is not in a voice channel")
                         await ctx.send("❌ I'm not in a voice channel!")
                         return
 
-                    if not ctx.voice_client.is_listening():
+                    # Check if listening (only if voice_recv is available)
+                    if not hasattr(ctx.voice_client, 'is_listening') or not ctx.voice_client.is_listening():
+                        print(f"🎤 [DEBUG] Not currently listening")
                         await ctx.send("⚠️ Not currently listening!")
                         return
 
                     try:
                         guild_id = ctx.guild.id
-                        ctx.voice_client.stop_listening()
+                        print(f"🎤 [DEBUG] Stopping voice client listening...")
+
+                        # Stop listening (only if method exists)
+                        if hasattr(ctx.voice_client, 'stop_listening'):
+                            ctx.voice_client.stop_listening()
+                        else:
+                            print(f"🎤 [DEBUG] WARNING: stop_listening method not available")
+                            await ctx.send("❌ Voice receive not supported!")
+                            return
 
                         if guild_id in self.output_router.audio_sinks:
+                            print(f"🎤 [DEBUG] Removing audio sink for guild {guild_id}")
                             del self.output_router.audio_sinks[guild_id]
 
                         await ctx.send("🔇 Stopped listening to voice input.")
+                        print(f"🎤 [DEBUG] !stop_listening command completed successfully")
                     except Exception as e:
+                        print(f"❌ [DEBUG] Error in !stop_listening command: {e}")
+                        import traceback
+                        traceback.print_exc()
                         await ctx.send(f"❌ Error stopping voice input: {e}")
+            else:
+                print(f"🎤 [DEBUG] ❌ Voice input commands NOT registered!")
+                print(f"🎤 [DEBUG] Reason: VOICE_RECEIVE_SUPPORT={VOICE_RECEIVE_SUPPORT}, GROQ_SUPPORT={GROQ_SUPPORT}")
 
             # TTS Commands
             @self.bot.command(name="tts")
@@ -1391,8 +1710,10 @@ class DiscordKernel:
                 if user_id not in self.progress_printers:
                     printer = DiscordProgressPrinter(ctx.channel, user_id)
                     self.progress_printers[user_id] = printer
-                    # Register with agent
-                    self.kernel.agent.set_progress_callback(printer.progress_callback)
+                    # Register global progress callback if not already registered
+                    if not hasattr(self, '_progress_callback_registered'):
+                        self.kernel.agent.set_progress_callback(self._dispatch_progress_event)
+                        self._progress_callback_registered = True
                     await printer.enable()
                     await ctx.send("✅ Progress tracking enabled!")
                 else:
@@ -1421,11 +1742,158 @@ class DiscordKernel:
                     # Create new printer
                     printer = DiscordProgressPrinter(ctx.channel, user_id)
                     self.progress_printers[user_id] = printer
-                    self.kernel.agent.set_progress_callback(printer.progress_callback)
+                    # Register global progress callback if not already registered
+                    if not hasattr(self, '_progress_callback_registered'):
+                        self.kernel.agent.set_progress_callback(self._dispatch_progress_event)
+                        self._progress_callback_registered = True
                     await printer.enable()
                     await ctx.send("✅ Progress tracking enabled!")
             else:
                 await ctx.send("❌ Invalid action. Use: !progress [on|off|toggle]")
+
+        # Reset command
+        @self.bot.command(name="reset")
+        async def reset_command(ctx: commands.Context):
+            """Reset user data (memories, context, preferences, scheduled tasks)"""
+            user_id = str(ctx.author.id)
+
+            embed = discord.Embed(
+                title="🔄 Reset User Data",
+                description="Choose what you want to reset. **Warning:** This action cannot be undone!",
+                color=discord.Color.orange()
+            )
+
+            # Show current data counts
+            user_memories = self.kernel.memory_store.user_memories.get(user_id, [])
+            user_prefs = self.kernel.learning_engine.user_preferences.get(user_id)
+            user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
+
+            data_summary = (
+                f"**Memories:** {len(user_memories)}\n"
+                f"**Preferences:** {'✅ Set' if user_prefs else '❌ None'}\n"
+                f"**Scheduled Tasks:** {len(user_tasks)}\n"
+            )
+            embed.add_field(name="📊 Current Data", value=data_summary, inline=False)
+
+            # Create interactive view with reset buttons
+            view = discord.ui.View(timeout=60)  # 1 minute timeout
+
+            # Button: Reset Memories
+            reset_memories_btn = discord.ui.Button(
+                label=f"🗑️ Reset Memories ({len(user_memories)})",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reset_memories_{user_id}"
+            )
+
+            async def reset_memories_callback(interaction: discord.Interaction):
+                if str(interaction.user.id) != user_id:
+                    await interaction.response.send_message("❌ This is not your reset menu!", ephemeral=True)
+                    return
+
+                # Delete all memories
+                if user_id in self.kernel.memory_store.user_memories:
+                    count = len(self.kernel.memory_store.user_memories[user_id])
+                    self.kernel.memory_store.user_memories[user_id] = []
+                    await interaction.response.send_message(
+                        f"✅ Deleted {count} memories!",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message("⚠️ No memories to delete!", ephemeral=True)
+
+            reset_memories_btn.callback = reset_memories_callback
+            view.add_item(reset_memories_btn)
+
+            # Button: Reset Preferences
+            reset_prefs_btn = discord.ui.Button(
+                label="⚙️ Reset Preferences",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reset_prefs_{user_id}"
+            )
+
+            async def reset_prefs_callback(interaction: discord.Interaction):
+                if str(interaction.user.id) != user_id:
+                    await interaction.response.send_message("❌ This is not your reset menu!", ephemeral=True)
+                    return
+
+                # Delete preferences
+                if user_id in self.kernel.learning_engine.user_preferences:
+                    del self.kernel.learning_engine.user_preferences[user_id]
+                    await interaction.response.send_message("✅ Preferences reset!", ephemeral=True)
+                else:
+                    await interaction.response.send_message("⚠️ No preferences to reset!", ephemeral=True)
+
+            reset_prefs_btn.callback = reset_prefs_callback
+            view.add_item(reset_prefs_btn)
+
+            # Button: Reset Scheduled Tasks
+            reset_tasks_btn = discord.ui.Button(
+                label=f"📅 Reset Tasks ({len(user_tasks)})",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reset_tasks_{user_id}"
+            )
+
+            async def reset_tasks_callback(interaction: discord.Interaction):
+                if str(interaction.user.id) != user_id:
+                    await interaction.response.send_message("❌ This is not your reset menu!", ephemeral=True)
+                    return
+
+                # Cancel all user tasks
+                user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
+                cancelled_count = 0
+                for task in user_tasks:
+                    if await self.kernel.scheduler.cancel_task(task.id):
+                        cancelled_count += 1
+
+                await interaction.response.send_message(
+                    f"✅ Cancelled {cancelled_count} scheduled tasks!",
+                    ephemeral=True
+                )
+
+            reset_tasks_btn.callback = reset_tasks_callback
+            view.add_item(reset_tasks_btn)
+
+            # Button: Reset ALL
+            reset_all_btn = discord.ui.Button(
+                label="🔥 Reset ALL",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reset_all_{user_id}"
+            )
+
+            async def reset_all_callback(interaction: discord.Interaction):
+                if str(interaction.user.id) != user_id:
+                    await interaction.response.send_message("❌ This is not your reset menu!", ephemeral=True)
+                    return
+
+                # Reset everything
+                mem_count = 0
+                if user_id in self.kernel.memory_store.user_memories:
+                    mem_count = len(self.kernel.memory_store.user_memories[user_id])
+                    self.kernel.memory_store.user_memories[user_id] = []
+
+                prefs_reset = False
+                if user_id in self.kernel.learning_engine.user_preferences:
+                    del self.kernel.learning_engine.user_preferences[user_id]
+                    prefs_reset = True
+
+                user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
+                task_count = 0
+                for task in user_tasks:
+                    if await self.kernel.scheduler.cancel_task(task.id):
+                        task_count += 1
+
+                summary = (
+                    f"✅ **Reset Complete!**\n"
+                    f"• Deleted {mem_count} memories\n"
+                    f"• Reset preferences: {'✅' if prefs_reset else '❌'}\n"
+                    f"• Cancelled {task_count} tasks"
+                )
+                await interaction.response.send_message(summary, ephemeral=True)
+
+            reset_all_btn.callback = reset_all_callback
+            view.add_item(reset_all_btn)
+
+            await ctx.send(embed=embed, view=view)
 
         # Context overview command
         @self.bot.command(name="context")
@@ -1540,12 +2008,241 @@ class DiscordKernel:
 
                     embed.add_field(name="📊 Context Distribution", value=context_text, inline=False)
 
-                embed.set_footer(text="ProA Kernel Context System")
+                # Get user-specific data counts
+                user_memories = self.kernel.memory_store.user_memories.get(user_id, [])
+                user_learning = [r for r in self.kernel.learning_engine.records if r.user_id == user_id]
+                user_prefs = self.kernel.learning_engine.preferences.get(user_id)
+                user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
 
-                await ctx.send(embed=embed)
+                # Add user data summary
+                user_data_summary = (
+                    f"**Memories:** {len(user_memories)}\n"
+                    f"**Learning Records:** {len(user_learning)}\n"
+                    f"**Preferences:** {'✅ Learned' if user_prefs else '❌ Not yet'}\n"
+                    f"**Scheduled Tasks:** {len(user_tasks)}"
+                )
+                embed.add_field(name="🧑 What I Know About You", value=user_data_summary, inline=False)
+
+                embed.set_footer(text="ProA Kernel Context System • Use buttons below for details")
+
+                # Create interactive view with buttons
+                view = discord.ui.View(timeout=300)  # 5 minutes timeout
+
+                # Button: Show Memories
+                memories_button = discord.ui.Button(
+                    label=f"📝 Memories ({len(user_memories)})",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"context_memories_{user_id}"
+                )
+
+                async def memories_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    # Create memories embed
+                    mem_embed = discord.Embed(
+                        title="📝 Your Memories",
+                        description=f"I have {len(user_memories)} memories about you",
+                        color=discord.Color.green()
+                    )
+
+                    if user_memories:
+                        # Group by type
+                        from collections import defaultdict
+                        by_type = defaultdict(list)
+                        for mem in user_memories:
+                            by_type[mem.memory_type.value].append(mem)
+
+                        for mem_type, mems in sorted(by_type.items()):
+                            # Show top 5 most important
+                            sorted_mems = sorted(mems, key=lambda m: m.importance, reverse=True)[:5]
+                            mem_text = ""
+                            for mem in sorted_mems:
+                                importance_bar = "⭐" * int(mem.importance * 5)
+                                mem_text += f"{importance_bar} {mem.content[:100]}\n"
+
+                            mem_embed.add_field(
+                                name=f"{mem_type.upper()} ({len(mems)} total)",
+                                value=mem_text or "None",
+                                inline=False
+                            )
+                    else:
+                        mem_embed.description = "No memories stored yet. I'll learn about you as we interact!"
+
+                    await interaction.response.send_message(embed=mem_embed, ephemeral=True)
+
+                memories_button.callback = memories_callback
+                view.add_item(memories_button)
+
+                # Button: Show Preferences
+                prefs_button = discord.ui.Button(
+                    label="⚙️ Preferences",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"context_prefs_{user_id}"
+                )
+
+                async def prefs_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    prefs_embed = discord.Embed(
+                        title="⚙️ Your Preferences",
+                        color=discord.Color.blue()
+                    )
+
+                    if user_prefs:
+                        prefs_text = (
+                            f"**Communication Style:** {user_prefs.communication_style}\n"
+                            f"**Response Format:** {user_prefs.response_format}\n"
+                            f"**Proactivity Level:** {user_prefs.proactivity_level}\n"
+                            f"**Preferred Tools:** {', '.join(user_prefs.preferred_tools) if user_prefs.preferred_tools else 'None yet'}\n"
+                            f"**Topic Interests:** {', '.join(user_prefs.topic_interests) if user_prefs.topic_interests else 'None yet'}\n"
+                            f"**Time Preferences:** {user_prefs.time_preferences or 'Not learned yet'}"
+                        )
+                        prefs_embed.description = prefs_text
+                        prefs_embed.set_footer(text=f"Last updated: {datetime.fromtimestamp(user_prefs.last_updated).strftime('%Y-%m-%d %H:%M:%S')}")
+                    else:
+                        prefs_embed.description = "No preferences learned yet. I'll adapt to your style as we interact!"
+
+                    await interaction.response.send_message(embed=prefs_embed, ephemeral=True)
+
+                prefs_button.callback = prefs_callback
+                view.add_item(prefs_button)
+
+                # Button: Show Learning Records
+                learning_button = discord.ui.Button(
+                    label=f"📚 Learning ({len(user_learning)})",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"context_learning_{user_id}"
+                )
+
+                async def learning_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    learn_embed = discord.Embed(
+                        title="📚 Learning Records",
+                        description=f"I have {len(user_learning)} learning records from our interactions",
+                        color=discord.Color.purple()
+                    )
+
+                    if user_learning:
+                        # Show recent records
+                        recent = sorted(user_learning, key=lambda r: r.timestamp, reverse=True)[:10]
+
+                        for record in recent:
+                            time_str = datetime.fromtimestamp(record.timestamp).strftime('%Y-%m-%d %H:%M')
+                            learn_embed.add_field(
+                                name=f"{record.interaction_type.value} - {time_str}",
+                                value=f"Context: {record.outcome if record.outcome else record.context} {record.feedback_score}",
+                                inline=False
+                            )
+                    else:
+                        learn_embed.description = "No learning records yet. I'll learn from our interactions!"
+
+                    await interaction.response.send_message(embed=learn_embed, ephemeral=True)
+
+                learning_button.callback = learning_callback
+                view.add_item(learning_button)
+
+                # Button: Show All Memories (Full List)
+                all_memories_button = discord.ui.Button(
+                    label="📋 All Memories",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"context_all_memories_{user_id}"
+                )
+
+                async def all_memories_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    if not user_memories:
+                        await interaction.response.send_message("📝 No memories stored yet!", ephemeral=True)
+                        return
+
+                    # Create paginated view of all memories
+                    all_mem_text = "**All Memories:**\n\n"
+                    for i, mem in enumerate(sorted(user_memories, key=lambda m: m.importance, reverse=True), 1):
+                        importance_bar = "⭐" * int(mem.importance * 5)
+                        tags_str = f" [{', '.join(mem.tags)}]" if mem.tags else ""
+                        all_mem_text += f"{i}. {importance_bar} **{mem.memory_type.value}**{tags_str}\n   {mem.content}\n\n"
+
+                        # Discord message limit
+                        if len(all_mem_text) > 1800:
+                            all_mem_text += f"... and {len(user_memories) - i} more"
+                            break
+
+                    await interaction.response.send_message(all_mem_text, ephemeral=True)
+
+                all_memories_button.callback = all_memories_callback
+                view.add_item(all_memories_button)
+
+                # Button: Show Scheduled Tasks
+                tasks_button = discord.ui.Button(
+                    label=f"📅 Scheduled Tasks ({len(user_tasks)})",
+                    style=discord.ButtonStyle.secondary,
+                    custom_id=f"context_tasks_{user_id}"
+                )
+
+                async def tasks_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    tasks_embed = discord.Embed(
+                        title="📅 Scheduled Tasks",
+                        description=f"You have {len(user_tasks)} scheduled tasks",
+                        color=discord.Color.gold()
+                    )
+
+                    if user_tasks:
+                        # Group by status
+                        from collections import defaultdict
+                        by_status = defaultdict(list)
+                        for task in user_tasks:
+                            by_status[task.status.value].append(task)
+
+                        for status, tasks in sorted(by_status.items()):
+                            task_text = ""
+                            for task in tasks[:5]:  # Show max 5 per status
+                                scheduled_dt = datetime.fromtimestamp(task.scheduled_time).strftime('%Y-%m-%d %H:%M')
+                                priority_stars = "⭐" * task.priority
+                                task_text += f"{priority_stars} **{task.task_type}** - {scheduled_dt}\n   {task.content[:80]}\n\n"
+
+                            if len(tasks) > 5:
+                                task_text += f"... and {len(tasks) - 5} more\n"
+
+                            tasks_embed.add_field(
+                                name=f"{status.upper()} ({len(tasks)} total)",
+                                value=task_text or "None",
+                                inline=False
+                            )
+                    else:
+                        tasks_embed.description = "No scheduled tasks. Use kernel tools to schedule tasks!"
+
+                    await interaction.response.send_message(embed=tasks_embed, ephemeral=True)
+
+                tasks_button.callback = tasks_callback
+                view.add_item(tasks_button)
+
+                await ctx.send(embed=embed, view=view)
 
             except Exception as e:
                 await ctx.send(f"❌ Error retrieving context: {e}")
+
+    async def _dispatch_progress_event(self, event: ProgressEvent):
+        """Dispatch progress events to all enabled progress printers"""
+        # Send event to all enabled printers
+        for user_id, printer in self.progress_printers.items():
+            if printer.enabled:
+                try:
+                    await printer.progress_callback(event)
+                except Exception as e:
+                    print(f"⚠️ Error dispatching progress event to user {user_id}: {e}")
 
     async def _auto_save_loop(self):
         """Auto-save kernel state periodically"""
@@ -1882,15 +2579,26 @@ Use these tools to interact with Discord based on your current context!
             if self.bot.user in message.mentions:
                 content = content.replace(f"<@{self.bot.user.id}>", "").strip()
 
-            # Handle attachments
+            # Handle attachments - add them as [media:url] to content
             attachments_info = []
             if message.attachments:
+                media_links = []
                 for attachment in message.attachments:
                     attachments_info.append({
                         "filename": attachment.filename,
                         "url": attachment.url,
                         "content_type": attachment.content_type
                     })
+                    # Add media link to content
+                    media_type = "image" if attachment.content_type and attachment.content_type.startswith("image") else "file"
+                    media_links.append(f"[{media_type}:{attachment.url}]")
+
+                # Append media links to content
+                if media_links:
+                    if content:
+                        content += "\n\n" + "\n".join(media_links)
+                    else:
+                        content = "\n".join(media_links)
 
             # Send typing indicator
             async with message.channel.typing():
