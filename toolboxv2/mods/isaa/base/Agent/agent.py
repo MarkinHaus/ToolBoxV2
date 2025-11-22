@@ -9117,6 +9117,9 @@ class FlowAgent:
 
             content = msg["content"]
 
+            if not content:
+                continue
+
             # Check if content contains media tags
             if "[media:" in content:
                 cleaned_content, media_list = parse_media_from_query(content)
@@ -10331,7 +10334,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # Finde neuesten Checkpoint
             checkpoint_files = []
             for file in os.listdir(folder):
-                if file.endswith('.pkl') and file.startswith('agent_checkpoint_'):
+                if file.endswith('.pkl') and (file.startswith('agent_checkpoint_') or file == 'final_checkpoint.pkl'):
                     filepath = os.path.join(folder, file)
                     try:
                         timestamp_str = file.replace('agent_checkpoint_', '').replace('.pkl', '')
@@ -11225,7 +11228,8 @@ tool_complexity: low/medium/high
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] = None,
-                             max_retries: int = 2, auto_context=True, session_id: str = None, llm_kwargs=None, **kwargs) -> dict[str, Any]:
+                             max_retries: int = 2, auto_context=True, session_id: str = None, llm_kwargs=None,
+                             model_preference="complex", **kwargs) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
         Supports media inputs via [media:(path/url)] tags in the prompt.
@@ -11238,6 +11242,7 @@ tool_complexity: low/medium/high
             auto_context: Whether to include session context
             session_id: Optional session ID
             llm_kwargs: Additional kwargs to pass to litellm
+            model_preference: "fast" or "complex"
             **kwargs: Additional arguments (merged with llm_kwargs)
 
         Returns:
@@ -11301,7 +11306,7 @@ Respond in YAML format only:
 
                 # Generate LLM response
                 response = await self.a_run_llm_completion(
-                    model=self.amd.complex_llm_model,
+                    model_preference=model_preference,
                     messages=messages,
                     stream=False,
                     with_context=auto_context,

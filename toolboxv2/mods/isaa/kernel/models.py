@@ -154,9 +154,13 @@ class LearningEngine:
             self.records = list(filter(lambda x: x.get(feedback_score) is not None, self.records))
             self.records = self.records[-self.max_records:]
 
+        if interaction_type.value != "feedback":
+            return
+
         # Trigger learning if enough data
-        if len(self.records) % 10 == 0:  # Every 10 interactions
-            await self.analyze_and_learn(user_id)
+        if len(self.records) % 10 == 0 and list(filter(lambda x: x.get(feedback_score) is not None, self.records)):  # Every 10 interactions
+            from toolboxv2 import get_app
+            get_app().run_bg_task_advanced(self.analyze_and_learn, user_id)
 
     async def analyze_and_learn(self, user_id: str):
         """Analyze interactions and update preferences"""
@@ -532,7 +536,7 @@ class TaskScheduler:
     async def _execute_task(self, task: ScheduledTask):
         """Execute a scheduled task"""
         task.status = TaskStatus.RUNNING
-
+        print(f"Executing task {task.id} content: {task.content}")
         try:
             # Create signal for the task
             signal = Signal(

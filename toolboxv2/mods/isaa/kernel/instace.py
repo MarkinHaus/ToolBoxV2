@@ -409,9 +409,10 @@ class Kernel(IProAKernel):
 
                 response = await self.agent.a_format_class(
                     pydantic_model=ImmediateResponse,
-                    prompt=self.agent.amd.system_message+'\n\n Task generate an immediate response to the following USER REQUEST: '+modified_query,
+                    prompt='Task generate an immediate response to the following USER REQUEST: '+modified_query,
                     session_id=user_id,
                     auto_context=True,
+                    model_preference="fast",
                 )
 
                 # Record and send immediate response
