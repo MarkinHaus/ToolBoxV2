@@ -434,6 +434,101 @@ class DiscordKernelTools:
         except Exception as e:
             return []
 
+
+    #  ===== Message Reaction Tools =====
+    async def get_message_reactions(
+        self,
+        channel_id: int,
+        message_id: int,
+        emoji: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get reactions from a message.
+
+        Args:
+            channel_id: Channel ID where the message is
+            message_id: Message ID
+            emoji: Optional specific emoji to get reactions for (e.g., "👍", "custom_emoji_name")
+
+        Returns:
+            Dict with reaction data
+        """
+        try:
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                return {"error": f"Channel {channel_id} not found"}
+
+            message = await channel.fetch_message(message_id)
+
+            if not message.reactions:
+                return {
+                    "success": True,
+                    "message_id": message_id,
+                    "channel_id": channel_id,
+                    "reactions": []
+                }
+
+            reactions_data = []
+
+            for reaction in message.reactions:
+                # Filter by emoji if specified
+                if emoji:
+                    # Handle custom emojis
+                    if isinstance(reaction.emoji, str):
+                        if reaction.emoji != emoji:
+                            continue
+                    else:  # discord.PartialEmoji or discord.Emoji
+                        if reaction.emoji.name != emoji and str(reaction.emoji) != emoji:
+                            continue
+
+                # Get users who reacted
+                users = []
+                async for user in reaction.users():
+                    users.append({
+                        "id": user.id,
+                        "name": user.name,
+                        "display_name": user.display_name,
+                        "bot": user.bot
+                    })
+
+                reaction_info = {
+                    "emoji": str(reaction.emoji),
+                    "count": reaction.count,
+                    "me": reaction.me,  # Whether the bot reacted
+                    "users": users
+                }
+
+                # Add custom emoji details if applicable
+                if isinstance(reaction.emoji, (discord.PartialEmoji, discord.Emoji)):
+                    reaction_info["custom"] = True
+                    reaction_info["emoji_id"] = reaction.emoji.id
+                    reaction_info["emoji_name"] = reaction.emoji.name
+                    reaction_info["animated"] = reaction.emoji.animated
+                else:
+                    reaction_info["custom"] = False
+
+                reactions_data.append(reaction_info)
+
+            return {
+                "success": True,
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "message_content": message.content[:100] + "..." if len(message.content) > 100 else message.content,
+                "author": {
+                    "id": message.author.id,
+                    "name": message.author.name
+                },
+                "reactions": reactions_data,
+                "total_reactions": sum(r["count"] for r in reactions_data)
+            }
+
+        except discord.NotFound:
+            return {"error": f"Message {message_id} not found in channel {channel_id}"}
+        except discord.Forbidden:
+            return {"error": "Missing permissions to access this channel or message"}
+        except Exception as e:
+            return {"error": str(e)}
+
     async def add_reaction(self, channel_id: int, message_id: int, emoji: str) -> Dict[str, Any]:
         """
         Add a reaction to a message.
@@ -3539,6 +3634,17 @@ class DiscordKernelTools:
                        "Args: channel_id (int), limit (int, default 10, max 100), before (int, optional), after (int, optional). "
                        "Returns: List of message dicts. "
                        "Example: discord_get_recent_messages(channel_id=123, limit=20)"
+        )
+
+        await agent.add_tool(
+            self.get_message_reactions,
+            "discord_get_message_reactions",
+            description="Get reactions from a Discord message. "
+                        "Args: channel_id (int), message_id (int), emoji (str, optional). "
+                        "If emoji is specified, only returns data for that specific reaction. "
+                        "Returns: Dict with reaction data including emoji, count, and users who reacted. "
+                        "Example: discord_get_message_reactions(channel_id=123456789, message_id=987654321) "
+                        "or discord_get_message_reactions(channel_id=123456789, message_id=987654321, emoji='👍')"
         )
 
         await agent.add_tool(

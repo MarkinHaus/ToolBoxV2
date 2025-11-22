@@ -54,18 +54,19 @@ Limitations:
 
 import asyncio
 import os
+import random
 import sys
 import time
 from datetime import datetime, UTC
 from pathlib import Path
-from typing import Optional, Dict, List, Any
-
-from toolboxv2.mods.isaa.extras.terminal_progress import ProgressiveTreePrinter
+from typing import Any, Dict, List, Optional, Tuple
+import json
+from collections import defaultdict
 
 try:
     import discord
     from discord.ext import commands
-
+    from discord.ui import View, Button, Select
     # Check for voice support
     try:
         import nacl
@@ -145,9 +146,14 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
         self.last_audio_time: Dict[str, float] = {}  # user_id -> last audio timestamp
         self.silence_threshold = 1.0  # 1 second of silence before stopping transcription
 
+        # Voice channel history for group calls (15 minute window)
+        self.voice_channel_history: Dict[str, List[dict]] = {}  # channel_id -> list of history entries
+        self.history_max_age = 900  # 15 minutes in seconds
+
         print(f"🎤 [DEBUG] WhisperAudioSink initialized successfully")
         print(f"🎤 [DEBUG] - Groq client: {'✅' if groq_client else '❌'}")
         print(f"🎤 [DEBUG] - Transcription interval: {self.transcription_interval}s")
+        print(f"🎤 [DEBUG] - Voice channel history: 15 minute window")
 
     def wants_opus(self) -> bool:
         """We want decoded PCM audio, not Opus"""
@@ -208,6 +214,69 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                     print(f"❌ [DEBUG] Error scheduling transcription: {e}")
 
             self.last_transcription[user_id] = current_time
+
+    def _cleanup_old_history(self, channel_id: str):
+        """Remove history entries older than max_age (15 minutes)"""
+        if channel_id not in self.voice_channel_history:
+            return
+
+        current_time = time.time()
+        cutoff_time = current_time - self.history_max_age
+
+        # Filter out old entries
+        original_count = len(self.voice_channel_history[channel_id])
+        self.voice_channel_history[channel_id] = [
+            entry for entry in self.voice_channel_history[channel_id]
+            if entry["timestamp"] > cutoff_time
+        ]
+
+        removed_count = original_count - len(self.voice_channel_history[channel_id])
+        if removed_count > 0:
+            print(f"🗑️ [HISTORY] Cleaned up {removed_count} old entries from channel {channel_id}")
+
+    def _add_to_history(self, channel_id: str, user_name: str, user_id: str, text: str, language: str):
+        """Add a transcription to voice channel history"""
+        if channel_id not in self.voice_channel_history:
+            self.voice_channel_history[channel_id] = []
+
+        entry = {
+            "user": user_name,
+            "user_id": user_id,
+            "text": text,
+            "timestamp": time.time(),
+            "language": language
+        }
+
+        self.voice_channel_history[channel_id].append(entry)
+        print(f"📝 [HISTORY] Added to channel {channel_id}: [{user_name}] {text}")
+
+        # Cleanup old entries
+        self._cleanup_old_history(channel_id)
+
+    def _format_history(self, channel_id: str) -> str:
+        """Format voice channel history for agent context"""
+        if channel_id not in self.voice_channel_history or not self.voice_channel_history[channel_id]:
+            return ""
+
+        # Cleanup before formatting
+        self._cleanup_old_history(channel_id)
+
+        history_entries = self.voice_channel_history[channel_id]
+        if not history_entries:
+            return ""
+
+        # Format as readable history
+        lines = ["Voice Channel Recent History (last 15 minutes):"]
+        for entry in history_entries:
+            timestamp = entry["timestamp"]
+            time_str = time.strftime("%H:%M:%S", time.localtime(timestamp))
+            user = entry["user"]
+            text = entry["text"]
+            lines.append(f"[{time_str}] {user}: {text}")
+
+        formatted = "\n".join(lines)
+        print(f"📋 [HISTORY] Formatted {len(history_entries)} history entries for channel {channel_id}")
+        return formatted
 
     async def _transcribe_buffer(self, user_id: str, user):
         """Transcribe buffered audio for a user"""
@@ -305,6 +374,92 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
                 if text and len(text) > 2:  # At least 3 characters
                     print(f"🎤 [DEBUG] Text is not empty, processing...")
 
+                    # ===== STOP COMMAND DETECTION =====
+                    # Check if user said "stop" to stop playback
+                    text_lower = text.lower().strip()
+                    if text_lower in ["stop", "stopp", "halt", "pause"]:
+                        print(f"🛑 [VOICE] Stop command detected from {user.display_name}")
+
+                        # Stop playback if active
+                        guild_id = user.guild.id if hasattr(user, 'guild') else None
+                        if guild_id and guild_id in self.output_router.voice_clients:
+                            voice_client = self.output_router.voice_clients[guild_id]
+                            if voice_client.is_playing():
+                                voice_client.stop()
+                                print(f"🛑 [VOICE] Stopped playback in guild {guild_id}")
+                            else:
+                                print(f"🛑 [VOICE] No active playback to stop")
+
+                        # Don't process this as a regular input
+                        return
+
+                    # ===== VOICE CHANNEL HISTORY TRACKING =====
+                    # Get voice channel ID for history tracking
+                    voice_channel_id = None
+                    guild_id = user.guild.id if hasattr(user, 'guild') else None
+                    if guild_id and guild_id in self.output_router.voice_clients:
+                        voice_client = self.output_router.voice_clients[guild_id]
+                        if voice_client and voice_client.channel:
+                            voice_channel_id = str(voice_client.channel.id)
+
+                    # ALWAYS add transcription to history (even without wake word)
+                    # This allows agent to reference previous context when called
+                    if voice_channel_id:
+                        self._add_to_history(
+                            channel_id=voice_channel_id,
+                            user_name=user.display_name,
+                            user_id=str(user.id),
+                            text=text,
+                            language=language
+                        )
+
+                    # ===== WAKE WORD DETECTION FOR GROUP CALLS =====
+                    # Check if multiple users are in the voice channel
+                    should_process = True  # Default: process in single-user calls
+                    voice_channel_history = ""  # Will be populated if wake word detected
+
+                    if guild_id and guild_id in self.output_router.voice_clients:
+                        voice_client = self.output_router.voice_clients[guild_id]
+                        if voice_client and voice_client.channel:
+                            # Count non-bot members in voice channel
+                            members_in_voice = [m for m in voice_client.channel.members if not m.bot]
+                            is_group_call = len(members_in_voice) > 1
+
+                            print(f"🎤 [DEBUG] Voice channel members: {len(members_in_voice)} (group call: {is_group_call})")
+
+                            if is_group_call:
+                                # Check for wake words (case-insensitive)
+                                wake_words = [
+                                    "agent", "toolbox", "isaa", "bot", "isabot", "isa", "issa",
+                                    # German variants
+                                    "assistent", "assistant"
+                                ]
+
+                                # Check if any wake word is in the text
+                                has_wake_word = any(wake_word in text_lower for wake_word in wake_words)
+
+                                if not has_wake_word:
+                                    print(f"🎤 [DEBUG] Group call detected but no wake word found, storing in history only: '{text}'")
+                                    should_process = False  # Don't send to agent
+                                else:
+                                    print(f"🎤 [DEBUG] Wake word detected in group call: '{text}'")
+
+                                    # Get voice channel history for context
+                                    if voice_channel_id:
+                                        voice_channel_history = self._format_history(voice_channel_id)
+                                        if voice_channel_history:
+                                            print(f"📋 [HISTORY] Including {len(self.voice_channel_history[voice_channel_id])} history entries in context")
+
+                                    # Remove wake word from text for cleaner processing
+                                    for wake_word in wake_words:
+                                        text = text.replace(wake_word, "").replace(wake_word.capitalize(), "")
+                                    text = text.strip()
+                                    print(f"🎤 [DEBUG] Text after wake word removal: '{text}'")
+
+                    # If we shouldn't process (group call without wake word), return early
+                    if not should_process:
+                        return
+
                     # Get Discord context if available
                     discord_context = None
                     if self.discord_kernel and hasattr(user, 'guild'):
@@ -393,22 +548,33 @@ class WhisperAudioSink(voice_recv.AudioSink if VOICE_RECEIVE_SUPPORT else object
 
                     # Send transcription to kernel with enhanced metadata
                     print(f"🎤 [DEBUG] Creating kernel signal for user {user.id}")
+
+                    # Build metadata with voice channel history if available
+                    signal_metadata = {
+                        "interface": "discord_voice",
+                        "user_name": str(user),
+                        "user_display_name": user.display_name,
+                        "transcription": True,
+                        "language": language,
+                        "discord_context": discord_context,
+                        "output_mode": output_mode,
+                        "formatting_instructions": formatting_instructions,
+                        "fast_response": True,  # Enable fast response mode for voice
+                        "user_id": str(user.id)  # Ensure user_id is in metadata
+                    }
+
+                    # Add voice channel history if available (from wake word detection)
+                    if voice_channel_history:
+                        signal_metadata["voice_channel_history"] = voice_channel_history
+                        print(f"📋 [HISTORY] Including voice channel history in signal metadata")
+
                     signal = KernelSignal(
                         type=SignalType.USER_INPUT,
                         id=str(user.id),
                         content=text,
-                        metadata={
-                            "interface": "discord_voice",
-                            "user_name": str(user),
-                            "user_display_name": user.display_name,
-                            "transcription": True,
-                            "language": language,
-                            "discord_context": discord_context,
-                            "output_mode": output_mode,
-                            "formatting_instructions": formatting_instructions
-                        }
+                        metadata=signal_metadata
                     )
-                    print(f"🎤 [DEBUG] Sending signal to kernel...")
+                    print(f"🎤 [DEBUG] Sending signal to kernel with fast_response=True...")
                     await self.kernel.process_signal(signal)
                     print(f"🎤 ✅ Voice input from {user.display_name}: {text}")
                 else:
@@ -1145,6 +1311,756 @@ class DiscordOutputRouter(IOutputRouter):
             }
 
 
+class VariableExplorerView(View):
+    """Interactive UI for exploring variable scopes with tree navigation"""
+
+    def __init__(self, var_manager, user_id: str, current_path: str = "", timeout: int = 300):
+        super().__init__(timeout=timeout)
+        self.var_manager = var_manager
+        self.user_id = user_id
+        self.current_path = current_path
+        self.page = 0
+        self.items_per_page = 10
+
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build the UI components based on current state"""
+        self.clear_items()
+
+        # Add scope selector if at root
+        if not self.current_path:
+            self._add_scope_selector()
+
+        # Add navigation buttons
+        if self.current_path:
+            self._add_back_button()
+
+        self._add_refresh_button()
+        self._add_export_button()
+
+        # Add pagination if needed
+        current_data = self._get_current_data()
+
+        # Check if it's a top-level scope
+        if self.current_path in self.var_manager.scopes:
+            current_data = self.var_manager.scopes[self.current_path]
+
+        if isinstance(current_data, dict) and len(current_data) > self.items_per_page:
+            self._add_pagination_buttons()
+
+    def _add_scope_selector(self):
+        """Add dropdown for scope selection"""
+        scopes = list(self.var_manager.scopes.keys())
+
+        if len(scopes) > 0:
+            options = [
+                discord.SelectOption(
+                    label=scope,
+                    value=scope,
+                    description=f"Explore {scope} scope",
+                    emoji="📁"
+                )
+                for scope in scopes[:25]  # Discord limit
+            ]
+
+            select = Select(
+                placeholder="Select a scope to explore...",
+                options=options,
+                custom_id=f"scope_select_{self.user_id}"
+            )
+            select.callback = self._scope_select_callback
+            self.add_item(select)
+
+    def _add_back_button(self):
+        """Add back navigation button"""
+        button = Button(
+            label="⬅️ Back",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"back_{self.user_id}"
+        )
+        button.callback = self._back_callback
+        self.add_item(button)
+
+    def _add_refresh_button(self):
+        """Add refresh button"""
+        button = Button(
+            label="🔄 Refresh",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"refresh_{self.user_id}"
+        )
+        button.callback = self._refresh_callback
+        self.add_item(button)
+
+    def _add_export_button(self):
+        """Add export button"""
+        button = Button(
+            label="💾 Export",
+            style=discord.ButtonStyle.success,
+            custom_id=f"export_{self.user_id}"
+        )
+        button.callback = self._export_callback
+        self.add_item(button)
+
+    def _add_pagination_buttons(self):
+        """Add pagination controls"""
+        # Get actual data for pagination calculation
+        if self.current_path in self.var_manager.scopes:
+            current_data = self.var_manager.scopes[self.current_path]
+        else:
+            current_data = self._get_current_data()
+
+        total_pages = (len(current_data) + self.items_per_page - 1) // self.items_per_page
+
+        # Previous page button
+        prev_button = Button(
+            label="◀️ Previous",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"prev_{self.user_id}",
+            disabled=self.page == 0
+        )
+        prev_button.callback = self._prev_page_callback
+        self.add_item(prev_button)
+
+        # Page indicator button (disabled, just for display)
+        page_button = Button(
+            label=f"Page {self.page + 1}/{total_pages}",
+            style=discord.ButtonStyle.secondary,
+            disabled=True
+        )
+        self.add_item(page_button)
+
+        # Next page button
+        next_button = Button(
+            label="Next ▶️",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"next_{self.user_id}",
+            disabled=self.page >= total_pages - 1
+        )
+        next_button.callback = self._next_page_callback
+        self.add_item(next_button)
+
+    def _get_current_data(self) -> Any:
+        """Get data for current path"""
+        if not self.current_path:
+            return self.var_manager.scopes
+
+        # For top-level scopes, get directly from scopes dict
+        if self.current_path in self.var_manager.scopes:
+            return self.var_manager.scopes[self.current_path]
+
+        # For nested paths, use the get method
+        data = self.var_manager.get(self.current_path)
+
+        # Handle None returns
+        if data is None:
+            data = {}
+
+        return data
+
+    def _get_child_items(self) -> List[Tuple[str, Any]]:
+        """Get child items for current path with pagination"""
+        # Get the actual data
+        if self.current_path in self.var_manager.scopes:
+            current_data = self.var_manager.scopes[self.current_path]
+        else:
+            current_data = self._get_current_data()
+
+        if isinstance(current_data, dict):
+            items = list(current_data.items())
+        elif isinstance(current_data, list):
+            items = [(str(i), item) for i, item in enumerate(current_data)]
+        else:
+            return []
+
+        # Apply pagination
+        start_idx = self.page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        return items[start_idx:end_idx]
+
+    def _format_value_preview(self, value: Any, max_length: int = 100) -> str:
+        """Format a value preview with type information"""
+        value_type = type(value).__name__
+
+        if isinstance(value, dict):
+            keys = list(value.keys())[:3]
+            preview = f"Dict with {len(value)} keys: {keys}"
+            if len(value) > 3:
+                preview += "..."
+        elif isinstance(value, list):
+            preview = f"List with {len(value)} items"
+            if len(value) > 0:
+                preview += f" (first: {str(value[0])[:30]}...)"
+        elif isinstance(value, str):
+            preview = value[:max_length]
+            if len(value) > max_length:
+                preview += "..."
+        else:
+            preview = str(value)[:max_length]
+
+        return f"[{value_type}] {preview}"
+
+    def _calculate_scope_sizes(self) -> Dict[str, Dict[str, int]]:
+        """Calculate size statistics for each scope"""
+        sizes = {}
+
+        for scope_name, scope_data in self.var_manager.scopes.items():
+            try:
+                # Calculate approximate size in characters
+                json_str = json.dumps(scope_data, default=str)
+                sizes[scope_name] = {
+                    'chars': len(json_str),
+                    'keys': len(scope_data) if isinstance(scope_data, dict) else 1,
+                    'kb': len(json_str) / 1024
+                }
+            except:
+                sizes[scope_name] = {'chars': 0, 'keys': 0, 'kb': 0}
+
+        return sizes
+
+    def create_embed(self) -> discord.Embed:
+        """Create the main embed for current view"""
+        if not self.current_path:
+            return self._create_root_embed()
+        else:
+            return self._create_path_embed()
+
+    def _create_root_embed(self) -> discord.Embed:
+        """Create embed for root scope overview"""
+        embed = discord.Embed(
+            title="🗂️ Variable Explorer - Root",
+            description="Select a scope to explore its contents",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(UTC)
+        )
+
+        # Calculate scope sizes
+        sizes = self._calculate_scope_sizes()
+
+        # Add scope overview
+        scope_info = []
+        for scope_name, scope_data in self.var_manager.scopes.items():
+            size_info = sizes.get(scope_name, {})
+
+            # Count items
+            if isinstance(scope_data, dict):
+                item_count = len(scope_data)
+                icon = "📁"
+            elif isinstance(scope_data, list):
+                item_count = len(scope_data)
+                icon = "📋"
+            else:
+                item_count = 1
+                icon = "📄"
+
+            scope_info.append(
+                f"{icon} **{scope_name}**\n"
+                f"  └─ {item_count} items | {size_info.get('kb', 0):.2f} KB"
+            )
+
+        # Split into multiple fields if needed
+        field_text = "\n\n".join(scope_info)
+        if len(field_text) > 1024:
+            # Split into multiple fields
+            chunks = self._split_text(field_text, 1024)
+            for i, chunk in enumerate(chunks[:25]):  # Max 25 fields
+                embed.add_field(
+                    name=f"Scopes (Part {i + 1})" if i > 0 else "Available Scopes",
+                    value=chunk,
+                    inline=False
+                )
+        else:
+            embed.add_field(
+                name="Available Scopes",
+                value=field_text or "No scopes available",
+                inline=False
+            )
+
+        # Add total stats
+        total_size = sum(s.get('kb', 0) for s in sizes.values())
+        total_items = sum(s.get('keys', 0) for s in sizes.values())
+
+        embed.set_footer(text=f"Total: {total_items} items | {total_size:.2f} KB")
+
+        return embed
+
+    def _create_path_embed(self) -> discord.Embed:
+        """Create embed for specific path view"""
+        # Get actual data
+        if self.current_path in self.var_manager.scopes:
+            current_data = self.var_manager.scopes[self.current_path]
+        else:
+            current_data = self._get_current_data()
+
+        # Determine breadcrumb trail
+        path_parts = self.current_path.split('.')
+        breadcrumb = ' > '.join(path_parts)
+
+        embed = discord.Embed(
+            title=f"📂 {path_parts[-1]}",
+            description=f"Path: `{breadcrumb}`",
+            color=discord.Color.green(),
+            timestamp=datetime.now(UTC)
+        )
+
+        # Handle different data types
+        if isinstance(current_data, dict):
+            embed = self._add_dict_fields(embed, current_data)
+        elif isinstance(current_data, list):
+            embed = self._add_list_fields(embed, current_data)
+        else:
+            # Leaf value
+            embed = self._add_value_field(embed, current_data)
+
+        return embed
+
+    def _add_dict_fields(self, embed: discord.Embed, data: dict) -> discord.Embed:
+        """Add dictionary contents to embed"""
+        # Ensure we have the actual data
+        if not data or len(data) == 0:
+            if self.current_path in self.var_manager.scopes:
+                data = self.var_manager.scopes[self.current_path]
+
+            if not data or len(data) == 0:
+                embed.add_field(name="Empty", value="This dictionary is empty", inline=False)
+                return embed
+
+        child_items = self._get_child_items()
+
+        if not child_items:
+            embed.add_field(name="Empty", value="This dictionary is empty", inline=False)
+            return embed
+
+        # Group by type for better organization
+        grouped = defaultdict(list)
+        for key, value in child_items:
+            value_type = 'dict' if isinstance(value, dict) else \
+                'list' if isinstance(value, list) else 'value'
+            grouped[value_type].append((key, value))
+
+        # Add fields for each group
+        for type_name in ['dict', 'list', 'value']:
+            if type_name not in grouped:
+                continue
+
+            items = grouped[type_name]
+            icon = "📁" if type_name == 'dict' else "📋" if type_name == 'list' else "📄"
+
+            field_text = ""
+            for key, value in items:
+                preview = self._format_value_preview(value, 80)
+                field_text += f"{icon} **{key}**\n  └─ {preview}\n\n"
+
+            # Handle field length limit
+            if len(field_text) > 1024:
+                chunks = self._split_text(field_text, 1024)
+                for i, chunk in enumerate(chunks[:3]):  # Max 3 chunks per type
+                    field_name = f"{type_name.title()}s (Part {i + 1})" if i > 0 else f"{type_name.title()}s"
+                    embed.add_field(name=field_name, value=chunk, inline=False)
+            else:
+                embed.add_field(
+                    name=f"{type_name.title()}s",
+                    value=field_text,
+                    inline=False
+                )
+
+        # Add pagination info
+        total_items = len(data)
+        start_idx = self.page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, total_items)
+
+        embed.set_footer(text=f"Showing {start_idx + 1}-{end_idx} of {total_items} items")
+
+        return embed
+
+    def _add_list_fields(self, embed: discord.Embed, data: list) -> discord.Embed:
+        """Add list contents to embed"""
+        child_items = self._get_child_items()
+
+        if not child_items:
+            embed.add_field(name="Empty", value="This list is empty", inline=False)
+            return embed
+
+        field_text = ""
+        for idx, value in child_items:
+            preview = self._format_value_preview(value, 80)
+            field_text += f"**[{idx}]**\n  └─ {preview}\n\n"
+
+        # Handle field length limit
+        if len(field_text) > 1024:
+            chunks = self._split_text(field_text, 1024)
+            for i, chunk in enumerate(chunks[:25]):
+                field_name = f"Items (Part {i + 1})" if i > 0 else "Items"
+                embed.add_field(name=field_name, value=chunk, inline=False)
+        else:
+            embed.add_field(name="Items", value=field_text, inline=False)
+
+        # Add pagination info
+        total_items = len(data)
+        start_idx = self.page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, total_items)
+
+        embed.set_footer(text=f"Showing {start_idx + 1}-{end_idx} of {total_items} items")
+
+        return embed
+
+    def _add_value_field(self, embed: discord.Embed, value: Any) -> discord.Embed:
+        """Add leaf value to embed"""
+        value_type = type(value).__name__
+
+        # Format value based on type
+        if isinstance(value, str):
+            formatted = value
+        else:
+            try:
+                formatted = json.dumps(value, indent=2, default=str)
+            except:
+                formatted = str(value)
+
+        # Split if too long
+        if len(formatted) > 1024:
+            chunks = self._split_text(formatted, 1024)
+            for i, chunk in enumerate(chunks[:25]):
+                field_name = f"Value (Part {i + 1})" if i > 0 else f"Value [{value_type}]"
+                embed.add_field(name=field_name, value=f"```\n{chunk}\n```", inline=False)
+        else:
+            embed.add_field(
+                name=f"Value [{value_type}]",
+                value=f"```\n{formatted}\n```",
+                inline=False
+            )
+
+        return embed
+
+    @staticmethod
+    def _split_text(text: str, max_length: int) -> List[str]:
+        """Split text into chunks of max_length, preserving line breaks"""
+        chunks = []
+        current_chunk = ""
+
+        for line in text.split('\n'):
+            if len(current_chunk) + len(line) + 1 > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += ('\n' if current_chunk else '') + line
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
+
+    # Callback methods
+    async def _scope_select_callback(self, interaction: discord.Interaction):
+        """Handle scope selection"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        scope_name = interaction.data['values'][0]
+        self.current_path = scope_name
+        self.page = 0
+        self._build_ui()
+
+        embed = self.create_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _back_callback(self, interaction: discord.Interaction):
+        """Handle back navigation"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        path_parts = self.current_path.split('.')
+        if len(path_parts) > 1:
+            self.current_path = '.'.join(path_parts[:-1])
+        else:
+            self.current_path = ""
+
+        self.page = 0
+        self._build_ui()
+
+        embed = self.create_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _refresh_callback(self, interaction: discord.Interaction):
+        """Handle refresh"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        self._build_ui()
+        embed = self.create_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _export_callback(self, interaction: discord.Interaction):
+        """Handle export to JSON file"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Get actual data
+            if self.current_path in self.var_manager.scopes:
+                current_data = self.var_manager.scopes[self.current_path]
+            else:
+                current_data = self._get_current_data()
+
+            json_str = json.dumps(current_data, indent=2, default=str)
+
+            # Create file
+            import io
+            file_content = io.BytesIO(json_str.encode('utf-8'))
+            file_name = f"variables_{self.current_path or 'root'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+            file = discord.File(file_content, filename=file_name)
+
+            await interaction.followup.send(
+                f"📥 Exported: `{self.current_path or 'root'}`",
+                file=file,
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Export failed: {e}", ephemeral=True)
+
+    async def _prev_page_callback(self, interaction: discord.Interaction):
+        """Handle previous page"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        if self.page > 0:
+            self.page -= 1
+            self._build_ui()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def _next_page_callback(self, interaction: discord.Interaction):
+        """Handle next page"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your explorer!", ephemeral=True)
+            return
+
+        # Get actual data for page count
+        if self.current_path in self.var_manager.scopes:
+            current_data = self.var_manager.scopes[self.current_path]
+        else:
+            current_data = self._get_current_data()
+
+        total_pages = (len(current_data) + self.items_per_page - 1) // self.items_per_page
+
+        if self.page < total_pages - 1:
+            self.page += 1
+            self._build_ui()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+
+class ContextPaginationView(discord.ui.View):
+    """Paginated view for context data with navigation buttons"""
+
+    def __init__(self, user_id: str, data_type: str, items: list, formatter_func, timeout: int = 300):
+        super().__init__(timeout=timeout)
+        self.user_id = user_id
+        self.data_type = data_type
+        self.items = items
+        self.formatter_func = formatter_func
+        self.current_page = 0
+        self.items_per_page = 5
+        self.total_pages = (len(items) + self.items_per_page - 1) // self.items_per_page if items else 1
+
+        self._build_buttons()
+
+    def _build_buttons(self):
+        """Build navigation buttons"""
+        self.clear_items()
+
+        # Previous page button
+        prev_button = discord.ui.Button(
+            label="◀️ Previous",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"prev_{self.user_id}",
+            disabled=self.current_page == 0
+        )
+        prev_button.callback = self._prev_callback
+        self.add_item(prev_button)
+
+        # Page indicator
+        page_button = discord.ui.Button(
+            label=f"Page {self.current_page + 1}/{self.total_pages}",
+            style=discord.ButtonStyle.secondary,
+            disabled=True
+        )
+        self.add_item(page_button)
+
+        # Next page button
+        next_button = discord.ui.Button(
+            label="Next ▶️",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"next_{self.user_id}",
+            disabled=self.current_page >= self.total_pages - 1
+        )
+        next_button.callback = self._next_callback
+        self.add_item(next_button)
+
+        # Jump to first page button
+        if self.total_pages > 2:
+            first_button = discord.ui.Button(
+                label="⏮️ First",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"first_{self.user_id}",
+                disabled=self.current_page == 0
+            )
+            first_button.callback = self._first_callback
+            self.add_item(first_button)
+
+        # Jump to last page button
+        if self.total_pages > 2:
+            last_button = discord.ui.Button(
+                label="Last ⏭️",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"last_{self.user_id}",
+                disabled=self.current_page >= self.total_pages - 1
+            )
+            last_button.callback = self._last_callback
+            self.add_item(last_button)
+
+    def get_current_page_items(self) -> list:
+        """Get items for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        return self.items[start_idx:end_idx]
+
+    def create_embed(self) -> discord.Embed:
+        """Create embed for current page"""
+        page_items = self.get_current_page_items()
+
+        # Create base embed
+        embed = discord.Embed(
+            title=self._get_title(),
+            description=self._get_description(),
+            color=self._get_color(),
+            timestamp=datetime.now(UTC)
+        )
+
+        # Add items using formatter function
+        for item in page_items:
+            field_data = self.formatter_func(item)
+            if field_data:
+                embed.add_field(
+                    name=field_data.get('name', 'Item'),
+                    value=field_data.get('value', 'No data'),
+                    inline=field_data.get('inline', False)
+                )
+
+        # Add footer with page info
+        start_idx = self.current_page * self.items_per_page + 1
+        end_idx = min(start_idx + len(page_items) - 1, len(self.items))
+        embed.set_footer(
+            text=f"Showing {start_idx}-{end_idx} of {len(self.items)} items • Page {self.current_page + 1}/{self.total_pages}")
+
+        return embed
+
+    def _get_title(self) -> str:
+        """Get embed title based on data type"""
+        titles = {
+            'memories': '📝 Your Memories',
+            'learning': '📚 Learning Records',
+            'history': '📜 Conversation History',
+            'tasks': '📅 Scheduled Tasks'
+        }
+        return titles.get(self.data_type, '📋 Data')
+
+    def _get_description(self) -> str:
+        """Get embed description"""
+        if not self.items:
+            descriptions = {
+                'memories': 'No memories stored yet. I\'ll learn about you as we interact!',
+                'learning': 'No learning records yet. I\'ll learn from our interactions!',
+                'history': 'No history records yet. Start chatting to build history!',
+                'tasks': 'No scheduled tasks. Use kernel tools to schedule tasks!'
+            }
+            return descriptions.get(self.data_type, 'No data available')
+
+        return f"Total {self.data_type}: {len(self.items)}"
+
+    def _get_color(self) -> discord.Color:
+        """Get embed color based on data type"""
+        colors = {
+            'memories': discord.Color.green(),
+            'learning': discord.Color.purple(),
+            'history': discord.Color.blue(),
+            'tasks': discord.Color.gold()
+        }
+        return colors.get(self.data_type, discord.Color.blue())
+
+    async def _check_permission(self, interaction: discord.Interaction) -> bool:
+        """Check if user has permission to interact"""
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+            return False
+        return True
+
+    async def _prev_callback(self, interaction: discord.Interaction):
+        """Handle previous page"""
+        if not await self._check_permission(interaction):
+            return
+
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._build_buttons()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def _next_callback(self, interaction: discord.Interaction):
+        """Handle next page"""
+        if not await self._check_permission(interaction):
+            return
+
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self._build_buttons()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def _first_callback(self, interaction: discord.Interaction):
+        """Handle jump to first page"""
+        if not await self._check_permission(interaction):
+            return
+
+        if self.current_page != 0:
+            self.current_page = 0
+            self._build_buttons()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def _last_callback(self, interaction: discord.Interaction):
+        """Handle jump to last page"""
+        if not await self._check_permission(interaction):
+            return
+
+        if self.current_page != self.total_pages - 1:
+            self.current_page = self.total_pages - 1
+            self._build_buttons()
+            embed = self.create_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+
 class DiscordKernel:
     """Discord-based ProA Kernel with auto-persistence and rich features"""
 
@@ -1184,8 +2100,26 @@ class DiscordKernel:
         intents.members = True
         intents.guilds = True
 
-        self.bot = commands.Bot(command_prefix=command_prefix, intents=intents)
+        # Bot description for help command
+        bot_description = (
+            "🤖 **ToolBox Isaa Agent** - Your intelligent AI assistant\n\n"
+            "I can help you with various tasks, answer questions, and interact via voice or text.\n"
+            "Use commands to control my behavior and access advanced features."
+        )
+
+        self.bot = commands.Bot(
+            command_prefix=command_prefix,
+            intents=intents,
+            description=bot_description,
+            help_command=commands.DefaultHelpCommand(),  # Enable default help command
+            strip_after_prefix=True
+        )
         self.bot_token = bot_token
+
+        # Admin whitelist - only these users can use admin commands (!vars, !reset, !exit)
+        # Default: "Kinr3" and bot owner
+        self.admin_whitelist = {"kinr3"}  # Lowercase for case-insensitive comparison
+        print(f"🔒 [SECURITY] Admin whitelist initialized: {self.admin_whitelist}")
 
         # Initialize kernel with Discord output router
         config = KernelConfig(
@@ -1284,6 +2218,42 @@ class DiscordKernel:
         print()
 
         print(f"✓ Discord Kernel initialized (instance: {instance_id})")
+
+    def _is_admin(self, ctx: commands.Context) -> bool:
+        """Check if user is in admin whitelist or is bot owner"""
+        # Check if user is bot owner
+        if ctx.author.id == self.bot.owner_id:
+            return True
+
+        # Check if username is in whitelist (case-insensitive)
+        username_lower = ctx.author.name.lower()
+        if username_lower in self.admin_whitelist:
+            return True
+
+        # Check if user ID is in whitelist (for ID-based whitelist entries)
+        user_id_str = str(ctx.author.id)
+        if user_id_str in self.admin_whitelist:
+            return True
+
+        return False
+
+    async def _check_admin_permission(self, ctx: commands.Context) -> bool:
+        """Check admin permission and send error message if denied"""
+        if not self._is_admin(ctx):
+            embed = discord.Embed(
+                title="🔒 Access Denied",
+                description="This command is restricted to administrators only.",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="Your Access Level",
+                value=f"User: {ctx.author.name}\nAdmin: ❌",
+                inline=False
+            )
+            await ctx.send(embed=embed, ephemeral=True)
+            print(f"🔒 [SECURITY] Admin command denied for user {ctx.author.name} (ID: {ctx.author.id})")
+            return False
+        return True
 
     def _get_save_path(self) -> Path:
         """Get save file path"""
@@ -1470,8 +2440,11 @@ class DiscordKernel:
             await ctx.send(embed=embed)
 
         @self.bot.command(name="exit")
-        async def help_command(ctx: commands.Context):
-            """Exit the kernel"""
+        async def exit_command(ctx: commands.Context):
+            """Exit the kernel (Admin only)"""
+            # Check admin permission
+            if not await self._check_admin_permission(ctx):
+                return
 
             await ctx.send("👋 Goodbye!")
             await self.stop()
@@ -1878,7 +2851,8 @@ class DiscordKernel:
         # Reset command
         @self.bot.command(name="reset")
         async def reset_command(ctx: commands.Context):
-            """Reset user data (memories, context, preferences, scheduled tasks)"""
+            """Reset user data (memories, context, preferences, scheduled tasks, history)"""
+
             user_id = str(ctx.author.id)
 
             embed = discord.Embed(
@@ -1889,7 +2863,7 @@ class DiscordKernel:
 
             # Show current data counts
             user_memories = self.kernel.memory_store.user_memories.get(user_id, [])
-            user_prefs = self.kernel.learning_engine.user_preferences.get(user_id)
+            user_prefs = self.kernel.learning_engine.preferences.get(user_id)
             user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
 
             data_summary = (
@@ -1941,8 +2915,8 @@ class DiscordKernel:
                     return
 
                 # Delete preferences
-                if user_id in self.kernel.learning_engine.user_preferences:
-                    del self.kernel.learning_engine.user_preferences[user_id]
+                if user_id in self.kernel.learning_engine.preferences:
+                    del self.kernel.learning_engine.preferences[user_id]
                     await interaction.response.send_message("✅ Preferences reset!", ephemeral=True)
                 else:
                     await interaction.response.send_message("⚠️ No preferences to reset!", ephemeral=True)
@@ -1977,6 +2951,35 @@ class DiscordKernel:
             reset_tasks_btn.callback = reset_tasks_callback
             view.add_item(reset_tasks_btn)
 
+            session = self.kernel.agent.context_manager.session_managers.get(user_id, {"history": []})
+            if hasattr(session, 'history'):
+                len_his = len(session.history)
+            elif isinstance(session, dict) and 'history' in session:
+                len_his = len(session['history'])
+
+            # Button: Reset History Tasks
+            reset_history_btn = discord.ui.Button(
+                label=f"📜 Reset History ({len_his})",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"reset_history_{user_id}"
+            )
+
+            async def reset_history_callback(interaction: discord.Interaction):
+                if str(interaction.user.id) != user_id:
+                    await interaction.response.send_message("❌ This is not your reset menu!", ephemeral=True)
+                    return
+
+                # Clear history
+                self.kernel.agent.clear_context(user_id)
+
+                await interaction.response.send_message(
+                    f"✅ History reset!",
+                    ephemeral=True
+                )
+
+            reset_history_btn.callback = reset_history_callback
+            view.add_item(reset_history_btn)
+
             # Button: Reset ALL
             reset_all_btn = discord.ui.Button(
                 label="🔥 Reset ALL",
@@ -1996,8 +2999,8 @@ class DiscordKernel:
                     self.kernel.memory_store.user_memories[user_id] = []
 
                 prefs_reset = False
-                if user_id in self.kernel.learning_engine.user_preferences:
-                    del self.kernel.learning_engine.user_preferences[user_id]
+                if user_id in self.kernel.learning_engine.preferences:
+                    del self.kernel.learning_engine.preferences[user_id]
                     prefs_reset = True
 
                 user_tasks = self.kernel.scheduler.get_user_tasks(user_id)
@@ -2167,37 +3170,23 @@ class DiscordKernel:
                         await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
                         return
 
-                    # Create memories embed
-                    mem_embed = discord.Embed(
-                        title="📝 Your Memories",
-                        description=f"I have {len(user_memories)} memories about you",
-                        color=discord.Color.green()
-                    )
+                    # Formatter function for memories
+                    def format_memory(mem):
+                        importance_bar = "⭐" * int(mem.importance * 5)
+                        tags_str = f" `[{', '.join(mem.tags[:3])}]`" if mem.tags else ""
+                        content = mem.content[:200] + "..." if len(mem.content) > 200 else mem.content
 
-                    if user_memories:
-                        # Group by type
-                        from collections import defaultdict
-                        by_type = defaultdict(list)
-                        for mem in user_memories:
-                            by_type[mem.memory_type.value].append(mem)
+                        return {
+                            'name': f"{importance_bar} {mem.memory_type.value.upper()}{tags_str}",
+                            'value': content,
+                            'inline': False
+                        }
 
-                        for mem_type, mems in sorted(by_type.items()):
-                            # Show top 5 most important
-                            sorted_mems = sorted(mems, key=lambda m: m.importance, reverse=True)[:5]
-                            mem_text = ""
-                            for mem in sorted_mems:
-                                importance_bar = "⭐" * int(mem.importance * 5)
-                                mem_text += f"{importance_bar} {mem.content[:100]}\n"
+                    # Create paginated view
+                    view = ContextPaginationView(user_id, 'memories', user_memories, format_memory)
+                    embed = view.create_embed()
 
-                            mem_embed.add_field(
-                                name=f"{mem_type.upper()} ({len(mems)} total)",
-                                value=mem_text or "None",
-                                inline=False
-                            )
-                    else:
-                        mem_embed.description = "No memories stored yet. I'll learn about you as we interact!"
-
-                    await interaction.response.send_message(embed=mem_embed, ephemeral=True)
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
                 memories_button.callback = memories_callback
                 view.add_item(memories_button)
@@ -2250,30 +3239,97 @@ class DiscordKernel:
                         await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
                         return
 
-                    learn_embed = discord.Embed(
-                        title="📚 Learning Records",
-                        description=f"I have {len(user_learning)} learning records from our interactions",
-                        color=discord.Color.purple()
-                    )
+                    # Sort by timestamp (newest first)
+                    sorted_learning = sorted(user_learning, key=lambda r: r.timestamp, reverse=True)
 
-                    if user_learning:
-                        # Show recent records
-                        recent = sorted(user_learning, key=lambda r: r.timestamp, reverse=True)[:10]
+                    # Formatter function for learning records
+                    def format_learning(record):
+                        if record.feedback_score is not None:
+                            feedback_emoji = "👍" if record.feedback_score > 0 else "👎"
+                        else:
+                            feedback_emoji = "➖"
 
-                        for record in recent:
-                            time_str = datetime.fromtimestamp(record.timestamp).strftime('%Y-%m-%d %H:%M')
-                            learn_embed.add_field(
-                                name=f"{record.interaction_type.value} - {time_str}",
-                                value=f"Context: {record.outcome if record.outcome else record.context} {record.feedback_score}",
-                                inline=False
-                            )
-                    else:
-                        learn_embed.description = "No learning records yet. I'll learn from our interactions!"
 
-                    await interaction.response.send_message(embed=learn_embed, ephemeral=True)
+                        time_str = datetime.fromtimestamp(record.timestamp).strftime('%Y-%m-%d %H:%M')
+                        content = record.content or record.outcome or "No content"
+                        content_preview = content[:200] + "..." if len(content) > 200 else content
+
+                        return {
+                            'name': f"{record.interaction_type.value} - {time_str} {feedback_emoji}",
+                            'value': content_preview,
+                            'inline': False
+                        }
+
+                    # Create paginated view
+                    view = ContextPaginationView(user_id, 'learning', sorted_learning, format_learning)
+                    embed = view.create_embed()
+
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
                 learning_button.callback = learning_callback
                 view.add_item(learning_button)
+
+                session = self.kernel.agent.context_manager.session_managers.get(user_id, {"history": []})
+                if hasattr(session, 'history'):
+                    user_history = session.history
+                elif isinstance(session, dict) and 'history' in session:
+                    user_history = session['history']
+                else:
+                    user_history = []
+
+                # Button: Show History Records
+                history_button = discord.ui.Button(
+                    label=f"📚 History ({len(user_history)})",
+                    style=discord.ButtonStyle.primary,
+                    custom_id=f"context_history_{user_id}"
+                )
+
+                async def history_callback(interaction: discord.Interaction):
+                    if str(interaction.user.id) != user_id:
+                        await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
+                        return
+
+                    # Reverse to show newest first
+                    reversed_history = list(user_history)
+
+                    # Formatter function for history records
+                    def format_history(record):
+                        if isinstance(record, dict):
+                            role = record.get('role', 'unknown')
+                            content = record.get('content', 'unknown')
+                        elif hasattr(record, 'role') and hasattr(record, 'content'):
+                            role = record.role
+                            content = record.content
+                        else:
+                            role = 'unknown'
+                            content = str(record)
+
+                        # Truncate long content
+                        content_preview = content[:500] + "..." if len(content) > 500 else content
+
+                        # Role emoji mapping
+                        role_emoji = {
+                            'user': '👤',
+                            'assistant': '🤖',
+                            'system': '⚙️',
+                            'tool': '🛠️'
+                        }
+                        emoji = role_emoji.get(role.lower(), '❓')
+
+                        return {
+                            'name': f"{emoji} {role.upper()}",
+                            'value': f"```\n{content_preview}\n```",
+                            'inline': False
+                        }
+
+                    # Create paginated view
+                    view = ContextPaginationView(user_id, 'history', reversed_history, format_history)
+                    embed = view.create_embed()
+
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+                history_button.callback = history_callback
+                view.add_item(history_button)
 
                 # Button: Show All Memories (Full List)
                 all_memories_button = discord.ui.Button(
@@ -2291,19 +3347,43 @@ class DiscordKernel:
                         await interaction.response.send_message("📝 No memories stored yet!", ephemeral=True)
                         return
 
-                    # Create paginated view of all memories
-                    all_mem_text = "**All Memories:**\n\n"
-                    for i, mem in enumerate(sorted(user_memories, key=lambda m: m.importance, reverse=True), 1):
+                    # Sort by importance (highest first)
+                    sorted_memories = sorted(user_memories, key=lambda m: m.importance, reverse=True)
+
+                    # Formatter function for all memories (detailed view)
+                    def format_detailed_memory(mem):
                         importance_bar = "⭐" * int(mem.importance * 5)
-                        tags_str = f" [{', '.join(mem.tags)}]" if mem.tags else ""
-                        all_mem_text += f"{i}. {importance_bar} **{mem.memory_type.value}**{tags_str}\n   {mem.content}\n\n"
+                        tags_str = f"\n**Tags:** {mem.importance:.2f} {', '.join(mem.tags)}" if mem.tags else ""
 
-                        # Discord message limit
-                        if len(all_mem_text) > 1800:
-                            all_mem_text += f"... and {len(user_memories) - i} more"
-                            break
+                        # Add metadata
+                        metadata_lines = []
+                        if hasattr(mem, 'created_at'):
+                            created = datetime.fromtimestamp(mem.created_at).strftime('%Y-%m-%d %H:%M')
+                            metadata_lines.append(f"**Created:** {created}")
+                        if hasattr(mem, 'last_accessed'):
+                            accessed = datetime.fromtimestamp(mem.last_accessed).strftime('%Y-%m-%d %H:%M')
+                            metadata_lines.append(f"**Last Accessed:** {accessed}")
+                        if hasattr(mem, 'access_count'):
+                            metadata_lines.append(f"**Access Count:** {mem.access_count}")
 
-                    await interaction.response.send_message(all_mem_text, ephemeral=True)
+                        metadata = "\n".join(metadata_lines) if metadata_lines else ""
+
+                        return {
+                            'name': f"{importance_bar} {mem.memory_type.value.upper()}",
+                            'value': f"{mem.content}{tags_str}\n{metadata}",
+                            'inline': False
+                        }
+
+                    # Create paginated view with detailed formatting
+                    view = ContextPaginationView(user_id, 'memories', sorted_memories, format_detailed_memory)
+                    view.items_per_page = 3  # Fewer items per page for detailed view
+                    view.total_pages = (len(sorted_memories) + view.items_per_page - 1) // view.items_per_page
+                    view._build_buttons()
+
+                    embed = view.create_embed()
+                    embed.title = "📋 All Memories (Detailed)"
+
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
                 all_memories_button.callback = all_memories_callback
                 view.add_item(all_memories_button)
@@ -2320,38 +3400,34 @@ class DiscordKernel:
                         await interaction.response.send_message("❌ This is not your context!", ephemeral=True)
                         return
 
-                    tasks_embed = discord.Embed(
-                        title="📅 Scheduled Tasks",
-                        description=f"You have {len(user_tasks)} scheduled tasks",
-                        color=discord.Color.gold()
-                    )
+                    # Sort by scheduled time (nearest first)
+                    sorted_tasks = sorted(user_tasks, key=lambda t: t.scheduled_time)
 
-                    if user_tasks:
-                        # Group by status
-                        from collections import defaultdict
-                        by_status = defaultdict(list)
-                        for task in user_tasks:
-                            by_status[task.status.value].append(task)
+                    # Formatter function for tasks
+                    def format_task(task):
+                        scheduled_dt = datetime.fromtimestamp(task.scheduled_time).strftime('%Y-%m-%d %H:%M')
+                        priority_stars = "⭐" * task.priority
+                        status_emoji = {
+                            'pending': '⏳',
+                            'completed': '✅',
+                            'failed': '❌',
+                            'cancelled': '🚫'
+                        }
+                        emoji = status_emoji.get(task.status.value.lower(), '❓')
 
-                        for status, tasks in sorted(by_status.items()):
-                            task_text = ""
-                            for task in tasks[:5]:  # Show max 5 per status
-                                scheduled_dt = datetime.fromtimestamp(task.scheduled_time).strftime('%Y-%m-%d %H:%M')
-                                priority_stars = "⭐" * task.priority
-                                task_text += f"{priority_stars} **{task.task_type}** - {scheduled_dt}\n   {task.content[:80]}\n\n"
+                        content = task.content[:200] + "..." if len(task.content) > 200 else task.content
 
-                            if len(tasks) > 5:
-                                task_text += f"... and {len(tasks) - 5} more\n"
+                        return {
+                            'name': f"{emoji} {priority_stars} {task.task_type} - {scheduled_dt}",
+                            'value': f"**Status:** {task.status.value}\n{content}",
+                            'inline': False
+                        }
 
-                            tasks_embed.add_field(
-                                name=f"{status.upper()} ({len(tasks)} total)",
-                                value=task_text or "None",
-                                inline=False
-                            )
-                    else:
-                        tasks_embed.description = "No scheduled tasks. Use kernel tools to schedule tasks!"
+                    # Create paginated view
+                    view = ContextPaginationView(user_id, 'tasks', sorted_tasks, format_task)
+                    embed = view.create_embed()
 
-                    await interaction.response.send_message(embed=tasks_embed, ephemeral=True)
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
                 tasks_button.callback = tasks_callback
                 view.add_item(tasks_button)
@@ -2361,33 +3437,37 @@ class DiscordKernel:
             except Exception as e:
                 await ctx.send(f"❌ Error retrieving context: {e}")
 
-        # Variables management command
-        @self.bot.command(name="vars")
-        async def vars_command(ctx: commands.Context, action: str = None, path: str = None, *, value: str = None):
+        @self.bot.command(name="restrict")
+        async def restrict_command(ctx: commands.Context, action: str = None, *, args: str = None):
             """
-            Manage agent variables interactively.
+            Manage tool restrictions for sessions (Admin only).
 
             Usage:
-                !vars                    - List all variables
-                !vars list [path]        - List variables (optionally filtered by path)
-                !vars get <path>         - Get a specific variable
-                !vars set <path> <value> - Set a variable
-                !vars delete <path>      - Delete a variable
+                !restrict list                           - List all tool restrictions
+                !restrict sessions                       - List all known sessions/users
+                !restrict tools                          - List all available tools
+                !restrict set <tool> <session> <allow>   - Set restriction for specific session
+                !restrict default <tool> <allow>         - Set default restriction for tool
+                !restrict reset [tool]                   - Reset restrictions (all or specific tool)
+                !restrict check <tool> <session>         - Check if tool is allowed in session
 
             Examples:
-                !vars
-                !vars list discord
-                !vars get discord.output_mode.268830485889810432
-                !vars set user.preferences.theme dark
-                !vars delete user.temp.data
+                !restrict list
+                !restrict sessions
+                !restrict set execute_python 123456789 false
+                !restrict default dangerous_tool false
+                !restrict reset execute_python
+                !restrict check execute_python 123456789
             """
-            user_id = str(ctx.author.id)
-
-            if not hasattr(self.kernel.agent, 'variable_manager'):
-                await ctx.send("❌ Variable manager not available!")
+            # Check admin permission
+            if not await self._check_admin_permission(ctx):
                 return
 
-            var_manager = self.kernel.agent.variable_manager
+            if not hasattr(self.kernel.agent, 'session_tool_restrictions'):
+                await ctx.send("❌ Tool restrictions not available on this agent!")
+                return
+
+            user_id = str(ctx.author.id)
 
             # Default action is list
             if action is None:
@@ -2397,174 +3477,923 @@ class DiscordKernel:
 
             try:
                 if action == "list":
-                    # List all variables or filter by path
-                    # Try to get all variables - check if get_all() exists
-                    if hasattr(var_manager, 'get_all'):
-                        all_vars = var_manager.get_all()
-                    elif hasattr(var_manager, 'variables'):
-                        # If variables are stored in a dict attribute
-                        all_vars = var_manager.variables
-                    elif hasattr(var_manager, '_variables'):
-                        all_vars = var_manager._variables
-                    else:
-                        # Fallback: try to access internal storage
-                        await ctx.send("❌ Cannot list variables - variable manager doesn't support listing!")
+                    # List all current restrictions
+                    restrictions = self.kernel.agent.list_tool_restrictions()
+
+                    if not restrictions:
+                        await ctx.send("📋 No tool restrictions configured. All tools are allowed by default.")
                         return
 
-                    if not all_vars:
-                        await ctx.send("📝 No variables stored yet!")
-                        return
-
-                    # Filter by path if provided
-                    if path:
-                        filtered_vars = {k: v for k, v in all_vars.items() if k.startswith(path)}
-                        if not filtered_vars:
-                            await ctx.send(f"📝 No variables found matching path: `{path}`")
-                            return
-                        all_vars = filtered_vars
-
-                    # Create interactive view
                     embed = discord.Embed(
-                        title="🔧 Agent Variables",
-                        description=f"Total: {len(all_vars)} variable(s)" + (f" (filtered by `{path}`)" if path else ""),
+                        title="🔒 Tool Restrictions",
+                        description=f"Total tools with restrictions: {len(restrictions)}",
+                        color=discord.Color.orange(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    # Group by tool
+                    for tool_name, sessions in restrictions.items():
+                        # Format session restrictions
+                        session_lines = []
+
+                        # Show default first if exists
+                        if '*' in sessions:
+                            default_status = "✅ Allowed" if sessions['*'] else "❌ Restricted"
+                            session_lines.append(f"**Default:** {default_status}")
+
+                        # Show specific sessions
+                        for session_id, allowed in sessions.items():
+                            if session_id == '*':
+                                continue
+
+                            status = "✅" if allowed else "❌"
+
+                            # Try to get user display name
+                            try:
+                                user = self.bot.get_user(int(session_id))
+                                display_name = f"{user.display_name} ({session_id})" if user else session_id
+                            except:
+                                display_name = session_id
+
+                            session_lines.append(f"{status} `{display_name}`")
+
+                        session_text = "\n".join(session_lines) if session_lines else "No restrictions"
+
+                        # Add field (max 1024 chars)
+                        if len(session_text) > 1024:
+                            session_text = session_text[:1020] + "..."
+
+                        embed.add_field(
+                            name=f"🛠️ {tool_name}",
+                            value=session_text,
+                            inline=False
+                        )
+
+                    embed.set_footer(text="Use !restrict set <tool> <session> <true/false> to modify")
+
+                    await ctx.send(embed=embed)
+
+                elif action == "sessions":
+                    # List all known sessions/users
+                    await ctx.send("🔍 Gathering session information...")
+
+                    sessions_info = await self.list_all_known_sessions()
+
+                    if not sessions_info:
+                        await ctx.send("📋 No sessions found.")
+                        return
+
+                    embed = discord.Embed(
+                        title="👥 Known Sessions/Users",
+                        description=f"Total sessions: {len(sessions_info)}",
                         color=discord.Color.blue(),
                         timestamp=datetime.now(UTC)
                     )
 
-                    # Group variables by prefix
-                    from collections import defaultdict
-                    grouped = defaultdict(list)
-                    for var_path, var_value in all_vars.items():
-                        prefix = var_path.split('.')[0] if '.' in var_path else 'root'
-                        grouped[prefix].append((var_path, var_value))
+                    # Group by source
+                    sources = {
+                        'active': [],
+                        'memory': [],
+                        'learning': [],
+                        'context': []
+                    }
 
-                    # Add fields for each group (max 25 fields per embed)
-                    field_count = 0
-                    for prefix, vars_list in sorted(grouped.items()):
-                        if field_count >= 25:
-                            break
+                    for user_info in sessions_info:
+                        user_id = user_info['user_id']
+                        display = f"`{user_id}` - **{user_info['display_name']}** (@{user_info['username']})"
 
-                        # Show first 5 variables in each group
-                        var_text = ""
-                        for var_path, var_value in sorted(vars_list)[:5]:
-                            # Truncate long values
-                            value_str = str(var_value)
-                            if len(value_str) > 100:
-                                value_str = value_str[:97] + "..."
-                            var_text += f"`{var_path}`\n└─ {value_str}\n\n"
+                        # Check which sources have this user
+                        has_active = user_id in self.output_router.user_channels
+                        has_memory = user_id in self.kernel.memory_store.user_memories
+                        has_learning = user_id in self.kernel.learning_engine.preferences
+                        has_context = (hasattr(self.kernel.agent, 'context_manager') and
+                                       user_id in self.kernel.agent.context_manager.session_managers)
 
-                        if len(vars_list) > 5:
-                            var_text += f"... and {len(vars_list) - 5} more\n"
+                        status_icons = []
+                        if has_active: status_icons.append("💬")
+                        if has_context: status_icons.append("🧠")
+                        if has_memory: status_icons.append("💾")
+                        if has_learning: status_icons.append("📚")
 
+                        display += f" {' '.join(status_icons)}"
+
+                        if has_active:
+                            sources['active'].append(display)
+                        elif has_context:
+                            sources['context'].append(display)
+                        elif has_memory:
+                            sources['memory'].append(display)
+                        else:
+                            sources['learning'].append(display)
+
+                    # Add fields for each source
+                    if sources['active']:
+                        text = "\n".join(sources['active'][:10])
+                        if len(sources['active']) > 10:
+                            text += f"\n... and {len(sources['active']) - 10} more"
                         embed.add_field(
-                            name=f"📁 {prefix.upper()} ({len(vars_list)})",
-                            value=var_text or "Empty",
+                            name="💬 Active Sessions",
+                            value=text,
                             inline=False
                         )
-                        field_count += 1
 
-                    # Create interactive buttons
-                    view = discord.ui.View(timeout=300)
+                    if sources['context']:
+                        text = "\n".join(sources['context'][:10])
+                        if len(sources['context']) > 10:
+                            text += f"\n... and {len(sources['context']) - 10} more"
+                        embed.add_field(
+                            name="🧠 Context Sessions",
+                            value=text,
+                            inline=False
+                        )
 
-                    # Button: Refresh
-                    refresh_button = discord.ui.Button(
-                        label="🔄 Refresh",
-                        style=discord.ButtonStyle.primary,
-                        custom_id=f"vars_refresh_{user_id}"
-                    )
+                    if sources['memory']:
+                        text = "\n".join(sources['memory'][:10])
+                        if len(sources['memory']) > 10:
+                            text += f"\n... and {len(sources['memory']) - 10} more"
+                        embed.add_field(
+                            name="💾 Memory Only",
+                            value=text,
+                            inline=False
+                        )
 
-                    async def refresh_callback(interaction: discord.Interaction):
-                        if str(interaction.user.id) != user_id:
-                            await interaction.response.send_message("❌ This is not your command!", ephemeral=True)
-                            return
+                    if sources['learning']:
+                        text = "\n".join(sources['learning'][:10])
+                        if len(sources['learning']) > 10:
+                            text += f"\n... and {len(sources['learning']) - 10} more"
+                        embed.add_field(
+                            name="📚 Learning Only",
+                            value=text,
+                            inline=False
+                        )
 
-                        # Re-run the list command
-                        await interaction.response.defer()
-                        await vars_command.callback(ctx, "list", path)
+                    embed.set_footer(text="Icons: 💬 Active | 🧠 Context | 💾 Memory | 📚 Learning")
 
-                    refresh_button.callback = refresh_callback
-                    view.add_item(refresh_button)
+                    await ctx.send(embed=embed)
 
-                    await ctx.send(embed=embed, view=view)
-
-                elif action == "get":
-                    if not path:
-                        await ctx.send("❌ Usage: `!vars get <path>`")
+                elif action == "tools":
+                    # List all available tools
+                    if not hasattr(self.kernel.agent, '_tool_registry'):
+                        await ctx.send("❌ No tools available!")
                         return
 
-                    var_value = var_manager.get(path)
-
-                    if var_value is None:
-                        await ctx.send(f"❌ Variable not found: `{path}`")
-                        return
-
-                    # Format value nicely
-                    import json
-                    try:
-                        if isinstance(var_value, (dict, list)):
-                            value_str = json.dumps(var_value, indent=2)
-                        else:
-                            value_str = str(var_value)
-                    except:
-                        value_str = str(var_value)
+                    tools = self.kernel.agent._tool_registry
 
                     embed = discord.Embed(
-                        title=f"🔧 Variable: {path}",
-                        description=f"```json\n{value_str[:4000]}\n```" if len(value_str) < 4000 else f"```\n{value_str[:4000]}...\n```",
+                        title="🛠️ Available Tools",
+                        description=f"Total tools: {len(tools)}",
                         color=discord.Color.green(),
                         timestamp=datetime.now(UTC)
                     )
+
+                    # Group tools by category (if available)
+                    categorized = {}
+                    for tool in tools.keys():
+                        category = tool.split('_')[0]
+                        if category not in categorized:
+                            categorized[category] = []
+
+                        tool_name = tool
+                        # Check if tool has any restrictions
+                        has_restrictions = tool_name in self.kernel.agent.session_tool_restrictions
+                        restriction_icon = "🔒" if has_restrictions else "🔓"
+
+                        categorized[category].append(f"{restriction_icon} `{tool_name}`")
+
+                    # Add fields for each category
+                    for category, tool_list in sorted(categorized.items()):
+                        tool_text = "\n".join(tool_list[:20])  # Max 20 per category
+                        if len(tool_list) > 20:
+                            tool_text += f"\n... and {len(tool_list) - 20} more"
+
+                        embed.add_field(
+                            name=f"📁 {category}",
+                            value=tool_text,
+                            inline=False
+                        )
+
+                    embed.set_footer(text="🔓 No restrictions | 🔒 Has restrictions")
 
                     await ctx.send(embed=embed)
 
                 elif action == "set":
-                    if not path or value is None:
+                    # Set restriction for specific session
+                    if not args:
+                        await ctx.send("❌ Usage: `!restrict set <tool> <session> <true/false>`")
+                        return
+
+                    parts = args.split()
+                    if len(parts) < 3:
+                        await ctx.send("❌ Usage: `!restrict set <tool> <session> <true/false>`")
+                        return
+
+                    tool_name = parts[0]
+                    session_id = parts[1]
+                    allowed_str = parts[2].lower()
+
+                    # Parse allowed value
+                    if allowed_str in ['true', 'yes', '1', 'allow', 'allowed']:
+                        allowed = True
+                    elif allowed_str in ['false', 'no', '0', 'deny', 'restrict', 'restricted']:
+                        allowed = False
+                    else:
+                        await ctx.send(f"❌ Invalid value: `{allowed_str}`. Use true/false, yes/no, allow/deny")
+                        return
+
+                    # Check if tool exists
+                    if hasattr(self.kernel.agent, 'agent_tools'):
+                        tool_names = [t.name for t in self.kernel.agent.agent_tools]
+                        if tool_name not in tool_names:
+                            await ctx.send(
+                                f"⚠️ Warning: Tool `{tool_name}` not found in available tools. Setting restriction anyway.")
+
+                    # Set restriction
+                    self.kernel.agent.set_tool_restriction(tool_name, session_id, allowed)
+
+                    # Get user display name
+                    try:
+                        user = self.bot.get_user(int(session_id))
+                        display_name = f"{user.display_name} ({session_id})" if user else session_id
+                    except:
+                        display_name = session_id
+
+                    status_text = "✅ Allowed" if allowed else "❌ Restricted"
+
+                    embed = discord.Embed(
+                        title="✅ Restriction Set",
+                        description=f"Tool restriction updated successfully",
+                        color=discord.Color.green() if allowed else discord.Color.red(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    embed.add_field(name="Tool", value=f"`{tool_name}`", inline=True)
+                    embed.add_field(name="Session", value=display_name, inline=True)
+                    embed.add_field(name="Status", value=status_text, inline=True)
+
+                    await ctx.send(embed=embed)
+
+                elif action == "default":
+                    # Set default restriction for tool
+                    if not args:
+                        await ctx.send("❌ Usage: `!restrict default <tool> <true/false>`")
+                        return
+
+                    parts = args.split()
+                    if len(parts) < 2:
+                        await ctx.send("❌ Usage: `!restrict default <tool> <true/false>`")
+                        return
+
+                    tool_name = parts[0]
+                    allowed_str = parts[1].lower()
+
+                    # Parse allowed value
+                    if allowed_str in ['true', 'yes', '1', 'allow', 'allowed']:
+                        allowed = True
+                    elif allowed_str in ['false', 'no', '0', 'deny', 'restrict', 'restricted']:
+                        allowed = False
+                    else:
+                        await ctx.send(f"❌ Invalid value: `{allowed_str}`. Use true/false, yes/no, allow/deny")
+                        return
+
+                    # Set default restriction
+                    self.kernel.agent.set_tool_restriction(tool_name, '*', allowed)
+
+                    status_text = "✅ Allowed by default" if allowed else "❌ Restricted by default"
+
+                    embed = discord.Embed(
+                        title="✅ Default Restriction Set",
+                        description=f"Default restriction for `{tool_name}` updated",
+                        color=discord.Color.green() if allowed else discord.Color.red(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    embed.add_field(name="Tool", value=f"`{tool_name}`", inline=True)
+                    embed.add_field(name="Default Status", value=status_text, inline=True)
+
+                    embed.set_footer(text="This applies to all sessions unless overridden")
+
+                    await ctx.send(embed=embed)
+
+                elif action == "reset":
+                    # Reset restrictions
+                    tool_name = args.strip() if args else None
+
+                    # Confirmation
+                    if tool_name:
+                        confirm_text = f"reset restrictions for tool `{tool_name}`"
+                    else:
+                        confirm_text = "reset **ALL** tool restrictions"
+
+                    embed = discord.Embed(
+                        title="⚠️ Confirm Reset",
+                        description=f"Are you sure you want to {confirm_text}?",
+                        color=discord.Color.orange(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    embed.set_footer(text="React with ✅ to confirm or ❌ to cancel (30s timeout)")
+
+                    msg = await ctx.send(embed=embed)
+                    await msg.add_reaction("✅")
+                    await msg.add_reaction("❌")
+
+                    # Wait for reaction
+                    def check(reaction, user):
+                        return user == ctx.author and str(reaction.emoji) in ["✅",
+                                                                              "❌"] and reaction.message.id == msg.id
+
+                    try:
+                        reaction, user = await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
+
+                        if str(reaction.emoji) == "❌":
+                            await msg.edit(embed=discord.Embed(
+                                title="❌ Reset Cancelled",
+                                color=discord.Color.red()
+                            ))
+                            await msg.clear_reactions()
+                            return
+
+                        # Perform reset
+                        self.kernel.agent.reset_tool_restrictions(tool_name)
+
+                        embed = discord.Embed(
+                            title="✅ Restrictions Reset",
+                            description=f"Successfully reset {confirm_text}",
+                            color=discord.Color.green(),
+                            timestamp=datetime.now(UTC)
+                        )
+
+                        await msg.edit(embed=embed)
+                        await msg.clear_reactions()
+
+                    except asyncio.TimeoutError:
+                        await msg.edit(embed=discord.Embed(
+                            title="⏱️ Reset Timeout",
+                            description="Confirmation timed out. Reset cancelled.",
+                            color=discord.Color.red()
+                        ))
+                        await msg.clear_reactions()
+
+                elif action == "check":
+                    # Check if tool is allowed in session
+                    if not args:
+                        await ctx.send("❌ Usage: `!restrict check <tool> <session>`")
+                        return
+
+                    parts = args.split()
+                    if len(parts) < 2:
+                        await ctx.send("❌ Usage: `!restrict check <tool> <session>`")
+                        return
+
+                    tool_name = parts[0]
+                    session_id = parts[1]
+
+                    # Check restriction
+                    is_allowed = self.kernel.agent.get_tool_restriction(tool_name, session_id)
+
+                    # Get user display name
+                    try:
+                        user = self.bot.get_user(int(session_id))
+                        display_name = f"{user.display_name} ({session_id})" if user else session_id
+                    except:
+                        display_name = session_id
+
+                    # Check what rule applies
+                    restrictions = self.kernel.agent.session_tool_restrictions.get(tool_name, {})
+
+                    if session_id in restrictions:
+                        rule = f"Specific session rule: `{session_id}`"
+                    elif '*' in restrictions:
+                        rule = "Default rule: `*`"
+                    else:
+                        rule = "No restrictions (allowed by default)"
+
+                    status_text = "✅ Allowed" if is_allowed else "❌ Restricted"
+                    color = discord.Color.green() if is_allowed else discord.Color.red()
+
+                    embed = discord.Embed(
+                        title="🔍 Restriction Check",
+                        description=f"Checking tool access for session",
+                        color=color,
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    embed.add_field(name="Tool", value=f"`{tool_name}`", inline=True)
+                    embed.add_field(name="Session", value=display_name, inline=True)
+                    embed.add_field(name="Status", value=status_text, inline=True)
+                    embed.add_field(name="Applied Rule", value=rule, inline=False)
+
+                    await ctx.send(embed=embed)
+
+                else:
+                    await ctx.send(
+                        f"❌ Unknown action: `{action}`\n\nValid actions: list, sessions, tools, set, default, reset, check")
+
+            except Exception as e:
+                await ctx.send(f"❌ Error managing restrictions: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Variables management command
+        @self.bot.command(name="vars")
+        async def vars_command(ctx: commands.Context, action: str = None, *, args: str = None):
+            """
+            Interactive variable explorer and manager (Admin only).
+
+            Usage:
+                !vars                 - Open interactive explorer
+                !vars explore [path]  - Explore specific path
+                !vars get <path>      - Get value at path
+                !vars set <path> <value> - Set value at path
+                !vars delete <path>   - Delete value at path
+                !vars search <query>  - Search for variables
+
+            Examples:
+                !vars
+                !vars explore discord
+                !vars get discord.output_mode.123456789
+                !vars set user.theme dark
+                !vars delete temp.cache
+                !vars search user
+            """
+            if not await self._check_admin_permission(ctx):
+                return
+
+            if not hasattr(self.kernel.agent, 'variable_manager'):
+                await ctx.send("❌ Variable manager not available!")
+                return
+
+            var_manager = self.kernel.agent.variable_manager
+            user_id = str(ctx.author.id)
+
+            # Default action is explore
+            if action is None:
+                action = "explore"
+
+            action = action.lower()
+
+            try:
+                if action == "explore":
+                    # Open interactive explorer
+                    start_path = args.strip() if args else ""
+
+                    view = VariableExplorerView(var_manager, user_id, start_path)
+                    embed = view.create_embed()
+
+                    await ctx.send(embed=embed, view=view)
+
+                elif action == "get":
+                    if not args:
+                        await ctx.send("❌ Usage: `!vars get <path>`")
+                        return
+
+                    path = args.strip()
+                    value = var_manager.get(path)
+
+                    if value is None:
+                        await ctx.send(f"❌ Variable not found: `{path}`")
+                        return
+
+                    # Format value
+                    try:
+                        if isinstance(value, (dict, list)):
+                            formatted = json.dumps(value, indent=2, default=str)
+                        else:
+                            formatted = str(value)
+                    except:
+                        formatted = str(value)
+
+                    # Split if too long
+                    if len(formatted) > 1900:
+                        # Send as file
+                        import io
+                        file_content = io.BytesIO(formatted.encode('utf-8'))
+                        file = discord.File(file_content, filename=f"{path.replace('.', '_')}.json")
+
+                        await ctx.send(f"📄 Value at `{path}` (sent as file):", file=file)
+                    else:
+                        embed = discord.Embed(
+                            title=f"🔍 Variable: {path}",
+                            description=f"```json\n{formatted}\n```",
+                            color=discord.Color.blue()
+                        )
+                        await ctx.send(embed=embed)
+
+                elif action == "set":
+                    if not args or ' ' not in args:
                         await ctx.send("❌ Usage: `!vars set <path> <value>`")
                         return
 
-                    # Try to parse value as JSON first
-                    import json
-                    try:
-                        parsed_value = json.loads(value)
-                    except:
-                        # If not JSON, use as string
-                        parsed_value = value
+                    # Split path and value
+                    parts = args.split(' ', 1)
+                    path = parts[0].strip()
+                    value_str = parts[1].strip()
 
-                    var_manager.set(path, parsed_value)
+                    # Try to parse value as JSON
+                    try:
+                        value = json.loads(value_str)
+                    except:
+                        value = value_str
+
+                    var_manager.set(path, value)
 
                     embed = discord.Embed(
                         title="✅ Variable Set",
-                        description=f"**Path:** `{path}`\n**Value:** `{parsed_value}`",
+                        description=f"**Path:** `{path}`\n**Value:** `{value}`",
+                        color=discord.Color.green()
+                    )
+                    await ctx.send(embed=embed)
+
+                elif action == "delete":
+                    if not args:
+                        await ctx.send("❌ Usage: `!vars delete <path>`")
+                        return
+
+                    path = args.strip()
+
+                    if var_manager.get(path) is None:
+                        await ctx.send(f"❌ Variable not found: `{path}`")
+                        return
+
+                    # Delete variable
+                    if hasattr(var_manager, 'delete'):
+                        var_manager.delete(path)
+                    else:
+                        var_manager.set(path, None)
+
+                    embed = discord.Embed(
+                        title="✅ Variable Deleted",
+                        description=f"**Path:** `{path}`",
+                        color=discord.Color.orange()
+                    )
+                    await ctx.send(embed=embed)
+
+                elif action == "search":
+                    if not args:
+                        await ctx.send("❌ Usage: `!vars search <query>`")
+                        return
+
+                    query = args.strip().lower()
+                    results = []
+
+                    # Search through all scopes
+                    def search_recursive(data, path_prefix=""):
+                        if isinstance(data, dict):
+                            for key, value in data.items():
+                                current_path = f"{path_prefix}.{key}" if path_prefix else key
+
+                                # Check if key matches
+                                if query in key.lower():
+                                    results.append((current_path, value))
+
+                                # Check if value matches (for strings)
+                                if isinstance(value, str) and query in value.lower():
+                                    results.append((current_path, value))
+
+                                # Recurse
+                                if isinstance(value, (dict, list)):
+                                    search_recursive(value, current_path)
+
+                        elif isinstance(data, list):
+                            for i, item in enumerate(data):
+                                current_path = f"{path_prefix}.{i}"
+
+                                if isinstance(item, str) and query in item.lower():
+                                    results.append((current_path, item))
+
+                                if isinstance(item, (dict, list)):
+                                    search_recursive(item, current_path)
+
+                    # Search all scopes
+                    for scope_name, scope_data in var_manager.scopes.items():
+                        search_recursive(scope_data, scope_name)
+
+                    if not results:
+                        await ctx.send(f"🔍 No results found for: `{query}`")
+                        return
+
+                    # Create result embed
+                    embed = discord.Embed(
+                        title=f"🔍 Search Results: {query}",
+                        description=f"Found {len(results)} match(es)",
+                        color=discord.Color.blue()
+                    )
+
+                    # Add results (limit to first 10)
+                    result_text = ""
+                    for path, value in results[:10]:
+                        preview = str(value)[:100]
+                        if len(str(value)) > 100:
+                            preview += "..."
+                        result_text += f"📍 `{path}`\n  └─ {preview}\n\n"
+
+                    if len(results) > 10:
+                        result_text += f"... and {len(results) - 10} more results"
+
+                    embed.add_field(name="Results", value=result_text, inline=False)
+
+                    await ctx.send(embed=embed)
+
+                else:
+                    await ctx.send(
+                        f"❌ Unknown action: `{action}`\n\nValid actions: explore, get, set, delete, search")
+
+            except Exception as e:
+                await ctx.send(f"❌ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
+        @self.bot.command(name="varsreset")
+        async def vars_reset_command(ctx: commands.Context, scope: str = None):
+            """
+            Reset variables - clear specific scope or all variables (Admin only).
+
+            Usage:
+                !varsreset              - Reset ALL variables (requires confirmation)
+                !varsreset <scope>      - Reset specific scope (requires confirmation)
+                !varsreset <scope> --force - Reset without confirmation
+
+            Examples:
+                !varsreset
+                !varsreset shared
+                !varsreset results --force
+            """
+            # Check admin permission
+            if not await self._check_admin_permission(ctx):
+                return
+
+            if not hasattr(self.kernel.agent, 'variable_manager'):
+                await ctx.send("❌ Variable manager not available!")
+                return
+
+            var_manager = self.kernel.agent.variable_manager
+            user_id = str(ctx.author.id)
+
+            # Check for --force flag
+            force = False
+            if scope and scope.endswith("--force"):
+                force = True
+                scope = scope.replace("--force", "").strip()
+
+            try:
+                # Determine what to reset
+                if scope is None:
+                    # Reset ALL variables
+                    target = "ALL VARIABLES"
+                    scopes_to_reset = list(var_manager.scopes.keys())
+                elif scope in var_manager.scopes:
+                    # Reset specific scope
+                    target = f"scope '{scope}'"
+                    scopes_to_reset = [scope]
+                else:
+                    await ctx.send(
+                        f"❌ Scope not found: `{scope}`\n\nAvailable scopes: {', '.join(var_manager.scopes.keys())}")
+                    return
+
+                # Confirmation prompt if not forced
+                if not force:
+                    embed = discord.Embed(
+                        title="⚠️ Confirm Reset",
+                        description=f"Are you sure you want to reset **{target}**?\n\nThis action cannot be undone!",
+                        color=discord.Color.orange(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    # Show what will be affected
+                    affected_info = []
+                    for scope_name in scopes_to_reset:
+                        scope_data = var_manager.scopes[scope_name]
+                        if isinstance(scope_data, dict):
+                            count = len(scope_data)
+                        elif isinstance(scope_data, list):
+                            count = len(scope_data)
+                        else:
+                            count = 1
+                        affected_info.append(f"📁 **{scope_name}**: {count} items")
+
+                    embed.add_field(
+                        name="Affected Scopes",
+                        value="\n".join(affected_info),
+                        inline=False
+                    )
+
+                    embed.set_footer(text="React with ✅ to confirm or ❌ to cancel (60s timeout)")
+
+                    msg = await ctx.send(embed=embed)
+
+                    # Add reactions
+                    await msg.add_reaction("✅")
+                    await msg.add_reaction("❌")
+
+                    # Wait for reaction
+                    def check(reaction, user):
+                        return user == ctx.author and str(reaction.emoji) in ["✅",
+                                                                              "❌"] and reaction.message.id == msg.id
+
+                    try:
+                        reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
+
+                        if str(reaction.emoji) == "❌":
+                            await msg.edit(embed=discord.Embed(
+                                title="❌ Reset Cancelled",
+                                description=f"Reset of {target} was cancelled.",
+                                color=discord.Color.red()
+                            ))
+                            await msg.clear_reactions()
+                            return
+
+                    except asyncio.TimeoutError:
+                        await msg.edit(embed=discord.Embed(
+                            title="⏱️ Reset Timeout",
+                            description="Confirmation timed out. Reset cancelled.",
+                            color=discord.Color.red()
+                        ))
+                        await msg.clear_reactions()
+                        return
+
+                # Perform the reset
+                reset_stats = {
+                    'scopes_reset': 0,
+                    'items_cleared': 0,
+                    'backup_created': False
+                }
+
+                # Create backup before reset
+                backup = {}
+                for scope_name in scopes_to_reset:
+                    backup[scope_name] = var_manager.scopes[scope_name]
+
+                # Store backup in session_archive
+                backup_key = f"reset_backup_{datetime.now().isoformat()}"
+                if 'session_archive' in var_manager.scopes:
+                    var_manager.scopes['session_archive'][backup_key] = {
+                        'type': 'reset_backup',
+                        'timestamp': datetime.now().isoformat(),
+                        'user_id': user_id,
+                        'scopes': backup
+                    }
+                    reset_stats['backup_created'] = True
+
+                # Reset the scopes
+                for scope_name in scopes_to_reset:
+                    scope_data = var_manager.scopes[scope_name]
+
+                    # Count items before clearing
+                    if isinstance(scope_data, dict):
+                        reset_stats['items_cleared'] += len(scope_data)
+                        var_manager.scopes[scope_name] = {}
+                    elif isinstance(scope_data, list):
+                        reset_stats['items_cleared'] += len(scope_data)
+                        var_manager.scopes[scope_name] = []
+                    else:
+                        reset_stats['items_cleared'] += 1
+                        var_manager.scopes[scope_name] = None
+
+                    reset_stats['scopes_reset'] += 1
+
+                # Clear cache
+                if hasattr(var_manager, '_cache'):
+                    var_manager._cache.clear()
+
+                # Success embed
+                embed = discord.Embed(
+                    title="✅ Variables Reset",
+                    description=f"Successfully reset {target}",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(UTC)
+                )
+
+                embed.add_field(
+                    name="Statistics",
+                    value=f"🗑️ Scopes reset: {reset_stats['scopes_reset']}\n"
+                          f"📦 Items cleared: {reset_stats['items_cleared']}\n"
+                          f"💾 Backup created: {'Yes' if reset_stats['backup_created'] else 'No'}",
+                    inline=False
+                )
+
+                if reset_stats['backup_created']:
+                    embed.add_field(
+                        name="Backup Info",
+                        value=f"A backup was created: `{backup_key}`\n"
+                              f"You can restore it using: `!varsrestore {backup_key}`",
+                        inline=False
+                    )
+
+                if force:
+                    await ctx.send(embed=embed)
+                else:
+                    await msg.edit(embed=embed)
+                    try:
+                        await msg.clear_reactions()
+                    except Exception as e:
+                        print(f"❌ Error clearing reactions: {e}")
+                        try:
+                            await msg.delete()
+                        except Exception as e:
+                            print(f"❌ Error clearing reactions: {e}")
+
+            except Exception as e:
+                await ctx.send(f"❌ Error resetting variables: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Whitelist management command
+        @self.bot.command(name="whitelist")
+        async def whitelist_command(ctx: commands.Context, action: str = None, *, user: str = None):
+            """
+            Manage admin whitelist (Admin only).
+
+            Usage:
+                !whitelist              - List all whitelisted users
+                !whitelist add <user>   - Add user to whitelist (username or ID)
+                !whitelist remove <user> - Remove user from whitelist
+
+            Examples:
+                !whitelist
+                !whitelist add Kinr3
+                !whitelist add 268830485889810432
+                !whitelist remove SomeUser
+            """
+            # Check admin permission
+            if not await self._check_admin_permission(ctx):
+                return
+
+            try:
+                # List action (default)
+                if action is None or action.lower() == "list":
+                    embed = discord.Embed(
+                        title="🔒 Admin Whitelist",
+                        description="Users with admin access to restricted commands",
+                        color=discord.Color.blue(),
+                        timestamp=datetime.now(UTC)
+                    )
+
+                    if self.admin_whitelist:
+                        whitelist_text = "\n".join([f"• `{user}`" for user in sorted(self.admin_whitelist)])
+                        embed.add_field(
+                            name=f"Whitelisted Users ({len(self.admin_whitelist)})",
+                            value=whitelist_text,
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name="Whitelisted Users",
+                            value="*No users in whitelist*",
+                            inline=False
+                        )
+
+                    embed.add_field(
+                        name="ℹ️ Note",
+                        value="Bot owner always has admin access, even if not in whitelist.",
+                        inline=False
+                    )
+
+                    await ctx.send(embed=embed)
+
+                # Add action
+                elif action.lower() == "add":
+                    if not user:
+                        await ctx.send("❌ Please specify a user to add.\n\nUsage: `!whitelist add <username or ID>`")
+                        return
+
+                    # Normalize to lowercase for case-insensitive comparison
+                    user_normalized = user.lower()
+
+                    if user_normalized in self.admin_whitelist:
+                        await ctx.send(f"⚠️ User `{user}` is already in the whitelist.")
+                        return
+
+                    self.admin_whitelist.add(user_normalized)
+                    print(f"🔒 [SECURITY] Added {user} to admin whitelist by {ctx.author.name}")
+
+                    embed = discord.Embed(
+                        title="✅ User Added to Whitelist",
+                        description=f"**User:** `{user}`\n\nThis user now has admin access.",
                         color=discord.Color.green(),
                         timestamp=datetime.now(UTC)
                     )
 
                     await ctx.send(embed=embed)
 
-                elif action == "delete":
-                    if not path:
-                        await ctx.send("❌ Usage: `!vars delete <path>`")
+                # Remove action
+                elif action.lower() == "remove":
+                    if not user:
+                        await ctx.send("❌ Please specify a user to remove.\n\nUsage: `!whitelist remove <username or ID>`")
                         return
 
-                    # Check if variable exists
-                    if var_manager.get(path) is None:
-                        await ctx.send(f"❌ Variable not found: `{path}`")
+                    # Normalize to lowercase
+                    user_normalized = user.lower()
+
+                    if user_normalized not in self.admin_whitelist:
+                        await ctx.send(f"⚠️ User `{user}` is not in the whitelist.")
                         return
 
-                    # Delete variable - check if delete() exists
-                    if hasattr(var_manager, 'delete'):
-                        var_manager.delete(path)
-                    elif hasattr(var_manager, 'remove'):
-                        var_manager.remove(path)
-                    else:
-                        # Fallback: set to None
-                        var_manager.set(path, None)
-                        await ctx.send(f"⚠️ Variable set to None (delete not supported): `{path}`")
-                        return
+                    self.admin_whitelist.remove(user_normalized)
+                    print(f"🔒 [SECURITY] Removed {user} from admin whitelist by {ctx.author.name}")
 
                     embed = discord.Embed(
-                        title="✅ Variable Deleted",
-                        description=f"**Path:** `{path}`",
+                        title="✅ User Removed from Whitelist",
+                        description=f"**User:** `{user}`\n\nThis user no longer has admin access.",
                         color=discord.Color.orange(),
                         timestamp=datetime.now(UTC)
                     )
@@ -2572,10 +4401,10 @@ class DiscordKernel:
                     await ctx.send(embed=embed)
 
                 else:
-                    await ctx.send(f"❌ Unknown action: `{action}`\n\nValid actions: list, get, set, delete")
+                    await ctx.send(f"❌ Unknown action: `{action}`\n\nValid actions: list, add, remove")
 
             except Exception as e:
-                await ctx.send(f"❌ Error managing variables: {e}")
+                await ctx.send(f"❌ Error managing whitelist: {e}")
                 import traceback
                 traceback.print_exc()
 
@@ -2968,6 +4797,98 @@ Use these tools to interact with Discord based on your current context!
 
         except Exception as e:
             print(f"❌ Error handling Discord message from {message.author}: {e}")
+
+    # Methode 1: Über user_channels (alle User, die Nachrichten gesendet haben)
+    async def list_all_users_with_nicknames(self):
+        """Liste alle bekannten User mit ihren Nicknames auf"""
+        users_info = []
+
+        # Durchlaufe alle user_ids in user_channels
+        for user_id in self.output_router.user_channels.keys():
+            # Hole das Discord User Objekt
+            user = self.bot.get_user(int(user_id))
+
+            if user:
+                users_info.append({
+                    'user_id': user_id,
+                    'username': user.name,
+                    'display_name': user.display_name,
+                    'discriminator': user.discriminator if hasattr(user, 'discriminator') else None
+                })
+            else:
+                # Falls User nicht im Cache ist, versuche ihn zu fetchen
+                try:
+                    user = await self.bot.fetch_user(int(user_id))
+                    users_info.append({
+                        'user_id': user_id,
+                        'username': user.name,
+                        'display_name': user.display_name,
+                        'discriminator': user.discriminator if hasattr(user, 'discriminator') else None
+                    })
+                except:
+                    users_info.append({
+                        'user_id': user_id,
+                        'username': 'Unknown',
+                        'display_name': 'Unknown'
+                    })
+
+        return users_info
+
+    # Methode 2: Kombiniere mehrere Quellen für vollständige Liste
+    async def list_all_known_sessions(self):
+        """Liste alle bekannten Sessions aus verschiedenen Quellen"""
+        all_user_ids = set()
+
+        # User aus user_channels
+        all_user_ids.update(self.output_router.user_channels.keys())
+
+        # User aus session_managers
+        if hasattr(self.kernel.agent, 'context_manager'):
+            all_user_ids.update(self.kernel.agent.context_manager.session_managers.keys())
+
+        # User aus memory_store
+        all_user_ids.update(self.kernel.memory_store.user_memories.keys())
+
+        # User aus learning_engine
+        all_user_ids.update(self.kernel.learning_engine.preferences.keys())
+
+        # Hole Nicknames für alle User
+        users_info = []
+        for user_id in all_user_ids:
+            try:
+                user_id = int(user_id)
+            except:
+                users_info.append({
+                    'user_id': user_id,
+                    'display_name': 'Unknown',
+                    'username': 'Unknown'
+                })
+
+            user = self.bot.get_user(user_id)
+            if not user:
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                except:
+                    users_info.append({
+                        'user_id': user_id,
+                        'display_name': 'Unknown',
+                        'username': 'Unknown'
+                    })
+            if not user:
+                users_info.append({
+                    'user_id': user_id,
+                    'display_name': 'Unknown',
+                    'username': 'Unknown'
+                })
+            else:
+                users_info.append({
+                    'user_id': user_id,
+                    'display_name': user.display_name,
+                    'username': user.name
+                })
+
+
+        return users_info
 
 
 # ===== MODULE REGISTRATION =====

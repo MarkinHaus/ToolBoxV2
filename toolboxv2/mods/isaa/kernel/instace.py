@@ -18,6 +18,8 @@ from pathlib import Path
 from collections import defaultdict
 import traceback
 
+from pydantic import BaseModel
+
 from toolboxv2.mods.isaa.base.Agent.agent import FlowAgent
 # Import all core interfaces from types
 from toolboxv2.mods.isaa.kernel.types import (
@@ -243,6 +245,7 @@ class Kernel(IProAKernel):
         if self.main_task:
             self.main_task.cancel()
 
+        await self.agent.close()
         self.state = KernelState.STOPPED
         print("✓ Kernel stopped")
 
@@ -372,14 +375,65 @@ class Kernel(IProAKernel):
         # Get formatting instructions from metadata (set by Discord voice input)
         formatting_instructions = signal.metadata.get("formatting_instructions", "")
 
-        # Temporarily inject formatting instructions into system prompt
+        # Get voice channel history from metadata (set by Discord voice input in group calls)
+        voice_channel_history = signal.metadata.get("voice_channel_history", "")
+
+        # Temporarily inject formatting instructions and voice history into system prompt
         original_system_message = None
-        if formatting_instructions and hasattr(self.agent, 'amd'):
+        if hasattr(self.agent, 'amd'):
             original_system_message = self.agent.amd.system_message
-            self.agent.amd.system_message = original_system_message + f"\n\n{formatting_instructions}"
+
+            # Build additional context
+            additional_context = ""
+            if formatting_instructions:
+                additional_context += f"\n\n{formatting_instructions}"
+            if voice_channel_history:
+                additional_context += f"\n\n{voice_channel_history}"
+                print(f"📋 [KERNEL] Injecting voice channel history into agent context")
+
+            if additional_context:
+                self.agent.amd.system_message = original_system_message + additional_context
 
         try:
-            # Run agent
+            # Check if fast response mode is enabled (for voice input)
+            fast_response_mode = signal.metadata.get("fast_response", False)
+
+            if fast_response_mode:
+                print(f"🚀 [KERNEL] Fast Response Mode enabled for voice input")
+
+                # PHASE 1: Single LLM call with full context for immediate response
+                print(f"🚀 [KERNEL] Phase 1: Generating immediate response...")
+                class ImmediateResponse(BaseModel):
+                    response: str
+                    needs_tools: bool
+
+                response = await self.agent.a_format_class(
+                    pydantic_model=ImmediateResponse,
+                    prompt=self.agent.amd.system_message+'\n\n Task generate an immediate response to the following USER REQUEST: '+modified_query,
+                    session_id=user_id,
+                    auto_context=True,
+                )
+
+                # Record and send immediate response
+                await self.learning_engine.record_interaction(
+                    user_id=user_id,
+                    interaction_type=InteractionType.AGENT_RESPONSE,
+                    content={"response": response.get("response"), "phase": "immediate"},
+                    outcome="success"
+                )
+
+                print(f"🚀 [KERNEL] Sending immediate response...")
+                await self.output_router.send_response(
+                    user_id=user_id,
+                    content=response.get("response"),
+                    role="assistant"
+                )
+
+                if not response.get("needs_tools"):
+                    return
+
+
+            # Normal mode: Standard agent run
             response = await self.agent.a_run(
                 query=modified_query,
                 session_id=user_id,

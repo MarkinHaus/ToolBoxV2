@@ -582,6 +582,9 @@ class AgentCheckpoint:
     tool_capabilities: dict[str, Any] = field(default_factory=dict)
     variable_scopes: dict[str, Any] = field(default_factory=dict)
 
+    # Session-restricted tools map: {tool_name: {session_id: allowed (bool), '*': default_allowed (bool)}}
+    session_tool_restrictions: dict[str, dict[str, bool]] = field(default_factory=dict)
+
     # Optional: Additional system state
     performance_metrics: dict[str, Any] = field(default_factory=dict)
     execution_history: list[dict[str, Any]] = field(default_factory=list)

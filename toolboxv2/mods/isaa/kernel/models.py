@@ -151,6 +151,7 @@ class LearningEngine:
 
         # Limit records
         if len(self.records) > self.max_records:
+            self.records = list(filter(lambda x: x.get(feedback_score) is not None, self.records))
             self.records = self.records[-self.max_records:]
 
         # Trigger learning if enough data

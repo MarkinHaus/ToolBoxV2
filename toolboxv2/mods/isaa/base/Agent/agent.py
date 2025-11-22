@@ -2605,6 +2605,7 @@ class LLMToolNode(AsyncNode):
         initial_prompt = await self._build_context_aware_prompt(prep_res)
         conversation_history.append({"role": "user", "content":  prep_res["variable_manager"].format_text(initial_prompt)})
         runs = 0
+        all_tool_results = {}
         while tool_call_count < self.max_tool_calls:
             runs += 1
             # Get LLM response
@@ -2655,6 +2656,7 @@ class LLMToolNode(AsyncNode):
 
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
+                all_tool_results[str(runs)] = tool_results_text
                 final_response = tool_results_text
                 next_prompt = f"""Tool results have been processed:
                 {tool_results_text}
@@ -2699,6 +2701,7 @@ class LLMToolNode(AsyncNode):
             "tool_calls_made": tool_call_count,
             "conversation_history": conversation_history,
             "model_used": model_to_use,
+            "tool_results": all_tool_results,
             "llm_statistics": {
                 "total_calls": total_llm_calls,
                 "total_cost": total_cost,
@@ -3166,6 +3169,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                                           "confidence": (0.7 if exec_res.get("model_used") == prep_res.get("complex_llm_model") else 0.6) if exec_res.get("success", False) else 0,
                                           "metadata": exec_res.get("metadata", {"model_used": exec_res.get("model_used")}),
                                           "synthesis_method": "llm_tool"}
+        shared["results"] = exec_res.get("tool_results", [])
         return "llm_tool_complete"
 
 @with_progress_tracking
@@ -9053,6 +9057,10 @@ class FlowAgent:
         # Tool analysis file path
         self.tool_analysis_file = self._get_tool_analysis_path()
 
+        # Session-restricted tools: {tool_name: {session_id: allowed (bool), '*': default_allowed (bool)}}
+        # All tools start as allowed (True) by default via '*' key
+        self.session_tool_restrictions = {}
+
         # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
         self.llm_rate_limiter = LLMRateLimiter(
             max_requests_per_minute=kwargs.get('max_llm_rpm', 60),
@@ -10246,7 +10254,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 variable_scopes=cleaned_variable_scopes,
                 results_store=self.shared.get("results", {}),
                 conversation_history=self.shared.get("conversation_history", [])[-100:],
-                tool_capabilities=self._tool_capabilities.copy()
+                tool_capabilities=self._tool_capabilities.copy(),
+                session_tool_restrictions=self.session_tool_restrictions.copy()
             )
 
             rprint(
@@ -10481,6 +10490,12 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 7. Tool Capabilities wiederherstellen
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
+
+            # 8. Session Tool Restrictions wiederherstellen
+            if hasattr(checkpoint, 'session_tool_restrictions') and checkpoint.session_tool_restrictions:
+                self.session_tool_restrictions = checkpoint.session_tool_restrictions.copy()
+                restore_stats["tool_restrictions_restored"] = len(checkpoint.session_tool_restrictions)
+                rprint(f"Tool restrictions wiederhergestellt: {len(checkpoint.session_tool_restrictions)} Tools mit Restrictions")
 
             self.shared["system_status"] = "restored"
             restore_stats["restoration_timestamp"] = datetime.now().isoformat()
@@ -11056,12 +11071,114 @@ tool_complexity: low/medium/high
         """Get tool function by name"""
         return self._tool_registry.get(tool_name, {}).get("function")
 
+    # ===== SESSION TOOL RESTRICTIONS =====
+
+    def _is_tool_allowed_in_session(self, tool_name: str, session_id: str) -> bool:
+        """
+        Check if a tool is allowed in a specific session.
+
+        Logic:
+        1. If tool not in restrictions map -> allowed (default True)
+        2. If tool in map, check session_id key -> use that value
+        3. If session_id not in tool's map, use '*' default value
+        4. If '*' not set, default to True (allow)
+
+        Args:
+            tool_name: Name of the tool
+            session_id: Session ID to check
+
+        Returns:
+            bool: True if tool is allowed, False if restricted
+        """
+        if tool_name not in self.session_tool_restrictions:
+            # Tool not in restrictions -> allowed by default
+            return True
+
+        tool_restrictions = self.session_tool_restrictions[tool_name]
+
+        # Check specific session restriction
+        if session_id in tool_restrictions:
+            return tool_restrictions[session_id]
+
+        # Fall back to default '*' value
+        return tool_restrictions.get('*', True)
+
+    def set_tool_restriction(self, tool_name: str, session_id: str = '*', allowed: bool = True):
+        """
+        Set tool restriction for a specific session or as default.
+
+        Args:
+            tool_name: Name of the tool to restrict
+            session_id: Session ID to restrict (use '*' for default)
+            allowed: True to allow, False to restrict
+
+        Examples:
+            # Restrict tool in specific session
+            agent.set_tool_restriction('dangerous_tool', 'session_123', allowed=False)
+
+            # Set default to restricted, but allow in specific session
+            agent.set_tool_restriction('admin_tool', '*', allowed=False)
+            agent.set_tool_restriction('admin_tool', 'admin_session', allowed=True)
+        """
+        if tool_name not in self.session_tool_restrictions:
+            self.session_tool_restrictions[tool_name] = {}
+
+        self.session_tool_restrictions[tool_name][session_id] = allowed
+        rprint(f"Tool restriction set: {tool_name} in session '{session_id}' -> {'allowed' if allowed else 'restricted'}")
+
+    def get_tool_restriction(self, tool_name: str, session_id: str = '*') -> bool:
+        """
+        Get tool restriction status for a session.
+
+        Args:
+            tool_name: Name of the tool
+            session_id: Session ID (use '*' for default)
+
+        Returns:
+            bool: True if allowed, False if restricted
+        """
+        return self._is_tool_allowed_in_session(tool_name, session_id)
+
+    def reset_tool_restrictions(self, tool_name: str = None):
+        """
+        Reset tool restrictions. If tool_name is None, reset all restrictions.
+
+        Args:
+            tool_name: Specific tool to reset, or None for all tools
+        """
+        if tool_name is None:
+            self.session_tool_restrictions.clear()
+            rprint("All tool restrictions cleared")
+        elif tool_name in self.session_tool_restrictions:
+            del self.session_tool_restrictions[tool_name]
+            rprint(f"Tool restrictions cleared for: {tool_name}")
+
+    def list_tool_restrictions(self) -> dict[str, dict[str, bool]]:
+        """
+        Get all current tool restrictions.
+
+        Returns:
+            dict: Copy of session_tool_restrictions map
+        """
+        return self.session_tool_restrictions.copy()
+
+    # ===== TOOL EXECUTION =====
+
     async def arun_function(self, function_name: str, *args, **kwargs) -> Any:
         """
         Asynchronously finds a function by its string name, executes it with
         the given arguments, and returns the result.
         """
         rprint(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
+
+        # Check session-based tool restrictions
+        if self.active_session:
+            if not self._is_tool_allowed_in_session(function_name, self.active_session):
+                raise PermissionError(
+                    f"Tool '{function_name}' is restricted in session '{self.active_session}'. "
+                    f"Use set_tool_restriction() to allow it."
+                )
+
         target_function = self.get_tool_by_name(function_name)
 
         start_time = time.perf_counter()
