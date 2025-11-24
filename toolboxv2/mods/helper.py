@@ -71,8 +71,7 @@ def create_user(app: App, username: str, email: str):
                          get_results=True,
                          username=username,
                          email=email,
-                         invitation=invitation_res.get(),
-                         create=True)
+                         invitation=invitation_res.get())
 
     if result.is_ok():
         print(f"✅ User '{username}' created successfully.")

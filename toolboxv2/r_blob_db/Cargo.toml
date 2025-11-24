@@ -25,3 +25,11 @@ reed-solomon-erasure = { version = "6.0", features = ["simd-accel"] }
 tracing = "0.1.4"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "time"] }
 tokio-util = { version = "0.7.15", features = ["io"] }
+
+dashmap = { version = "5", features = ["serde"] } # Thread-safe Map für Indizes
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.11", features = ["json"] } # Um Shards zu senden
+bytes = "1"
+headers = "0.4"
+base64 = "0.21"
+notify = "6.1" #

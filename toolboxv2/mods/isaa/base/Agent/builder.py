@@ -1416,6 +1416,7 @@ class FlowAgentBuilder:
                     res = await agent.load_latest_checkpoint(auto_restore_history=True, max_age_hours=self.config.checkpoint.max_age_hours)
                     info_print(f"loading completed {res}")
 
+                await agent.voting_as_tool()
                 # Final summary
                 iprint("ok FlowAgent built successfully!")
                 iprint(f"   Agent: {agent.amd.name}")

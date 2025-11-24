@@ -1,5 +1,8 @@
 # Assumed to be in a file like: toolboxv2/utils/db/mini_db.py
 
+import os
+import pickle
+
 from toolboxv2 import Result
 from toolboxv2.mods.DB.types import AuthenticationTypes
 
@@ -154,11 +157,28 @@ class BlobDB:
         If the key contains wildcards, loads all matching blob files.
         """
         if key.endswith('*'):
-            # For wildcard searches, we need to scan and load relevant files
-            # This is a simplified approach - in production you might want to maintain an index
+            # For wildcard searches, scan blob storage and load matching files
             prefix = key.replace('*', '')
-            # For now, we'll rely on the in-memory cache
-            # A more sophisticated approach would scan blob storage
+
+            # First, check if we already have matching keys in memory
+            matching_keys_in_memory = [k for k in self.data.keys() if k.startswith(prefix)]
+
+            # Scan blob storage for matching files
+            matching_blob_paths = self._scan_blob_storage_for_prefix(prefix)
+
+            # Load each matching blob file that isn't already fully loaded
+            for blob_path in matching_blob_paths:
+                # Check if this blob file's data is already in memory
+                # by checking if any key from this blob file is missing
+                blob_data = self._load_blob_file(blob_path)
+
+                # Only merge if we found new data
+                if blob_data:
+                    # Check if any keys from this blob are not in memory
+                    new_keys = [k for k in blob_data.keys() if k not in self.data]
+                    if new_keys:
+                        self.data.update(blob_data)
+
             return
 
         # Check if key is already in memory
@@ -171,6 +191,129 @@ class BlobDB:
 
         # Merge loaded data into memory
         self.data.update(blob_data)
+
+    def _scan_blob_storage_for_prefix(self, prefix: str) -> list[str]:
+        """
+        Scans the blob storage directory for files matching the given prefix.
+        Returns a list of blob file paths that match the prefix pattern.
+
+        Args:
+            prefix (str): The key prefix to search for (e.g., "USER::alice")
+
+        Returns:
+            list[str]: List of matching blob file paths
+        """
+        if not self.storage_client or not hasattr(self.storage_client, 'storage_directory'):
+            # If storage client doesn't have a storage_directory, we can't scan
+            return []
+
+        matching_paths = []
+        storage_dir = self.storage_client.storage_directory
+
+        # Convert prefix to path pattern
+        # e.g., "USER::alice" -> "USER/alice"
+        prefix_path = prefix.replace('::', '/').strip('/').strip(':').strip('/')
+
+        # Build the expected directory path
+        search_base = os.path.join(self.db_path, prefix_path) if prefix_path else self.db_path
+
+        try:
+            # Walk through the storage directory looking for matching blob files
+            if os.path.exists(storage_dir):
+                for root, dirs, files in os.walk(storage_dir):
+                    for file in files:
+                        if file.endswith('.blobcache'):
+                            # Extract blob_id from filename
+                            blob_id = file.replace('.blobcache', '')
+
+                            # Try to reconstruct what this blob might contain
+                            # by checking if it matches our db_path pattern
+                            # This is a heuristic approach - we load and check the content
+                            cache_file = os.path.join(root, file)
+
+                            # Read the blob to check if it contains keys with our prefix
+                            try:
+                                with open(cache_file, 'rb') as f:
+                                    blob_content = pickle.loads(f.read())
+
+                                    # Check if this blob contains data for our prefix
+                                    # The blob structure is nested: blob_id -> folder -> file -> data
+                                    # We need to check if any keys in the stored JSON match our prefix
+                                    if self._blob_contains_prefix(blob_id, prefix, blob_content):
+                                        # Construct the blob path that would be used to load this
+                                        # We need to find the actual path within our db structure
+                                        potential_paths = self._extract_blob_paths_from_content(blob_id, prefix, blob_content)
+                                        matching_paths.extend(potential_paths)
+                            except Exception as e:
+                                # Skip blobs we can't read
+                                print(f"Warning: Could not scan blob cache file '{cache_file}': {e}")
+                                continue
+        except Exception as e:
+            print(f"Warning: Error scanning blob storage directory: {e}")
+
+        return list(set(matching_paths))  # Remove duplicates
+
+    def _blob_contains_prefix(self, blob_id: str, prefix: str, blob_content: dict) -> bool:
+        """
+        Checks if a blob contains any keys matching the given prefix.
+
+        Args:
+            blob_id (str): The blob identifier
+            prefix (str): The key prefix to search for
+            blob_content (dict): The deserialized blob content
+
+        Returns:
+            bool: True if the blob contains matching keys
+        """
+        # The blob content structure is: {folder: {file: data}}
+        # We need to check if any stored keys match our prefix
+        for folder, files in blob_content.items():
+            if isinstance(files, dict):
+                for file, data in files.items():
+                    # Reconstruct the potential blob path
+                    potential_path = f"{self.db_path}/{folder}/{file}"
+
+                    # Check if this path could contain keys with our prefix
+                    if prefix in potential_path or potential_path.startswith(self.db_path):
+                        return True
+        return False
+
+    def _extract_blob_paths_from_content(self, blob_id: str, prefix: str, blob_content: dict) -> list[str]:
+        """
+        Extracts blob file paths from blob content that match the prefix.
+
+        Args:
+            blob_id (str): The blob identifier
+            prefix (str): The key prefix to search for
+            blob_content (dict): The deserialized blob content
+
+        Returns:
+            list[str]: List of blob paths that might contain matching keys
+        """
+        paths = []
+        prefix_path = prefix.replace('::', '/').strip('/').strip(':').strip('/')
+
+        for folder, files in blob_content.items():
+            if isinstance(files, dict):
+                for file, data in files.items():
+                    # Reconstruct the blob path
+                    if file.endswith('.json'):
+                        file_without_ext = file[:-5]  # Remove .json
+                    else:
+                        file_without_ext = file
+
+                    # Build the full path
+                    if folder:
+                        full_path = f"{self.db_path}/{folder}/{file_without_ext}.json"
+                    else:
+                        full_path = f"{self.db_path}/{file_without_ext}.json"
+
+                    # Check if this path matches our prefix
+                    path_key = full_path.replace(f"{self.db_path}/", "").replace(".json", "").replace("/", "::")
+                    if path_key.startswith(prefix):
+                        paths.append(full_path)
+
+        return paths
 
     def get(self, key: str) -> Result:
         data = []

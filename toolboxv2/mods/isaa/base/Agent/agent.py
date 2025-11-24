@@ -8976,6 +8976,78 @@ class UnifiedContextManager:
             eprint(f"Error cleaning up old sessions: {e}")
             return 0
 
+# ===== VOTING ======
+
+import os
+import asyncio
+from typing import Any, Literal, Optional
+from pydantic import BaseModel, Field
+from enum import Enum
+
+
+# ===== PYDANTIC MODELS FOR STRUCTURED VOTING =====
+
+class VotingMode(str, Enum):
+    """Voting mode types"""
+    SIMPLE = "simple"
+    ADVANCED = "advanced"
+    UNSTRUCTURED = "unstructured"
+
+
+class VotingStrategy(str, Enum):
+    """Strategy for advanced voting"""
+    BEST = "best"
+    VOTE = "vote"
+    RECOMBINE = "recombine"
+
+
+class SimpleVoteResult(BaseModel):
+    """Result of a simple vote"""
+    option: str = Field(description="The voted option")
+    reasoning: Optional[str] = Field(default=None, description="Optional reasoning for the vote")
+
+
+class ThinkingResult(BaseModel):
+    """Result from a thinking/analysis phase"""
+    analysis: str = Field(description="The analysis or thinking result")
+    key_points: list[str] = Field(description="Key points extracted")
+    quality_score: float = Field(description="Self-assessed quality score 0-1", ge=0, le=1)
+
+
+class OrganizedData(BaseModel):
+    """Organized structure from unstructured data"""
+    structure: dict[str, Any] = Field(description="The organized data structure")
+    categories: list[str] = Field(description="Identified categories")
+    parts: list[dict[str, str]] = Field(description="Individual parts with id and content")
+    quality_score: float = Field(description="Organization quality 0-1", ge=0, le=1)
+
+
+class VoteSelection(BaseModel):
+    """Selection of best item from voting"""
+    selected_id: str = Field(description="ID of selected item")
+    reasoning: str = Field(description="Why this item was selected")
+    confidence: float = Field(description="Confidence in selection 0-1", ge=0, le=1)
+
+
+class FinalConstruction(BaseModel):
+    """Final constructed output"""
+    output: str = Field(description="The final constructed output")
+    sources_used: list[str] = Field(description="IDs of sources used in construction")
+    synthesis_notes: str = Field(description="How sources were synthesized")
+
+
+class VotingResult(BaseModel):
+    """Complete voting result"""
+    mode: VotingMode
+    winner: str
+    votes: int
+    margin: int
+    k_margin: int
+    total_votes: int
+    reached_k_margin: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    cost_info: dict[str, float] = Field(default_factory=dict)
+
 # ===== MAIN AGENT CLASS =====
 class FlowAgent:
     """Production-ready agent system built on PocketFlow """
@@ -11727,6 +11799,575 @@ Respond in YAML format only:
             if health["state"] != "OPEN":
                 health["state"] = "OPEN"
                 eprint(f"MCP Circuit Breaker for {server_name}: OPENED after {health['failures']} failures")
+
+    # ===== VOTING METHOD FOR FLOWAGENT =====
+
+    async def voting_as_tool(self):
+
+        if "voting" in self._tool_registry:
+            return
+
+        async def a_voting(**kwargs):
+            return await self.a_voting(session_id=self.active_session, **kwargs)
+
+        await self.add_tool(
+            a_voting,
+            "voting",
+            description="""Advanced AI voting system with First-to-ahead-by-k algorithm.
+Modes:
+- simple: Vote on predefined options with multiple voters
+- advanced: Thinkers analyze, then best/vote/recombine strategies
+- unstructured: Organize data, vote on parts/structures, optional final construction
+
+Args:
+    mode: Voting mode (simple/advanced/unstructured)
+    prompt: Main prompt/question for voting
+    options: List of options (simple mode)
+    k_margin: Required vote margin to declare winner
+    num_voters: Number of voters (simple mode)
+    votes_per_voter: Votes each voter can cast (simple mode)
+    num_thinkers: Number of thinkers (advanced mode)
+    strategy: Strategy for advanced mode (best/vote/recombine)
+    num_organizers: Number of organizers (unstructured mode)
+    vote_on_parts: Vote on parts vs structures (unstructured mode)
+    final_construction: Create final output (unstructured mode)
+    unstructured_data: Raw data to organize (unstructured mode)
+    complex_data: Use complex model for thinking/organizing phases
+    task_id: Task identifier for tracking
+
+Returns:
+    dict: Voting results with winner, votes, margin, and cost info"""
+        )
+
+    async def a_voting(
+        self,
+        mode: Literal["simple", "advanced", "unstructured"] = "simple",
+        prompt: str = None,
+        options: list[str] = None,
+        k_margin: int = 2,
+        num_voters: int = 5,
+        votes_per_voter: int = 1,
+        num_thinkers: int = 3,
+        strategy: Literal["best", "vote", "recombine"] = "best",
+        num_organizers: int = 2,
+        vote_on_parts: bool = True,
+        final_construction: bool = True,
+        unstructured_data: str = None,
+        complex_data: bool = False,
+        task_id: str = "voting_task",
+        session_id: str = None,
+        **kwargs
+    ) -> dict[str, Any]:
+        """
+        Advanced AI voting system with First-to-ahead-by-k algorithm.
+
+        Modes:
+        - simple: Vote on predefined options with multiple voters
+        - advanced: Thinkers analyze, then best/vote/recombine strategies
+        - unstructured: Organize data, vote on parts/structures, optional final construction
+
+        Args:
+            mode: Voting mode (simple/advanced/unstructured)
+            prompt: Main prompt/question for voting
+            options: List of options (simple mode)
+            k_margin: Required vote margin to declare winner
+            num_voters: Number of voters (simple mode)
+            votes_per_voter: Votes each voter can cast (simple mode)
+            num_thinkers: Number of thinkers (advanced mode)
+            strategy: Strategy for advanced mode (best/vote/recombine)
+            num_organizers: Number of organizers (unstructured mode)
+            vote_on_parts: Vote on parts vs structures (unstructured mode)
+            final_construction: Create final output (unstructured mode)
+            unstructured_data: Raw data to organize (unstructured mode)
+            complex_data: Use complex model for thinking/organizing phases
+            task_id: Task identifier for tracking
+            session_id: Session ID
+            **kwargs: Additional arguments
+
+        Returns:
+            dict: Voting results with winner, votes, margin, and cost info
+
+        Example:
+            # Simple voting
+            result = await agent.a_voting(
+                mode="simple",
+                prompt="Which approach is best?",
+                options=["Approach A", "Approach B", "Approach C"],
+                k_margin=2,
+                num_voters=5
+            )
+
+            # Advanced with thinking
+            result = await agent.a_voting(
+                mode="advanced",
+                prompt="Analyze the problem and propose solutions",
+                num_thinkers=3,
+                strategy="recombine",
+                complex_data=True
+            )
+        """
+
+        # Get voting model from env or use fast model
+        voting_model = os.getenv("VOTING_MODEL")
+
+        # Track costs
+        start_tokens_in = self.total_tokens_in
+        start_tokens_out = self.total_tokens_out
+        start_cost = self.total_cost_accumulated
+
+        try:
+            if mode == "simple":
+                result = await self._voting_simple(
+                    prompt, options, k_margin, num_voters, votes_per_voter,
+                    session_id, voting_model, **kwargs
+                )
+            elif mode == "advanced":
+                result = await self._voting_advanced(
+                    prompt, num_thinkers, strategy, k_margin, complex_data,
+                    task_id, session_id, voting_model, **kwargs
+                )
+            elif mode == "unstructured":
+                result = await self._voting_unstructured(
+                    prompt, unstructured_data, num_organizers, k_margin,
+                    vote_on_parts, final_construction, complex_data,
+                    task_id, session_id, voting_model, **kwargs
+                )
+            else:
+                raise ValueError(f"Invalid mode: {mode}. Use 'simple', 'advanced', or 'unstructured'")
+
+            # Add cost information
+            result["cost_info"] = {
+                "tokens_in": self.total_tokens_in - start_tokens_in,
+                "tokens_out": self.total_tokens_out - start_tokens_out,
+                "cost": self.total_cost_accumulated - start_cost
+            }
+
+            if self.verbose:
+                print(f"[Voting] Mode: {mode}, Winner: {result['winner']}, "
+                      f"Cost: ${result['cost_info']['cost']:.4f}")
+
+            return result
+
+        except Exception as e:
+            print(f"[Voting Error] {e}")
+            raise
+
+    async def _voting_simple(
+        self,
+        prompt: str,
+        options: list[str],
+        k_margin: int,
+        num_voters: int,
+        votes_per_voter: int,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Simple voting: Multiple voters vote on predefined options"""
+
+        if not options or len(options) < 2:
+            raise ValueError("Simple voting requires at least 2 options")
+
+        if not prompt:
+            prompt = "Select the best option from the given choices."
+
+        votes = []
+        vote_details = []
+
+        # Collect votes from all voters
+        for voter_id in range(num_voters):
+            for vote_num in range(votes_per_voter):
+                voting_prompt = f"""{prompt}
+
+    Options:
+    {chr(10).join(f"{i + 1}. {opt}" for i, opt in enumerate(options))}
+
+    Select the best option and explain your reasoning briefly."""
+
+                # Use a_format_class for structured voting
+                vote_result = await self.a_format_class(
+                    pydantic_model=SimpleVoteResult,
+                    prompt=voting_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+
+                votes.append(vote_result["option"])
+                vote_details.append({
+                    "voter": voter_id,
+                    "vote_num": vote_num,
+                    "option": vote_result["option"],
+                    "reasoning": vote_result.get("reasoning", "")
+                })
+
+        # Apply First-to-ahead-by-k algorithm
+        result = self._first_to_ahead_by_k(votes, k_margin)
+
+        return {
+            "mode": "simple",
+            "winner": result["winner"],
+            "votes": result["votes"],
+            "margin": result["margin"],
+            "k_margin": k_margin,
+            "total_votes": result["total_votes"],
+            "reached_k_margin": result["margin"] >= k_margin,
+            "details": {
+                "options": options,
+                "vote_details": vote_details,
+                "vote_history": result["history"]
+            }
+        }
+
+    async def _voting_advanced(
+        self,
+        prompt: str,
+        num_thinkers: int,
+        strategy: str,
+        k_margin: int,
+        complex_data: bool,
+        task_id: str,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Advanced voting: Thinkers analyze, then apply strategy"""
+
+        if not prompt:
+            raise ValueError("Advanced voting requires a prompt")
+
+        # Phase 1: Thinkers analyze the problem
+        thinker_results = []
+        model_pref = "complex" if complex_data else "fast"
+
+        thinking_tasks = []
+        for i in range(num_thinkers):
+            thinking_prompt = f"""You are Thinker #{i + 1} of {num_thinkers}.
+
+    {prompt}
+
+    Provide a thorough analysis with key points and assess your confidence (0-1)."""
+
+            task = self.a_format_class(
+                pydantic_model=ThinkingResult,
+                prompt=thinking_prompt,
+                max_retries=2,
+                auto_context=False,
+                session_id=session_id,
+                model_preference=model_pref,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                **kwargs
+            )
+            thinking_tasks.append(task)
+
+        # Execute all thinking in parallel
+        thinker_results = await asyncio.gather(*thinking_tasks)
+
+        # Phase 2: Apply strategy
+        if strategy == "best":
+            # Select best by quality score
+            best = max(thinker_results, key=lambda x: x["quality_score"])
+            winner_id = f"Thinker-{thinker_results.index(best) + 1}"
+
+            return {
+                "mode": "advanced",
+                "winner": winner_id,
+                "votes": 1,
+                "margin": 1,
+                "k_margin": k_margin,
+                "total_votes": 1,
+                "reached_k_margin": True,
+                "details": {
+                    "strategy": "best",
+                    "thinker_results": thinker_results,
+                    "best_result": best
+                }
+            }
+
+        elif strategy == "vote":
+            # Vote on thinker results using fast model
+            votes = []
+            for _ in range(num_thinkers * 2):  # Each thinker result gets multiple votes
+
+                vote_prompt = f"""Evaluate these analysis results and select the best one:
+
+    {chr(10).join(f"Thinker-{i + 1}: {r['analysis'][:200]}..." for i, r in enumerate(thinker_results))}
+
+    Select the ID of the best analysis."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+
+                votes.append(vote["selected_id"])
+
+            result = self._first_to_ahead_by_k(votes, k_margin)
+
+            return {
+                "mode": "advanced",
+                "winner": result["winner"],
+                "votes": result["votes"],
+                "margin": result["margin"],
+                "k_margin": k_margin,
+                "total_votes": result["total_votes"],
+                "reached_k_margin": result["margin"] >= k_margin,
+                "details": {
+                    "strategy": "vote",
+                    "thinker_results": thinker_results,
+                    "vote_history": result["history"]
+                }
+            }
+
+        elif strategy == "recombine":
+            # Recombine best results - use fast model for synthesis
+            top_n = max(2, num_thinkers // 2)
+            top_results = sorted(thinker_results, key=lambda x: x["quality_score"], reverse=True)[:top_n]
+
+            recombine_prompt = f"""Synthesize these analyses into a superior solution:
+
+    {chr(10).join(f"Analysis {i + 1}:{chr(10)}{r['analysis']}{chr(10)}" for i, r in enumerate(top_results))}
+
+    Create a final synthesis that combines the best insights."""
+
+            # Use a_run_llm_completion for final natural language output
+            final_output = await self.a_run_llm_completion(
+                node_name="VotingRecombine",
+                task_id=task_id,
+                model_preference="fast",
+                with_context=False,
+                auto_fallbacks=True,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                messages=[{"role": "user", "content": recombine_prompt}],
+                session_id=session_id,
+                **kwargs
+            )
+
+            return {
+                "mode": "advanced",
+                "winner": "recombined",
+                "votes": len(top_results),
+                "margin": len(top_results),
+                "k_margin": k_margin,
+                "total_votes": len(top_results),
+                "reached_k_margin": True,
+                "details": {
+                    "strategy": "recombine",
+                    "thinker_results": thinker_results,
+                    "top_results_used": top_results,
+                    "final_synthesis": final_output
+                }
+            }
+
+        else:
+            raise ValueError(f"Invalid strategy: {strategy}")
+
+    async def _voting_unstructured(
+        self,
+        prompt: str,
+        unstructured_data: str,
+        num_organizers: int,
+        k_margin: int,
+        vote_on_parts: bool,
+        final_construction: bool,
+        complex_data: bool,
+        task_id: str,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Unstructured voting: Organize data, vote, optionally construct final output"""
+
+        if not unstructured_data:
+            raise ValueError("Unstructured voting requires data")
+
+        # Phase 1: Organizers structure the data
+        model_pref = "complex" if complex_data else "fast"
+
+        organize_tasks = []
+        for i in range(num_organizers):
+            organize_prompt = f"""You are Organizer #{i + 1} of {num_organizers}.
+
+    {prompt if prompt else 'Organize the following unstructured data into a meaningful structure:'}
+
+    Data:
+    {unstructured_data}
+
+    Create a structured organization with categories and parts."""
+
+            task = self.a_format_class(
+                pydantic_model=OrganizedData,
+                prompt=organize_prompt,
+                max_retries=2,
+                auto_context=False,
+                session_id=session_id,
+                model_preference=model_pref,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                **kwargs
+            )
+            organize_tasks.append(task)
+
+        organized_versions = await asyncio.gather(*organize_tasks)
+
+        # Phase 2: Vote on parts or structures
+        votes = []
+
+        if vote_on_parts:
+            # Collect all parts from all organizers
+            all_parts = []
+            for org_id, org in enumerate(organized_versions):
+                for part in org["parts"]:
+                    all_parts.append(f"Org{org_id + 1}-Part{part['id']}")
+
+            # Vote on best parts using fast model
+            for _ in range(len(all_parts)):
+                vote_prompt = f"""Select the best organized part:
+
+    {chr(10).join(f"{i + 1}. {part}" for i, part in enumerate(all_parts))}
+
+    Select the ID of the best part."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+                votes.append(vote["selected_id"])
+        else:
+            # Vote on complete structures
+            structure_ids = [f"Structure-Org{i + 1}" for i in range(num_organizers)]
+
+            for _ in range(num_organizers * 2):
+                vote_prompt = f"""Evaluate these organizational structures:
+
+    {chr(10).join(f"{sid}: Quality {org['quality_score']:.2f}" for sid, org in zip(structure_ids, organized_versions))}
+
+    Select the best structure ID."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+                votes.append(vote["selected_id"])
+
+        vote_result = self._first_to_ahead_by_k(votes, k_margin)
+
+        # Phase 3: Optional final construction
+        final_output = None
+        if final_construction:
+            # Use fast model for final construction
+            construct_prompt = f"""Create a final polished output based on the winning selection:
+
+    Winner: {vote_result['winner']}
+    Context: {vote_on_parts and 'individual parts' or 'complete structures'}
+
+    Synthesize the best elements into a coherent final result."""
+
+            # Use a_run_llm_completion for natural language final output
+            final_text = await self.a_run_llm_completion(
+                node_name="VotingConstruct",
+                task_id=task_id,
+                model_preference="fast",
+                with_context=False,
+                auto_fallbacks=True,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                messages=[{"role": "user", "content": construct_prompt}],
+                session_id=session_id,
+                **kwargs
+            )
+
+            final_output = {
+                "output": final_text,
+                "winner_used": vote_result["winner"],
+                "vote_on_parts": vote_on_parts
+            }
+
+        return {
+            "mode": "unstructured",
+            "winner": vote_result["winner"],
+            "votes": vote_result["votes"],
+            "margin": vote_result["margin"],
+            "k_margin": k_margin,
+            "total_votes": vote_result["total_votes"],
+            "reached_k_margin": vote_result["margin"] >= k_margin,
+            "details": {
+                "organized_versions": organized_versions,
+                "vote_on_parts": vote_on_parts,
+                "vote_history": vote_result["history"],
+                "final_construction": final_output
+            }
+        }
+
+    def _first_to_ahead_by_k(self, votes: list[str], k: int) -> dict[str, Any]:
+        """
+        First-to-ahead-by-k algorithm implementation.
+
+        Returns winner when one option has k more votes than the next best.
+        Based on: P(correct) = 1 / (1 + ((1-p)/p)^k)
+        """
+        counts = {}
+        history = []
+
+        for vote in votes:
+            counts[vote] = counts.get(vote, 0) + 1
+            history.append(dict(counts))
+
+            # Check if any option is k ahead
+            if len(counts) >= 2:
+                sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+                first, second = sorted_counts[0], sorted_counts[1]
+
+                if first[1] - second[1] >= k:
+                    return {
+                        "winner": first[0],
+                        "votes": first[1],
+                        "margin": first[1] - second[1],
+                        "history": history,
+                        "total_votes": len(votes)
+                    }
+            elif len(counts) == 1:
+                only_option = list(counts.items())[0]
+                if only_option[1] >= k:
+                    return {
+                        "winner": only_option[0],
+                        "votes": only_option[1],
+                        "margin": only_option[1],
+                        "history": history,
+                        "total_votes": len(votes)
+                    }
+
+        # Fallback: return most voted (k-margin not reached)
+        if counts:
+            winner = max(counts.items(), key=lambda x: x[1])
+            return {
+                "winner": winner[0],
+                "votes": winner[1],
+                "margin": 0,
+                "history": history,
+                "total_votes": len(votes)
+            }
+
+        raise ValueError("No votes collected")
 
     @property
     def total_cost(self) -> float:

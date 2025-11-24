@@ -45,6 +45,16 @@ except ImportError:
     print(Style.YELLOW("Please install them using: pip install psutil requests"))
     sys.exit(1)
 
+# Import encryption utilities for API key storage
+try:
+    from toolboxv2.utils.security.cryp import Code, DEVICE_KEY
+except ImportError:
+    try:
+        from toolboxv2.security.cryp import Code, DEVICE_KEY
+    except ImportError:
+        print(Style.RED("FATAL: Encryption utilities not found."))
+        sys.exit(1)
+
 # Default configuration file name
 CLUSTER_CONFIG_FILE = "cluster_config.json"
 # The base name of the Rust executable
@@ -80,6 +90,8 @@ class DBInstanceManager:
         self.data_dir = Path(config['data_dir'])
         self.state_file = self.data_dir / "instance_state.json"
         self.log_file = self.data_dir / "instance.log"
+        self.api_key_file = self.data_dir / "api_key.enc"
+        self._api_key = None
 
     def read_state(self) -> tuple[int | None, str | None]:
         """Reads the PID and version from the instance's state file."""
@@ -103,6 +115,80 @@ class DBInstanceManager:
         """Checks if the process associated with this instance is running."""
         pid, _ = self.read_state()
         return psutil.pid_exists(pid) if pid else False
+
+    def get_api_key(self) -> str | None:
+        """Get the API key for this instance, loading from disk if needed"""
+        if self._api_key:
+            return self._api_key
+
+        if not self.api_key_file.exists():
+            return None
+
+        try:
+            with open(self.api_key_file, 'r') as f:
+                encrypted_key = f.read()
+
+            device_key = DEVICE_KEY()
+            self._api_key = Code.decrypt_symmetric(encrypted_key, device_key)
+            return self._api_key
+        except Exception as e:
+            print_status(f"Failed to load API key for {self.id}: {e}", "error")
+            return None
+
+    def save_api_key(self, api_key: str):
+        """Save API key encrypted to disk"""
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            device_key = DEVICE_KEY()
+            encrypted_key = Code.encrypt_symmetric(api_key, device_key)
+
+            with open(self.api_key_file, 'w') as f:
+                f.write(encrypted_key)
+
+            self._api_key = api_key
+            print_status(f"API key saved for instance '{self.id}'", "success")
+        except Exception as e:
+            print_status(f"Failed to save API key: {e}", "error")
+
+    def ensure_api_key(self) -> bool:
+        """Ensure this instance has an API key, creating one if needed"""
+        # Check if we already have a key
+        existing_key = self.get_api_key()
+        if existing_key:
+            return True
+
+        # Instance must be running to create a key
+        if not self.is_running():
+            print_status(f"Instance '{self.id}' is not running, cannot create API key", "warning")
+            return False
+
+        # Create new API key
+        try:
+            url = f"http://{self.host}:{self.port}/keys"
+            response = requests.post(url, timeout=5, json= {"device_name": platform.node()})
+            response.raise_for_status()
+
+            data = response.json()
+            api_key = data.get('key')
+
+            if api_key:
+                self.save_api_key(api_key)
+                print_status(f"Created API key for instance '{self.id}'", "success")
+                return True
+            else:
+                print_status(f"Server did not return API key", "error")
+                return False
+
+        except Exception as e:
+            print_status(f"Failed to create API key for '{self.id}': {e}", "error")
+            return False
+
+    def _get_auth_headers(self) -> dict:
+        """Get authentication headers for API requests"""
+        api_key = self.get_api_key()
+        if api_key:
+            return {'x-api-key': api_key}
+        return {}
 
     def start(self, executable_path: Path, version: str) -> bool:
         """Starts the instance process and detaches, redirecting output to a log file."""
@@ -217,9 +303,11 @@ class DBInstanceManager:
         if not self.is_running():
             return []
 
-        # Try API endpoint first
+        # Try API endpoint first with authentication
         try:
-            response = requests.get(f"http://{self.host}:{self.port}/blobs", timeout=5)
+            headers = self._get_auth_headers()
+            response = requests.get(f"http://{self.host}:{self.port}/blobs",
+                                   headers=headers, timeout=5)
             response.raise_for_status()
             return response.json().get('blobs', [])
         except requests.exceptions.HTTPError as e:
@@ -227,6 +315,15 @@ class DBInstanceManager:
                 # Endpoint doesn't exist, fallback to scanning data directory
                 print_status("API endpoint /blobs not available, scanning data directory...", "warning")
                 return self._scan_data_directory()
+            elif e.response.status_code == 401:
+                print_status("Authentication failed, trying to refresh API key...", "warning")
+                if self.ensure_api_key():
+                    # Retry with new key
+                    headers = self._get_auth_headers()
+                    response = requests.get(f"http://{self.host}:{self.port}/blobs",
+                                           headers=headers, timeout=5)
+                    response.raise_for_status()
+                    return response.json().get('blobs', [])
             return []
         except Exception as e:
             print_status(f"Error fetching blob list: {e}", "warning")
@@ -275,7 +372,9 @@ class DBInstanceManager:
             return self._read_blob_from_disk(blob_id)
 
         try:
-            response = requests.get(f"http://{self.host}:{self.port}/blob/{blob_id}", timeout=5)
+            headers = self._get_auth_headers()
+            response = requests.get(f"http://{self.host}:{self.port}/blob/{blob_id}",
+                                   headers=headers, timeout=5)
             response.raise_for_status()
             return response.content
         except Exception as e:
@@ -310,7 +409,9 @@ class DBInstanceManager:
             return False
 
         try:
-            response = requests.delete(f"http://{self.host}:{self.port}/blob/{blob_id}", timeout=5)
+            headers = self._get_auth_headers()
+            response = requests.delete(f"http://{self.host}:{self.port}/blob/{blob_id}",
+                                      headers=headers, timeout=5)
             response.raise_for_status()
             return True
         except Exception as e:
@@ -324,8 +425,10 @@ class DBInstanceManager:
             return self._get_local_stats()
 
         try:
-            # Try stats endpoint
-            response = requests.get(f"http://{self.host}:{self.port}/stats", timeout=5)
+            # Try stats endpoint with authentication
+            headers = self._get_auth_headers()
+            response = requests.get(f"http://{self.host}:{self.port}/stats",
+                                   headers=headers, timeout=5)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
@@ -412,7 +515,7 @@ class ClusterManager:
         return list(self.instances.values())
 
     def start_all(self, executable_path: Path, version: str, instance_id: str | None = None):
-        """Start all instances"""
+        """Start all instances and ensure they have API keys"""
         instances = self.get_instances(instance_id)
 
         if len(instances) > 1:
@@ -422,6 +525,15 @@ class ClusterManager:
 
         for instance in instances:
             instance.start(executable_path, version)
+
+            # Wait a moment for the server to be ready
+            time.sleep(2)
+
+            # Ensure API key exists
+            if instance.is_running():
+                print_status(f"Ensuring API key for '{instance.id}'...", "info")
+                instance.ensure_api_key()
+
             if len(instances) > 1:
                 print()
 
@@ -594,10 +706,35 @@ class DataDiscovery:
     def __init__(self, manager: ClusterManager):
         self.manager = manager
         self.selected_instance: Optional[DBInstanceManager] = None
-        self.current_view = "instances"  # instances, blobs, blob_detail
+        self.current_view = "instances"  # instances, blobs, blob_detail, shares
         self.selected_index = 0
         self.blob_list = []
         self.current_blob = None
+        self.current_shares = []
+        self._blob_storage = None  # Lazy-loaded BlobStorage instance
+
+    def get_blob_storage(self):
+        """Get or create BlobStorage instance for current instance"""
+        if self._blob_storage is None and self.selected_instance:
+            from toolboxv2.utils.extras.blobs import BlobStorage
+
+            # Get server URL from instance
+            server_url = f"http://localhost:{self.selected_instance.port}"
+
+            # Create BlobStorage with instance's data directory
+            self._blob_storage = BlobStorage(
+                servers=[server_url],
+                storage_directory=str(self.selected_instance.data_dir / 'blob_cache')
+            )
+
+        return self._blob_storage
+
+    def get_user_id(self) -> Optional[str]:
+        """Get Public User ID for current instance"""
+        storage = self.get_blob_storage()
+        if storage:
+            return storage.get_user_id()
+        return None
 
     async def run(self):
         """Run interactive discovery session"""
@@ -614,6 +751,8 @@ class DataDiscovery:
                 action = self.show_blobs()
             elif self.current_view == "blob_detail":
                 action = self.show_blob_detail()
+            elif self.current_view == "shares":
+                action = self.show_shares()
 
             if action == "quit":
                 break
@@ -685,8 +824,21 @@ class DataDiscovery:
                 status_icon = "✅" if is_running else "❌"
                 arrow = "▶" if is_selected else " "
 
+                # Get user ID if instance is selected and running
+                user_id_display = ""
+                if is_selected and is_running:
+                    # Temporarily set selected instance to get user_id
+                    temp_instance = self.selected_instance
+                    self.selected_instance = instance
+                    user_id = self.get_user_id()
+                    self.selected_instance = temp_instance
+
+                    if user_id:
+                        user_id_short = user_id[:15] + '...' if len(user_id) > 18 else user_id
+                        user_id_display = f" 👤 {user_id_short}"
+
                 if is_selected:
-                    print(f"  {arrow} \033[1;96m{status_icon} {instance.id:<20} Port: {instance.port:<6}\033[0m")
+                    print(f"  {arrow} \033[1;96m{status_icon} {instance.id:<20} Port: {instance.port:<6}{user_id_display}\033[0m")
                 else:
                     print(f"  {arrow} {status_icon} {instance.id:<20} Port: {instance.port:<6}")
 
@@ -823,20 +975,36 @@ class DataDiscovery:
             if end_idx - start_idx < visible_count:
                 start_idx = max(0, end_idx - visible_count)
 
+            # Get share counts for visible blobs
+            storage = self.get_blob_storage()
+            share_counts = {}
+            if storage:
+                for i in range(start_idx, end_idx):
+                    blob_id = self.blob_list[i].get('id', 'N/A')
+                    try:
+                        shares = storage.list_shares(blob_id)
+                        share_counts[blob_id] = len(shares)
+                    except:
+                        share_counts[blob_id] = 0
+
             for i in range(start_idx, end_idx):
                 blob = self.blob_list[i]
                 is_selected = i == self.selected_index
                 arrow = "▶" if is_selected else " "
 
                 blob_id = blob.get('id', 'N/A')
-                blob_id_display = (blob_id[:37] + '...') if len(blob_id) > 40 else blob_id
+                blob_id_display = (blob_id[:32] + '...') if len(blob_id) > 35 else blob_id
                 blob_size = blob.get('size', 0)
                 size_str = self.format_size(blob_size)
 
+                # Add share indicator
+                share_count = share_counts.get(blob_id, 0)
+                share_indicator = f"📤{share_count}" if share_count > 0 else "   "
+
                 if is_selected:
-                    print(f"  {arrow} \033[1;96m{blob_id_display:<42} {size_str:>10}\033[0m")
+                    print(f"  {arrow} \033[1;96m{blob_id_display:<37} {size_str:>10} {share_indicator}\033[0m")
                 else:
-                    print(f"  {arrow} {blob_id_display:<42} {size_str:>10}")
+                    print(f"  {arrow} {blob_id_display:<37} {size_str:>10} {share_indicator}")
 
             if len(self.blob_list) > visible_count:
                 print(f"\n  Showing {start_idx + 1}-{end_idx} of {len(self.blob_list)}")
@@ -892,6 +1060,12 @@ class DataDiscovery:
                     return 'export'
                 elif key in (b'd', b'D'):
                     return 'delete'
+                elif key in (b's', b'S'):
+                    return 'share'
+                elif key in (b'v', b'V'):
+                    return 'view_shares'
+                elif key in (b'u', b'U'):
+                    return 'user_id'
                 elif key in (b'b', b'B'):
                     return 'back'
                 return None
@@ -911,6 +1085,12 @@ class DataDiscovery:
                         return 'export'
                     elif ch in ('d', 'D'):
                         return 'delete'
+                    elif ch in ('s', 'S'):
+                        return 'share'
+                    elif ch in ('v', 'V'):
+                        return 'view_shares'
+                    elif ch in ('u', 'U'):
+                        return 'user_id'
                     elif ch in ('b', 'B'):
                         return 'back'
                     return None
@@ -968,9 +1148,28 @@ class DataDiscovery:
                 print()
                 print_status("Could not load blob data", "error")
 
+            # Show shares if available
+            storage = self.get_blob_storage()
+            if storage:
+                try:
+                    shares = storage.list_shares(blob_id)
+                    if shares:
+                        print()
+                        print_separator()
+                        print(f"  📤 Shared with {len(shares)} user(s):")
+                        for share in shares[:3]:  # Show first 3
+                            user_id_short = share['user_id'][:20] + '...' if len(share['user_id']) > 23 else share['user_id']
+                            access_icon = "✏️" if share['access_level'] == 'read_write' else "👁️"
+                            print(f"    {access_icon} {user_id_short} ({share['access_level']})")
+                        if len(shares) > 3:
+                            print(f"    ... and {len(shares) - 3} more (press 'v' to view all)")
+                        print_separator()
+                except Exception as e:
+                    pass  # Silently ignore if shares not available
+
             print()
             print_box_footer()
-            print_status("e: Export | d: Delete | b: Back | q: Quit", "info")
+            print_status("e: Export | d: Delete | s: Share | v: View Shares | u: User ID | b: Back | q: Quit", "info")
 
             # Get user input
             key = get_key()
@@ -1011,6 +1210,39 @@ class DataDiscovery:
                 if self.confirm_delete_blob():
                     self.delete_current_blob()
                     return "back"
+            elif key == 'share':
+                # Temporarily restore terminal for input
+                if platform.system() != "Windows":
+                    import tty
+                    import termios
+                    fd = sys.stdin.fileno()
+                    old_settings = termios.tcgetattr(fd)
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+                self.share_current_blob()
+
+                # Wait for keypress to continue
+                print()
+                print_status("Press any key to continue...", "info")
+                get_key()
+            elif key == 'view_shares':
+                self.current_view = "shares"
+                return "continue"
+            elif key == 'user_id':
+                # Temporarily restore terminal for display
+                if platform.system() != "Windows":
+                    import tty
+                    import termios
+                    fd = sys.stdin.fileno()
+                    old_settings = termios.tcgetattr(fd)
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+                self.show_user_id()
+
+                # Wait for keypress to continue
+                print()
+                print_status("Press any key to continue...", "info")
+                get_key()
 
     def confirm_delete_blob(self) -> bool:
         """Confirm blob deletion with user"""
@@ -1087,7 +1319,10 @@ class DataDiscovery:
 
     def go_back(self):
         """Navigate back in the view hierarchy"""
-        if self.current_view == "blob_detail":
+        if self.current_view == "shares":
+            self.current_view = "blob_detail"
+            self.current_shares = []
+        elif self.current_view == "blob_detail":
             self.current_view = "blobs"
             self.current_blob = None
         elif self.current_view == "blobs":
@@ -1095,6 +1330,217 @@ class DataDiscovery:
             self.selected_instance = None
             self.blob_list = []
             self.selected_index = 0
+
+    def share_current_blob(self):
+        """Share current blob with another user"""
+        if not self.current_blob:
+            return
+
+        blob_id = self.current_blob.get('id', 'N/A')
+        storage = self.get_blob_storage()
+
+        if not storage:
+            print()
+            print_status("BlobStorage not available", "error")
+            return
+
+        print()
+        print_box_header("Share Blob", "🔗")
+        print()
+
+        # Get target user ID
+        print("  Enter target User ID: ", end='', flush=True)
+        target_user_id = input().strip()
+
+        if not target_user_id:
+            print_status("Share cancelled", "warning")
+            return
+
+        # Get access level
+        print("  Access level (read_only/read_write) [read_only]: ", end='', flush=True)
+        access_level = input().strip() or 'read_only'
+
+        if access_level not in ['read_only', 'read_write']:
+            print_status("Invalid access level", "error")
+            return
+
+        # Share the blob
+        try:
+            result = storage.share_blob(blob_id, target_user_id, access_level)
+            print()
+            print_status(f"✅ Shared with {target_user_id} ({access_level})", "success")
+            print_status(f"Granted at: {result.get('granted_at', 'N/A')}", "info")
+        except Exception as e:
+            print()
+            print_status(f"Failed to share: {e}", "error")
+
+    def show_user_id(self):
+        """Show current user's Public User ID"""
+        user_id = self.get_user_id()
+
+        print()
+        print_box_header("Your Public User ID", "👤")
+        print()
+
+        if user_id:
+            print(f"  User ID: {user_id}")
+            print()
+            print_status("Share this ID with others to receive blob access", "info")
+        else:
+            print_status("User ID not available", "error")
+
+        print()
+        print_box_footer()
+
+    def show_shares(self):
+        """Show detailed shares view for current blob"""
+        import sys
+
+        def get_key():
+            """Get single keypress (cross-platform)"""
+            if platform.system() == "Windows":
+                import msvcrt
+                key = msvcrt.getch()
+                if key == b'\xe0':  # Arrow key prefix
+                    key = msvcrt.getch()
+                    if key == b'H':
+                        return 'up'
+                    elif key == b'P':
+                        return 'down'
+                elif key == b'\r':
+                    return 'enter'
+                elif key in (b'r', b'R'):
+                    return 'revoke'
+                elif key in (b'b', b'B'):
+                    return 'back'
+                elif key in (b'q', b'Q'):
+                    return 'quit'
+                return None
+            else:
+                import tty
+                import termios
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setraw(sys.stdin.fileno())
+                    ch = sys.stdin.read(1)
+                    if ch == '\x1b':  # ESC sequence
+                        next_ch = sys.stdin.read(1)
+                        if next_ch == '[':
+                            arrow = sys.stdin.read(1)
+                            if arrow == 'A':
+                                return 'up'
+                            elif arrow == 'B':
+                                return 'down'
+                    elif ch in ('q', 'Q', '\x03'):
+                        return 'quit'
+                    elif ch in ('r', 'R'):
+                        return 'revoke'
+                    elif ch in ('b', 'B'):
+                        return 'back'
+                    elif ch == '\r':
+                        return 'enter'
+                    return None
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+        if not self.current_blob:
+            return "back"
+
+        blob_id = self.current_blob.get('id', 'N/A')
+        storage = self.get_blob_storage()
+
+        if not storage:
+            print_status("BlobStorage not available", "error")
+            time.sleep(1)
+            return "back"
+
+        # Load shares
+        try:
+            self.current_shares = storage.list_shares(blob_id)
+        except Exception as e:
+            print_status(f"Failed to load shares: {e}", "error")
+            time.sleep(1)
+            return "back"
+
+        while True:
+            print('\033[2J\033[H')  # Clear screen
+
+            blob_id_short = (blob_id[:40] + '...') if len(blob_id) > 43 else blob_id
+            print_box_header(f"Shares for: {blob_id_short}", "📤")
+            print()
+
+            if not self.current_shares:
+                print("  No shares found")
+            else:
+                print(f"  Total shares: {len(self.current_shares)}")
+                print()
+                print_separator()
+
+                for i, share in enumerate(self.current_shares):
+                    prefix = "→ " if i == self.selected_index else "  "
+                    access_icon = "✏️" if share['access_level'] == 'read_write' else "👁️"
+
+                    user_id = share['user_id']
+                    user_id_display = (user_id[:30] + '...') if len(user_id) > 33 else user_id
+
+                    print(f"{prefix}{access_icon} {user_id_display}")
+                    print(f"     Access: {share['access_level']}")
+                    print(f"     Granted by: {share['granted_by']}")
+
+                    # Format timestamp
+                    import datetime
+                    granted_time = datetime.datetime.fromtimestamp(share['granted_at'])
+                    print(f"     Granted at: {granted_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print()
+
+            print_separator()
+            print()
+            print_box_footer()
+            print_status("↑↓: Navigate | r: Revoke Selected | b: Back | q: Quit", "info")
+
+            # Get user input
+            key = get_key()
+
+            if key == 'quit':
+                return "quit"
+            elif key == 'back':
+                return "back"
+            elif key == 'up':
+                if self.current_shares and self.selected_index > 0:
+                    self.selected_index -= 1
+            elif key == 'down':
+                if self.current_shares and self.selected_index < len(self.current_shares) - 1:
+                    self.selected_index += 1
+            elif key == 'revoke':
+                if self.current_shares and 0 <= self.selected_index < len(self.current_shares):
+                    # Temporarily restore terminal for confirmation
+                    if platform.system() != "Windows":
+                        import tty
+                        import termios
+                        fd = sys.stdin.fileno()
+                        old_settings = termios.tcgetattr(fd)
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+                    share = self.current_shares[self.selected_index]
+                    print()
+                    print_status(f"Revoke access for {share['user_id'][:30]}?", "warning")
+                    print("  Type 'yes' to confirm: ", end='', flush=True)
+
+                    confirm = input().strip()
+
+                    if confirm.lower() == 'yes':
+                        try:
+                            storage.revoke_share(blob_id, share['user_id'])
+                            print_status("Access revoked successfully", "success")
+                            # Reload shares
+                            self.current_shares = storage.list_shares(blob_id)
+                            if self.selected_index >= len(self.current_shares):
+                                self.selected_index = max(0, len(self.current_shares) - 1)
+                        except Exception as e:
+                            print_status(f"Failed to revoke: {e}", "error")
+
+                        time.sleep(1)
 
     @staticmethod
     def format_size(size_bytes: int) -> str:
