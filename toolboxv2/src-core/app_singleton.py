@@ -276,6 +276,7 @@ def call_module_function(
             if 'spec' in kwargs:
                 kwargs['tb_run_with_specification'] = kwargs.pop('spec')
         # result = app.run(*args, mod_function_name=(module_name, function_name), request=kwargs.pop('request') if 'request' in kwargs else None, **kwargs)
+        print(f"[CALL] {module_name}.{function_name} with args={args} and kwargs={kwargs}")
         if asyncio.iscoroutinefunction(app.a_run_any):
             # Async call - wir müssen einen neuen Event Loop erstellen
             # NICHT den existierenden Loop verwenden (Deadlock!)

@@ -173,7 +173,7 @@ class WatchManager:
                         break
 
                 # Make watch request to server (60s timeout on server side)
-                result = self.storage.watch_resource(blob_id=None, timeout=60)
+                result = self.storage.watch_resource(timeout=60)
                 # Handle timeout (no changes)
                 if result.get('timeout'):
                     self._cleanup_expired_callbacks()
@@ -276,6 +276,7 @@ class ApiKeyHandler(metaclass=Singleton):
     """
     def __init__(self, storage_directory: str):
         self.storage_directory = storage_directory
+        os.makedirs(storage_directory, exist_ok=True)
         self.keys_file = os.path.join(storage_directory, 'api_keys.enc')
         self._keys: Dict[str, Dict[str, str]] = {}  # server_url -> {api_key, user_id}
         self._load_keys()
@@ -284,7 +285,6 @@ class ApiKeyHandler(metaclass=Singleton):
         """Load encrypted API keys from disk"""
         if not os.path.exists(self.keys_file):
             return
-
         try:
             with open(self.keys_file, 'r') as f:
                 encrypted_data = f.read()
@@ -424,7 +424,7 @@ class BlobStorage:
     """
 
     def __init__(self, servers: list[str], storage_directory: str = './.data/blob_cache',
-                 data_shards: int = 4, parity_shards: int = 2):
+                 data_shards: int = 4, parity_shards: int = 2, api_key_dir: str = './.data/api_keys'):
         self.servers = servers
         self.session = requests.Session()
         self.storage_directory = storage_directory
@@ -434,7 +434,7 @@ class BlobStorage:
         os.makedirs(storage_directory, exist_ok=True)
 
         # Initialize API key handler
-        self.api_key_handler = ApiKeyHandler(storage_directory)
+        self.api_key_handler = ApiKeyHandler(api_key_dir)
 
         # Initialize the consistent hash ring
         self.hash_ring = ConsistentHashRing()
@@ -536,30 +536,30 @@ class BlobStorage:
 
                 try:
                     # FIX: Nutze request_timeout hier
+                    from toolboxv2 import get_app
+                    get_app().sprint(f"[BloBDB] make_request {method} {url} {kwargs if method != "PUT" else 'PUT_DATA'}")
                     response = self.session.request(method, url, timeout=request_timeout, **kwargs)
-
+                    get_app().sprint(f"response {response.status_code}")
                     if 500 <= response.status_code < 600:
                         get_logger().warning(
                             f"Warning: Server {server} returned status {response.status_code}. Retrying...")
                         continue
 
+                    # Let raise_for_status() handle all error codes including 401
+                    # This ensures proper HTTPError exceptions are raised
+                    # NEVER create a new API key automatically - that would cause data loss!
                     if response.status_code == 401 and include_auth:
-                        get_logger().warning(f"API key invalid for {server}, creating new one...")
-                        raise Exception("API key invalid")
-                        #try:
-                        #    self._create_api_key(server)
-                        #    api_key = self.api_key_handler.get_key(server)
-                        #    if api_key:
-                        #        kwargs['headers']['x-api-key'] = api_key
-                        #        response = self.session.request(method, url, timeout=request_timeout, **kwargs)
-                        #except Exception as e:
-                        #    get_logger().error(f"Failed to refresh API key: {e}")
+                        get_logger().error(f"API key invalid for {server} - {response.text} ({endpoint}, {method})")
+                        # Fall through to raise_for_status() to raise proper HTTPError
 
                     response.raise_for_status()
                     return response
                 except requests.exceptions.RequestException as e:
                     last_error = e
-                    get_logger().warning(f"Warning: Could not connect to server {server}: {e}. Trying next server.")
+                    get_logger().warning(f"Warning: Could not connect to server {server}: {e}. {'Trying next server.' if len(self.servers) > 1 else 'No more servers to try.'}")
+
+            if len(self.servers) <= 1:
+                break
 
             if attempt < max_retries - 1:
                 wait_time = 2 ** (attempt * 0.1)
@@ -672,11 +672,25 @@ class BlobStorage:
             data_shards = metadata.get('data_shards', self.data_shards)
             parity_shards = metadata.get('parity_shards', self.parity_shards)
             original_size = metadata.get('size', 0)
+        except ConnectionError as e:
+            if '404' in str(e):
+                raise e
+            get_logger().warning(f"Failed to fetch metadata for {blob_id}: {e}")
+            metadata = None
+            version = None
+            shard_locations = []
+            data_shards = self.data_shards
+            parity_shards = self.parity_shards
+            original_size = 0
         except Exception as e:
             get_logger().warning(f"Failed to fetch metadata for {blob_id}: {e}")
             metadata = None
             version = None
             shard_locations = []
+            data_shards = self.data_shards
+            parity_shards = self.parity_shards
+            original_size = 0
+
 
         # Try to read from primary server
         try:
@@ -785,12 +799,11 @@ class BlobStorage:
         if os.path.exists(cache_file):
             os.remove(cache_file)
 
-    def watch_resource(self, blob_id: Optional[str] = None, timeout: int = 60):
+    def watch_resource(self, timeout: int = 60):
         """
         Low-level watch method for single long-polling request.
 
         Args:
-            blob_id: Specific blob to watch (Note: server ignores this, watches all)
             timeout: How long to wait for changes (seconds)
 
         Returns:
@@ -967,23 +980,10 @@ class BlobStorage:
         result = response.json()
         return result.get('shares', [])
 
-    # NOTE: share_blobs and recover_blob are legacy coordination endpoints
-    def share_blobs(self, blob_ids: list[str]):
-        """Legacy method - sharing is now handled automatically by the server"""
-        get_logger().info(f"Instructing a server to share blobs for recovery: {blob_ids}")
-        payload = {"blob_ids": blob_ids}
-        self._make_request('POST', '/share', json=payload)
-        get_logger().info("Sharing command sent successfully.")
-
     def recover_blob(self, lost_blob_id: str) -> bytes:
         """Legacy method - recovery is now handled via shard reconstruction"""
         get_logger().info(f"Attempting to recover '{lost_blob_id}' from the cluster.")
-        payload = {"blob_id": lost_blob_id}
-        response = self._make_request('POST', '/recover', json=payload)
-        recovered_data = response.content
-        get_logger().info(f"Successfully recovered blob '{lost_blob_id}'.")
-        self._save_blob_to_cache(lost_blob_id, recovered_data)
-        return recovered_data
+        return self.read_blob(lost_blob_id)
 
     def _get_blob_cache_filename(self, blob_id: str) -> str:
         return os.path.join(self.storage_directory, blob_id + '.blobcache')
@@ -1004,10 +1004,7 @@ class BlobStorage:
             return f.read()
 
     def exit(self):
-        if len(self.blob_ids) < 5:
-            return
-        for _i in range(len(self.servers)//2+1):
-            self.share_blobs(self.blob_ids)
+        pass
 
 
 # The BlobFile interface remains unchanged as it's a high-level abstraction
@@ -1061,13 +1058,26 @@ class BlobFile(io.IOBase):
                 raw_blob_data = b""
             blob_content = pickle.loads(raw_blob_data)
         except (requests.exceptions.HTTPError, EOFError, pickle.UnpicklingError, ConnectionError) as e:
-            if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code == 404:
-                blob_content = {}  # Blob doesn't exist yet, treat as empty
+            if isinstance(e, requests.exceptions.HTTPError):
+                if e.response.status_code == 404:
+                    # Blob doesn't exist yet - create it
+                    blob_content = {}
+                else:
+                    # Other HTTP errors (401 Unauthorized, 403 Forbidden, etc.)
+                    # Re-raise to prevent data loss from creating blob with wrong credentials
+                    raise
             elif isinstance(e, EOFError | pickle.UnpicklingError):
-                blob_content = {}  # Blob is empty or corrupt, treat as empty for writing
-            else:
-                self.storage.create_blob(blob_id=self.blob_id, data=pickle.dumps({}))
+                # Blob is empty or corrupt, treat as empty for writing
                 blob_content = {}
+            elif isinstance(e, ConnectionError):
+                # Network error - re-raise, don't create blob
+                if '404' in str(e):
+                    blob_content = {}
+                else:
+                    raise
+            else:
+                # Unknown error - re-raise to be safe
+                raise
 
         if 'r' in self.mode:
             path_key = self.folder if self.folder else self.datei

@@ -186,8 +186,7 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&storage_path).await?;
     info!("Mounting storage at: {:?}", storage_path);
 
-    // Persistenz laden (Permissions) - Simuliert für Production
-    // In einer echten DB würde man das hier laden. Wir nutzen Files.
+    // Persistenz laden (Permissions)
     let permissions_path = storage_path.join("sys_permissions.json");
     let permissions = if permissions_path.exists() {
         let data = fs::read(&permissions_path).await?;
@@ -614,10 +613,6 @@ async fn upload_blob(
         ShardConfig::default()
     };
 
-    info!("Received upload request - id: {}, config: {:?}", id, shard_config);
-    info!("Data shards: {}, Parity shards: {}, Peers: {:?}",
-          shard_config.data_shards, shard_config.parity_shards, shard_config.peers);
-
     // Auto-Grant Permission if new, else check
     let is_new = !state.storage_path.join(format!("{}.meta", id)).exists();
     if !is_new {
@@ -757,11 +752,14 @@ async fn read_blob(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let key = get_api_key(&headers)?;
-    check_access(&state, &key, &id).await?;
-
+    // Check if blob exists BEFORE checking access
+    // This ensures we return 404 (not found) instead of 401 (unauthorized) when blob doesn't exist
     let path = state.storage_path.join(format!("{}.data", id));
     if !path.exists() { return Err(AppError::NotFound); }
+
+    // Now check access permissions
+    let key = get_api_key(&headers)?;
+    check_access(&state, &key, &id).await?;
 
     let file = File::open(path).await?;
     let stream = tokio_util::io::ReaderStream::new(file);
@@ -780,8 +778,15 @@ async fn read_meta(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<BlobMeta>, AppError> {
+    // Check if blob metadata exists BEFORE checking access
+    // This ensures we return 404 (not found) instead of 401 (unauthorized) when blob doesn't exist
+    let meta_path = state.storage_path.join(format!("{}.meta", id));
+    if !meta_path.exists() { return Err(AppError::NotFound); }
+
+    // Now check access permissions
     let key = get_api_key(&headers)?;
     check_access(&state, &key, &id).await?;
+
     let meta = load_meta(&state.storage_path, &id).await?;
     Ok(Json(meta))
 }

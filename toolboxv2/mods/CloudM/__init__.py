@@ -12,6 +12,8 @@ from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
 from .LogInSystem import open_web_login_web
+from .services import *
+from .AuthManagerV2 import Name as AuthManagerV2Name
 
 tools = Tools
 Name = 'CloudM'

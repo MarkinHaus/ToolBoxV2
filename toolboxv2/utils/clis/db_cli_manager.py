@@ -86,7 +86,7 @@ class DBInstanceManager:
     def __init__(self, instance_id: str, config: dict):
         self.id = instance_id
         self.port = config['port']
-        self.host = config.get('host', '127.0.0.1')
+        self.host = config.get('host', 'http://127.0.0.1')
         self.data_dir = Path(config['data_dir'])
         self.state_file = self.data_dir / "instance_state.json"
         self.log_file = self.data_dir / "instance.log"
@@ -121,29 +121,20 @@ class DBInstanceManager:
         if self._api_key:
             return self._api_key
 
-        if not self.api_key_file.exists():
-            return None
-
         try:
-            with open(self.api_key_file, 'r') as f:
-                encrypted_key = f.read()
-
-            device_key = DEVICE_KEY()
-            self._api_key = Code.decrypt_symmetric(encrypted_key, device_key)
+            from toolboxv2 import get_app
+            self._api_key = get_app("get_api_key").db_api_key_handler.get_key(f"{self.host}:{self.port}")
             return self._api_key
         except Exception as e:
             print_status(f"Failed to load API key for {self.id}: {e}", "error")
             return None
 
-    def save_api_key(self, api_key: str):
+    def save_api_key(self, api_key: str, user_id:str):
         """Save API key encrypted to disk"""
         try:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-            device_key = DEVICE_KEY()
-            encrypted_key = Code.encrypt_symmetric(api_key, device_key)
-
-            with open(self.api_key_file, 'w') as f:
-                f.write(encrypted_key)
+            from toolboxv2 import get_app
+            get_app("save_api_key").db_api_key_handler.set_key(server_url=f"{self.host}:{self.port}",
+                                                                              api_key=api_key, user_id=user_id)
 
             self._api_key = api_key
             print_status(f"API key saved for instance '{self.id}'", "success")
@@ -164,15 +155,16 @@ class DBInstanceManager:
 
         # Create new API key
         try:
-            url = f"http://{self.host}:{self.port}/keys"
+            url = f"{self.host}:{self.port}/keys"
             response = requests.post(url, timeout=5, json= {"device_name": platform.node()})
             response.raise_for_status()
 
             data = response.json()
             api_key = data.get('key')
+            user_id = data.get('user_id')
 
             if api_key:
-                self.save_api_key(api_key)
+                self.save_api_key(api_key, user_id)
                 print_status(f"Created API key for instance '{self.id}'", "success")
                 return True
             else:
@@ -277,7 +269,7 @@ class DBInstanceManager:
             return {'id': self.id, 'status': 'STOPPED', 'error': 'Process not running'}
 
         pid, version = self.read_state()
-        health_url = f"http://{self.host}:{self.port}/health"
+        health_url = f"{self.host}:{self.port}/health"
         start_time = time.monotonic()
 
         try:
@@ -306,7 +298,7 @@ class DBInstanceManager:
         # Try API endpoint first with authentication
         try:
             headers = self._get_auth_headers()
-            response = requests.get(f"http://{self.host}:{self.port}/blobs",
+            response = requests.get(f"{self.host}:{self.port}/blobs",
                                    headers=headers, timeout=5)
             response.raise_for_status()
             return response.json().get('blobs', [])
@@ -320,7 +312,7 @@ class DBInstanceManager:
                 if self.ensure_api_key():
                     # Retry with new key
                     headers = self._get_auth_headers()
-                    response = requests.get(f"http://{self.host}:{self.port}/blobs",
+                    response = requests.get(f"{self.host}:{self.port}/blobs",
                                            headers=headers, timeout=5)
                     response.raise_for_status()
                     return response.json().get('blobs', [])
@@ -373,7 +365,7 @@ class DBInstanceManager:
 
         try:
             headers = self._get_auth_headers()
-            response = requests.get(f"http://{self.host}:{self.port}/blob/{blob_id}",
+            response = requests.get(f"{self.host}:{self.port}/blob/{blob_id}",
                                    headers=headers, timeout=5)
             response.raise_for_status()
             return response.content
@@ -410,7 +402,7 @@ class DBInstanceManager:
 
         try:
             headers = self._get_auth_headers()
-            response = requests.delete(f"http://{self.host}:{self.port}/blob/{blob_id}",
+            response = requests.delete(f"{self.host}:{self.port}/blob/{blob_id}",
                                       headers=headers, timeout=5)
             response.raise_for_status()
             return True
@@ -427,7 +419,7 @@ class DBInstanceManager:
         try:
             # Try stats endpoint with authentication
             headers = self._get_auth_headers()
-            response = requests.get(f"http://{self.host}:{self.port}/stats",
+            response = requests.get(f"{self.host}:{self.port}/stats",
                                    headers=headers, timeout=5)
             response.raise_for_status()
             return response.json()
@@ -579,7 +571,7 @@ class ClusterManager:
             is_running = instance.is_running()
 
             if is_running:
-                server_list.append(f"http://{instance.host}:{instance.port}")
+                server_list.append(f"{instance.host}:{instance.port}")
                 services_online += 1
 
             if not silent:
@@ -719,7 +711,7 @@ class DataDiscovery:
             from toolboxv2.utils.extras.blobs import BlobStorage
 
             # Get server URL from instance
-            server_url = f"http://localhost:{self.selected_instance.port}"
+            server_url = f"localhost:{self.selected_instance.port}"
 
             # Create BlobStorage with instance's data directory
             self._blob_storage = BlobStorage(

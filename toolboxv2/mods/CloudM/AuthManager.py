@@ -121,14 +121,16 @@ def db_crate_invitation(app: App):
 
 def db_helper_save_user(app: App, user_data: dict) -> Result:
     # db_helper_delete_user(app, user_data['name'], user_data['uid'], matching=True)
+    print("SAVE USER", user_data)
     return app.run_any(TBEF.DB.SET, query=f"USER::{user_data['name']}::{user_data['uid']}",
                        data=user_data,
                        get_results=True)
 
 
 def db_helper_get_user(app: App, username: str, uid: str = '*'):
-    return app.run_any(TBEF.DB.GET, query=f"USER::{username}::{uid}",
+    data =  app.run_any(TBEF.DB.GET, query=f"USER::{username}::{uid}",
                        get_results=True)
+    return data
 
 
 def db_helper_delete_user(app: App, username: str, uid: str, matching=False):
@@ -260,25 +262,14 @@ def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
     if isinstance(user_data, str) or user_data.is_error():
         return Result.default_internal_error(info="get_user_by_name failed no User data found is_error")
 
-    user_data = user_data.get()
 
-    if isinstance(user_data, bytes):
-        return Result.ok(data=User(**eval(user_data.decode())))
+    if '*' in uid:
+        user_data = user_data.get(list(user_data.get().keys())[0])
+    else:
+        user_data = user_data.get()
+
     if isinstance(user_data, str):
         return Result.ok(data=User(**eval(user_data)))
-    if isinstance(user_data, dict):
-        return Result.ok(data=User(**user_data))
-    elif isinstance(user_data, list):
-        if len(user_data) == 0:
-            return Result.default_internal_error(info="get_user_by_name failed no User data found", exec_code=9283)
-
-        if len(user_data) > 1:
-            pass
-
-        if isinstance(user_data[0], bytes):
-            user_data[0] = user_data[0].decode()
-
-        return Result.ok(data=User(**eval(user_data[0])))
     else:
         return Result.default_internal_error(info="get_user_by_name failed no User data found", exec_code=2351)
 

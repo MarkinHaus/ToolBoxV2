@@ -8,13 +8,13 @@ import api from './api.js';
 import env from './env.js';
 import events from './events.js';
 import logger from './logger.js';
-import * as crypto from './crypto.js';
+import * as crypto from './cryptoV2.js';
 import * as graphics from './graphics.js';
 import sse from './sse.js';
 import ws from './ws.js';
 import * as utils from './utils.js';
 import sw from './sw.js';
-import user from './user.js';
+import user from './userV2.js';
 import {ToolBoxError,
 ToolBoxInterfaces,
 ToolBoxResult,

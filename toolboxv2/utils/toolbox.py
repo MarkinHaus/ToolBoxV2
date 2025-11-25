@@ -196,6 +196,8 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
+        from .extras.blobs import ApiKeyHandler
+        self.db_api_key_handler = ApiKeyHandler(self.info_dir+ '\\api_keys\\')
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
         from toolboxv2.utils.clis.db_cli_manager import ClusterManager, get_executable_path
@@ -1978,7 +1980,7 @@ class App(AppType, metaclass=Singleton):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
                 if request_as_kwarg and 'request' in kwargs_:
-                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
                     if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
                         kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
                         del kwargs_['data']
@@ -1998,7 +2000,6 @@ class App(AppType, metaclass=Singleton):
                 args, kwargs = args_kwargs_helper(args, kwargs)
                 if pre_compute is not None:
                     args, kwargs = await pre_compute(*args, **kwargs)
-                print("running with", args, kwargs)
                 if asyncio.iscoroutinefunction(func):
                     result = await func(*args, **kwargs)
                 else:
@@ -2051,7 +2052,7 @@ class App(AppType, metaclass=Singleton):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
                 if request_as_kwarg and 'request' in kwargs_:
-                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"])
+                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
                     if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
                         kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
                         del kwargs_['data']
@@ -2065,6 +2066,7 @@ class App(AppType, metaclass=Singleton):
 
                 args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
                 args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
+
                 return args_, kwargs_
 
             def executor(*args, **kwargs):

@@ -134,13 +134,23 @@ impl PythonEnv {
     fn try_fallback_python_env() -> Option<Self> {
         use std::path::Path;
 
-        // Dynamically find ToolBoxV2 workspace root
-        let cwd = env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-        let workspace_root = cwd.ancestors()
-            .find(|p| p.join(".git").exists() || p.join("Cargo.toml").exists() || p.file_name().and_then(|n| n.to_str()) == Some("ToolBoxV2"))
-            .unwrap_or(&cwd);
+        let cwd = env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+
+        // 1) Zuerst NUR nach "ToolBoxV2" suchen
+        let toolbox_root = cwd.ancestors().find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| name == "ToolBoxV2")
+                .unwrap_or(false)
+        });
+
+        // 2) Falls nicht gefunden → Fallback: .git oder Cargo.toml
+        let workspace_root = toolbox_root.or_else(|| {
+            cwd.ancestors().find(|p| {
+                p.join(".git").exists()
+            })
+        }).unwrap_or(&cwd);
 
         let python_env_path = workspace_root.join("python_env");
         let python_env_str = python_env_path.to_string_lossy().to_string();
