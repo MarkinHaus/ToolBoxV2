@@ -1,105 +1,162 @@
-// /web/scripts/signup.js - V2 WebAuthn Only
-
-import userV2 from '../../tbjs/src/core/userV2.js';
+// /web/scripts/singup.js
+// ToolBox V2 Signup Script with Clerk Integration
 
 function setupSignup() {
-    const signupForm = document.getElementById('signupForm');
-    const usernameInput = document.getElementById('username');
-    const emailInput = document.getElementById('email');
-    const inviteCodeInput = document.getElementById('inviteCode');
-    const deviceLabelInput = document.getElementById('deviceLabel');
-    const infoPopup = document.getElementById('infoPopup');
-    const infoText = document.getElementById('infoText');
-
-    // Parse URL and prefill fields
-    const urlParams = new URLSearchParams(window.location.search);
-    const defaultEmail = urlParams.get('email');
-    const defaultUsername = urlParams.get('username');
-    const defaultInviteCode = urlParams.get('invite');
-
-    if (defaultEmail && emailInput) emailInput.value = decodeURIComponent(defaultEmail);
-    if (defaultUsername && usernameInput) usernameInput.value = decodeURIComponent(defaultUsername);
-    if (defaultInviteCode && inviteCodeInput) inviteCodeInput.value = decodeURIComponent(defaultInviteCode);
-
-    // Set default device label
-    if (deviceLabelInput && !deviceLabelInput.value) {
-        deviceLabelInput.value = `${navigator.platform} - ${new Date().toLocaleDateString()}`;
+    // Play initial animation if graphics available
+    if (window.TB?.graphics?.playAnimationSequence) {
+        window.TB.graphics.playAnimationSequence("Z0+12");
     }
 
-    function showInfo(message, isError = false, animationSequence = null) {
-        if (infoPopup && infoText) {
-            infoText.textContent = message;
-            infoPopup.style.display = 'block';
-            if (isError) infoPopup.classList.add('error'); else infoPopup.classList.remove('error');
-        }
+    setTimeout(async () => {
+        await initializeClerkSignup();
+    }, 100);
+}
 
-        if (isError) {
-            window.TB.ui.Toast.showError(message);
-            if (window.TB.graphics?.playAnimationSequence) {
-                window.TB.graphics.playAnimationSequence(animationSequence || "R0-31");
-            }
-        } else {
-            window.TB.ui.Toast.showSuccess(message);
-            if (window.TB.graphics?.playAnimationSequence) {
-                window.TB.graphics.playAnimationSequence(animationSequence || "P0+21");
-            }
-        }
+async function initializeClerkSignup() {
+    const container = document.getElementById('clerk-sign-up') || document.getElementById('signupForm');
+
+    if (!container) {
+        console.warn('[Signup] No signup container found');
+        return;
     }
 
-    async function handleSignup() {
-        const username = usernameInput.value.trim();
-        const email = emailInput.value.trim();
-        const inviteCode = inviteCodeInput ? inviteCodeInput.value.trim() : null;
-        const deviceLabel = deviceLabelInput ? deviceLabelInput.value.trim() : 'My Device';
+    // Check if TB is loaded
+    if (!window.TB) {
+        console.error('[Signup] TB framework not loaded');
+        showError(container, 'Framework not loaded. Please refresh the page.');
+        return;
+    }
 
-        if (!username || !email) {
-            showInfo("Username and Email are required.", true, "Y0-22");
+    try {
+        // Wait for TB.user to initialize
+        if (!window.TB.user) {
+            console.warn('[Signup] TB.user not available yet, waiting...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        // Check if user is already authenticated
+        if (window.TB.user?.isAuthenticated()) {
+            const username = window.TB.user.getUsername();
+            showSuccess(container, `Already logged in as ${username}. Redirecting...`);
+
+            setTimeout(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const nextUrl = urlParams.get('next') || '/web/mainContent.html';
+                window.TB.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+            }, 1000);
             return;
         }
 
-        showInfo(`Creating account for ${username}...`, false, "Y1+11:R1-11");
-        window.TB.ui.Loader.show('Registering with WebAuthn...');
+        // Initialize Clerk sign-up
+        await initClerkSignUp(container);
 
-        try {
-            // V2 signup - WebAuthn only
-            const result = await userV2.signup(username, email, inviteCode, deviceLabel);
-
-            if (result.success) {
-                showInfo("Signup successful! Redirecting to dashboard...", false, "Z1+32:Y0+50");
-                setTimeout(() => {
-                    window.TB.router.navigateTo('/web/dashboard');
-                    if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
-                }, 800);
-            } else {
-                showInfo(result.message || "Signup failed. Please try again.", true, "R2-42");
-                if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
-            }
-        } catch (error) {
-            window.TB.logger?.error('[Signup Page] Error:', error);
-            showInfo(error.message || "An unexpected error occurred during signup.", true, "P2-52:Y2-52");
-            if (window.TB.graphics?.stopAnimationSequence) window.TB.graphics.stopAnimationSequence();
-        } finally {
-            window.TB.ui.Loader.hide();
-        }
+    } catch (error) {
+        console.error('[Signup] Initialization error:', error);
+        showError(container, error.message || 'Failed to initialize signup');
     }
+}
 
-    if (signupForm) {
-        signupForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            await handleSignup();
+async function initClerkSignUp(container) {
+    // If TB.user has Clerk integration, use it
+    if (window.TB?.user?.mountSignUp) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const nextUrl = urlParams.get('next') || '/web/mainContent.html';
+
+        window.TB.user.mountSignUp(container, {
+            redirectUrl: nextUrl,
+            signInUrl: '/web/assets/login.html'
         });
-    } else {
-        window.TB.logger?.warn('[Signup Page] Signup form not found.');
+
+        // Listen for sign-up events
+        window.TB.events?.on('user:signedIn', (data) => {
+            showSuccess(container, `Welcome, ${data.username}! Account created successfully.`);
+
+            if (window.TB.graphics?.playAnimationSequence) {
+                window.TB.graphics.playAnimationSequence("Z1+32:R0+50");
+            }
+
+            setTimeout(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                const nextUrl = urlParams.get('next') || '/web/mainContent.html';
+                window.TB.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+            }, 800);
+        });
+
+        return;
+    }
+
+    // Fallback: Direct Clerk initialization (same as in signup.html)
+    console.log('[Signup] Using direct Clerk initialization');
+
+    // Clerk is already loaded in the HTML page
+    // The initialization happens in the inline script
+}
+
+function showError(container, message) {
+    if (window.TB?.ui?.Toast?.showError) {
+        window.TB.ui.Toast.showError(message);
+    }
+
+    if (window.TB?.graphics?.playAnimationSequence) {
+        window.TB.graphics.playAnimationSequence("R0-31");
+    }
+
+    const errorEl = document.getElementById('error-message');
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.classList.add('show');
+    }
+
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
+    if (infoPopup && infoText) {
+        infoText.textContent = message;
+        infoPopup.style.display = 'block';
     }
 }
 
-// Wait for tbjs to be initialized
-if (window.TB?.events) {
-     if (window.TB.config?.get('appRootId')) {
-         setupSignup();
-    } else {
-        window.TB.events.on('tbjs:initialized', setupSignup, { once: true });
+function showSuccess(container, message) {
+    if (window.TB?.ui?.Toast?.showSuccess) {
+        window.TB.ui.Toast.showSuccess(message);
     }
-} else {
-    document.addEventListener('tbjs:initialized', setupSignup, { once: true });
+
+    if (window.TB?.graphics?.playAnimationSequence) {
+        window.TB.graphics.playAnimationSequence("P0+21");
+    }
+
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
+    if (infoPopup && infoText) {
+        infoText.textContent = message;
+        infoText.style.color = '#22c55e';
+        infoPopup.style.display = 'block';
+    }
 }
+
+function showInfo(message) {
+    if (window.TB?.ui?.Toast?.showInfo) {
+        window.TB.ui.Toast.showInfo(message);
+    }
+
+    const infoPopup = document.getElementById('infoPopup');
+    const infoText = document.getElementById('infoText');
+    if (infoPopup && infoText) {
+        infoText.textContent = message;
+        infoPopup.style.display = 'block';
+    }
+}
+
+// Initialize when TB is ready
+if (window.TB?.once) {
+    window.TB.once(setupSignup);
+} else {
+    // Fallback: wait for DOMContentLoaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupSignup);
+    } else {
+        setupSignup();
+    }
+}
+
+// Export for module usage
+export { setupSignup, initializeClerkSignup };

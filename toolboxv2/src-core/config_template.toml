@@ -2,7 +2,7 @@
 ip = "0.0.0.0"
 port = 8080
 dist_path = "./dist"
-open_modules = ["CloudM.AuthManager", "CloudM",  "CloudM.email_services"]
+open_modules = ["CloudM.AuthClerk", "CloudM",  "CloudM.email_services"]
 init_modules = ["CloudM"]
 watch_modules = ["CloudM", "TruthSeeker", "DoNext"]
 

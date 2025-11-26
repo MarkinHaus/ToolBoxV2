@@ -1979,18 +1979,25 @@ class App(AppType, metaclass=Singleton):
             def args_kwargs_helper(args_, kwargs_):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
+                parms = self.functions.get(module_name, {}).get(func_name, {}).get('params', [])
                 if request_as_kwarg and 'request' in kwargs_:
                     kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
-                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
+                    if 'data' in kwargs_ and 'data' not in parms:
                         kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
                         del kwargs_['data']
-                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
-                                                                                                               []):
+                    if 'form_data' in kwargs_ and 'form_data' not in parms:
                         kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
                         del kwargs_['form_data']
 
                 if not request_as_kwarg and 'request' in kwargs_:
                     del kwargs_['request']
+
+                if self.functions.get(module_name, {}).get(func_name, {}).get('api') and 'data' in kwargs_ and 'data' not in parms:
+                    for k in kwargs_['data']:
+                        if k in parms:
+                            kwargs_[k] = kwargs_['data'][k]
+                            del kwargs_['data'][k]
+
 
                 args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
                 args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()

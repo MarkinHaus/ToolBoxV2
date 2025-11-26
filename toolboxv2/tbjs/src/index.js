@@ -84,7 +84,7 @@ const TB = {
     this.state.init(this.config.get('initialState')); // Get from config
     this.ui.theme.init(this.config.get('themeSettings')); // Get from config
 
-    // await this.user.init();
+    await this.user.init();
 
     // Router.init will navigate to the current window.location.pathname + search + hash
     this.router.init(
