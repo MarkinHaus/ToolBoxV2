@@ -57,14 +57,17 @@ async function initializeClerkSignup() {
 }
 
 async function initClerkSignUp(container) {
-    // If TB.user has Clerk integration, use it
     if (window.TB?.user?.mountSignUp) {
+        // Setup hash change listener for Clerk's #/continue route
+        setupClerkContinueHandler();
+
+        // Get redirect URL for after signup
         const urlParams = new URLSearchParams(window.location.search);
         const nextUrl = urlParams.get('next') || '/web/mainContent.html';
 
-        window.TB.user.mountSignUp(container, {
-            redirectUrl: nextUrl,
-            signInUrl: '/web/assets/login.html'
+        await window.TB.user.mountSignUp(container, {
+            afterSignUpUrl: nextUrl,
+            afterSignInUrl: nextUrl
         });
 
         // Listen for sign-up events
@@ -75,21 +78,71 @@ async function initClerkSignUp(container) {
                 window.TB.graphics.playAnimationSequence("Z1+32:R0+50");
             }
 
+            // Redirect nach erfolgreicher Registrierung
             setTimeout(() => {
-                const urlParams = new URLSearchParams(window.location.search);
-                const nextUrl = urlParams.get('next') || '/web/mainContent.html';
-                window.TB.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
-            }, 800);
+                window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+            }, 1000);
         });
 
         return;
     }
 
-    // Fallback: Direct Clerk initialization (same as in signup.html)
-    console.log('[Signup] Using direct Clerk initialization');
+    console.log('[Signup] TB.user.mountSignUp not available');
+}
 
-    // Clerk is already loaded in the HTML page
-    // The initialization happens in the inline script
+function setupClerkContinueHandler() {
+    // Listen for hash changes
+    window.addEventListener('hashchange', checkAndHandleContinueRoute);
+
+    // Bei #/continue: Clerk UI neu mounten, um Username-Eingabe zu ermöglichen
+    if (window.location.hash.includes('#/continue')) {
+        console.log('[Signup] Continue route detected, ensuring Clerk UI is mounted...');
+
+        // Kurze Verzögerung, dann prüfen ob Clerk UI vorhanden ist
+        // setTimeout(() => {
+        //     const container = document.getElementById('clerk-sign-up');
+        //     if (container && container.children.length <= 1) {
+        //         // Clerk UI nicht geladen - neu mounten
+        //         console.log('[Signup] Clerk UI not fully loaded, remounting...');
+        //         if (window.TB?.user?.mountSignUp) {
+        //             container.innerHTML = '';
+        //             window.TB.user.mountSignUp(container);
+        //         }
+        //     }
+        // }, 1000);
+    }
+}
+
+function checkAndHandleContinueRoute() {
+    const hash = window.location.hash;
+
+    if (hash.includes('#/continue')) {
+        console.log('[Signup] Detected Clerk continue route - allowing username entry...');
+
+        // NICHT weiterleiten! Clerk zeigt das Username-Formular an.
+        // Starte Polling um zu prüfen wann User fertig ist
+        const checkAuthInterval = setInterval(() => {
+            if (window.TB?.user?.isAuthenticated()) {
+                const clerkUser = window.TB.user.getClerkUser();
+                // Prüfe ob Username gesetzt ist
+                if (clerkUser?.username) {
+                    console.log('[Signup] User completed signup with username:', clerkUser.username);
+                    clearInterval(checkAuthInterval);
+
+                    // Redirect zu mainContent
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const nextUrl = urlParams.get('next') || '/web/mainContent.html';
+
+                    setTimeout(() => {
+                        window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+                    }, 500);
+                }
+            }
+        }, 1000);
+
+        // Timeout nach 5 Minuten
+        setTimeout(() => clearInterval(checkAuthInterval), 300000);
+    }
 }
 
 function showError(container, message) {

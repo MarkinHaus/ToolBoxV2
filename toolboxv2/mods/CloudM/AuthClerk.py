@@ -211,75 +211,246 @@ async def get_clerk_config(app: App = None) -> ApiResult:
         return Result.default_internal_error(str(e))
 
 
-@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def verify_session(app: App = None, request=None, session_token: str = None) -> ApiResult:
+# =================== Clerk Session Token Verification ===================
+# Füge dies am Anfang von AuthClerk.py hinzu (nach den bestehenden imports)
+
+import httpx
+from typing import Optional, Tuple
+from dataclasses import dataclass
+
+# Versuche die offiziellen SDK-Helper zu importieren
+try:
+    from clerk_backend_api.security import authenticate_request
+    from clerk_backend_api.security.types import AuthenticateRequestOptions
+
+    CLERK_SDK_AUTH_AVAILABLE = True
+except ImportError:
+    CLERK_SDK_AUTH_AVAILABLE = False
+
+
+@dataclass
+class TokenVerificationResult:
+    """Result of token verification"""
+    is_valid: bool
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    claims: Optional[dict] = None
+    error: Optional[str] = None
+
+
+def verify_session_token(token: str, authorized_parties: list = None) -> TokenVerificationResult:
     """
-    Verify Clerk session token
-    Called by middleware/frontend to validate authentication
+    Verify Clerk session token using the official SDK.
+
+    Args:
+        token: The session token (JWT) from the frontend
+        authorized_parties: List of allowed origins (e.g., ['https://example.com'])
+
+    Returns:
+        TokenVerificationResult with verification status and user info
     """
-    if app is None:
-        app = get_app(f"{Name}.verify_session")
+    logger = get_logger()
+
+    if not token:
+        return TokenVerificationResult(is_valid=False, error="No token provided")
 
     try:
         clerk = get_clerk_client()
 
-        # Get token from request header or parameter
+        # Erstelle einen httpx.Request mit dem Token im Authorization Header
+        # Das ist das Format, das authenticate_request erwartet
+        fake_request = httpx.Request(
+            method="GET",
+            url="http://localhost/verify",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+
+        # Konfiguriere authorized_parties (CSRF-Schutz)
+        if authorized_parties is None:
+            # Fallback: Erlaube localhost für Entwicklung
+            authorized_parties = [
+                "http://localhost:8080",
+                "http://localhost:3000",
+                "http://127.0.0.1:8080",
+            ]
+            # Füge Produktions-Domain hinzu falls konfiguriert
+            prod_domain = os.getenv('APP_BASE_URL')
+            if prod_domain:
+                authorized_parties.append(prod_domain)
+
+        if CLERK_SDK_AUTH_AVAILABLE:
+            # Nutze die offizielle SDK-Methode
+            request_state = clerk.authenticate_request(
+                fake_request,
+                AuthenticateRequestOptions(
+                    authorized_parties=authorized_parties
+                )
+            )
+
+            if request_state.is_signed_in:
+                # Token ist gültig - extrahiere Claims
+                payload = request_state.payload or {}
+                return TokenVerificationResult(
+                    is_valid=True,
+                    user_id=payload.get("sub"),  # subject = user_id
+                    session_id=payload.get("sid"),  # session_id
+                    claims=payload
+                )
+            else:
+                return TokenVerificationResult(
+                    is_valid=False,
+                    error=request_state.reason or "Token verification failed"
+                )
+        else:
+            # Fallback: Nutze sessions.get_session mit Session-ID aus Token
+            # Dekodiere Token ohne Verifikation um Session-ID zu bekommen
+            import jwt
+            unverified = jwt.decode(token, options={"verify_signature": False})
+            session_id = unverified.get("sid")
+            user_id = unverified.get("sub")
+
+            if not session_id:
+                return TokenVerificationResult(is_valid=False, error="No session ID in token")
+
+            # Verifiziere Session über Clerk API
+            try:
+                session = clerk.sessions.get(session_id=session_id)
+                if session and session.status == "active":
+                    return TokenVerificationResult(
+                        is_valid=True,
+                        user_id=user_id or session.user_id,
+                        session_id=session_id,
+                        claims=unverified
+                    )
+                else:
+                    return TokenVerificationResult(
+                        is_valid=False,
+                        error=f"Session not active: {session.status if session else 'not found'}"
+                    )
+            except Exception as e:
+                logger.warning(f"[{Name}] Session lookup failed: {e}")
+                return TokenVerificationResult(is_valid=False, error=str(e))
+
+    except Exception as e:
+        logger.error(f"[{Name}] Token verification error: {e}")
+        return TokenVerificationResult(is_valid=False, error=str(e))
+
+
+# =================== Updated verify_session ===================
+
+@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
+async def verify_session(app: App = None, request=None, session_token: str = None,
+                         clerk_user_id: str = None) -> ApiResult:
+    """
+    Verify Clerk session token.
+    Called by middleware/frontend to validate authentication.
+    """
+    if app is None:
+        app = get_app(f"{Name}.verify_session")
+
+    logger = get_logger()
+
+    try:
+        # Get token from multiple sources
         token = session_token
         if not token and request:
-            auth_header = request.request.headers.get("Authorization", "")
+            # Try Authorization header
+            auth_header = ""
+            if hasattr(request, 'request') and hasattr(request.request, 'headers'):
+                auth_header = request.request.headers.get("Authorization", "")
+            elif hasattr(request, 'headers'):
+                auth_header = request.headers.get("Authorization", "")
+
             if auth_header.startswith("Bearer "):
                 token = auth_header[7:]
 
+            # Try request body
+            if not token and hasattr(request, 'data'):
+                data = request.data
+                if isinstance(data, dict):
+                    token = data.get("session_token") or data.get("Jwt_claim")
+
         if not token:
+            logger.warning(f"[{Name}] No session token provided")
             return Result.default_user_error("No session token provided", data={"authenticated": False})
 
-        # Verify session with Clerk
+        logger.info(f"[{Name}] Verifying session token (length: {len(token)})")
+
+        # Verify token
+        result = verify_session_token(token)
+
+        if not result.is_valid:
+            logger.warning(f"[{Name}] Token verification failed: {result.error}")
+            return Result.default_user_error(
+                "Invalid or expired session",
+                data={"authenticated": False}
+            )
+
+        user_id = result.user_id or clerk_user_id
+
+        if not user_id:
+            logger.warning(f"[{Name}] No user ID in verified token")
+            return Result.default_user_error("Invalid token", data={"authenticated": False})
+
+        logger.info(f"[{Name}] Token verified for user: {user_id}")
+
+        # Get user info from Clerk
         try:
-            # Clerk SDK session verification
-            sessions = clerk.sessions.list()
-            valid_session = None
-            for session in sessions:
-                if session.status == "active":
-                    # Check if this session matches
-                    valid_session = session
-                    break
-
-            if not valid_session:
-                return Result.default_user_error("Invalid or expired session", data={"authenticated": False})
-
-            # Get user info
-            user = clerk.users.get(user_id=valid_session.user_id)
-
-            # Load/create local user data
-            local_data = load_local_user_data(user.id)
-            if not local_data:
-                local_data = LocalUserData(
-                    clerk_user_id=user.id,
-                    username=user.username or user.email_addresses[0].email_address.split("@")[0],
-                    email=user.email_addresses[0].email_address if user.email_addresses else "",
-                    level=1,
-                    settings={},
-                    session_token=token
-                )
-                save_local_user_data(local_data)
-
-            return Result.ok({
-                "authenticated": True,
-                "user_id": user.id,
-                "username": local_data.username,
-                "email": local_data.email,
-                "level": local_data.level,
-                "settings": local_data.settings
-            })
-
+            clerk = get_clerk_client()
+            user = clerk.users.get(user_id=user_id)
         except Exception as e:
-            get_logger().warning(f"[{Name}] Session verification failed: {e}")
-            return Result.default_user_error("Session verification failed", data={"authenticated": False})
+            logger.error(f"[{Name}] Failed to get user: {e}")
+            return Result.default_user_error("User not found", data={"authenticated": False})
+
+        # Extract user info
+        email = ""
+        if user.email_addresses and len(user.email_addresses) > 0:
+            email = user.email_addresses[0].email_address
+
+        username = user.username or (email.split("@")[0] if email else f"user_{user_id[:8]}")
+
+        # Load or create local user data
+        local_data = load_local_user_data(user_id)
+
+        if not local_data:
+            local_data = LocalUserData(
+                clerk_user_id=user_id,
+                username=username,
+                email=email,
+                level=1,
+                settings={},
+                mod_data={},
+                session_token=token,
+                last_sync=time.time()
+            )
+            save_local_user_data(local_data)
+            _db_save_user_sync_data(app, user_id, local_data.to_dict())
+            logger.info(f"[{Name}] Created local user data for {user_id}")
+        else:
+            local_data.session_token = token
+            local_data.last_sync = time.time()
+            if user.username:
+                local_data.username = user.username
+            if email:
+                local_data.email = email
+            save_local_user_data(local_data)
+
+        return Result.ok({
+            "authenticated": True,
+            "user_id": user_id,
+            "username": local_data.username,
+            "email": local_data.email,
+            "level": local_data.level,
+            "settings": local_data.settings
+        })
+
+    except ValueError as ve:
+        logger.error(f"[{Name}] Configuration error: {ve}")
+        return Result.default_internal_error("Authentication service not configured")
 
     except Exception as e:
-        get_logger().error(f"[{Name}] Error in verify_session: {e}")
-        return Result.default_internal_error(f"Authentication error: {str(e)}")
-
+        logger.error(f"[{Name}] Error in verify_session: {e}")
+        return Result.default_internal_error("Authentication error")
 
 @export(mod_name=Name, version=version, api=True)
 async def get_user_data(app: App = None, clerk_user_id: str = None, data=None) -> ApiResult:
@@ -556,8 +727,8 @@ async def cli_check_auth(app: App = None, cli_session_id: str = None) -> ApiResu
 
 # =================== Web Authentication Callbacks ===================
 
-@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def on_sign_in(app: App = None, request=None, user_data: dict = None) -> ApiResult:
+@export(mod_name=Name, version=version, api=True)
+async def on_sign_in(app: App = None, user_data: dict = None) -> ApiResult:
     """
     Webhook/Callback when user signs in via Clerk UI
     Creates local user data and syncs to DB

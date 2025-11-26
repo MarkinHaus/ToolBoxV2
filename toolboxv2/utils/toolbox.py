@@ -1185,8 +1185,8 @@ class App(AppType, metaclass=Singleton):
         self.alive = False
         self.called_exit = True, time.time()
         self.save_exit()
-        if hasattr(self, 'root_blob_storage') and self.root_blob_storage:
-            self.root_blob_storage.exit()
+        # if hasattr(self, 'root_blob_storage') and self.root_blob_storage:
+        #     self.root_blob_storage.exit()
         try:
             self.config_fh.save_file_handler()
         except SystemExit:
@@ -1996,7 +1996,7 @@ class App(AppType, metaclass=Singleton):
                     for k in kwargs_['data']:
                         if k in parms:
                             kwargs_[k] = kwargs_['data'][k]
-                            del kwargs_['data'][k]
+                    del kwargs_['data']
 
 
                 args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()

@@ -16,22 +16,28 @@ use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
     path::PathBuf,
-    sync::{Arc},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     fs::{self, File},
-    sync::{broadcast},
+    sync::broadcast,
 };
-use tracing::{error, info, instrument};
-use tracing::log::warn;
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
-// --- KONFIGURATION ---
+// --- CONFIGURATION ---
 const STORAGE_ENV: &str = "R_BLOB_DB_DATA_DIR";
-const DEFAULT_STORAGE: &str =  "./data_blobs";
+const DEFAULT_STORAGE: &str = "./data_blobs";
 
-// --- DATENSTRUKTUREN ---
+// Persistence file names
+const PERMISSIONS_FILE: &str = "sys_permissions.json";
+const USER_KEYS_FILE: &str = "sys_user_keys.json";
+const KEY_USERS_FILE: &str = "sys_key_users.json";
+const BLOB_PERMISSIONS_FILE: &str = "sys_blob_permissions.json";
+const BLOB_LISTENERS_FILE: &str = "sys_blob_listeners.json";
+
+// --- DATA STRUCTURES ---
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlobMeta {
@@ -40,7 +46,6 @@ pub struct BlobMeta {
     pub data_shards: usize,
     pub parity_shards: usize,
     pub created_at: u64,
-    // Liste der Server, wo Shards liegen (zur Info für den Client bei Recovery)
     pub shard_locations: Vec<String>,
 }
 
@@ -51,7 +56,6 @@ pub struct ShardMeta {
     pub version: u64,
 }
 
-// Access Level für Blob-Permissions
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessLevel {
@@ -59,20 +63,17 @@ pub enum AccessLevel {
     ReadWrite,
 }
 
-// Permission Entry für einen Blob
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlobPermission {
     pub api_key: String,
-    pub user_id: String,  // Public User ID (hash of device name)
+    pub user_id: String,
     pub access_level: AccessLevel,
-    pub granted_by: String,  // User ID who granted access
-    pub granted_at: u64,  // Unix timestamp
+    pub granted_by: String,
+    pub granted_at: u64,
 }
 
-// Request Body für Upload
 #[derive(Deserialize, Debug)]
 struct PutRequestParams {
-    // Wenn gesetzt, wird Sharding aktiviert
     #[serde(default)]
     peers: Vec<String>,
     #[serde(default = "default_ds")]
@@ -80,32 +81,28 @@ struct PutRequestParams {
     #[serde(default = "default_ps")]
     parity_shards: usize,
 }
+
 fn default_ds() -> usize { 4 }
 fn default_ps() -> usize { 2 }
 
-// In-Memory State des Servers
+// In-Memory State
 struct AppState {
     storage_path: PathBuf,
 
-    // NEW: Blob-based permissions with access levels
-    // BlobID -> Vec<BlobPermission>
+    // Blob-based permissions
     blob_permissions: DashMap<String, Vec<BlobPermission>>,
 
-    // NEW: User ID <-> API Key mappings
-    // UserID -> API Key
+    // User <-> Key mappings (NOW PERSISTED)
     user_keys: DashMap<String, String>,
-    // API Key -> UserID (reverse index)
     key_users: DashMap<String, String>,
 
-    // LEGACY: Old permission system (kept for backward compatibility)
-    // API Key -> Set<BlobID>
+    // Legacy permissions
     permissions: DashMap<String, DashSet<String>>,
 
-    // BlobID -> Set<KeyID> (Reverse Index für Notifications)
+    // Notification system
     blob_listeners: DashMap<String, DashSet<String>>,
-    // Notification Channels: KeyID -> Sender
     notify_channels: DashMap<String, broadcast::Sender<String>>,
-    // HTTP Client für Replikation
+
     http_client: reqwest::Client,
 }
 
@@ -149,7 +146,7 @@ impl IntoResponse for AppError {
     }
 }
 
-// --- HELPER FUNKTIONEN ---
+// --- HELPER FUNCTIONS ---
 
 fn get_api_key(headers: &HeaderMap) -> Result<String, AppError> {
     headers
@@ -159,7 +156,6 @@ fn get_api_key(headers: &HeaderMap) -> Result<String, AppError> {
         .ok_or(AppError::Unauthorized)
 }
 
-// Generate Public User ID from device name
 fn generate_user_id(device_name: &str) -> String {
     let mut hasher = DefaultHasher::new();
     device_name.hash(&mut hasher);
@@ -167,12 +163,198 @@ fn generate_user_id(device_name: &str) -> String {
     format!("user_{:x}", hash)
 }
 
-// Get current Unix timestamp
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+// --- PERSISTENCE ---
+
+/// Load a DashMap<String, DashSet<String>> from JSON
+async fn load_dashmap_dashset(path: &PathBuf) -> DashMap<String, DashSet<String>> {
+    if !path.exists() {
+        return DashMap::new();
+    }
+    match fs::read(path).await {
+        Ok(data) => {
+            let parsed: Result<std::collections::HashMap<String, Vec<String>>, _> =
+                serde_json::from_slice(&data);
+            match parsed {
+                Ok(map) => {
+                    let dm = DashMap::new();
+                    for (k, v) in map {
+                        let ds = DashSet::new();
+                        for item in v {
+                            ds.insert(item);
+                        }
+                        dm.insert(k, ds);
+                    }
+                    dm
+                }
+                Err(e) => {
+                    warn!("Failed to parse {:?}: {}", path, e);
+                    DashMap::new()
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read {:?}: {}", path, e);
+            DashMap::new()
+        }
+    }
+}
+
+/// Save a DashMap<String, DashSet<String>> to JSON
+async fn save_dashmap_dashset(path: &PathBuf, map: &DashMap<String, DashSet<String>>) -> Result<(), AppError> {
+    let mut serializable: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for entry in map.iter() {
+        let key = entry.key().clone();
+        let values: Vec<String> = entry.value().iter().map(|r| r.key().clone()).collect();
+        serializable.insert(key, values);
+    }
+    let json = serde_json::to_vec_pretty(&serializable)?;
+    fs::write(path, json).await?;
+    Ok(())
+}
+
+/// Load a DashMap<String, String> from JSON
+async fn load_dashmap_string(path: &PathBuf) -> DashMap<String, String> {
+    if !path.exists() {
+        return DashMap::new();
+    }
+    match fs::read(path).await {
+        Ok(data) => {
+            let parsed: Result<std::collections::HashMap<String, String>, _> =
+                serde_json::from_slice(&data);
+            match parsed {
+                Ok(map) => {
+                    let dm = DashMap::new();
+                    for (k, v) in map {
+                        dm.insert(k, v);
+                    }
+                    dm
+                }
+                Err(e) => {
+                    warn!("Failed to parse {:?}: {}", path, e);
+                    DashMap::new()
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read {:?}: {}", path, e);
+            DashMap::new()
+        }
+    }
+}
+
+/// Save a DashMap<String, String> to JSON
+async fn save_dashmap_string(path: &PathBuf, map: &DashMap<String, String>) -> Result<(), AppError> {
+    let serializable: std::collections::HashMap<String, String> =
+        map.iter().map(|r| (r.key().clone(), r.value().clone())).collect();
+    let json = serde_json::to_vec_pretty(&serializable)?;
+    fs::write(path, json).await?;
+    Ok(())
+}
+
+/// Load blob permissions from JSON
+async fn load_blob_permissions(path: &PathBuf) -> DashMap<String, Vec<BlobPermission>> {
+    if !path.exists() {
+        return DashMap::new();
+    }
+    match fs::read(path).await {
+        Ok(data) => {
+            let parsed: Result<std::collections::HashMap<String, Vec<BlobPermission>>, _> =
+                serde_json::from_slice(&data);
+            match parsed {
+                Ok(map) => {
+                    let dm = DashMap::new();
+                    for (k, v) in map {
+                        dm.insert(k, v);
+                    }
+                    dm
+                }
+                Err(e) => {
+                    warn!("Failed to parse {:?}: {}", path, e);
+                    DashMap::new()
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read {:?}: {}", path, e);
+            DashMap::new()
+        }
+    }
+}
+
+/// Save blob permissions to JSON
+async fn save_blob_permissions(path: &PathBuf, map: &DashMap<String, Vec<BlobPermission>>) -> Result<(), AppError> {
+    let serializable: std::collections::HashMap<String, Vec<BlobPermission>> =
+        map.iter().map(|r| (r.key().clone(), r.value().clone())).collect();
+    let json = serde_json::to_vec_pretty(&serializable)?;
+    fs::write(path, json).await?;
+    Ok(())
+}
+
+/// Initialize notify channels for all known API keys
+fn init_notify_channels(
+    permissions: &DashMap<String, DashSet<String>>,
+    key_users: &DashMap<String, String>,
+) -> DashMap<String, broadcast::Sender<String>> {
+    let channels = DashMap::new();
+
+    // Add channels for all keys in legacy permissions
+    for entry in permissions.iter() {
+        let key = entry.key().clone();
+        if !channels.contains_key(&key) {
+            let (tx, _) = broadcast::channel(100);
+            channels.insert(key, tx);
+        }
+    }
+
+    // Add channels for all keys in key_users
+    for entry in key_users.iter() {
+        let key = entry.key().clone();
+        if !channels.contains_key(&key) {
+            let (tx, _) = broadcast::channel(100);
+            channels.insert(key, tx);
+        }
+    }
+
+    info!("Initialized {} notification channels", channels.len());
+    channels
+}
+
+/// Ensure a notify channel exists for a key, creating one if needed
+fn ensure_notify_channel(state: &Arc<AppState>, key: &str) {
+    if !state.notify_channels.contains_key(key) {
+        let (tx, _) = broadcast::channel(100);
+        state.notify_channels.insert(key.to_string(), tx);
+        info!("Created notify channel for key: {}...", &key[..8.min(key.len())]);
+    }
+}
+
+/// Save all persistent state
+async fn save_all_state(state: &Arc<AppState>) -> Result<(), AppError> {
+    let storage_path = &state.storage_path;
+
+    // Save permissions
+    save_dashmap_dashset(&storage_path.join(PERMISSIONS_FILE), &state.permissions).await?;
+
+    // Save user_keys
+    save_dashmap_string(&storage_path.join(USER_KEYS_FILE), &state.user_keys).await?;
+
+    // Save key_users
+    save_dashmap_string(&storage_path.join(KEY_USERS_FILE), &state.key_users).await?;
+
+    // Save blob_permissions
+    save_blob_permissions(&storage_path.join(BLOB_PERMISSIONS_FILE), &state.blob_permissions).await?;
+
+    // Save blob_listeners
+    save_dashmap_dashset(&storage_path.join(BLOB_LISTENERS_FILE), &state.blob_listeners).await?;
+
+    Ok(())
 }
 
 // --- MAIN SERVER LOGIC ---
@@ -186,32 +368,39 @@ async fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&storage_path).await?;
     info!("Mounting storage at: {:?}", storage_path);
 
-    // Persistenz laden (Permissions)
-    let permissions_path = storage_path.join("sys_permissions.json");
-    let permissions = if permissions_path.exists() {
-        let data = fs::read(&permissions_path).await?;
-        serde_json::from_slice(&data).unwrap_or_default()
-    } else {
-        DashMap::new()
-    };
+    // Load all persistent state
+    info!("Loading persistent state...");
+    let permissions = load_dashmap_dashset(&storage_path.join(PERMISSIONS_FILE)).await;
+    let user_keys = load_dashmap_string(&storage_path.join(USER_KEYS_FILE)).await;
+    let key_users = load_dashmap_string(&storage_path.join(KEY_USERS_FILE)).await;
+    let blob_permissions = load_blob_permissions(&storage_path.join(BLOB_PERMISSIONS_FILE)).await;
+    let blob_listeners = load_dashmap_dashset(&storage_path.join(BLOB_LISTENERS_FILE)).await;
+
+    info!("Loaded {} permissions, {} users, {} blob permissions",
+          permissions.len(), user_keys.len(), blob_permissions.len());
+
+    // Initialize notify channels for ALL known keys
+    let notify_channels = init_notify_channels(&permissions, &key_users);
 
     let state = Arc::new(AppState {
         storage_path,
-        blob_permissions: DashMap::new(),
-        user_keys: DashMap::new(),
-        key_users: DashMap::new(),
+        blob_permissions,
+        user_keys,
+        key_users,
         permissions,
-        blob_listeners: DashMap::new(),
-        notify_channels: DashMap::new(),
+        blob_listeners,
+        notify_channels,
         http_client: reqwest::Client::new(),
     });
 
-    // Auto-Save Task für Permissions (alle 30s)
+    // Auto-Save Task (every 30s)
     let state_clone = state.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            save_permissions(&state_clone).await.ok();
+            if let Err(e) = save_all_state(&state_clone).await {
+                error!("Failed to save state: {}", e);
+            }
         }
     });
 
@@ -220,14 +409,15 @@ async fn main() -> anyhow::Result<()> {
         // Key Management
         .route("/keys", post(create_key))
         .route("/keys/{key}", delete(revoke_key))
+        .route("/keys/validate", get(validate_key))  // NEW: Key validation endpoint
         .route("/permissions/{blob_id}", post(grant_permission))
-        // NEW: Sharing API
+        // Sharing API
         .route("/share/{blob_id}", post(share_blob).get(list_shares))
         .route("/share/{blob_id}/{user_id}", delete(revoke_share))
-        // Blob Operationen
+        // Blob Operations
         .route("/blob/{id}", put(upload_blob).get(read_blob).delete(delete_blob))
         .route("/blob/{id}/meta", get(read_meta))
-        // Shard Handling (Server-zu-Server)
+        // Shard Handling
         .route("/shard/{id}/{index}", post(receive_shard).get(read_shard))
         // Realtime
         .route("/watch", get(watch_changes))
@@ -239,13 +429,6 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-    Ok(())
-}
-
-async fn save_permissions(state: &Arc<AppState>) -> Result<(), AppError> {
-    let path = state.storage_path.join("sys_permissions.json");
-    let json = serde_json::to_vec(&state.permissions)?;
-    fs::write(path, json).await?;
     Ok(())
 }
 
@@ -269,11 +452,9 @@ async fn create_key(
 ) -> Json<KeyResponse> {
     let key = Uuid::new_v4().to_string();
 
-    // Generate User ID from device name
     let user_id = if let Some(device_name) = payload.device_name {
         generate_user_id(&device_name)
     } else {
-        // Fallback: use key as user_id
         format!("user_{}", &key[..8])
     };
 
@@ -284,14 +465,53 @@ async fn create_key(
     // Legacy permission system
     state.permissions.insert(key.clone(), DashSet::new());
 
-    // Initialisiere Channel für Notifications
+    // Initialize notification channel
     let (tx, _) = broadcast::channel(100);
     state.notify_channels.insert(key.clone(), tx);
 
-    save_permissions(&state).await.ok();
+    // Save state immediately
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state after key creation: {}", e);
+        }
+    });
 
     info!("Created API key for user_id: {}", user_id);
     Json(KeyResponse { key, user_id })
+}
+
+/// NEW: Validate an existing API key and re-register it if needed
+async fn validate_key(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let key = get_api_key(&headers)?;
+
+    // Check if key exists in any of our systems
+    let exists_in_permissions = state.permissions.contains_key(&key);
+    let exists_in_key_users = state.key_users.contains_key(&key);
+
+    if !exists_in_permissions && !exists_in_key_users {
+        return Err(AppError::Unauthorized);
+    }
+
+    // Ensure notify channel exists (self-healing)
+    ensure_notify_channel(&state, &key);
+
+    // Ensure key is in permissions if not already
+    if !exists_in_permissions {
+        state.permissions.insert(key.clone(), DashSet::new());
+    }
+
+    let user_id = state.key_users.get(&key)
+        .map(|r| r.value().clone())
+        .unwrap_or_else(|| format!("user_{}", &key[..8]));
+
+    Ok(Json(serde_json::json!({
+        "valid": true,
+        "user_id": user_id
+    })))
 }
 
 async fn revoke_key(
@@ -299,17 +519,39 @@ async fn revoke_key(
     Path(key): Path<String>,
     headers: HeaderMap
 ) -> Result<StatusCode, AppError> {
-    // Einfache Admin Logik: Nur wer Admin Key hat darf löschen?
-    // Hier vereinfacht: Jeder mit gültigem Key darf seinen löschen oder andere (Vorsicht in Prod!)
     let _requester = get_api_key(&headers)?;
+
+    // Remove from all maps
+    if let Some((_, user_id)) = state.key_users.remove(&key) {
+        state.user_keys.remove(&user_id);
+    }
     state.permissions.remove(&key);
     state.notify_channels.remove(&key);
-    save_permissions(&state).await.ok();
+
+    // Remove from blob_permissions
+    for mut entry in state.blob_permissions.iter_mut() {
+        entry.value_mut().retain(|p| p.api_key != key);
+    }
+
+    // Remove from blob_listeners
+    for entry in state.blob_listeners.iter() {
+        entry.value().remove(&key);
+    }
+
+    // Save state
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state after key revocation: {}", e);
+        }
+    });
+
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
 struct GrantReq { key_to_grant: String }
+
 async fn grant_permission(
     State(state): State<Arc<AppState>>,
     Path(blob_id): Path<String>,
@@ -317,31 +559,36 @@ async fn grant_permission(
     Json(payload): Json<GrantReq>
 ) -> Result<StatusCode, AppError> {
     let requester = get_api_key(&headers)?;
-
-    // Darf der Requester überhaupt Berechtigungen vergeben?
-    // Wir nehmen an: Wer Zugriff auf den Blob hat, darf teilen.
     check_access(&state, &requester, &blob_id).await?;
+
+    // Ensure notify channel exists for target key
+    ensure_notify_channel(&state, &payload.key_to_grant);
 
     if let Some(set) = state.permissions.get(&payload.key_to_grant) {
         set.insert(blob_id.clone());
 
-        // Reverse Index Update für Notifications
         let listener_entry = state.blob_listeners.entry(blob_id.clone()).or_insert_with(DashSet::new);
         listener_entry.insert(payload.key_to_grant.clone());
     } else {
         return Err(AppError::BadRequest("Target Key does not exist".into()));
     }
 
-    save_permissions(&state).await.ok();
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state: {}", e);
+        }
+    });
+
     Ok(StatusCode::OK)
 }
 
-// 2. NEW: Sharing API
+// 2. Sharing API
 
 #[derive(Deserialize)]
 struct ShareRequest {
-    user_id: String,  // Public User ID to share with
-    access_level: AccessLevel,  // read_only or read_write
+    user_id: String,
+    access_level: AccessLevel,
 }
 
 #[derive(Serialize)]
@@ -352,9 +599,6 @@ struct ShareResponse {
     granted_at: u64,
 }
 
-/// Share a blob with another user
-/// POST /share/:blob_id
-/// Body: { "user_id": "user_abc123", "access_level": "read_only" | "read_write" }
 async fn share_blob(
     State(state): State<Arc<AppState>>,
     Path(blob_id): Path<String>,
@@ -363,28 +607,23 @@ async fn share_blob(
 ) -> Result<Json<ShareResponse>, AppError> {
     let requester_key = get_api_key(&headers)?;
 
-    // Get requester's user_id
     let requester_user_id = state.key_users.get(&requester_key)
         .map(|r| r.value().clone())
         .ok_or(AppError::Unauthorized)?;
 
-    // Security: Prevent sharing with yourself
     if requester_user_id == payload.user_id {
         return Err(AppError::BadRequest("Cannot share with yourself".into()));
     }
 
-    // Check if requester has write access to this blob
     check_write_access(&state, &requester_key, &blob_id).await?;
 
-    // Get target user's API key
     let target_key = state.user_keys.get(&payload.user_id)
         .map(|r| r.value().clone())
         .ok_or(AppError::BadRequest("Target user does not exist".into()))?;
 
-    // Security: Ensure one party doesn't have both keys
-    // This is enforced by the user_id system - each device has unique user_id
+    // Ensure target has a notify channel
+    ensure_notify_channel(&state, &target_key);
 
-    // Create permission entry
     let permission = BlobPermission {
         api_key: target_key.clone(),
         user_id: payload.user_id.clone(),
@@ -393,22 +632,21 @@ async fn share_blob(
         granted_at: now(),
     };
 
-    // Add to blob permissions
     let mut perms = state.blob_permissions.entry(blob_id.clone())
         .or_insert_with(Vec::new);
-
-    // Remove existing permission for this user if any
     perms.value_mut().retain(|p| p.user_id != payload.user_id);
-
-    // Add new permission
     perms.value_mut().push(permission.clone());
 
-    // Update notification listeners
     let listener_entry = state.blob_listeners.entry(blob_id.clone())
         .or_insert_with(DashSet::new);
     listener_entry.insert(target_key);
 
-    save_permissions(&state).await.ok();
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state: {}", e);
+        }
+    });
 
     info!("Shared blob '{}' with user '{}' ({:?})",
           blob_id, payload.user_id, payload.access_level);
@@ -421,8 +659,6 @@ async fn share_blob(
     }))
 }
 
-/// List all shares for a blob
-/// GET /share/:blob_id
 #[derive(Serialize)]
 struct ListSharesResponse {
     blob_id: String,
@@ -443,11 +679,8 @@ async fn list_shares(
     headers: HeaderMap,
 ) -> Result<Json<ListSharesResponse>, AppError> {
     let requester_key = get_api_key(&headers)?;
-
-    // Check if requester has access to this blob
     check_access(&state, &requester_key, &blob_id).await?;
 
-    // Get all permissions for this blob
     let shares = if let Some(perms) = state.blob_permissions.get(&blob_id) {
         perms.value().iter().map(|p| ShareInfo {
             user_id: p.user_id.clone(),
@@ -465,19 +698,14 @@ async fn list_shares(
     }))
 }
 
-/// Revoke share for a user
-/// DELETE /share/:blob_id/:user_id
 async fn revoke_share(
     State(state): State<Arc<AppState>>,
     Path((blob_id, user_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
     let requester_key = get_api_key(&headers)?;
-
-    // Check if requester has write access
     check_write_access(&state, &requester_key, &blob_id).await?;
 
-    // Remove permission
     if let Some(mut perms) = state.blob_permissions.get_mut(&blob_id) {
         let before_len = perms.len();
         perms.retain(|p| p.user_id != user_id);
@@ -486,7 +714,6 @@ async fn revoke_share(
             return Err(AppError::NotFound);
         }
 
-        // Remove from listeners if no longer has access
         if let Some(target_key) = state.user_keys.get(&user_id) {
             if let Some(listeners) = state.blob_listeners.get(&blob_id) {
                 listeners.remove(target_key.value());
@@ -496,21 +723,27 @@ async fn revoke_share(
         return Err(AppError::NotFound);
     }
 
-    save_permissions(&state).await.ok();
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state: {}", e);
+        }
+    });
 
     info!("Revoked share for blob '{}' from user '{}'", blob_id, user_id);
-
     Ok(StatusCode::NO_CONTENT)
 }
 
 // 3. Blob Operations
 
-/// Check if user has any access (read or write) to a blob
 async fn check_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> Result<(), AppError> {
+    // Ensure key has a channel (self-healing)
+    ensure_notify_channel(state, key);
+
     // Check new permission system first
     if let Some(perms) = state.blob_permissions.get(blob_id) {
         for perm in perms.value() {
-            if &perm.api_key == key {
+            if perm.api_key == key {
                 return Ok(());
             }
         }
@@ -529,12 +762,14 @@ async fn check_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> Result
     }
 }
 
-/// Check if user has write access to a blob
 async fn check_write_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> Result<(), AppError> {
+    // Ensure key has a channel (self-healing)
+    ensure_notify_channel(state, key);
+
     // Check new permission system
     if let Some(perms) = state.blob_permissions.get(blob_id) {
         for perm in perms.value() {
-            if &perm.api_key == key {
+            if perm.api_key == key {
                 if perm.access_level == AccessLevel::ReadWrite {
                     return Ok(());
                 } else {
@@ -544,7 +779,7 @@ async fn check_write_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> 
         }
     }
 
-    // Fallback to legacy system (assumes full access)
+    // Fallback to legacy system
     match state.permissions.get(key) {
         Some(blobs) => {
             if blobs.contains(blob_id) {
@@ -557,17 +792,16 @@ async fn check_write_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> 
     }
 }
 
-// Helper: Notify listeners
 async fn notify_subscribers(state: &Arc<AppState>, blob_id: &str) {
     if let Some(listeners) = state.blob_listeners.get(blob_id) {
         for key in listeners.iter() {
             if let Some(sender) = state.notify_channels.get(key.key()) {
-                // Sendet "BlobID:Version" oder einfach BlobID
                 let _ = sender.send(blob_id.to_string());
             }
         }
     }
 }
+
 #[derive(Debug, Deserialize)]
 struct ShardConfig {
     data_shards: usize,
@@ -595,7 +829,9 @@ async fn upload_blob(
 ) -> Result<Json<BlobMeta>, AppError> {
     let key = get_api_key(&headers)?;
 
-    // Parse shard config from header (defaults if not provided)
+    // Ensure key has a channel
+    ensure_notify_channel(&state, &key);
+
     let shard_config: ShardConfig = if let Some(config_header) = headers.get("x-shard-config") {
         match config_header.to_str() {
             Ok(config_str) => {
@@ -613,13 +849,11 @@ async fn upload_blob(
         ShardConfig::default()
     };
 
-    // Auto-Grant Permission if new, else check
     let is_new = !state.storage_path.join(format!("{}.meta", id)).exists();
+
     if !is_new {
-        // For updates, check write access
         check_write_access(&state, &key, &id).await?;
 
-        // Concurrency Check (Optimistic Locking)
         if let Some(if_match) = headers.get("if-match") {
             let client_ver: u64 = if_match.to_str().unwrap_or("0").parse().unwrap_or(0);
             let current_meta = load_meta(&state.storage_path, &id).await?;
@@ -628,13 +862,13 @@ async fn upload_blob(
             }
         }
     } else {
-        // Grant full access to creator (NEW permission system)
+        // Grant full access to creator
         if let Some(user_id) = state.key_users.get(&key) {
             let permission = BlobPermission {
                 api_key: key.clone(),
                 user_id: user_id.value().clone(),
                 access_level: AccessLevel::ReadWrite,
-                granted_by: user_id.value().clone(),  // Self-granted
+                granted_by: user_id.value().clone(),
                 granted_at: now(),
             };
 
@@ -643,7 +877,7 @@ async fn upload_blob(
                 .push(permission);
         }
 
-        // Legacy permission system
+        // Legacy system
         if let Some(set) = state.permissions.get(&key) {
             set.insert(id.clone());
             let listener_entry = state.blob_listeners.entry(id.clone()).or_insert_with(DashSet::new);
@@ -651,29 +885,21 @@ async fn upload_blob(
         }
     }
 
-    let version = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-
-    // 1. Sharding Logic (Reed Solomon)
+    let version = now();
     let data_shards_count = shard_config.data_shards;
     let parity_shards_count = shard_config.parity_shards;
 
-    // FIX: Added ::<Field> to specify we are using 8-bit Galois Field
     let encoder = ReedSolomon::<Field>::new(data_shards_count, parity_shards_count)
         .map_err(|e| AppError::ReedSolomon(e.to_string()))?;
 
-    // Write Data (Original)
+    // Write Data
     let data_path = state.storage_path.join(format!("{}.data", id));
     fs::write(&data_path, &body).await?;
 
     // Prepare Shards
     let data_vec = body.to_vec();
-
-    // Calculate shard length (round up)
-    // IMPORTANT: RS requires equal length shards. We pad the data.
     let shard_len = (data_vec.len() + data_shards_count - 1) / data_shards_count;
     let mut padded_data = data_vec.clone();
-
-    // Pad with zeros to fit perfect rectangle
     padded_data.resize(shard_len * data_shards_count, 0);
 
     let mut master_shards: Vec<Vec<u8>> = padded_data
@@ -681,12 +907,10 @@ async fn upload_blob(
         .map(|c| c.to_vec())
         .collect();
 
-    // Add empty parity shards containers
     for _ in 0..parity_shards_count {
         master_shards.push(vec![0u8; shard_len]);
     }
 
-    // Perform encoding
     encoder.encode(&mut master_shards)
         .map_err(|e| AppError::ReedSolomon(e.to_string()))?;
 
@@ -702,17 +926,15 @@ async fn upload_blob(
     let meta_path = state.storage_path.join(format!("{}.meta", id));
     fs::write(&meta_path, serde_json::to_vec(&meta)?).await?;
 
-    // Distribute Shards Concurrently
+    // Distribute Shards
     if !shard_config.peers.is_empty() {
         let client = state.http_client.clone();
         let peers = shard_config.peers.clone();
         let blob_id = id.clone();
 
-        // Background task to push shards to other servers
         tokio::spawn(async move {
             for (i, shard) in master_shards.iter().enumerate() {
                 if peers.is_empty() { break; }
-                // Round robin distribution
                 let peer = &peers[i % peers.len()];
                 let url = format!("{}/shard/{}/{}", peer, blob_id, i);
 
@@ -722,19 +944,24 @@ async fn upload_blob(
                     version,
                 };
 
-                // Send Shard + Meta headers
                 let _res = client.post(&url)
                     .body(shard.clone())
                     .header("x-shard-meta", serde_json::to_string(&shard_meta).unwrap_or_default())
                     .send()
                     .await;
-
-                // In production: Retry logic and error logging goes here
             }
         });
     }
 
     notify_subscribers(&state, &id).await;
+
+    // Save state
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state: {}", e);
+        }
+    });
 
     Ok(Json(meta))
 }
@@ -752,12 +979,9 @@ async fn read_blob(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    // Check if blob exists BEFORE checking access
-    // This ensures we return 404 (not found) instead of 401 (unauthorized) when blob doesn't exist
     let path = state.storage_path.join(format!("{}.data", id));
     if !path.exists() { return Err(AppError::NotFound); }
 
-    // Now check access permissions
     let key = get_api_key(&headers)?;
     check_access(&state, &key, &id).await?;
 
@@ -765,7 +989,6 @@ async fn read_blob(
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
-    // Add ETag header
     let meta = load_meta(&state.storage_path, &id).await?;
     let mut headers = HeaderMap::new();
     headers.insert("ETag", meta.version.to_string().parse().unwrap());
@@ -778,12 +1001,9 @@ async fn read_meta(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<BlobMeta>, AppError> {
-    // Check if blob metadata exists BEFORE checking access
-    // This ensures we return 404 (not found) instead of 401 (unauthorized) when blob doesn't exist
     let meta_path = state.storage_path.join(format!("{}.meta", id));
     if !meta_path.exists() { return Err(AppError::NotFound); }
 
-    // Now check access permissions
     let key = get_api_key(&headers)?;
     check_access(&state, &key, &id).await?;
 
@@ -798,44 +1018,39 @@ async fn delete_blob(
     headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
     let key = get_api_key(&headers)?;
-
-    // Check if user has write access to delete
     check_write_access(&state, &key, &id).await?;
 
-    // Delete data file
     let data_path = state.storage_path.join(format!("{}.data", id));
     if data_path.exists() {
         fs::remove_file(&data_path).await?;
     }
 
-    // Delete metadata file
     let meta_path = state.storage_path.join(format!("{}.meta", id));
     if meta_path.exists() {
         fs::remove_file(&meta_path).await?;
     }
 
-    // Remove permissions
     state.blob_permissions.remove(&id);
 
-    // Remove from legacy permissions
     for entry in state.permissions.iter() {
         entry.value().remove(&id);
     }
 
-    // Remove listeners
     state.blob_listeners.remove(&id);
-
-    // Notify subscribers about deletion
     notify_subscribers(&state, &id).await;
 
-    info!("Deleted blob: {}", id);
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = save_all_state(&state_clone).await {
+            error!("Failed to save state: {}", e);
+        }
+    });
 
+    info!("Deleted blob: {}", id);
     Ok(StatusCode::NO_CONTENT)
 }
 
-// 3. Shard Management (No Auth check needed usually, or specific Cluster Key)
-// For simplicity: We assume peers are trusted or use a specific "Cluster-Key"
-// Prompt: "Server doesn't need to know about others". So open or basic validation.
+// 4. Shard Management
 
 async fn receive_shard(
     State(state): State<Arc<AppState>>,
@@ -843,12 +1058,10 @@ async fn receive_shard(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, AppError> {
-    // 1. Save .shard.N
     let shard_filename = format!("{}.shard.{}", id, index);
     let data_path = state.storage_path.join(&shard_filename);
     fs::write(&data_path, &body).await?;
 
-    // 2. Save .shard.N.meta
     if let Some(meta_json) = headers.get("x-shard-meta") {
         let meta_path = state.storage_path.join(format!("{}.meta", shard_filename));
         fs::write(&meta_path, meta_json.as_bytes()).await?;
@@ -870,7 +1083,7 @@ async fn read_shard(
     Ok(Body::from_stream(stream))
 }
 
-// 4. Notifications (Long Polling / Server Sent Events alternative)
+// 5. Watch / Notifications
 
 async fn watch_changes(
     State(state): State<Arc<AppState>>,
@@ -878,16 +1091,26 @@ async fn watch_changes(
 ) -> Result<String, AppError> {
     let key = get_api_key(&headers)?;
 
+    // Self-healing: ensure channel exists if key is valid
+    let key_exists = state.permissions.contains_key(&key) || state.key_users.contains_key(&key);
+
+    if !key_exists {
+        return Err(AppError::Unauthorized);
+    }
+
+    // Create channel if it doesn't exist (self-healing after restart)
+    ensure_notify_channel(&state, &key);
+
     let mut rx = if let Some(sender) = state.notify_channels.get(&key) {
         sender.subscribe()
     } else {
+        // This should not happen after ensure_notify_channel, but handle gracefully
         return Err(AppError::Unauthorized);
     };
 
-    // Wait for notification or timeout
     match tokio::time::timeout(Duration::from_secs(60), rx.recv()).await {
-        Ok(Ok(blob_id)) => Ok(blob_id), // Return ID of changed blob
+        Ok(Ok(blob_id)) => Ok(blob_id),
         Ok(Err(_)) => Err(AppError::BadRequest("Lagged".into())),
-        Err(_) => Ok("timeout".to_string()), // Client connects again
+        Err(_) => Ok("timeout".to_string()),
     }
 }

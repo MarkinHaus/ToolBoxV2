@@ -280,22 +280,51 @@ const user = {
     // =================== Clerk Event Handlers ===================
 
     async _onClerkSignIn(clerkUser) {
-        TB.logger.info('[User] Clerk sign-in detected:', clerkUser.id);
+    // Prüfe ob wir bereits für diesen User authentifiziert sind
+    const currentUserId = this.getUserId();
+    const currentToken = this.getToken();
 
-        const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
-        const username = clerkUser.username || email.split('@')[0];
+    // Wenn gleicher User und wir haben bereits einen Token -> nur Token refreshen
+    if (currentUserId === clerkUser.id && currentToken && this.isAuthenticated()) {
+        TB.logger.debug('[User] Same user, just refreshing token...');
 
-        // Get session token
-        let token = null;
+        // Nur neuen Token holen und speichern
         if (clerkInstance?.session) {
             try {
-                token = await clerkInstance.session.getToken();
+                const newToken = await clerkInstance.session.getToken();
+                this._updateUserState({ token: newToken });
+                TB.logger.debug('[User] Token refreshed');
             } catch (e) {
-                TB.logger.warn('[User] Failed to get session token:', e);
+                TB.logger.warn('[User] Token refresh failed:', e);
             }
         }
+        return; // Kein Backend-Call nötig!
+    }
 
-        // Notify backend of sign-in
+    // Neuer Login oder anderer User -> vollständige Authentifizierung
+    TB.logger.info('[User] New sign-in detected:', clerkUser.id);
+
+    const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
+    const username = clerkUser.username || email.split('@')[0];
+
+    // Get session token
+    let token = null;
+    if (clerkInstance?.session) {
+        try {
+            token = await clerkInstance.session.getToken();
+        } catch (e) {
+            TB.logger.warn('[User] Failed to get session token:', e);
+        }
+    }
+
+    // Token sofort speichern
+    this._updateUserState({
+        token: token,
+        userId: clerkUser.id,
+    });
+
+    // Backend nur bei NEUEM Login informieren
+    try {
         const userData = {
             id: clerkUser.id,
             username: username,
@@ -303,69 +332,145 @@ const user = {
             session_token: token
         };
 
-        try {
-            // 1. Backend über Login informieren
-            await fetch('/api/CloudM.AuthClerk/on_sign_in', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_data: userData })
-            });
-
-            // 2. Server-Session validieren
-            await fetch('/validateSession', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_token: token,
-                    clerk_user_id: clerkUser.id
-                })
-            });
-        } catch (e) {
-            TB.logger.error('[User] Failed to notify backend:', e);
-        }
-
-        // Load user data from backend
-        let settings = {};
-        let userLevel = 1;
-        let modData = {};
-
-        try {
-            const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ clerk_user_id: clerkUser.id })
-            });
-            const userDataResult = await userDataResponse.json();
-
-            if (userDataResult.error === "none" && userDataResult.result?.data) {
-                const data = userDataResult.result.data;
-                settings = data.settings || {};
-                userLevel = data.level || 1;
-                modData = data.mod_data || {};
-            }
-        } catch (e) {
-            TB.logger.warn('[User] Failed to load user data:', e);
-        }
-
-        // Update state
-        this._updateUserState({
-            isAuthenticated: true,
-            username: username,
-            email: email,
-            userId: clerkUser.id,
-            userLevel: userLevel,
-            token: token,
-            settings: settings,
-            modData: modData,
-            userData: {
-                firstName: clerkUser.firstName,
-                lastName: clerkUser.lastName,
-                imageUrl: clerkUser.imageUrl
-            }
+        await fetch('/api/CloudM.AuthClerk/on_sign_in', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : ''
+            },
+            body: JSON.stringify({ user_data: userData })
         });
 
-        TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
-    },
+        // Session validieren
+        const validateResponse = await fetch('/validateSession', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : ''
+            },
+            body: JSON.stringify({
+                session_token: token,
+                clerk_user_id: clerkUser.id
+            })
+        });
+
+        if (!validateResponse.ok) {
+            TB.logger.warn('[User] Session validation failed');
+        }
+
+    } catch (e) {
+        TB.logger.error('[User] Backend notification failed:', e);
+    }
+
+    // User-Daten laden (nur einmal bei Login)
+    let settings = {};
+    let userLevel = 1;
+    let modData = {};
+
+    try {
+        const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : ''
+            },
+            body: JSON.stringify({ clerk_user_id: clerkUser.id })
+        });
+        const userDataResult = await userDataResponse.json();
+
+        if (userDataResult.error === "none" && userDataResult.result?.data) {
+            const data = userDataResult.result.data;
+            settings = data.settings || {};
+            userLevel = data.level || 1;
+            modData = data.mod_data || {};
+        }
+    } catch (e) {
+        TB.logger.warn('[User] Failed to load user data:', e);
+    }
+
+    // State finalisieren
+    this._updateUserState({
+        isAuthenticated: true,
+        username: username,
+        email: email,
+        userId: clerkUser.id,
+        userLevel: userLevel,
+        token: token,
+        settings: settings,
+        modData: modData,
+        userData: {
+            firstName: clerkUser.firstName,
+            lastName: clerkUser.lastName,
+            imageUrl: clerkUser.imageUrl
+        }
+    });
+
+    TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
+    this._handlePostAuthRedirect();
+},
+
+    _handlePostAuthRedirect() {
+    const currentPath = window.location.pathname;
+    const isAuthPage = currentPath.includes('/login.html') || currentPath.includes('/signup.html');
+
+    // Prüfe ob Username gesetzt ist
+    const clerkUser = clerkInstance?.user;
+    if (clerkUser && !clerkUser.username) {
+        // User muss noch Username setzen - NICHT weiterleiten
+        TB.logger.info('[User] User needs to complete profile (set username)');
+
+        // Wenn auf Login-Seite, zur Signup-Seite weiterleiten
+        if (currentPath.includes('/login.html')) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const nextUrl = urlParams.get('next') || '/web/mainContent.html';
+            window.location.href = `/web/assets/signup.html?next=${encodeURIComponent(nextUrl)}`;
+        }
+        return;
+    }
+
+    if (isAuthPage) {
+        TB.logger.info('[User] On auth page after sign-in, redirecting...');
+
+        // Parse redirect URL from various sources
+        let redirectUrl = '/web/mainContent.html'; // Default
+
+        // 1. Check URL params
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('next')) {
+            redirectUrl = urlParams.get('next');
+        }
+
+        // 2. Check hash params (Clerk's #/continue?redirect_url=...)
+        const hash = window.location.hash;
+        if (hash.includes('redirect_url=')) {
+            const match = hash.match(/redirect_url=([^&]+)/);
+            if (match) {
+                redirectUrl = decodeURIComponent(match[1]);
+            }
+        } else if (hash.includes('after_sign_in_url=')) {
+            const match = hash.match(/after_sign_in_url=([^&]+)/);
+            if (match) {
+                redirectUrl = decodeURIComponent(match[1]);
+            }
+        } else if (hash.includes('after_sign_up_url=')) {
+            const match = hash.match(/after_sign_up_url=([^&]+)/);
+            if (match) {
+                redirectUrl = decodeURIComponent(match[1]);
+            }
+        }
+
+        TB.logger.info('[User] Redirecting to:', redirectUrl);
+
+        // Short delay for UI feedback, then redirect
+        setTimeout(() => {
+            if (window.TB?.router?.navigateTo) {
+                window.TB.router.navigateTo(redirectUrl);
+            } else {
+                window.location.href = redirectUrl;
+            }
+        }, 500);
+    }
+},
 
     async _onClerkSignOut() {
         TB.logger.info('[User] Clerk sign-out detected.');
@@ -661,8 +766,14 @@ const user = {
 
         element.innerHTML = '';
 
+        // Get redirect URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
+
         clerkInstance.mountSignIn(element, {
-            afterSignInUrl: options.afterSignInUrl || window.location.href,
+            // WICHTIG: Nutze die AKTUELLE URL als afterSignInUrl
+            // Clerk wird dann zu unserer Seite zurückkehren und wir handhaben den Redirect
+            afterSignUpUrl: window.location.pathname + '?next=' + encodeURIComponent(redirectUrl),
             signUpUrl: options.signUpUrl || clerkConfig?.sign_up_url || '/web/assets/signup.html',
             appearance: {
                 elements: {
@@ -682,57 +793,63 @@ const user = {
     },
 
     async mountSignUp(elementOrSelector, options = {}) {
-        if (!clerkInstance) {
-            const success = await this._initClerk();
-            if (!success) {
-                const element = typeof elementOrSelector === 'string'
-                    ? document.querySelector(elementOrSelector)
-                    : elementOrSelector;
+    if (!clerkInstance) {
+        const success = await this._initClerk();
+        if (!success) {
+            const element = typeof elementOrSelector === 'string'
+                ? document.querySelector(elementOrSelector)
+                : elementOrSelector;
 
-                if (element) {
-                    element.innerHTML = `
-                        <div style="text-align: center; color: #ef4444; padding: 20px;">
-                            <p>❌ Authentication service not available</p>
-                            <button onclick="location.reload()" style="margin-top: 16px; padding: 8px 16px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 6px;">
-                                Retry
-                            </button>
-                        </div>
-                    `;
-                }
-                return;
+            if (element) {
+                element.innerHTML = `
+                    <div style="text-align: center; color: #ef4444; padding: 20px;">
+                        <p>❌ Authentication service not available</p>
+                        <button onclick="location.reload()" style="margin-top: 16px; padding: 8px 16px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 6px;">
+                            Retry
+                        </button>
+                    </div>
+                `;
             }
-        }
-
-        const element = typeof elementOrSelector === 'string'
-            ? document.querySelector(elementOrSelector)
-            : elementOrSelector;
-
-        if (!element) {
-            TB.logger.error('[User] Element not found for sign-up mount');
             return;
         }
+    }
 
-        element.innerHTML = '';
+    const element = typeof elementOrSelector === 'string'
+        ? document.querySelector(elementOrSelector)
+        : elementOrSelector;
 
-        clerkInstance.mountSignUp(element, {
-            afterSignUpUrl: options.afterSignUpUrl || window.location.href,
-            signInUrl: options.signInUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
-            appearance: {
-                elements: {
-                    rootBox: { width: '100%' },
-                    card: {
-                        background: 'transparent',
-                        boxShadow: 'none',
-                        border: 'none'
-                    },
-                    formButtonPrimary: {
-                        backgroundColor: '#6366f1'
-                    }
+    if (!element) {
+        TB.logger.error('[User] Element not found for sign-up mount');
+        return;
+    }
+
+    element.innerHTML = '';
+
+    // Get redirect URL from options or URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const redirectUrl = options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
+
+    clerkInstance.mountSignUp(element, {
+        // Nach erfolgreichem Signup: direkt zur App, NICHT zu Login
+        afterSignUpUrl: redirectUrl,
+        afterSignInUrl: redirectUrl,
+        signInUrl: options.signInUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
+        appearance: {
+            elements: {
+                rootBox: { width: '100%' },
+                card: {
+                    background: 'transparent',
+                    boxShadow: 'none',
+                    border: 'none'
+                },
+                formButtonPrimary: {
+                    backgroundColor: '#6366f1'
                 }
-            },
-            ...options
-        });
-    },
+            }
+        },
+        ...options
+    });
+},
 
     async mountUserButton(elementOrSelector, options = {}) {
         if (!clerkInstance) {
