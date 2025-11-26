@@ -531,7 +531,7 @@ class Kernel(IProAKernel):
             await self._proactive_notify(user_id, signal)
 
     async def _handle_heartbeat_signal(self, signal: Signal):
-        """Handle HEARTBEAT signal"""
+        """Handle HEARTBEAT signal with task recovery"""
         # Maintenance tasks
         # Update all user states
         if hasattr(self.state_monitor, 'user_contexts'):
@@ -540,6 +540,34 @@ class Kernel(IProAKernel):
 
         # Clean old context
         self.context_store.clear_old_events(max_age_seconds=3600)
+
+        # Prüfe auf verpasste Tasks
+        now = time.time()
+        overdue_tasks = [
+            task for task in self.scheduler.tasks.values()
+            if task.status == TaskStatus.PENDING
+               and task.scheduled_time < now - 60  # Mehr als 1 Minute überfällig
+        ]
+
+        if overdue_tasks:
+            print(f"⚠️ Found {len(overdue_tasks)} overdue tasks, executing now...")
+            for task in overdue_tasks[:5]:  # Max 5 auf einmal
+                if task.status == TaskStatus.PENDING:
+                    asyncio.create_task(self.scheduler._execute_task(task))
+
+        # Alte abgeschlossene Tasks bereinigen
+        completed_cutoff = now - 86400  # 24 Stunden
+        old_completed = [
+            tid for tid, task in self.scheduler.tasks.items()
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
+               and task.scheduled_time < completed_cutoff
+        ]
+
+        for tid in old_completed[:100]:  # Max 100 auf einmal
+            del self.scheduler.tasks[tid]
+
+        if old_completed:
+            print(f"🧹 Cleaned up {len(old_completed)} old tasks")
 
         # System health check
         queue_size = self.signal_bus.get_queue_size()

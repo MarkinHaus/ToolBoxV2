@@ -21,7 +21,7 @@ from collections import defaultdict
 # Import core interfaces
 from toolboxv2.mods.isaa.kernel.types import (
     Signal, SignalType, IOutputRouter, LearningRecord, UserPreferences, InteractionType, Memory, MemoryType,
-    ScheduledTask, TaskStatus
+    ScheduledTask, TaskStatus, VALID_TASK_TYPES
 )
 
 
@@ -149,16 +149,20 @@ class LearningEngine:
 
         self.records.append(record)
 
-        # Limit records
+        # Limit records - FIX: Korrigierte Filter-Syntax
         if len(self.records) > self.max_records:
-            self.records = list(filter(lambda x: x.get(feedback_score) is not None, self.records))
-            self.records = self.records[-self.max_records:]
+            # Behalte Records mit Feedback-Score (wichtiger für Learning)
+            self.records = [r for r in self.records if r.feedback_score is not None]
+            # Falls immer noch zu viele, behalte die neuesten
+            if len(self.records) > self.max_records:
+                self.records = self.records[-self.max_records:]
 
-        if interaction_type.value != "feedback":
+        if interaction_type != InteractionType.FEEDBACK:
             return
 
-        # Trigger learning if enough data
-        if len(self.records) % 10 == 0 and list(filter(lambda x: x.get(feedback_score) is not None, self.records)):  # Every 10 interactions
+        # Trigger learning if enough data - FIX: Korrigierte Filter-Syntax
+        records_with_feedback = [r for r in self.records if r.feedback_score is not None]
+        if len(self.records) % 10 == 0 and records_with_feedback:
             from toolboxv2 import get_app
             get_app().run_bg_task_advanced(self.analyze_and_learn, user_id)
 
@@ -335,7 +339,7 @@ class MemoryStore:
         return memory.id
 
     async def _cleanup_old_memories(self):
-        """Remove least important/accessed memories"""
+        """Remove least important/accessed memories with proper error handling"""
         # Sort by importance and access
         sorted_memories = sorted(
             self.memories.values(),
@@ -344,10 +348,25 @@ class MemoryStore:
 
         # Remove bottom 10%
         to_remove = int(len(sorted_memories) * 0.1)
+
         for memory in sorted_memories[:to_remove]:
-            del self.memories[memory.id]
-            if memory.user_id in self.user_memories:
-                self.user_memories[memory.user_id].remove(memory.id)
+            memory_id = memory.id
+            user_id = memory.user_id
+
+            # Sichere Löschung mit Error-Handling
+            if memory_id in self.memories:
+                del self.memories[memory_id]
+
+            # Sichere Entfernung aus user_memories
+            if user_id in self.user_memories:
+                try:
+                    self.user_memories[user_id].remove(memory_id)
+                except ValueError:
+                    pass  # Already removed
+
+                # Leere Listen entfernen
+                if not self.user_memories[user_id]:
+                    del self.user_memories[user_id]
 
     async def get_relevant_memories(
         self,
@@ -467,30 +486,36 @@ class TaskScheduler:
         metadata: dict = None
     ) -> str:
         """
-        Schedule a task for execution
-
-        Args:
-            user_id: User who scheduled the task
-            task_type: Type of task (reminder, query, action)
-            content: Task content
-            scheduled_time: Unix timestamp for execution
-            delay_seconds: Alternative - delay from now
-            priority: Task priority
-            recurrence: Recurrence config (e.g., {"interval": 3600})
-            metadata: Additional metadata
-
-        Returns:
-            Task ID
+        Schedule a task for execution with validation
         """
+        # Validiere task_type
+        if task_type not in VALID_TASK_TYPES:
+            raise ValueError(f"Invalid task_type '{task_type}'. Valid types: {VALID_TASK_TYPES}")
+
+        # Validiere und berechne scheduled_time
+        now = time.time()
+
         if scheduled_time is None:
             if delay_seconds is None:
                 delay_seconds = 0
-            scheduled_time = time.time() + delay_seconds
+            scheduled_time = now + max(0, delay_seconds)  # Nicht in der Vergangenheit
+        else:
+            # Wenn scheduled_time in der Vergangenheit liegt, führe sofort aus
+            if scheduled_time < now:
+                print(f"⚠️ Warning: scheduled_time in past, executing immediately")
+                scheduled_time = now + 1  # 1 Sekunde Verzögerung für Queue-Verarbeitung
+
+        # Validiere priority
+        priority = max(0, min(10, priority))
+
+        # Validiere content
+        if not content or not content.strip():
+            raise ValueError("Task content cannot be empty")
 
         task = ScheduledTask(
             user_id=user_id,
             task_type=task_type,
-            content=content,
+            content=content.strip(),
             scheduled_time=scheduled_time,
             priority=priority,
             recurrence=recurrence,
@@ -500,7 +525,8 @@ class TaskScheduler:
         self.tasks[task.id] = task
 
         scheduled_dt = datetime.fromtimestamp(scheduled_time)
-        print(f"✓ Scheduled task {task.id} for {scheduled_dt}")
+        delay_info = f"in {scheduled_time - now:.1f}s" if scheduled_time > now else "immediately"
+        print(f"✓ Scheduled {task_type} task {task.id} for {scheduled_dt} ({delay_info})")
 
         return task.id
 
@@ -514,29 +540,48 @@ class TaskScheduler:
         return False
 
     async def _scheduler_loop(self):
-        """Main scheduler loop"""
+        """Main scheduler loop with improved task handling"""
         while self.running:
             try:
                 await asyncio.sleep(1)  # Check every second
-
                 now = time.time()
 
-                # Find tasks to execute
-                for task_id, task in list(self.tasks.items()):
-                    if (task.status == TaskStatus.PENDING and
-                        task.scheduled_time <= now):
-                        # Execute task
+                # Sammle alle fälligen Tasks auf einmal
+                due_tasks = [
+                    task for task_id, task in list(self.tasks.items())
+                    if task.status == TaskStatus.PENDING and task.scheduled_time <= now
+                ]
+
+                # Sortiere nach Priorität (höchste zuerst)
+                due_tasks.sort(key=lambda t: t.priority, reverse=True)
+
+                # Limitiere gleichzeitige Ausführungen
+                max_concurrent = getattr(self.kernel.config, 'max_concurrent_tasks', 5)
+                running_count = sum(
+                    1 for t in self.tasks.values()
+                    if t.status == TaskStatus.RUNNING
+                )
+
+                available_slots = max_concurrent - running_count
+
+                for task in due_tasks[:available_slots]:
+                    # Doppelte Ausführung verhindern
+                    if task.status == TaskStatus.PENDING:
+                        task.status = TaskStatus.RUNNING  # Sofort markieren
                         asyncio.create_task(self._execute_task(task))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 print(f"Scheduler loop error: {e}")
+                import traceback
+                traceback.print_exc()
 
     async def _execute_task(self, task: ScheduledTask):
-        """Execute a scheduled task"""
+        """Execute a scheduled task with proper user notification"""
         task.status = TaskStatus.RUNNING
         print(f"Executing task {task.id} content: {task.content}")
+
         try:
             # Create signal for the task
             signal = Signal(
@@ -559,7 +604,6 @@ class TaskScheduler:
             # Emit signal
             await self.kernel.signal_bus.emit_signal(signal)
 
-            # For certain task types, execute directly
             if task.task_type == "reminder":
                 await self.kernel.output_router.send_notification(
                     user_id=task.user_id,
@@ -577,6 +621,29 @@ class TaskScheduler:
                 )
                 task.result = response
 
+                # Sende das Ergebnis an den Benutzer!
+                await self.kernel.output_router.send_notification(
+                    user_id=task.user_id,
+                    content=f"📋 Scheduled Query Result:\n{response}",
+                    priority=task.priority,
+                    metadata={"task_id": task.id, "task_type": "query_result"}
+                )
+
+            elif task.task_type == "action":
+                # Neuer Task-Typ "action" für proaktive Aktionen
+                response = await self.kernel.agent.a_run(
+                    query=f"Execute action: {task.content}",
+                    session_id=task.user_id,
+                    user_id=task.user_id,
+                    remember=True
+                )
+                task.result = response
+                await self.kernel.output_router.send_notification(
+                    user_id=task.user_id,
+                    content=f"✅ Action completed: {response[:200]}{'...' if len(response) > 200 else ''}",
+                    priority=task.priority
+                )
+
             task.status = TaskStatus.COMPLETED
 
             # Handle recurrence
@@ -584,7 +651,10 @@ class TaskScheduler:
                 interval = task.recurrence.get("interval", 3600)
                 new_time = task.scheduled_time + interval
 
-                # Create new task
+                # Validiere, dass new_time in der Zukunft liegt
+                if new_time <= time.time():
+                    new_time = time.time() + interval
+
                 await self.schedule_task(
                     user_id=task.user_id,
                     task_type=task.task_type,
@@ -599,6 +669,13 @@ class TaskScheduler:
             task.status = TaskStatus.FAILED
             task.error = str(e)
             print(f"Task execution failed: {e}")
+
+            # Benachrichtige User über fehlgeschlagene Tasks
+            await self.kernel.output_router.send_notification(
+                user_id=task.user_id,
+                content=f"❌ Scheduled task failed: {task.content[:50]}...\nError: {str(e)[:100]}",
+                priority=max(task.priority, 6)  # Mindestens mittlere Priorität
+            )
 
     def get_user_tasks(
         self,
@@ -624,11 +701,31 @@ class WebSocketOutputRouter(IOutputRouter):
 
     def __init__(self):
         self.connections: dict[str, Any] = {}  # user_id -> websocket
+        self.pending_messages: dict[str, list] = defaultdict(list)
+        self.max_pending = 50
 
     def register_connection(self, user_id: str, websocket):
         """Register a WebSocket connection"""
         self.connections[user_id] = websocket
         print(f"✓ WebSocket registered for {user_id}")
+        asyncio.create_task(self._flush_pending(user_id))
+
+    async def _flush_pending(self, user_id: str):
+        """Send pending messages after reconnection"""
+        if user_id not in self.pending_messages:
+            return
+
+        pending = self.pending_messages[user_id]
+        self.pending_messages[user_id] = []
+
+        for message in pending:
+            try:
+                ws = self.connections.get(user_id)
+                if ws:
+                    await ws.send_json(message)
+            except Exception:
+                self.pending_messages[user_id].append(message)
+                break  # Connection failed again
 
     def unregister_connection(self, user_id: str):
         """Unregister a WebSocket connection"""
@@ -669,10 +766,7 @@ class WebSocketOutputRouter(IOutputRouter):
         priority: int = 5,
         metadata: dict = None
     ):
-        """Send notification via WebSocket"""
-        if user_id not in self.connections:
-            return
-
+        """Send notification via WebSocket with fallback"""
         message = {
             "type": "notification",
             "content": content,
@@ -681,11 +775,23 @@ class WebSocketOutputRouter(IOutputRouter):
             "metadata": metadata or {}
         }
 
+        if user_id not in self.connections:
+            # Queue statt verwerfen
+            if len(self.pending_messages[user_id]) < self.max_pending:
+                self.pending_messages[user_id].append(message)
+                print(f"📥 Queued notification for offline user {user_id}")
+            return
+
         try:
             ws = self.connections[user_id]
             await ws.send_json(message)
         except Exception as e:
             print(f"WebSocket send failed: {e}")
+            # Bei Fehler auch queuen
+            if len(self.pending_messages[user_id]) < self.max_pending:
+                self.pending_messages[user_id].append(message)
+            # Connection ist wahrscheinlich tot
+            self.unregister_connection(user_id)
 
     async def send_intermediate_response(
         self,

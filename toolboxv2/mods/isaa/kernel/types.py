@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any, Callable, Optional
 from collections import deque
 
+VALID_TASK_TYPES = {"reminder", "query", "action", "notification"}
 
 # ===== SIGNAL TYPES AND STRUCTURES =====
 
