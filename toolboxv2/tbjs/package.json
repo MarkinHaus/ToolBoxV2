@@ -61,6 +61,7 @@
     ]
   },
   "dependencies": {
+    "@clerk/clerk-js": "^5.111.0",
     "idb": "^8.0.3"
   }
 }

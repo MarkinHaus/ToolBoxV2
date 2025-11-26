@@ -1,6 +1,6 @@
 # toolboxv2/mods/CloudM/UI/widget.py
 
-from toolboxv2 import App, RequestData, get_app
+from toolboxv2 import App, RequestData, get_app, Result
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb
@@ -84,7 +84,7 @@ async def get_widget(app: App | None = None, request: RequestData = None, **kwar
         dashboard_result = await app.a_run_any(
             UserDashboard_ModuleName + ".main", request=request, get_results=True
         )  # It will return 401 if no user.
-        return dashboard_result.get() if not dashboard_result.is_error() else "<p>Please log in.</p>"
+        return dashboard_result if not dashboard_result.is_error() else Result.html("<p>Please log in.</p>")
 # Removed functions:
 # - load_root_widget
 # - reload_widget_main

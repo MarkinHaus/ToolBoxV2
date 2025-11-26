@@ -57,7 +57,7 @@ class Tools(MainTool):
         self.app.logger.info(f"Starting {self.name} v{self.version}...")
 
         # Get the ISAA module instance, which is a critical dependency
-        self.isaa_mod = None#self.app.get_mod("isaa")
+        self.isaa_mod = self.app.get_mod("isaa")
         if not self.isaa_mod:
             self.app.logger.error(
                 f"{self.name}: ISAA module not found or failed to load. Voice assistant will not be functional.")

@@ -1,26 +1,34 @@
+"""
+ToolBox V2 - Session Management
+Handles CLI and API sessions with Clerk integration
+"""
+
 import asyncio
+import json
 import os
 import socket
-from typing import Any, Coroutine
+from typing import Optional
 
 import requests
 from aiohttp import ClientResponse, ClientSession, MultipartWriter
+from aiohttp import ClientConnectorError, ClientError
 from requests import Response
 
-from ... import Code
-from ..extras.blobs import BlobFile
-from ..singelton_class import Singleton
-from .getting_and_closing_app import get_app, get_logger
-from .types import Result
+from toolboxv2.utils.security.cryp import Code
+from toolboxv2.utils.extras.blobs import BlobFile
+from toolboxv2.utils.singelton_class import Singleton
+from toolboxv2.utils.system.getting_and_closing_app import get_app, get_logger
+from toolboxv2.utils.system.types import Result
 
 
 class RequestSession:
+    """Wrapper for request session data"""
 
-    def __init__(self, session, body, json, row):
+    def __init__(self, session, body, json_data, row):
         super().__init__()
         self.session = session
         self._body = body
-        self._json = json
+        self._json = json_data
         self.row = row
 
     def body(self):
@@ -31,24 +39,27 @@ class RequestSession:
             return self._json
         return self._json()
 
-from aiohttp import ClientConnectorError, ClientError
-
 
 class Session(metaclass=Singleton):
+    """
+    Session manager for ToolBox V2 with Clerk integration.
+    Handles authentication tokens and API communication.
+    """
 
-    # user: LocalUser
-
-    def __init__(self, username, base=None):
+    def __init__(self, username=None, base=None):
         self.username = username
-        self._session: ClientSession | None = None
-        self._event_loop = None  # Track which event loop the session belongs to
+        self._session: Optional[ClientSession] = None
+        self._event_loop = None
         self.valid = False
+        self.clerk_user_id: Optional[str] = None
+        self.clerk_session_token: Optional[str] = None
+
+        # Set base URL
         if base is None:
             base = os.environ.get("TOOLBOXV2_REMOTE_BASE", "https://simplecore.app")
         if base is not None and base.endswith("/api/"):
             base = base.replace("api/", "")
-        self.base = base
-        self.base = base.rstrip('/')  # Ensure no trailing slash
+        self.base = base.rstrip('/')
 
     @property
     def session(self):
@@ -60,153 +71,289 @@ class Session(metaclass=Singleton):
         try:
             current_loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop
             if self._session is not None:
-                # Close old session if it exists
                 self._session = None
                 self._event_loop = None
             return
 
-        # Check if session exists and is for the current loop
         if self._session is None or self._event_loop != current_loop:
-            # Close old session if it exists and is from a different loop
             if self._session is not None:
                 try:
-                    # Try to close old session, but don't fail if loop is closed
                     if not self._session.closed:
                         asyncio.create_task(self._session.close())
                 except:
                     pass
-            # Create new session for current loop
             self._session = ClientSession()
             self._event_loop = current_loop
 
-    async def init_log_in_mk_link(self, mak_link):
-        from urllib.parse import parse_qs, urlparse
-        await asyncio.sleep(0.1)
+    # =================== Clerk Token Management ===================
 
-        pub_key, prv_key = Code.generate_asymmetric_keys()
-        Code.save_keys_to_files(pub_key, prv_key, get_app('sys.session').info_dir.replace(get_app('sys.session').id, ''))
-        parsed_url = urlparse(mak_link)
-        params = parse_qs(parsed_url.query)
-        invitation = params.get('key', [None])[0]
-        self.username = params.get('name', [get_app('sys.session').get_username()])[0]
-        if not invitation:
-            print('Invalid LoginKey')
-            return False
+    def _get_token_path(self) -> str:
+        """Get BlobFile path for session token"""
+        if self.username:
+            safe_name = Code.one_way_hash(self.username, "cli-session")[:16]
+            return f"clerk/cli/{safe_name}/session.json"
+        return "clerk/cli/default/session.json"
 
-        res = await get_app("Session.InitLogin").run_http("CloudM.AuthManager", "add_user_device", method="POST",
-                                                          name=self.username, pub_key=pub_key, invitation=invitation,
-                                                          web_data=False, as_base64=False)
-        res = Result.result_from_dict(**res)
-        if res.is_error():
-            return res
-        await asyncio.sleep(0.1)
-        return await self.auth_with_prv_key()
-
-    @staticmethod
-    def get_prv_key():
-        pub_key, prv_key = Code.load_keys_from_files(get_app('sys.session.get_prv_key').info_dir.replace(get_app('sys.session.get_prv_key').id, ''))
-        return prv_key
-
-    def if_key(self):
-        return len(self.get_prv_key()) > 0
-
-    async def auth_with_prv_key(self):
-        prv_key = self.get_prv_key()
-        if not prv_key:
-            return False
-        challenge = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'get_to_sing_data', method="POST",
-                                                                args_='username=' + self.username + '&personal_key=False')
-        challenge = Result.result_from_dict(**await challenge)
-        if challenge.is_error():
-            return challenge.lazy_return(-1, data=challenge.error)
-
-        await asyncio.sleep(0.1)
-        claim_data = await get_app("Session.InitLogin").run_http('CloudM.AuthManager', 'validate_device',
-                                                                 username=self.username,
-                                                                 signature=Code.create_signature(
-                                                                     challenge.get("challenge"), prv_key,
-                                                                     salt_length=32),
-                                                                 method="POST")
-        claim_data = Result.result_from_dict(**claim_data)
-        if claim_data.is_error():
-            return claim_data.lazy_return(-1, data=claim_data.error)
-
-        claim = claim_data.get("key")
-
-        if claim is None:
-            return claim_data
-        await asyncio.sleep(0.1)
-        with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
-            blob.clear()
-            blob.write(claim.encode())
-        await asyncio.sleep(0.1)
-        # Do something with the data or perform further actions
-        res = await self.login()
-        return res
-
-    def init(self):
-        self._ensure_session()
-
-    async def login(self, verbose=False):
-        self._ensure_session()
-        with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="r") as blob:
-            claim = blob.read()
-            if claim == b'Error decoding':
-                blob.clear()
-                claim = b''
-        if not claim:
-            res = await self.auth_with_prv_key()
-            return res is True
+    def _save_session_token(self, token: str, user_id: str = None):
+        """Save Clerk session token to BlobFile"""
         try:
-            self._ensure_session()  # Ensure session is valid before using
-            async with self.session.request("POST", url=f"{self.base}/validateSession", json={'Jwt_claim': claim.decode(),
-                                                                                             'Username': self.username}) as response:
-                # print(response.status, "status")
+            path = self._get_token_path()
+            session_data = {
+                "token": token,
+                "user_id": user_id or self.clerk_user_id,
+                "username": self.username
+            }
+            with BlobFile(path, key=Code.DK()(), mode="w") as blob:
+                blob.clear()
+                blob.write(json.dumps(session_data).encode())
+            self.clerk_session_token = token
+            self.clerk_user_id = user_id
+            return True
+        except Exception as e:
+            get_logger().error(f"Failed to save session token: {e}")
+            return False
+
+    def _load_session_token(self) -> Optional[dict]:
+        """Load Clerk session token from BlobFile"""
+        try:
+            path = self._get_token_path()
+            with BlobFile(path, key=Code.DK()(), mode="r") as blob:
+                data = blob.read()
+                if data and data != b'Error decoding':
+                    session_data = json.loads(data.decode())
+                    self.clerk_session_token = session_data.get("token")
+                    self.clerk_user_id = session_data.get("user_id")
+                    return session_data
+        except Exception as e:
+            get_logger().debug(f"No session token found: {e}")
+        return None
+
+    def _clear_session_token(self):
+        """Clear session token from BlobFile"""
+        try:
+            path = self._get_token_path()
+            with BlobFile(path, key=Code.DK()(), mode="w") as blob:
+                blob.clear()
+            self.clerk_session_token = None
+            self.clerk_user_id = None
+            return True
+        except:
+            return False
+
+    # =================== Authentication ===================
+
+    async def login(self, verbose=False) -> bool:
+        """
+        Login using stored Clerk session token.
+        Returns True if session is valid.
+        """
+        self._ensure_session()
+
+        # Try to load existing session
+        session_data = self._load_session_token()
+
+        if not session_data or not session_data.get("token"):
+            if verbose:
+                print("No stored session token. Please run 'tb login' first.")
+            return False
+
+        token = session_data.get("token")
+
+        try:
+            # Verify session with backend
+            async with self.session.request(
+                "POST",
+                url=f"{self.base}/api/CloudM.AuthClerk/verify_session",
+                json={"session_token": token}
+            ) as response:
                 if response.status == 200:
-                    print("Successfully Connected 2 TBxN")
-                    get_logger().info("LogIn successful")
-                    self.valid = True
-                    return True
-                if response.status == 401 and self.if_key():
-                    return await self.auth_with_prv_key()
-                # print(response)
-                get_logger().warning("LogIn failed")
+                    result = await response.json()
+                    if result.get("result", {}).get("authenticated"):
+                        get_logger().info("Session validated successfully")
+                        self.valid = True
+                        self.username = session_data.get("username")
+                        return True
+
+                # Session invalid
+                get_logger().warning("Session validation failed")
+                self._clear_session_token()
+                self.valid = False
                 return False
+
         except ClientConnectorError as e:
-            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}") if verbose else None
-            return False
-        except socket.gaierror as e:
-            print(f"DNS-Auflösung fehlgeschlagen: {e}") if verbose else None
-            return False
-        except ClientError as e:
-            print(f"Allgemeiner Client-Fehler: {e}") if verbose else None
+            if verbose:
+                print(f"Server not reachable: {e}")
             return False
         except Exception as e:
-            print("Connection error", self.username, e) if verbose else None
+            if verbose:
+                print(f"Connection error: {e}")
             return False
 
-    async def download_file(self, url, dest_folder="mods_sto"):
+    async def login_with_code(self, email: str, code: str) -> Result:
+        """
+        Login with email verification code (Clerk Email + Code flow).
+        This is the primary CLI login method.
+        """
         self._ensure_session()
+
+        try:
+            # First, request the verification
+            async with self.session.request(
+                "POST",
+                url=f"{self.base}/api/CloudM.AuthClerk/cli_request_code",
+                json={"email": email}
+            ) as response:
+                if response.status != 200:
+                    return Result.default_user_error("Failed to request verification code")
+
+                result = await response.json()
+                if result.get("error") != 0:
+                    return Result.default_user_error(
+                        result.get("info", {}).get("help_text", "Unknown error")
+                    )
+
+                cli_session_id = result.get("result", {}).get("cli_session_id")
+
+            # Then verify the code
+            async with self.session.request(
+                "POST",
+                url=f"{self.base}/api/CloudM.AuthClerk/cli_verify_code",
+                json={"cli_session_id": cli_session_id, "code": code}
+            ) as response:
+                if response.status != 200:
+                    return Result.default_user_error("Verification failed")
+
+                result = await response.json()
+                if result.get("error") != 0:
+                    return Result.default_user_error(
+                        result.get("info", {}).get("help_text", "Invalid code")
+                    )
+
+                data = result.get("result", {})
+
+                # Save session
+                self._save_session_token(
+                    data.get("session_token", ""),
+                    data.get("user_id")
+                )
+                self.username = data.get("username")
+                self.valid = True
+
+                return Result.ok("Login successful", data=data)
+
+        except Exception as e:
+            get_logger().error(f"Login error: {e}")
+            return Result.default_internal_error(str(e))
+
+    async def logout(self) -> bool:
+        """Logout and clear session"""
+        self._ensure_session()
+
+        # Notify server
+        if self.session and not self.session.closed and self.clerk_user_id:
+            try:
+                await self.session.post(
+                    f'{self.base}/api/CloudM.AuthClerk/on_sign_out',
+                    json={"clerk_user_id": self.clerk_user_id}
+                )
+            except:
+                pass
+
+        # Clear local session
+        self._clear_session_token()
+        self.valid = False
+        self.username = None
+
+        # Close HTTP session
+        if self.session and not self.session.closed:
+            try:
+                await self.session.close()
+            except:
+                pass
+            self._session = None
+            self._event_loop = None
+
+        return True
+
+    def init(self):
+        """Initialize session (legacy compatibility)"""
+        self._ensure_session()
+
+    def set_token(self, token: str):
+        """Set session token (for web login callback)"""
+        self._save_session_token(token)
+
+    # =================== HTTP Methods ===================
+
+    def _get_auth_headers(self) -> dict:
+        """Get authentication headers for API requests"""
+        headers = {}
+        if self.clerk_session_token:
+            headers["Authorization"] = f"Bearer {self.clerk_session_token}"
+        return headers
+
+    async def fetch(
+        self,
+        url: str,
+        method: str = 'GET',
+        data=None,
+        **kwargs
+    ) -> bool | ClientResponse | Response:
+        """Fetch URL with authentication"""
+        self._ensure_session()
+
+        if isinstance(url, str) and not url.startswith(('http://', 'https://')):
+            url = self.base + url
+
+        # Add auth headers
+        headers = kwargs.pop('headers', {})
+        headers.update(self._get_auth_headers())
+
+        if self.session:
+            try:
+                if method.upper() == 'POST':
+                    return await self.session.post(url, json=data, headers=headers, **kwargs)
+                else:
+                    return await self.session.get(url, headers=headers, **kwargs)
+            except ClientConnectorError as e:
+                print(f"Server not reachable: {e}")
+                return False
+            except ClientError as e:
+                print(f"Client error: {e}")
+                return False
+            except Exception as e:
+                print(f"Error: {e}")
+                return requests.request(method, url, json=data if method.upper() == 'POST' else None, headers=headers)
+        else:
+            return requests.request(
+                method,
+                url,
+                json=data if method.upper() == 'POST' else None,
+                headers=headers
+            )
+
+    async def download_file(self, url: str, dest_folder: str = "mods_sto") -> bool:
+        """Download file from URL"""
+        self._ensure_session()
+
         if not self.session:
-            raise Exception("Session not initialized. Please login first.")
-        # Sicherstellen, dass das Zielverzeichnis existiert
+            raise Exception("Session not initialized")
+
         os.makedirs(dest_folder, exist_ok=True)
 
-        # Analyse der URL, um den Dateinamen zu extrahieren
         filename = url.split('/')[-1]
-
-        # Bereinigen des Dateinamens von Sonderzeichen
         valid_chars = '-_.()abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
         filename = ''.join(char for char in filename if char in valid_chars)
-
-        # Konstruieren des vollständigen Dateipfads
         file_path = os.path.join(dest_folder, filename)
-        if isinstance(url, str):
+
+        if isinstance(url, str) and not url.startswith(('http://', 'https://')):
             url = self.base + url
+
+        headers = self._get_auth_headers()
+
         try:
-            async with self.session.get(url) as response:
+            async with self.session.get(url, headers=headers) as response:
                 if response.status == 200:
                     with open(file_path, 'wb') as f:
                         while True:
@@ -217,198 +364,89 @@ class Session(metaclass=Singleton):
                     print(f'File downloaded: {file_path}')
                     return True
                 else:
-                    print(f'Failed to download file: {url}. Status code: {response.status}')
-        except ClientConnectorError as e:
-            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-            return False
-        except socket.gaierror as e:
-            print(f"DNS-Auflösung fehlgeschlagen: {e}")
-            return False
-        except ClientError as e:
-            print(f"Allgemeiner Client-Fehler: {e}")
-            return False
+                    print(f'Failed to download: {url} (Status: {response.status})')
         except Exception as e:
-            print("Error:",e, self.username)
+            print(f"Download error: {e}")
         return False
 
-    async def logout(self) -> bool:
-        self._ensure_session()
-        if self.session and not self.session.closed:  # Sicherstellen, dass die Session offen ist
-            try:
-                # Der `post`-Aufruf gibt eine Coroutine zurück, die wir awaiten müssen,
-                # um das Response-Objekt zu erhalten.
-                response = await self.session.post(f'{self.base}/web/logoutS')
-
-                # Wir verwenden `async with` für die Response, um sicherzustellen, dass sie richtig behandelt wird.
-                async with response:
-                    is_successful = response.status == 200
-
-                # Die Session erst NACH der Anfrage schließen.
-                await self.session.close()
-                self.session = None
-                self._event_loop = None
-
-                return is_successful
-            except (ClientConnectorError, socket.gaierror, ClientError) as e:
-                # Zusammengefasste Fehlerbehandlung für Verbindungsfehler
-                print(f"Fehler bei der Verbindung während des Logouts: {e}")
-                if self.session:
-                    await self.session.close()
-                self.session = None
-                self._event_loop = None
-                return False
-            except Exception as e:
-                print(f"Allgemeiner Fehler während des Logouts: {e}, user: {self.username}")
-                if self.session:
-                    await self.session.close()
-                self.session = None
-                self._event_loop = None
-        return False  # Gibt False zurück, wenn keine Session vorhanden war
-
-    async def fetch(self, url: str, method: str = 'GET', data=None, **kwargs) -> bool | ClientResponse | Response:
-        # Ensure we have a valid session for the current event loop
-        self._ensure_session()
-
-        if isinstance(url, str):
-            url = self.base + url
-        if self.session:
-            try:
-                if method.upper() == 'POST':
-                    return await self.session.post(url, json=data, **kwargs)
-                else:
-                    return await self.session.get(url, **kwargs)
-            except ClientConnectorError as e:
-                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-                return False
-            except socket.gaierror as e:
-                print(f"DNS-Auflösung fehlgeschlagen: {e}")
-                return False
-            except ClientError as e:
-                print(f"Allgemeiner Client-Fehler: {e}")
-                return False
-            except Exception as e:
-                print("Error session fetch:", e, self.username)
-                import traceback
-                print(traceback.format_exc())
-                return requests.request(method, url, data=data)
-        else:
-            print(f"Could not find session using request on {url}")
-            if method.upper() == 'POST':
-                return requests.request(method, url, json=data)
-            return requests.request(method, url, data=data)
-            # raise Exception("Session not initialized. Please login first.")
-
     async def upload_file(self, file_path: str, upload_url: str):
-        # Prüfe, ob die Datei existiert
+        """Upload file to URL"""
         if not os.path.isfile(file_path):
-            raise FileNotFoundError(f"Datei {file_path} nicht gefunden.")
+            raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Initialisiere die Session, falls sie nicht bereits gestartet ist
         self._ensure_session()
+
         upload_url = self.base + upload_url
-        # headers = {'accept': '*/*',
-        #            'Content-Type': 'multipart/form-data'}
-        # file_dict = {"file": open(file_path, "rb")}
-        # response = await self.session.post(upload_url, headers=headers, data=file_dict)
+        headers = self._get_auth_headers()
+
         with open(file_path, 'rb') as f:
             file_data = f.read()
 
         with MultipartWriter('form-data') as mpwriter:
             part = mpwriter.append(file_data)
             part.set_content_disposition('form-data', name='file', filename=os.path.basename(file_path))
-            try:
-                async with self.session.post(upload_url, data=mpwriter, timeout=20000) as response:
 
-                    # Prüfe, ob der Upload erfolgreich war
+            try:
+                async with self.session.post(upload_url, data=mpwriter, headers=headers, timeout=20000) as response:
                     if response.status == 200:
-                        print(f"Datei {file_path} erfolgreich hochgeladen.")
+                        print(f"File uploaded: {file_path}")
                         return await response.json()
                     else:
-                        print(f"Fehler beim Hochladen der Datei {file_path}. Status: {response.status}")
-                        print(await response.text())
+                        print(f"Upload failed: {response.status}")
                         return None
-            except ClientConnectorError as e:
-                print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-                return False
-            except socket.gaierror as e:
-                print(f"DNS-Auflösung fehlgeschlagen: {e}")
-                return False
-            except ClientError as e:
-                print(f"Allgemeiner Client-Fehler: {e}")
-                return False
             except Exception as e:
-                print(f"Error session Fehler beim Hochladen der Datei {file_path}:", e, self.username)
-
-
+                print(f"Upload error: {e}")
+                return None
 
     async def cleanup(self):
-        """Cleanup session resources - should be called before application shutdown"""
+        """Cleanup session resources"""
         try:
             if self._session is not None and not self._session.closed:
                 await self._session.close()
-        except ClientConnectorError as e:
-            print(f"Server nicht erreichbar (DNS oder Verbindung): {e}")
-        except socket.gaierror as e:
-            print(f"DNS-Auflösung fehlgeschlagen: {e}")
-        except ClientError as e:
-            print(f"Allgemeiner Client-Fehler: {e}")
-        except Exception as e:
+        except:
             pass
         finally:
             self._session = None
             self._event_loop = None
 
     def exit(self):
-        with BlobFile(f"claim/{self.username}/jwt.c", key=Code.DK()(), mode="w") as blob:
-            blob.clear()
+        """Exit and clear session (legacy compatibility)"""
+        self._clear_session_token()
 
 
-async def helper_session_invalid():
-    s = Session('root')
+# =================== Utility Functions ===================
 
-    t = await s.init_log_in_mk_link("/")
-    print(t)
-    t1 = await s.login()
-    print(t1)
-    assert not t1
-
-
-def test_session_invalid():
-    import asyncio
-
-    asyncio.run(helper_session_invalid())
-
-
-def test_session_invalid_log_in():
-    import asyncio
-    async def helper():
-        s = Session('root')
-        t1 = await s.login()
-        print(t1)
-        assert not t1
-
-    asyncio.run(helper())
-
-
-def get_public_ip():
+def get_public_ip() -> Optional[str]:
+    """Get public IP address"""
     try:
         response = requests.get('https://api.ipify.org?format=json')
-        ip_address = response.json()['ip']
-        return ip_address
+        return response.json()['ip']
     except Exception as e:
-        print(f"Fehler beim Ermitteln der öffentlichen IP-Adresse: {e}")
+        print(f"Error getting public IP: {e}")
         return None
 
 
-def get_local_ip():
+def get_local_ip() -> Optional[str]:
+    """Get local IP address"""
     try:
-        # Erstellt einen Socket, um eine Verbindung mit einem öffentlichen DNS-Server zu simulieren
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Verwendet Google's öffentlichen DNS-Server als Ziel, ohne tatsächlich eine Verbindung herzustellen
             s.connect(("8.8.8.8", 80))
-            # Ermittelt die lokale IP-Adresse, die für die Verbindung verwendet würde
-            local_ip = s.getsockname()[0]
-        return local_ip
+            return s.getsockname()[0]
     except Exception as e:
-        print(f"Fehler beim Ermitteln der lokalen IP-Adresse: {e}")
+        print(f"Error getting local IP: {e}")
         return None
+
+
+# =================== Tests ===================
+
+async def _test_session_login():
+    """Test session login (requires valid session)"""
+    s = Session('test')
+    result = await s.login(verbose=True)
+    print(f"Login result: {result}")
+    return result
+
+
+def test_session():
+    """Run session tests"""
+    asyncio.run(_test_session_login())

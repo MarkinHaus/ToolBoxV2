@@ -56,6 +56,8 @@ dependencies = [
     "dill>=0.3.8",
     "icalendar>=6.3.1",
     "mcp[cli]>=1.13.1",
+    "pydantic[email]>=2.11.7",
+    "clerk-backend-api>=4.0.0",
 ]
 
 [project.scripts]

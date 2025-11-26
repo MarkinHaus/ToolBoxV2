@@ -53,6 +53,7 @@ const Api = {
             reader.readAsDataURL(file);
         });
     },
+
     _getRequestHeaders: (isJson = true) => {
         const headers = {
             'Accept': isJson ? 'application/json' : 'text/html',
@@ -60,17 +61,14 @@ const Api = {
         if (isJson) {
             headers['Content-Type'] = 'application/json';
         }
-        // Add Auth token if available and NOT for an auth-specific path that shouldn't have it
-        // This logic needs to be more nuanced if some auth paths need the token and others don't.
-        const token = TB.state.get('user.token'); // Assuming user state is under 'user' namespace
+
+        // Add Auth token if available
+        const token = TB.state.get('user.token');
         if (token) {
-            // Check if the current operation is one that should *not* receive a token
-            // For now, let's assume validateSession might be one such case if it's establishing a new session from a claim.
-            // This needs to be decided based on your backend's requirements.
-            // if ( !(moduleName === 'AuthManager' && functionName === 'validateSession') ) { // Example exclusion
-                 headers['Authorization'] = `Bearer ${token}`;
-            // }
+            headers['Authorization'] = `Bearer ${token}`;
+            TB.logger.debug('[API] Adding Authorization header');
         }
+
         return headers;
     },
 

@@ -1,7 +1,6 @@
 from .AdminDashboard import Name as AdminDashboard
 from .AuthManager import Name as AuthManagerName
 from .email_services import Name as EmailServicesName
-from .extras import login
 from .mini import *
 from .ModManager import Name as ModManagerName
 from .ModManager_tests import run_mod_manager_tests
@@ -12,6 +11,7 @@ from .UserAccountManager import Name as UserAccountManagerName
 from .UserDashboard import Name as UserDashboardName
 from .UserInstances import UserInstances
 from .LogInSystem import open_web_login_web
+from .extras import Name as ExtrasName
 
 tools = Tools
 Name = 'CloudM'

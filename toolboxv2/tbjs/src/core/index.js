@@ -8,7 +8,7 @@ import api from './api.js';
 import env from './env.js';
 import events from './events.js';
 import logger from './logger.js';
-import * as crypto from './crypto.js';
+import * as crypto from './cryptoV2.js';
 import * as graphics from './graphics.js';
 import sse from './sse.js';
 import ws from './ws.js';

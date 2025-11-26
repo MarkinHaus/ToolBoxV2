@@ -1303,7 +1303,11 @@ struct SessionSettings {
 // Session state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionData {
-    jwt_claim: Option<String>,
+    // Clerk-spezifische Felder (NEU)
+    clerk_session_token: Option<String>,  // Ersetzt jwt_claim
+    clerk_user_id: Option<String>,        // Clerk's User ID
+
+    // Bestehende Felder
     validate: bool,
     live_data: HashMap<String, String>,
     exp: DateTime<Utc>,
@@ -1320,7 +1324,8 @@ struct SessionData {
 impl Default for SessionData {
     fn default() -> Self {
         SessionData {
-            jwt_claim: None,
+            clerk_session_token: None,
+            clerk_user_id: None,
             validate: false,
             live_data: HashMap::new(),
             exp: Utc::now(),
@@ -1368,6 +1373,7 @@ struct SessionManager {
     black_list: Vec<String>,
 }
 
+
 impl SessionManager {
     fn new(
         config: SessionSettings,
@@ -1401,15 +1407,16 @@ impl SessionManager {
         &self,
         ip: String,
         port: String,
-        jwt_claim: Option<String>,
-        username: Option<String>,
+        clerk_session_token: Option<String>,
+        clerk_user_id: Option<String>,
         h_session_id: Option<String>,
     ) -> String {
         let session_id = generate_session_id();
         let h_sid = h_session_id.unwrap_or_else(|| "#0".to_string());
 
         let session_data = SessionData {
-            jwt_claim: jwt_claim.clone(),
+            clerk_session_token: clerk_session_token.clone(),
+            clerk_user_id: clerk_user_id.clone(),
             validate: false,
             live_data: HashMap::new(),
             exp: Utc::now(),
@@ -1420,7 +1427,7 @@ impl SessionManager {
             h_sid,
             user_name: None,
             new: false,
-            anonymous: jwt_claim.is_none() && username.is_none(),
+            anonymous: clerk_session_token.is_none() && clerk_user_id.is_none(),
         };
 
         self.save_session(&session_id, session_data);
@@ -1434,145 +1441,143 @@ impl SessionManager {
             return "#0X".to_string();
         }
 
-        if let (Some(jwt), Some(user)) = (jwt_claim, username) {
-            self.verify_session_id(&session_id, &user, &jwt).await
+        if let Some(token) = clerk_session_token {
+            self.verify_session_id(&session_id, &token).await
         } else {
             session_id
         }
     }
 
-    async fn verify_session_id(&self, session_id: &str, username: &str, jwt_claim: &str) -> String {
-        info!("Verifying session ID: {}", session_id);
+    /// Verifiziert eine Session mit Clerk's verify_session Endpunkt
+    async fn verify_session_id(&self, session_id: &str, clerk_session_token: &str) -> String {
+        info!("Verifying session ID with Clerk: {}", session_id);
         let mut session = self.get_session(session_id);
 
-        // Check JWT validity
-        info!("Checking JWT validity for user: {}", username);
-        let jwt_valid = match self.client.call_module(
-            "CloudM.AuthManager".to_string(),
-            "jwt_check_claim_server_side".to_string(),
+        // Clerk Session Token validieren via CloudM.AuthClerk.verify_session
+        info!("Checking Clerk session token validity");
+        let verify_result = match self.client.call_module(
+            "CloudM.AuthClerk".to_string(),
+            "verify_session".to_string(),
             serde_json::json!({
-                "username": username,
-                "jwt_claim": jwt_claim,
-                "spec": "",
-                "args": []
-            }),
-        ).await {
-            Ok(response) => {
-                let is_valid = response
-                    .get("result")
-                    .and_then(|res| res.get("data"))
-                    .and_then(|data| data.as_bool())
-                    .unwrap_or(false);
-                info!("JWT validation result: {}", is_valid);
-                is_valid
-            },
-            Err(e) => {
-                error!("JWT validation error: {:?}", e);
-                false
-            }
-        };
-
-        if !jwt_valid {
-            info!("JWT validation failed for user: {}", username);
-            session.check = "failed".to_string();
-            session.count += 1;
-            self.save_session(session_id, session);
-            return "#0".to_string();
-        }
-
-        // Get user by name
-        info!("Getting user information for: {}", username);
-        let user_result = match self.client.call_module(
-            "CloudM.AuthManager".to_string(),
-            "get_user_by_name".to_string(),
-            serde_json::json!({
-                "username": username,
+                "session_token": clerk_session_token,
                 "spec": "",
                 "args": []
             }),
         ).await {
             Ok(response) => response,
             Err(e) => {
-                error!("Error getting user information: {}", e);
+                error!("Clerk session verification error: {:?}", e);
                 session.check = e.to_string();
                 session.count += 1;
                 self.save_session(session_id, session);
                 return "#0".to_string();
             }
         };
-        // Ensure user is valid
-        if user_result.get("error")
-        .and_then(|err| err.as_str())
-        .map(|err| err != "none")
-        .unwrap_or(true) {
-            info!("Invalid user: {}", username);
-            session.check = "Invalid user".to_string();
+
+        // Prüfe ob Session authentifiziert ist
+        let is_authenticated = verify_result
+            .get("result")
+            .and_then(|res| res.get("data"))
+            .and_then(|data| data.get("authenticated"))
+            .and_then(|auth| auth.as_bool())
+            .unwrap_or(false);
+
+        if !is_authenticated {
+            info!("Clerk session validation failed");
+            session.check = "failed".to_string();
             session.count += 1;
             self.save_session(session_id, session);
             return "#0".to_string();
         }
-        let user = user_result.get("result").and_then(|res| res.get("data")).cloned().unwrap_or(serde_json::json!({}));
-        let uid = user.get("uid").and_then(Value::as_str).unwrap_or("");
-        info!("User UID: {}", uid);
 
-        info!("Getting user instance for UID: {}", uid);
-        let instance_result = match self.client.call_module(
+        // Extrahiere User-Daten aus der Clerk-Antwort
+        let result_data = verify_result
+            .get("result")
+            .and_then(|res| res.get("data"))
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
+
+        let clerk_user_id = result_data
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        let username = result_data
+            .get("username")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        let level = result_data
+            .get("level")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .max(1);
+
+        info!("Clerk user authenticated: {} (ID: {})", username, clerk_user_id);
+
+        // Optional: User Instance abfragen (falls noch benötigt)
+        let mut live_data = HashMap::new();
+
+        // Clerk User ID speichern
+        live_data.insert("clerk_user_id".to_string(), clerk_user_id.clone());
+        live_data.insert("level".to_string(), level.to_string());
+        live_data.insert("user_name".to_string(), username.clone());
+
+        // Optional: UserInstances Integration (falls noch verwendet)
+        if !clerk_user_id.is_empty() {
+            info!("Getting user instance for Clerk user ID: {}", clerk_user_id);
+            if let Ok(instance_result) = self.client.call_module(
                 "CloudM.UserInstances".to_string(),
                 "get_user_instance".to_string(),
                 serde_json::json!({
-                    "uid": uid,
+                    "uid": clerk_user_id,
                     "hydrate": false,
                     "spec": "",
                     "args": []
                 }),
             ).await {
-                Ok(response) => response,
-                Err(e) => {
-                    error!("Error getting user instance: {}", e);
-                    return "#0".to_string();
+                if instance_result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map_or(false, |err| err == "none")
+                {
+                    let instance = instance_result
+                        .get("result")
+                        .and_then(|res| res.get("data"))
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+
+                    if let Some(si_id) = instance.get("SiID").and_then(Value::as_str) {
+                        live_data.insert("SiID".to_string(), si_id.to_string());
+                        info!("SiID for user instance: {}", si_id);
+                    }
+
+                    if let Some(vt_id) = instance.get("VtID").and_then(Value::as_str) {
+                        live_data.insert("spec".to_string(), vt_id.to_string());
+                        info!("VtID for user instance: {}", vt_id);
+                    }
                 }
-            };
-
-            if instance_result.get("error").and_then(Value::as_str).map_or(true, |err| err != "none") {
-                info!("Invalid user instance for UID: {}", uid);
-                return "#0".to_string();
             }
+        }
 
-            let instance = instance_result.get("result").and_then(|res| res.get("data")).cloned().unwrap_or(serde_json::json!({}));
-            let mut live_data = HashMap::new();
+        let updated_session = SessionData {
+            clerk_session_token: Some(clerk_session_token.to_string()),
+            clerk_user_id: Some(clerk_user_id),
+            validate: true,
+            anonymous: false,
+            new: false,
+            exp: Utc::now(),
+            user_name: Some(username),
+            count: 0,
+            live_data,
+            ..session
+        };
 
-            if let Some(si_id) = instance.get("SiID").and_then(Value::as_str) {
-                live_data.insert("SiID".to_string(), si_id.to_string());
-                info!("SiID for user instance: {}", si_id);
-            }
-
-            if let Some(level) = user.get("level").and_then(Value::as_u64) {
-                let level = level.max(1);
-                live_data.insert("level".to_string(), level.to_string());
-                info!("User level: {}", level);
-            }
-
-            if let Some(vt_id) = instance.get("VtID").and_then(Value::as_str) {
-                live_data.insert("spec".to_string(), vt_id.to_string());
-                info!("VtID for user instance: {}", vt_id);
-            }
-
-            let encoded_username = format!("{}", username);
-            live_data.insert("user_name".to_string(), encoded_username.clone());
-
-            let updated_session = SessionData {
-                jwt_claim: Some(jwt_claim.to_string()),
-                validate: true,
-                exp: Utc::now(),
-                user_name: Some(encoded_username),
-                count: 0,
-                live_data,
-                ..session
-            };
-
-            info!("Session verified successfully for user: {}", username);
-            self.save_session(session_id, updated_session);
-            session_id.to_string()
+        info!("Session verified successfully");
+        self.save_session(session_id, updated_session);
+        session_id.to_string()
     }
 
     async fn validate_session(&self, session_id: &str) -> bool {
@@ -1592,18 +1597,16 @@ impl SessionManager {
 
         if session.new || !session.validate {
             info!("Session is new or not validated: new={}, validate={}", session.new, session.validate);
-            if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
-                // Extract username from encoded format
-                let username = user_name;
-                info!("Verifying session ID for user: {}", username);
-                let result = self.verify_session_id(session_id, username, jwt).await != "#0";
+            if let Some(token) = &session.clerk_session_token {
+                info!("Verifying session with Clerk token");
+                let result = self.verify_session_id(session_id, token).await != "#0";
                 info!("Session verification result: {}", result);
                 return result;
             }
         }
 
-        if session.user_name.is_none() || session.jwt_claim.is_none() {
-            info!("Session missing user_name or jwt_claim, validation failed");
+        if session.clerk_session_token.is_none() {
+            info!("Session missing clerk_session_token, validation failed");
             return false;
         }
 
@@ -1616,21 +1619,72 @@ impl SessionManager {
               session_age.num_seconds(), session_duration.as_secs());
 
         if session_age.num_seconds() > session_duration.as_secs() as i64 {
-            info!("Session expired, attempting to re-verify");
-            // Session expired, need to verify again
-            if let (Some(user_name), Some(jwt)) = (&session.user_name, &session.jwt_claim) {
-                // Extract username from encoded format
-                let username = user_name;
-                info!("Re-verifying session ID for user: {}", username);
-                let result = self.verify_session_id(session_id, username, jwt).await != "#0";
+            info!("Session expired, attempting to re-verify with Clerk");
+            // Session expired, need to verify again with Clerk
+            if let Some(token) = &session.clerk_session_token {
+                info!("Re-verifying session with Clerk");
+                let result = self.verify_session_id(session_id, token).await != "#0";
                 info!("Session re-verification result: {}", result);
                 return result;
             }
-            info!("Session expired and missing user_name or jwt_claim, validation failed");
+            info!("Session expired and missing clerk_session_token, validation failed");
             return false;
         }
 
         info!("Session validation successful");
+        true
+    }
+
+    /// Holt User-Daten von Clerk (optional, falls zusätzliche Daten benötigt werden)
+    async fn get_clerk_user_data(&self, clerk_user_id: &str) -> Option<serde_json::Value> {
+        match self.client.call_module(
+            "CloudM.AuthClerk".to_string(),
+            "get_user_data".to_string(),
+            serde_json::json!({
+                "clerk_user_id": clerk_user_id,
+                "spec": "",
+                "args": []
+            }),
+        ).await {
+            Ok(response) => {
+                if response
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map_or(false, |err| err == "none")
+                {
+                    response
+                        .get("result")
+                        .and_then(|res| res.get("data"))
+                        .cloned()
+                } else {
+                    None
+                }
+            }
+            Err(e) => {
+                error!("Error getting Clerk user data: {:?}", e);
+                None
+            }
+        }
+    }
+
+    /// Logout - Session beenden und Clerk benachrichtigen
+    async fn logout(&self, session_id: &str) -> bool {
+        let session = self.get_session(session_id);
+
+        if let Some(clerk_user_id) = &session.clerk_user_id {
+            // Clerk über Logout informieren
+            let _ = self.client.call_module(
+                "CloudM.AuthClerk".to_string(),
+                "on_sign_out".to_string(),
+                serde_json::json!({
+                    "clerk_user_id": clerk_user_id,
+                    "spec": "",
+                    "args": []
+                }),
+            ).await;
+        }
+
+        self.delete_session(session_id);
         true
     }
 }
@@ -1657,13 +1711,14 @@ pub struct ApiResult {
     pub result: Option<ToolBoxResultBM>,
     pub info: Option<ToolBoxInfoBM>,
 }
+
 async fn validate_session_handler(
     manager: web::Data<SessionManager>,
     session: Session,
-    body: Option<web::Json<serde_json::Value>>,  // Changed from web::Json<ValidateSessionRequest>
+    body: Option<web::Json<serde_json::Value>>,
     req_info: HttpRequest,
 ) -> HttpResponse {
-    // Extract client IP - try to get real IP even behind proxy
+    // Extract client IP
     let client_ip = req_info.connection_info().realip_remote_addr()
         .unwrap_or_else(|| {
             req_info.headers()
@@ -1677,7 +1732,6 @@ async fn validate_session_handler(
         .unwrap_or("unknown")
         .to_string();
 
-    // Extract client port
     let client_port = req_info.connection_info().peer_addr()
         .unwrap_or("unknown")
         .split(':')
@@ -1687,35 +1741,96 @@ async fn validate_session_handler(
 
     let current_session_id = session.get::<String>("ID").unwrap_or_else(|_| None);
 
-    // Extract data from the request body
-    let (username, jwt_claim) = if let Some(body) = &body {
-        let username = body.get("Username").and_then(|u| u.as_str()).map(String::from);
-        let jwt_claim = body.get("Jwt_claim").and_then(|j| j.as_str()).map(String::from);
-        (username, jwt_claim)
+    // Clerk-spezifische Felder extrahieren
+    let (clerk_session_token, clerk_user_id) = if let Some(body) = &body {
+        let token = body.get("session_token")
+            .or_else(|| body.get("Jwt_claim"))
+            .and_then(|t| t.as_str())
+            .map(String::from);
+        let user_id = body.get("clerk_user_id")
+            .or_else(|| body.get("Username"))
+            .and_then(|u| u.as_str())
+            .map(String::from);
+        (token, user_id)
     } else {
-        (None, None)
+        // Versuche Token aus Authorization Header zu holen
+        let auth_header = req_info.headers()
+            .get("Authorization")
+            .and_then(|h| h.to_str().ok());
+
+        let token = auth_header
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .map(String::from);
+
+        (token, None)
     };
 
     info!(
-        "Validating session - IP: {}, Port: {}, Current Session ID: {:?}, Username: {:?}, JWT Claim: {}",
+        "Validating session - IP: {}, Current Session: {:?}, Clerk User: {:?}, Has Token: {}",
         client_ip,
-        client_port,
         current_session_id,
-        username,
-        jwt_claim.as_ref().map(|jwt| format!("{:.10}...", jwt)).unwrap_or_else(|| "None".to_string())
+        clerk_user_id,
+        clerk_session_token.is_some()
     );
 
-    let session_id = manager.create_new_session(
-        client_ip,
-        client_port,
-        jwt_claim,
-        username,
-        current_session_id,
-    ).await;
+    // Wenn wir bereits eine Session haben, versuche sie zu erweitern
+    let session_id = if let Some(existing_id) = current_session_id {
+        info!("Extending existing session: {}", existing_id);
 
+        // Update session mit neuen Clerk-Daten falls vorhanden
+        if clerk_session_token.is_some() || clerk_user_id.is_some() {
+            let mut session_data = manager.get_session(&existing_id);
+
+            if let Some(token) = &clerk_session_token {
+                session_data.clerk_session_token = Some(token.clone());
+                // WICHTIG: Wenn Token vorhanden, ist Session nicht mehr anonym
+                session_data.anonymous = false;
+                session_data.new = false;
+            }
+            if let Some(user_id) = &clerk_user_id {
+                session_data.clerk_user_id = Some(user_id.clone());
+                // WICHTIG: Wenn User ID vorhanden, ist Session authentifiziert
+                session_data.anonymous = false;
+            }
+
+            manager.save_session(&existing_id, session_data);
+        }
+
+        existing_id
+    } else {
+        // Neue Session erstellen
+        info!("Creating new session");
+        manager.create_new_session(
+            client_ip,
+            client_port,
+            clerk_session_token.clone(),
+            clerk_user_id.clone(),
+            None,
+        ).await
+    };
+
+    // WICHTIG: Wenn Clerk-Daten vorhanden sind, Session-Flags aktualisieren bevor Validierung
+    if clerk_session_token.is_some() || clerk_user_id.is_some() {
+        let mut session_data = manager.get_session(&session_id);
+
+        // Session als nicht-anonym markieren wenn Clerk-Daten vorhanden
+        if clerk_session_token.is_some() {
+            session_data.anonymous = false;
+            session_data.new = false;
+        }
+        if clerk_user_id.is_some() {
+            session_data.anonymous = false;
+        }
+
+        manager.save_session(&session_id, session_data);
+    }
+
+    // Session validieren
     let valid = manager.validate_session(&session_id).await;
 
-    // Update session
+    info!("Session validation result - ID: {}, Valid: {}", session_id, valid);
+
+    // Update session cookie
     if let Err(e) = session.insert("ID", &session_id) {
         error!("Failed to update session: {}", e);
     }
@@ -1724,19 +1839,33 @@ async fn validate_session_handler(
         error!("Failed to update session validity: {}", e);
     }
 
+    // WICHTIG: anonymous Flag im Cookie auch aktualisieren
+    if valid {
+        if let Err(e) = session.insert("anonymous", false) {
+            error!("Failed to update session anonymous flag: {}", e);
+        }
+    }
+
     if valid {
         let session_data = manager.get_session(&session_id);
-        if let Err(e) = session.insert("live_data", session_data.live_data) {
+        if let Err(e) = session.insert("live_data", session_data.live_data.clone()) {
             error!("Failed to update session live data: {}", e);
         }
 
+        info!("Session validation successful for {}", session_id);
+
         HttpResponse::Ok().json(ApiResult {
-            error: Some("none".parse().unwrap()),
+            error: Some("none".to_string()),
             origin: None,
             result: Some(ToolBoxResultBM {
                 data_to: "API".to_string(),
                 data_info: Some("Valid Session".to_string()),
-                data: None,
+                data: Some(serde_json::json!({
+                    "session_id": session_id,
+                    "clerk_user_id": session_data.clerk_user_id,
+                    "user_name": session_data.user_name,
+                    "level": session_data.live_data.get("level").cloned(),
+                })),
                 data_type: None,
             }),
             info: Some(ToolBoxInfoBM {
@@ -1745,6 +1874,7 @@ async fn validate_session_handler(
             }),
         })
     } else {
+        warn!("Session validation failed for {}", session_id);
         HttpResponse::Unauthorized().json(ApiResult {
             error: Some("Invalid Auth data.".to_string()),
             origin: None,
@@ -1794,68 +1924,20 @@ async fn logout_handler(
         Ok(Some(true)) => true,
         _ => false,
     };
-    let client = match get_nuitka_client() {
-        Ok(client) => client,
-        Err(e) => {
-            panic!("{:?}", e)
-        }
-    };
+
     if valid {
-        if let Ok(Some(live_data)) = session.get::<HashMap<String, String>>("live_data") {
-            if let Some(si_id) = live_data.get("SiID") {
-                // Get instance UID
-                let instance_result = client.call_module(
-                    "CloudM.UserInstances".to_string(),
-                    "get_instance_si_id".to_string(),
-                    serde_json::json!({
-                        "si_id": si_id,
-                        "spec": live_data.get("spec").unwrap_or(&String::new()),
-                        "args": []
-                    }),
-                ).await.unwrap_or_else(|e| {
-                    log::error!("Error getting instance by si_id: {}", e);
-                    serde_json::json!({})
-                });
-
-                if let Some(uid) = instance_result.get("result")
-                    .and_then(|r| r.get("save"))
-                    .and_then(|s| s.get("uid"))
-                    .and_then(|u| u.as_str())
-                {
-                    // Close user instance
-                    let default_value = String::new();
-                    let close_result = client.call_module(
-                        "CloudM.UserInstances".to_string(),
-                        "close_user_instance".to_string(),
-                        serde_json::json!({
-                            "uid": uid,
-                            "spec": live_data.get("spec").unwrap_or(&default_value),
-                            "args": []
-                        }),
-                    );
-
-                    if let Err(e) = close_result.await {
-                        log::warn!("Error closing user instance: {}", e);
-                        // Continue with logout even if closing instance fails
-                    }
-
-                    // Delete session
-                    if let Ok(Some(session_id)) = session.get::<String>("ID") {
-                        manager.delete_session(&session_id);
-                    }
-
-                    // Clear session
-                    session.purge();
-
-                    return HttpResponse::Found()
-                        .append_header(("Location", "/web/logout"))
-                        .finish();
-                }
-            }
+        if let Ok(Some(session_id)) = session.get::<String>("ID") {
+            // Verwende die neue logout() Methode vom SessionManager
+            // Diese ruft automatisch CloudM.AuthClerk.on_sign_out auf
+            manager.logout(&session_id).await;
         }
 
-        // Clear session if we couldn't properly log out
+        // Clear session
         session.purge();
+
+        return HttpResponse::Found()
+            .append_header(("Location", "/web/logout"))
+            .finish();
     }
 
     HttpResponse::Forbidden().json(ApiResult {
@@ -1864,6 +1946,65 @@ async fn logout_handler(
         result: None,
         info: None,
     })
+}
+
+// Füge diesen neuen Handler hinzu
+async fn get_user_data_handler(
+    manager: web::Data<SessionManager>,
+    session: Session,
+) -> HttpResponse {
+    let valid = match session.get::<bool>("valid") {
+        Ok(Some(true)) => true,
+        _ => false,
+    };
+
+    if !valid {
+        return HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("Unauthorized: Session invalid.".to_string()),
+            origin: None,
+            result: None,
+            info: None,
+        });
+    }
+
+    // Hole clerk_user_id aus der Session
+    let clerk_user_id = match session.get::<HashMap<String, String>>("live_data") {
+        Ok(Some(live_data)) => live_data.get("clerk_user_id").cloned(),
+        _ => None,
+    };
+
+    let Some(clerk_user_id) = clerk_user_id else {
+        return HttpResponse::BadRequest().json(ApiResult {
+            error: Some("No Clerk user ID found in session.".to_string()),
+            origin: None,
+            result: None,
+            info: None,
+        });
+    };
+
+    // Hole User-Daten von Clerk
+    match manager.get_clerk_user_data(&clerk_user_id).await {
+        Some(user_data) => HttpResponse::Ok().json(ApiResult {
+            error: Some("none".to_string()),
+            origin: None,
+            result: Some(ToolBoxResultBM {
+                data_to: "API".to_string(),
+                data_info: Some("User data retrieved".to_string()),
+                data: Some(user_data),
+                data_type: Some("json".to_string()),
+            }),
+            info: Some(ToolBoxInfoBM {
+                exec_code: 0,
+                help_text: "Success".to_string(),
+            }),
+        }),
+        None => HttpResponse::NotFound().json(ApiResult {
+            error: Some("User data not found.".to_string()),
+            origin: None,
+            result: None,
+            info: None,
+        }),
+    }
 }
 
 
@@ -2604,6 +2745,9 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/web/logoutS")
                 .route(web::post().to(logout_handler))
                 )
+            .service(web::resource("/api_user_data")
+                .route(web::get().to(get_user_data_handler))
+            )
             // Serve static files
             .service(fs::Files::new("/", &dist_path) // Use the moved dist_path
                 .index_file("index.html"))

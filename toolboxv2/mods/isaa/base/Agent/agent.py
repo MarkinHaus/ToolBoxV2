@@ -98,6 +98,181 @@ asyncio_logger.setLevel(logging.CRITICAL)
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 rprint = print if AGENT_VERBOSE else lambda *a, **k: None
 wprint = print if AGENT_VERBOSE else lambda *a, **k: None
+
+
+# ===== MEDIA PARSING UTILITIES =====
+def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
+    """
+    Parse [media:(path/url)] tags from query and convert to litellm vision format
+
+    Args:
+        query: Text query that may contain [media:(path/url)] tags
+
+    Returns:
+        tuple: (cleaned_query, media_list)
+            - cleaned_query: Query with media tags removed
+            - media_list: List of dicts in litellm vision format
+
+    Examples:
+        >>> parse_media_from_query("Analyze [media:image.jpg] this image")
+        ("Analyze  this image", [{"type": "image_url", "image_url": {"url": "image.jpg", "format": "image/jpeg"}}])
+
+    Note:
+        litellm uses the OpenAI vision format: {"type": "image_url", "image_url": {"url": "...", "format": "..."}}
+        The "format" field is optional but recommended for explicit MIME type specification.
+    """
+    media_pattern = r'\[media:([^\]]+)\]'
+    media_matches = re.findall(media_pattern, query)
+
+    media_list = []
+    for media_path in media_matches:
+        media_path = media_path.strip()
+
+        # Determine media type from extension or URL
+        media_type = _detect_media_type(media_path)
+
+        # litellm uses image_url format for vision models
+        # Format: {"type": "image_url", "image_url": {"url": "...", "format": "image/jpeg"}}
+        if media_type == "image":
+            # Detect image format for explicit MIME type
+            mime_type = _get_image_mime_type(media_path)
+            image_obj = {"url": media_path}
+            if mime_type:
+                image_obj["format"] = mime_type
+
+            media_list.append({
+                "type": "image_url",
+                "image_url": image_obj
+            })
+        elif media_type in ["audio", "video", "pdf"]:
+            # For non-image media, some models may support them
+            # but we use image_url as the standard format
+            # The model will handle or reject based on its capabilities
+            wprint(f"Warning: Media type '{media_type}' detected. Not all models support non-image media.")
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+        else:
+            # Unknown type - try as image
+            media_list.append({
+                "type": "image_url",
+                "image_url": {"url": media_path}
+            })
+
+    # Remove media tags from query
+    cleaned_query = re.sub(media_pattern, '', query).strip()
+    return cleaned_query, media_list
+
+
+def _detect_media_type(path: str) -> str:
+    """Detect media type from file extension or URL"""
+    path_lower = path.lower()
+
+    # Image extensions
+    if any(path_lower.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']):
+        return "image"
+
+    # Audio extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac']):
+        return "audio"
+
+    # Video extensions
+    if any(path_lower.endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']):
+        return "video"
+
+    # PDF
+    if path_lower.endswith('.pdf'):
+        return "pdf"
+
+    return "unknown"
+
+
+def _get_image_mime_type(path: str) -> str:
+    """
+    Get MIME type for image based on file extension
+
+    Args:
+        path: Image file path or URL
+
+    Returns:
+        str: MIME type (e.g., "image/jpeg") or empty string if unknown
+    """
+    path_lower = path.lower()
+
+    mime_map = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.tiff': 'image/tiff',
+        '.tif': 'image/tiff',
+        '.ico': 'image/x-icon'
+    }
+
+    for ext, mime in mime_map.items():
+        if path_lower.endswith(ext):
+            return mime
+
+    return ""
+
+
+# ===== LLM RATE LIMITER =====
+class LLMRateLimiter:
+    """Token bucket rate limiter for LLM API calls to prevent cost explosions"""
+
+    def __init__(self, max_requests_per_minute: int = 60, max_requests_per_second: int = 10):
+        self.max_rpm = max_requests_per_minute
+        self.max_rps = max_requests_per_second
+        self.minute_window = []  # List of timestamps
+        self.second_window = []
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Acquire permission to make an LLM call (blocks if rate limit exceeded)"""
+        async with self.lock:
+            now = time.time()
+
+            # Clean old entries from windows
+            self.minute_window = [t for t in self.minute_window if now - t < 60]
+            self.second_window = [t for t in self.second_window if now - t < 1]
+
+            # Check rate limits
+            while len(self.minute_window) >= self.max_rpm or len(self.second_window) >= self.max_rps:
+                # Wait until we can proceed
+                if len(self.second_window) >= self.max_rps:
+                    wait_time = 1.0 - (now - self.second_window[0])
+                    if wait_time > 0:
+                        await asyncio.sleep(wait_time)
+                elif len(self.minute_window) >= self.max_rpm:
+                    wait_time = 60.0 - (now - self.minute_window[0])
+                    if wait_time > 0:
+                        await asyncio.sleep(min(wait_time, 1.0))  # Max 1s wait per iteration
+
+                # Refresh windows
+                now = time.time()
+                self.minute_window = [t for t in self.minute_window if now - t < 60]
+                self.second_window = [t for t in self.second_window if now - t < 1]
+
+            # Record this request
+            self.minute_window.append(now)
+            self.second_window.append(now)
+
+    def get_stats(self) -> dict:
+        """Get current rate limiter statistics"""
+        now = time.time()
+        self.minute_window = [t for t in self.minute_window if now - t < 60]
+        self.second_window = [t for t in self.second_window if now - t < 1]
+
+        return {
+            "requests_last_minute": len(self.minute_window),
+            "requests_last_second": len(self.second_window),
+            "max_rpm": self.max_rpm,
+            "max_rps": self.max_rps
+        }
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
 iprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
@@ -861,9 +1036,10 @@ Generate the adaptive execution plan:
 class TaskExecutorNode(AsyncNode):
     """Vollständige Task-Ausführung als unabhängige Node mit LLM-unterstützter Planung"""
 
-    def __init__(self, max_parallel: int = 3, **kwargs):
+    def __init__(self, max_parallel: int = 3, task_timeout: float = 300.0, **kwargs):
         super().__init__(**kwargs)
         self.max_parallel = max_parallel
+        self.task_timeout = task_timeout  # P0 - KRITISCH: Global timeout for task execution (default 5 minutes)
         self.results_store = {}  # Für {{ }} Referenzen
         self.execution_history = []  # Für LLM-basierte Optimierung
         self.agent_instance = None  # Wird gesetzt vom FlowAgent
@@ -1367,7 +1543,7 @@ confidence: 0.85
         return getattr(task, 'critical', False) or task.priority == 1
 
     async def _execute_parallel_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks parallel aus"""
+        """Führe Tasks parallel aus mit Timeout-Schutz"""
         if not tasks:
             return []
 
@@ -1377,15 +1553,23 @@ confidence: 0.85
 
         all_results = []
         for batch in batches:
+            # P0 - KRITISCH: Wrap each task with timeout
             batch_results = await asyncio.gather(
-                *[self._execute_single_task(task) for task in batch],
+                *[asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout) for task in batch],
                 return_exceptions=True
             )
 
-            # Handle exceptions
+            # Handle exceptions (including TimeoutError)
             processed_results = []
             for i, result in enumerate(batch_results):
-                if isinstance(result, Exception):
+                if isinstance(result, asyncio.TimeoutError):
+                    eprint(f"Task {batch[i].id} timed out after {self.task_timeout}s")
+                    processed_results.append({
+                        "task_id": batch[i].id,
+                        "status": "failed",
+                        "error": f"Task execution timed out after {self.task_timeout}s"
+                    })
+                elif isinstance(result, Exception):
                     eprint(f"Task {batch[i].id} failed with exception: {result}")
                     processed_results.append({
                         "task_id": batch[i].id,
@@ -1400,17 +1584,29 @@ confidence: 0.85
         return all_results
 
     async def _execute_sequential_batch(self, tasks: list[Task]) -> list[dict]:
-        """Führe Tasks sequenziell aus"""
+        """Führe Tasks sequenziell aus mit Timeout-Schutz"""
         results = []
 
         for task in tasks:
             try:
-                result = await self._execute_single_task(task)
+                # P0 - KRITISCH: Add timeout to sequential execution
+                result = await asyncio.wait_for(self._execute_single_task(task), timeout=self.task_timeout)
                 results.append(result)
 
                 # Stoppe bei kritischen Fehlern in sequenzieller Ausführung
                 if result.get("status") == "failed" and getattr(task, 'critical', False):
                     eprint(f"Critical task {task.id} failed, stopping sequential execution")
+                    break
+
+            except asyncio.TimeoutError:
+                eprint(f"Sequential task {task.id} timed out after {self.task_timeout}s")
+                results.append({
+                    "task_id": task.id,
+                    "status": "failed",
+                    "error": f"Task execution timed out after {self.task_timeout}s"
+                })
+
+                if getattr(task, 'critical', False):
                     break
 
             except Exception as e:
@@ -1719,6 +1915,9 @@ confidence: 0.85
         llm_start = time.perf_counter()
 
         try:
+            # P1 - HOCH: LLM Rate Limiting
+            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
+                await self.agent_instance.llm_rate_limiter.acquire()
 
             response = await litellm.acompletion(
                 model=model_to_use,
@@ -1870,6 +2069,10 @@ Your decision:"""
         model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
 
         try:
+            # P1 - HOCH: LLM Rate Limiting
+            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
+                await self.agent_instance.llm_rate_limiter.acquire()
+
             response = await litellm.acompletion(
                 model=model_to_use,
                 messages=[{"role": "user", "content": enhanced_prompt}],
@@ -2402,6 +2605,7 @@ class LLMToolNode(AsyncNode):
         initial_prompt = await self._build_context_aware_prompt(prep_res)
         conversation_history.append({"role": "user", "content":  prep_res["variable_manager"].format_text(initial_prompt)})
         runs = 0
+        all_tool_results = {}
         while tool_call_count < self.max_tool_calls:
             runs += 1
             # Get LLM response
@@ -2452,6 +2656,7 @@ class LLMToolNode(AsyncNode):
 
                 # Add tool results to conversation
                 tool_results_text = self._format_tool_results(tool_results)
+                all_tool_results[str(runs)] = tool_results_text
                 final_response = tool_results_text
                 next_prompt = f"""Tool results have been processed:
                 {tool_results_text}
@@ -2496,6 +2701,7 @@ class LLMToolNode(AsyncNode):
             "tool_calls_made": tool_call_count,
             "conversation_history": conversation_history,
             "model_used": model_to_use,
+            "tool_results": all_tool_results,
             "llm_statistics": {
                 "total_calls": total_llm_calls,
                 "total_cost": total_cost,
@@ -2963,6 +3169,7 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                                           "confidence": (0.7 if exec_res.get("model_used") == prep_res.get("complex_llm_model") else 0.6) if exec_res.get("success", False) else 0,
                                           "metadata": exec_res.get("metadata", {"model_used": exec_res.get("model_used")}),
                                           "synthesis_method": "llm_tool"}
+        shared["results"] = exec_res.get("tool_results", [])
         return "llm_tool_complete"
 
 @with_progress_tracking
@@ -7576,11 +7783,12 @@ class VariableManager:
         if isinstance(current, list):
             try:
                 key = int(last_part)
-                while len(current) <= key:
-                    current.append(None)
+                if key >= len(current):
+                    raise ValueError(f"Index '{key}' out of range for path '{path}'")
                 current[key] = value
-            except ValueError:
+            except ValueError as e:
                 current.append(value)
+
         elif isinstance(current, dict):
             current[last_part] = value
         elif scope_name == 'tasks' and hasattr(current, 'task_identification_attr'):# from tasks like Tooltask ... model dump and acces
@@ -8768,6 +8976,78 @@ class UnifiedContextManager:
             eprint(f"Error cleaning up old sessions: {e}")
             return 0
 
+# ===== VOTING ======
+
+import os
+import asyncio
+from typing import Any, Literal, Optional
+from pydantic import BaseModel, Field
+from enum import Enum
+
+
+# ===== PYDANTIC MODELS FOR STRUCTURED VOTING =====
+
+class VotingMode(str, Enum):
+    """Voting mode types"""
+    SIMPLE = "simple"
+    ADVANCED = "advanced"
+    UNSTRUCTURED = "unstructured"
+
+
+class VotingStrategy(str, Enum):
+    """Strategy for advanced voting"""
+    BEST = "best"
+    VOTE = "vote"
+    RECOMBINE = "recombine"
+
+
+class SimpleVoteResult(BaseModel):
+    """Result of a simple vote"""
+    option: str = Field(description="The voted option")
+    reasoning: Optional[str] = Field(default=None, description="Optional reasoning for the vote")
+
+
+class ThinkingResult(BaseModel):
+    """Result from a thinking/analysis phase"""
+    analysis: str = Field(description="The analysis or thinking result")
+    key_points: list[str] = Field(description="Key points extracted")
+    quality_score: float = Field(description="Self-assessed quality score 0-1", ge=0, le=1)
+
+
+class OrganizedData(BaseModel):
+    """Organized structure from unstructured data"""
+    structure: dict[str, Any] = Field(description="The organized data structure")
+    categories: list[str] = Field(description="Identified categories")
+    parts: list[dict[str, str]] = Field(description="Individual parts with id and content")
+    quality_score: float = Field(description="Organization quality 0-1", ge=0, le=1)
+
+
+class VoteSelection(BaseModel):
+    """Selection of best item from voting"""
+    selected_id: str = Field(description="ID of selected item")
+    reasoning: str = Field(description="Why this item was selected")
+    confidence: float = Field(description="Confidence in selection 0-1", ge=0, le=1)
+
+
+class FinalConstruction(BaseModel):
+    """Final constructed output"""
+    output: str = Field(description="The final constructed output")
+    sources_used: list[str] = Field(description="IDs of sources used in construction")
+    synthesis_notes: str = Field(description="How sources were synthesized")
+
+
+class VotingResult(BaseModel):
+    """Complete voting result"""
+    mode: VotingMode
+    winner: str
+    votes: int
+    margin: int
+    k_margin: int
+    total_votes: int
+    reached_k_margin: bool
+    details: dict[str, Any] = Field(default_factory=dict)
+    cost_info: dict[str, float] = Field(default_factory=dict)
+
 # ===== MAIN AGENT CLASS =====
 class FlowAgent:
     """Production-ready agent system built on PocketFlow """
@@ -8849,7 +9129,23 @@ class FlowAgent:
         # Tool analysis file path
         self.tool_analysis_file = self._get_tool_analysis_path()
 
-        self._tool_capabilities.update(self._load_tool_analysis())
+        # Session-restricted tools: {tool_name: {session_id: allowed (bool), '*': default_allowed (bool)}}
+        # All tools start as allowed (True) by default via '*' key
+        self.session_tool_restrictions = {}
+
+        # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
+        self.llm_rate_limiter = LLMRateLimiter(
+            max_requests_per_minute=kwargs.get('max_llm_rpm', 60),
+            max_requests_per_second=kwargs.get('max_llm_rps', 10)
+        )
+
+        # MCP Session Health Tracking (P0 - KRITISCH: Circuit breaker pattern)
+        self.mcp_session_health = {}  # server_name -> {"failures": int, "last_failure": float, "state": "CLOSED|OPEN|HALF_OPEN"}
+        self.mcp_circuit_breaker_threshold = 3  # Failures before opening circuit
+        self.mcp_circuit_breaker_timeout = 60.0  # Seconds before trying HALF_OPEN
+
+        # Load tool analysis - will be filtered to active tools during setup
+        # self._tool_capabilities.update(self._load_tool_analysis())
         if self.amd.budget_manager:
             self.amd.budget_manager.load_data()
 
@@ -8873,12 +9169,89 @@ class FlowAgent:
     def set_progress_callback(self, progress_callback: callable = None):
         self.progress_callback = progress_callback
 
-    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, **kwargs) -> str:
+    def _process_media_in_messages(self, messages: list[dict]) -> list[dict]:
+        """
+        Process messages to extract and convert [media:(path/url)] tags to litellm format
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+
+        Returns:
+            list[dict]: Processed messages with media content properly formatted
+        """
+        processed_messages = []
+
+        for msg in messages:
+            if not isinstance(msg.get("content"), str):
+                # Already processed or non-text content
+                processed_messages.append(msg)
+                continue
+
+            content = msg["content"]
+
+            if not content:
+                continue
+
+            # Check if content contains media tags
+            if "[media:" in content:
+                cleaned_content, media_list = parse_media_from_query(content)
+
+                if media_list:
+                    # Convert to multi-modal message format for litellm
+                    # Format: content becomes a list with text and media items
+                    content_parts = []
+
+                    # Add text part if there's any text left
+                    if cleaned_content.strip():
+                        content_parts.append({
+                            "type": "text",
+                            "text": cleaned_content
+                        })
+
+                    # Add media parts
+                    content_parts.extend(media_list)
+
+                    processed_messages.append({
+                        "role": msg["role"],
+                        "content": content_parts
+                    })
+                else:
+                    # No valid media found, keep original
+                    processed_messages.append(msg)
+            else:
+                # No media tags, keep original
+                processed_messages.append(msg)
+        return processed_messages
+
+    async def a_run_llm_completion(self, node_name="FlowAgentLLMCall",task_id="unknown",model_preference="fast", with_context=True, auto_fallbacks=True, llm_kwargs=None, **kwargs) -> str:
+        """
+        Run LLM completion with support for media inputs and custom kwargs
+
+        Args:
+            node_name: Name of the calling node for tracking
+            task_id: Task identifier for tracking
+            model_preference: "fast" or "complex" model preference
+            with_context: Whether to include session context
+            auto_fallbacks: Whether to use automatic fallback models
+            llm_kwargs: Additional kwargs to pass to litellm (merged with **kwargs)
+            **kwargs: Additional arguments for litellm.acompletion
+
+        Returns:
+            str: LLM response content
+        """
+        # Merge llm_kwargs if provided
+        if llm_kwargs:
+            kwargs.update(llm_kwargs)
+
         if "model" not in kwargs:
             kwargs["model"] = self.amd.fast_llm_model if model_preference == "fast" else self.amd.complex_llm_model
 
         if not 'stream' in kwargs:
             kwargs['stream'] = self.stream
+
+        # Parse media from messages if present
+        if "messages" in kwargs:
+            kwargs["messages"] = self._process_media_in_messages(kwargs["messages"])
 
         llm_start = time.perf_counter()
 
@@ -8932,6 +9305,8 @@ class FlowAgent:
                 fallbacks_dict_list.append({"model": model, "api_key": os.getenv(key, kwargs.get("api_key", None))})
             kwargs['fallbacks'] = fallbacks_dict_list
         try:
+            # P1 - HOCH: LLM Rate Limiting to prevent cost explosions
+            await self.llm_rate_limiter.acquire()
 
             if kwargs.get("stream", False):
                 kwargs["stream_options"] = {"include_usage": True}
@@ -9050,19 +9425,24 @@ class FlowAgent:
         """Main entry point für Agent-Ausführung mit UnifiedContextManager
 
         Args:
-            query: Die Benutzeranfrage
+            query: Die Benutzeranfrage (kann [media:(path/url)] Tags enthalten)
             session_id: Session-ID für Kontext-Management
             user_id: Benutzer-ID
             stream_callback: Callback für Streaming-Antworten
             remember: Ob die Interaktion gespeichert werden soll
             as_callback: Optional - Callback-Funktion für Echtzeit-Kontext-Injektion
             fast_run: Optional - Überspringt detaillierte Outline-Phase für schnelle Antworten
-            **kwargs: Zusätzliche Argumente
+            **kwargs: Zusätzliche Argumente (kann llm_kwargs enthalten)
+
+        Note:
+            Media-Tags im Format [media:(path/url)] werden automatisch geparst und
+            an das LLM als Multi-Modal-Input übergeben.
         """
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
         result = None
+
         await self.progress_tracker.emit_event(ProgressEvent(
             event_type="execution_start",
             timestamp=time.time(),
@@ -9505,18 +9885,38 @@ class FlowAgent:
 
         registered_tools = set(self._tool_registry.keys())
         cached_capabilities = list(self._tool_capabilities.keys())  # Create a copy of
+
+        # Remove capabilities for tools that are no longer registered
         for tool_name in cached_capabilities:
             if tool_name in self._tool_capabilities and tool_name not in registered_tools:
                 del self._tool_capabilities[tool_name]
                 iprint(f"Removed outdated capability for unavailable tool: {tool_name}")
 
-        for tool_name in tqdm(self.shared["available_tools"], desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green", total=len(self.shared["available_tools"])):
+        # Collect tools that need analysis
+        tools_to_analyze = []
+        for tool_name in self.shared["available_tools"]:
             if tool_name not in self._tool_capabilities:
                 tool_info = self._tool_registry.get(tool_name, {})
-                description = tool_info.get("description", "No description")
-                with Spinner(f"Analyzing tool {tool_name}"):
-                    await self._analyze_tool_capabilities(tool_name, description, tool_info.get("args_schema", "()"))
+                tools_to_analyze.append({
+                    "name": tool_name,
+                    "description": tool_info.get("description", "No description"),
+                    "args_schema": tool_info.get("args_schema", "()")
+                })
 
+        # Batch analyze tools if there are any to analyze
+        if tools_to_analyze:
+            if len(tools_to_analyze) <= 3:
+                # For small batches, analyze individually for better quality
+                for tool_data in tqdm(tools_to_analyze, desc=f"Agent {self.amd.name} Analyzing Tools", unit="tool", colour="green"):
+                    with Spinner(f"Analyzing tool {tool_data['name']}"):
+                        await self._analyze_tool_capabilities(tool_data['name'], tool_data['description'], tool_data['args_schema'])
+            else:
+                # For larger batches, use batch analysis
+                with Spinner(f"Batch analyzing {len(tools_to_analyze)} tools"):
+                    await self._batch_analyze_tool_capabilities(tools_to_analyze)
+
+        # Update args_schema for all registered tools
+        for tool_name in self.shared["available_tools"]:
             if tool_name in self._tool_capabilities:
                 function = self._tool_registry[tool_name]["function"]
                 if not isinstance(self._tool_capabilities[tool_name], dict):
@@ -9929,7 +10329,8 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
                 variable_scopes=cleaned_variable_scopes,
                 results_store=self.shared.get("results", {}),
                 conversation_history=self.shared.get("conversation_history", [])[-100:],
-                tool_capabilities=self._tool_capabilities.copy()
+                tool_capabilities=self._tool_capabilities.copy(),
+                session_tool_restrictions=self.session_tool_restrictions.copy()
             )
 
             rprint(
@@ -10005,7 +10406,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # Finde neuesten Checkpoint
             checkpoint_files = []
             for file in os.listdir(folder):
-                if file.endswith('.pkl') and file.startswith('agent_checkpoint_'):
+                if file.endswith('.pkl') and (file.startswith('agent_checkpoint_') or file == 'final_checkpoint.pkl'):
                     filepath = os.path.join(folder, file)
                     try:
                         timestamp_str = file.replace('agent_checkpoint_', '').replace('.pkl', '')
@@ -10164,6 +10565,12 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 7. Tool Capabilities wiederherstellen
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
+
+            # 8. Session Tool Restrictions wiederherstellen
+            if hasattr(checkpoint, 'session_tool_restrictions') and checkpoint.session_tool_restrictions:
+                self.session_tool_restrictions = checkpoint.session_tool_restrictions.copy()
+                restore_stats["tool_restrictions_restored"] = len(checkpoint.session_tool_restrictions)
+                rprint(f"Tool restrictions wiederhergestellt: {len(checkpoint.session_tool_restrictions)} Tools mit Restrictions")
 
             self.shared["system_status"] = "restored"
             restore_stats["restoration_timestamp"] = datetime.now().isoformat()
@@ -10456,9 +10863,106 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
 
         # Intelligent tool analysis
         if is_new:
-            await self._analyze_tool_capabilities(tool_name, tool_description)
+            await self._analyze_tool_capabilities(tool_name, tool_description, get_args_schema(tool_func))
+        else:
+            if res := self._load_tool_analysis([tool_name]):
+                self._tool_capabilities[tool_name] = res.get(tool_name)
+            else:
+                await self._analyze_tool_capabilities(tool_name, tool_description, get_args_schema(tool_func))
 
         rprint(f"Tool added with analysis: {tool_name}")
+
+    async def _batch_analyze_tool_capabilities(self, tools_data: list[dict]):
+        """
+        Batch analyze multiple tools in a single LLM call for efficiency
+
+        Args:
+            tools_data: List of dicts with 'name', 'description', 'args_schema' keys
+        """
+        if not LITELLM_AVAILABLE:
+            # Fallback for each tool
+            for tool_data in tools_data:
+                self._tool_capabilities[tool_data['name']] = {
+                    "use_cases": [tool_data['description']],
+                    "triggers": [tool_data['name'].lower().replace('_', ' ')],
+                    "complexity": "unknown",
+                    "confidence": 0.3
+                }
+            return
+
+        # Build batch analysis prompt
+        tools_section = "\n\n".join([
+            f"Tool {i+1}: {tool['name']}\nArgs: {tool['args_schema']}\nDescription: {tool['description']}"
+            for i, tool in enumerate(tools_data)
+        ])
+
+        prompt = f"""
+Analyze these {len(tools_data)} tools and identify their capabilities in a structured format.
+For EACH tool, provide a complete analysis.
+
+{tools_section}
+
+For each tool, provide:
+1. primary_function: One-sentence description of main purpose
+2. use_cases: List of 3-5 specific use cases
+3. trigger_phrases: List of 5-10 phrases that indicate this tool should be used
+4. confidence_triggers: Dict of phrases with confidence scores (0.0-1.0)
+5. indirect_connections: List of related concepts/tasks
+6. tool_complexity: "simple" | "medium" | "complex"
+7. estimated_execution_time: "fast" | "medium" | "slow"
+
+Respond in YAML format with this structure:
+```yaml
+tools:
+  tool_name_1:
+    primary_function: "..."
+    use_cases: [...]
+    trigger_phrases: [...]
+    confidence_triggers:
+      "phrase": 0.8
+    indirect_connections: [...]
+    tool_complexity: "medium"
+    estimated_execution_time: "fast"
+  tool_name_2:
+    # ... same structure
+```
+"""
+
+        model = os.getenv("BASEMODEL", self.amd.fast_llm_model)
+
+        try:
+            response = await self.a_run_llm_completion(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                with_context=False,
+                temperature=0.3,
+                max_tokens=2000 + (len(tools_data) * 200),  # Scale with number of tools
+                task_id="batch_tool_analysis"
+            )
+
+            # Extract YAML
+            yaml_match = re.search(r"```yaml\s*(.*?)\s*```", response, re.DOTALL)
+            if yaml_match:
+                yaml_str = yaml_match.group(1)
+            else:
+                yaml_str = response
+
+            analysis_data = yaml.safe_load(yaml_str)
+
+            # Store individual tool analyses
+            if "tools" in analysis_data:
+                for tool_name, analysis in analysis_data["tools"].items():
+                    self._tool_capabilities[tool_name] = analysis
+                    rprint(f"Batch analyzed: {tool_name}")
+
+            # Save to cache
+            await self._save_tool_analysis()
+
+        except Exception as e:
+            eprint(f"Batch tool analysis failed: {e}")
+            # Fallback to individual analysis
+            for tool_data in tools_data:
+                await self._analyze_tool_capabilities(tool_data['name'], tool_data['description'], tool_data['args_schema'])
 
     async def _analyze_tool_capabilities(self, tool_name: str, description: str, tool_args:str):
         """Analyze tool capabilities with LLM for smart usage"""
@@ -10584,12 +11088,25 @@ tool_complexity: low/medium/high
                     "tool_complexity": "medium"
                 }
 
-    def _load_tool_analysis(self) -> dict[str, Any]:
-        """Load tool analysis from cache"""
+    def _load_tool_analysis(self, tool_names: list[str] = None) -> dict[str, Any]:
+        """
+        Load tool analysis from cache - optimized to load only specified tools
+
+        Args:
+            tool_names: Optional list of tool names to load. If None, loads all cached analyses.
+
+        Returns:
+            dict: Tool capabilities for requested tools only
+        """
         try:
             if os.path.exists(self.tool_analysis_file):
                 with open(self.tool_analysis_file) as f:
-                    return json.load(f)
+                    all_analyses = json.load(f)
+
+                # If specific tools requested, filter to only those
+                if tool_names is not None:
+                    return {name: analysis for name, analysis in all_analyses.items() if name in tool_names}
+                return all_analyses
         except Exception as e:
             wprint(f"Could not load tool analysis: {e}")
         return {}
@@ -10629,12 +11146,114 @@ tool_complexity: low/medium/high
         """Get tool function by name"""
         return self._tool_registry.get(tool_name, {}).get("function")
 
+    # ===== SESSION TOOL RESTRICTIONS =====
+
+    def _is_tool_allowed_in_session(self, tool_name: str, session_id: str) -> bool:
+        """
+        Check if a tool is allowed in a specific session.
+
+        Logic:
+        1. If tool not in restrictions map -> allowed (default True)
+        2. If tool in map, check session_id key -> use that value
+        3. If session_id not in tool's map, use '*' default value
+        4. If '*' not set, default to True (allow)
+
+        Args:
+            tool_name: Name of the tool
+            session_id: Session ID to check
+
+        Returns:
+            bool: True if tool is allowed, False if restricted
+        """
+        if tool_name not in self.session_tool_restrictions:
+            # Tool not in restrictions -> allowed by default
+            return True
+
+        tool_restrictions = self.session_tool_restrictions[tool_name]
+
+        # Check specific session restriction
+        if session_id in tool_restrictions:
+            return tool_restrictions[session_id]
+
+        # Fall back to default '*' value
+        return tool_restrictions.get('*', True)
+
+    def set_tool_restriction(self, tool_name: str, session_id: str = '*', allowed: bool = True):
+        """
+        Set tool restriction for a specific session or as default.
+
+        Args:
+            tool_name: Name of the tool to restrict
+            session_id: Session ID to restrict (use '*' for default)
+            allowed: True to allow, False to restrict
+
+        Examples:
+            # Restrict tool in specific session
+            agent.set_tool_restriction('dangerous_tool', 'session_123', allowed=False)
+
+            # Set default to restricted, but allow in specific session
+            agent.set_tool_restriction('admin_tool', '*', allowed=False)
+            agent.set_tool_restriction('admin_tool', 'admin_session', allowed=True)
+        """
+        if tool_name not in self.session_tool_restrictions:
+            self.session_tool_restrictions[tool_name] = {}
+
+        self.session_tool_restrictions[tool_name][session_id] = allowed
+        rprint(f"Tool restriction set: {tool_name} in session '{session_id}' -> {'allowed' if allowed else 'restricted'}")
+
+    def get_tool_restriction(self, tool_name: str, session_id: str = '*') -> bool:
+        """
+        Get tool restriction status for a session.
+
+        Args:
+            tool_name: Name of the tool
+            session_id: Session ID (use '*' for default)
+
+        Returns:
+            bool: True if allowed, False if restricted
+        """
+        return self._is_tool_allowed_in_session(tool_name, session_id)
+
+    def reset_tool_restrictions(self, tool_name: str = None):
+        """
+        Reset tool restrictions. If tool_name is None, reset all restrictions.
+
+        Args:
+            tool_name: Specific tool to reset, or None for all tools
+        """
+        if tool_name is None:
+            self.session_tool_restrictions.clear()
+            rprint("All tool restrictions cleared")
+        elif tool_name in self.session_tool_restrictions:
+            del self.session_tool_restrictions[tool_name]
+            rprint(f"Tool restrictions cleared for: {tool_name}")
+
+    def list_tool_restrictions(self) -> dict[str, dict[str, bool]]:
+        """
+        Get all current tool restrictions.
+
+        Returns:
+            dict: Copy of session_tool_restrictions map
+        """
+        return self.session_tool_restrictions.copy()
+
+    # ===== TOOL EXECUTION =====
+
     async def arun_function(self, function_name: str, *args, **kwargs) -> Any:
         """
         Asynchronously finds a function by its string name, executes it with
         the given arguments, and returns the result.
         """
         rprint(f"Attempting to run function: {function_name} with args: {args}, kwargs: {kwargs}")
+
+        # Check session-based tool restrictions
+        if self.active_session:
+            if not self._is_tool_allowed_in_session(function_name, self.active_session):
+                raise PermissionError(
+                    f"Tool '{function_name}' is restricted in session '{self.active_session}'. "
+                    f"Use set_tool_restriction() to allow it."
+                )
+
         target_function = self.get_tool_by_name(function_name)
 
         start_time = time.perf_counter()
@@ -10681,15 +11300,22 @@ tool_complexity: low/medium/high
                              pydantic_model: type[BaseModel],
                              prompt: str,
                              message_context: list[dict] = None,
-                             max_retries: int = 2, auto_context=True, session_id: str = None, **kwargs) -> dict[str, Any]:
+                             max_retries: int = 2, auto_context=True, session_id: str = None, llm_kwargs=None,
+                             model_preference="complex", **kwargs) -> dict[str, Any]:
         """
         State-of-the-art LLM-based structured data formatting using Pydantic models.
+        Supports media inputs via [media:(path/url)] tags in the prompt.
 
         Args:
             pydantic_model: The Pydantic model class to structure the response
-            prompt: The main prompt for the LLM
+            prompt: The main prompt for the LLM (can include [media:(path/url)] tags)
             message_context: Optional conversation context messages
             max_retries: Maximum number of retry attempts
+            auto_context: Whether to include session context
+            session_id: Optional session ID
+            llm_kwargs: Additional kwargs to pass to litellm
+            model_preference: "fast" or "complex"
+            **kwargs: Additional arguments (merged with llm_kwargs)
 
         Returns:
             dict: Validated structured data matching the Pydantic model
@@ -10752,13 +11378,14 @@ Respond in YAML format only:
 
                 # Generate LLM response
                 response = await self.a_run_llm_completion(
-                    model=self.amd.complex_llm_model,
+                    model_preference=model_preference,
                     messages=messages,
                     stream=False,
                     with_context=auto_context,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    task_id=f"format_{model_name.lower()}_{attempt}"
+                    task_id=f"format_{model_name.lower()}_{attempt}",
+                    llm_kwargs=llm_kwargs
                 )
 
                 if not response or not response.strip():
@@ -11117,6 +11744,630 @@ Respond in YAML format only:
             await self._mcp_session_manager.cleanup_all()
 
         rprint("Agent shutdown complete")
+
+    # ===== MCP CIRCUIT BREAKER METHODS (P0 - KRITISCH) =====
+
+    def _check_mcp_circuit_breaker(self, server_name: str) -> bool:
+        """Check if MCP circuit breaker allows requests for this server"""
+        if server_name not in self.mcp_session_health:
+            self.mcp_session_health[server_name] = {
+                "failures": 0,
+                "last_failure": 0.0,
+                "state": "CLOSED"
+            }
+
+        health = self.mcp_session_health[server_name]
+        now = time.time()
+
+        # Check circuit state
+        if health["state"] == "OPEN":
+            # Check if timeout has passed to try HALF_OPEN
+            if now - health["last_failure"] > self.mcp_circuit_breaker_timeout:
+                health["state"] = "HALF_OPEN"
+                rprint(f"MCP Circuit Breaker for {server_name}: OPEN -> HALF_OPEN (retry)")
+                return True
+            else:
+                # Circuit still open
+                return False
+
+        return True  # CLOSED or HALF_OPEN allows requests
+
+    def _record_mcp_success(self, server_name: str):
+        """Record successful MCP call"""
+        if server_name in self.mcp_session_health:
+            health = self.mcp_session_health[server_name]
+            health["failures"] = 0
+            if health["state"] == "HALF_OPEN":
+                health["state"] = "CLOSED"
+                rprint(f"MCP Circuit Breaker for {server_name}: HALF_OPEN -> CLOSED (recovered)")
+
+    def _record_mcp_failure(self, server_name: str):
+        """Record failed MCP call and update circuit breaker state"""
+        if server_name not in self.mcp_session_health:
+            self.mcp_session_health[server_name] = {
+                "failures": 0,
+                "last_failure": 0.0,
+                "state": "CLOSED"
+            }
+
+        health = self.mcp_session_health[server_name]
+        health["failures"] += 1
+        health["last_failure"] = time.time()
+
+        # Open circuit if threshold exceeded
+        if health["failures"] >= self.mcp_circuit_breaker_threshold:
+            if health["state"] != "OPEN":
+                health["state"] = "OPEN"
+                eprint(f"MCP Circuit Breaker for {server_name}: OPENED after {health['failures']} failures")
+
+    # ===== VOTING METHOD FOR FLOWAGENT =====
+
+    async def voting_as_tool(self):
+
+        if "voting" in self._tool_registry:
+            return
+
+        async def a_voting(**kwargs):
+            return await self.a_voting(session_id=self.active_session, **kwargs)
+
+        await self.add_tool(
+            a_voting,
+            "voting",
+            description="""Advanced AI voting system with First-to-ahead-by-k algorithm.
+Modes:
+- simple: Vote on predefined options with multiple voters
+- advanced: Thinkers analyze, then best/vote/recombine strategies
+- unstructured: Organize data, vote on parts/structures, optional final construction
+
+Args:
+    mode: Voting mode (simple/advanced/unstructured)
+    prompt: Main prompt/question for voting
+    options: List of options (simple mode)
+    k_margin: Required vote margin to declare winner
+    num_voters: Number of voters (simple mode)
+    votes_per_voter: Votes each voter can cast (simple mode)
+    num_thinkers: Number of thinkers (advanced mode)
+    strategy: Strategy for advanced mode (best/vote/recombine)
+    num_organizers: Number of organizers (unstructured mode)
+    vote_on_parts: Vote on parts vs structures (unstructured mode)
+    final_construction: Create final output (unstructured mode)
+    unstructured_data: Raw data to organize (unstructured mode)
+    complex_data: Use complex model for thinking/organizing phases
+    task_id: Task identifier for tracking
+
+Returns:
+    dict: Voting results with winner, votes, margin, and cost info"""
+        )
+
+    async def a_voting(
+        self,
+        mode: Literal["simple", "advanced", "unstructured"] = "simple",
+        prompt: str = None,
+        options: list[str] = None,
+        k_margin: int = 2,
+        num_voters: int = 5,
+        votes_per_voter: int = 1,
+        num_thinkers: int = 3,
+        strategy: Literal["best", "vote", "recombine"] = "best",
+        num_organizers: int = 2,
+        vote_on_parts: bool = True,
+        final_construction: bool = True,
+        unstructured_data: str = None,
+        complex_data: bool = False,
+        task_id: str = "voting_task",
+        session_id: str = None,
+        **kwargs
+    ) -> dict[str, Any]:
+        """
+        Advanced AI voting system with First-to-ahead-by-k algorithm.
+
+        Modes:
+        - simple: Vote on predefined options with multiple voters
+        - advanced: Thinkers analyze, then best/vote/recombine strategies
+        - unstructured: Organize data, vote on parts/structures, optional final construction
+
+        Args:
+            mode: Voting mode (simple/advanced/unstructured)
+            prompt: Main prompt/question for voting
+            options: List of options (simple mode)
+            k_margin: Required vote margin to declare winner
+            num_voters: Number of voters (simple mode)
+            votes_per_voter: Votes each voter can cast (simple mode)
+            num_thinkers: Number of thinkers (advanced mode)
+            strategy: Strategy for advanced mode (best/vote/recombine)
+            num_organizers: Number of organizers (unstructured mode)
+            vote_on_parts: Vote on parts vs structures (unstructured mode)
+            final_construction: Create final output (unstructured mode)
+            unstructured_data: Raw data to organize (unstructured mode)
+            complex_data: Use complex model for thinking/organizing phases
+            task_id: Task identifier for tracking
+            session_id: Session ID
+            **kwargs: Additional arguments
+
+        Returns:
+            dict: Voting results with winner, votes, margin, and cost info
+
+        Example:
+            # Simple voting
+            result = await agent.a_voting(
+                mode="simple",
+                prompt="Which approach is best?",
+                options=["Approach A", "Approach B", "Approach C"],
+                k_margin=2,
+                num_voters=5
+            )
+
+            # Advanced with thinking
+            result = await agent.a_voting(
+                mode="advanced",
+                prompt="Analyze the problem and propose solutions",
+                num_thinkers=3,
+                strategy="recombine",
+                complex_data=True
+            )
+        """
+
+        # Get voting model from env or use fast model
+        voting_model = os.getenv("VOTING_MODEL")
+
+        # Track costs
+        start_tokens_in = self.total_tokens_in
+        start_tokens_out = self.total_tokens_out
+        start_cost = self.total_cost_accumulated
+
+        try:
+            if mode == "simple":
+                result = await self._voting_simple(
+                    prompt, options, k_margin, num_voters, votes_per_voter,
+                    session_id, voting_model, **kwargs
+                )
+            elif mode == "advanced":
+                result = await self._voting_advanced(
+                    prompt, num_thinkers, strategy, k_margin, complex_data,
+                    task_id, session_id, voting_model, **kwargs
+                )
+            elif mode == "unstructured":
+                result = await self._voting_unstructured(
+                    prompt, unstructured_data, num_organizers, k_margin,
+                    vote_on_parts, final_construction, complex_data,
+                    task_id, session_id, voting_model, **kwargs
+                )
+            else:
+                raise ValueError(f"Invalid mode: {mode}. Use 'simple', 'advanced', or 'unstructured'")
+
+            # Add cost information
+            result["cost_info"] = {
+                "tokens_in": self.total_tokens_in - start_tokens_in,
+                "tokens_out": self.total_tokens_out - start_tokens_out,
+                "cost": self.total_cost_accumulated - start_cost
+            }
+
+            if self.verbose:
+                print(f"[Voting] Mode: {mode}, Winner: {result['winner']}, "
+                      f"Cost: ${result['cost_info']['cost']:.4f}")
+
+            return result
+
+        except Exception as e:
+            print(f"[Voting Error] {e}")
+            raise
+
+    async def _voting_simple(
+        self,
+        prompt: str,
+        options: list[str],
+        k_margin: int,
+        num_voters: int,
+        votes_per_voter: int,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Simple voting: Multiple voters vote on predefined options"""
+
+        if not options or len(options) < 2:
+            raise ValueError("Simple voting requires at least 2 options")
+
+        if not prompt:
+            prompt = "Select the best option from the given choices."
+
+        votes = []
+        vote_details = []
+
+        # Collect votes from all voters
+        for voter_id in range(num_voters):
+            for vote_num in range(votes_per_voter):
+                voting_prompt = f"""{prompt}
+
+    Options:
+    {chr(10).join(f"{i + 1}. {opt}" for i, opt in enumerate(options))}
+
+    Select the best option and explain your reasoning briefly."""
+
+                # Use a_format_class for structured voting
+                vote_result = await self.a_format_class(
+                    pydantic_model=SimpleVoteResult,
+                    prompt=voting_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+
+                votes.append(vote_result["option"])
+                vote_details.append({
+                    "voter": voter_id,
+                    "vote_num": vote_num,
+                    "option": vote_result["option"],
+                    "reasoning": vote_result.get("reasoning", "")
+                })
+
+        # Apply First-to-ahead-by-k algorithm
+        result = self._first_to_ahead_by_k(votes, k_margin)
+
+        return {
+            "mode": "simple",
+            "winner": result["winner"],
+            "votes": result["votes"],
+            "margin": result["margin"],
+            "k_margin": k_margin,
+            "total_votes": result["total_votes"],
+            "reached_k_margin": result["margin"] >= k_margin,
+            "details": {
+                "options": options,
+                "vote_details": vote_details,
+                "vote_history": result["history"]
+            }
+        }
+
+    async def _voting_advanced(
+        self,
+        prompt: str,
+        num_thinkers: int,
+        strategy: str,
+        k_margin: int,
+        complex_data: bool,
+        task_id: str,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Advanced voting: Thinkers analyze, then apply strategy"""
+
+        if not prompt:
+            raise ValueError("Advanced voting requires a prompt")
+
+        # Phase 1: Thinkers analyze the problem
+        thinker_results = []
+        model_pref = "complex" if complex_data else "fast"
+
+        thinking_tasks = []
+        for i in range(num_thinkers):
+            thinking_prompt = f"""You are Thinker #{i + 1} of {num_thinkers}.
+
+    {prompt}
+
+    Provide a thorough analysis with key points and assess your confidence (0-1)."""
+
+            task = self.a_format_class(
+                pydantic_model=ThinkingResult,
+                prompt=thinking_prompt,
+                max_retries=2,
+                auto_context=False,
+                session_id=session_id,
+                model_preference=model_pref,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                **kwargs
+            )
+            thinking_tasks.append(task)
+
+        # Execute all thinking in parallel
+        thinker_results = await asyncio.gather(*thinking_tasks)
+
+        # Phase 2: Apply strategy
+        if strategy == "best":
+            # Select best by quality score
+            best = max(thinker_results, key=lambda x: x["quality_score"])
+            winner_id = f"Thinker-{thinker_results.index(best) + 1}"
+
+            return {
+                "mode": "advanced",
+                "winner": winner_id,
+                "votes": 1,
+                "margin": 1,
+                "k_margin": k_margin,
+                "total_votes": 1,
+                "reached_k_margin": True,
+                "details": {
+                    "strategy": "best",
+                    "thinker_results": thinker_results,
+                    "best_result": best
+                }
+            }
+
+        elif strategy == "vote":
+            # Vote on thinker results using fast model
+            votes = []
+            for _ in range(num_thinkers * 2):  # Each thinker result gets multiple votes
+
+                vote_prompt = f"""Evaluate these analysis results and select the best one:
+
+    {chr(10).join(f"Thinker-{i + 1}: {r['analysis'][:200]}..." for i, r in enumerate(thinker_results))}
+
+    Select the ID of the best analysis."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+
+                votes.append(vote["selected_id"])
+
+            result = self._first_to_ahead_by_k(votes, k_margin)
+
+            return {
+                "mode": "advanced",
+                "winner": result["winner"],
+                "votes": result["votes"],
+                "margin": result["margin"],
+                "k_margin": k_margin,
+                "total_votes": result["total_votes"],
+                "reached_k_margin": result["margin"] >= k_margin,
+                "details": {
+                    "strategy": "vote",
+                    "thinker_results": thinker_results,
+                    "vote_history": result["history"]
+                }
+            }
+
+        elif strategy == "recombine":
+            # Recombine best results - use fast model for synthesis
+            top_n = max(2, num_thinkers // 2)
+            top_results = sorted(thinker_results, key=lambda x: x["quality_score"], reverse=True)[:top_n]
+
+            recombine_prompt = f"""Synthesize these analyses into a superior solution:
+
+    {chr(10).join(f"Analysis {i + 1}:{chr(10)}{r['analysis']}{chr(10)}" for i, r in enumerate(top_results))}
+
+    Create a final synthesis that combines the best insights."""
+
+            # Use a_run_llm_completion for final natural language output
+            final_output = await self.a_run_llm_completion(
+                node_name="VotingRecombine",
+                task_id=task_id,
+                model_preference="fast",
+                with_context=False,
+                auto_fallbacks=True,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                messages=[{"role": "user", "content": recombine_prompt}],
+                session_id=session_id,
+                **kwargs
+            )
+
+            return {
+                "mode": "advanced",
+                "winner": "recombined",
+                "votes": len(top_results),
+                "margin": len(top_results),
+                "k_margin": k_margin,
+                "total_votes": len(top_results),
+                "reached_k_margin": True,
+                "details": {
+                    "strategy": "recombine",
+                    "thinker_results": thinker_results,
+                    "top_results_used": top_results,
+                    "final_synthesis": final_output
+                }
+            }
+
+        else:
+            raise ValueError(f"Invalid strategy: {strategy}")
+
+    async def _voting_unstructured(
+        self,
+        prompt: str,
+        unstructured_data: str,
+        num_organizers: int,
+        k_margin: int,
+        vote_on_parts: bool,
+        final_construction: bool,
+        complex_data: bool,
+        task_id: str,
+        session_id: str,
+        voting_model: str,
+        **kwargs
+    ) -> dict[str, Any]:
+        """Unstructured voting: Organize data, vote, optionally construct final output"""
+
+        if not unstructured_data:
+            raise ValueError("Unstructured voting requires data")
+
+        # Phase 1: Organizers structure the data
+        model_pref = "complex" if complex_data else "fast"
+
+        organize_tasks = []
+        for i in range(num_organizers):
+            organize_prompt = f"""You are Organizer #{i + 1} of {num_organizers}.
+
+    {prompt if prompt else 'Organize the following unstructured data into a meaningful structure:'}
+
+    Data:
+    {unstructured_data}
+
+    Create a structured organization with categories and parts."""
+
+            task = self.a_format_class(
+                pydantic_model=OrganizedData,
+                prompt=organize_prompt,
+                max_retries=2,
+                auto_context=False,
+                session_id=session_id,
+                model_preference=model_pref,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                **kwargs
+            )
+            organize_tasks.append(task)
+
+        organized_versions = await asyncio.gather(*organize_tasks)
+
+        # Phase 2: Vote on parts or structures
+        votes = []
+
+        if vote_on_parts:
+            # Collect all parts from all organizers
+            all_parts = []
+            for org_id, org in enumerate(organized_versions):
+                for part in org["parts"]:
+                    all_parts.append(f"Org{org_id + 1}-Part{part['id']}")
+
+            # Vote on best parts using fast model
+            for _ in range(len(all_parts)):
+                vote_prompt = f"""Select the best organized part:
+
+    {chr(10).join(f"{i + 1}. {part}" for i, part in enumerate(all_parts))}
+
+    Select the ID of the best part."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+                votes.append(vote["selected_id"])
+        else:
+            # Vote on complete structures
+            structure_ids = [f"Structure-Org{i + 1}" for i in range(num_organizers)]
+
+            for _ in range(num_organizers * 2):
+                vote_prompt = f"""Evaluate these organizational structures:
+
+    {chr(10).join(f"{sid}: Quality {org['quality_score']:.2f}" for sid, org in zip(structure_ids, organized_versions))}
+
+    Select the best structure ID."""
+
+                vote = await self.a_format_class(
+                    pydantic_model=VoteSelection,
+                    prompt=vote_prompt,
+                    max_retries=2,
+                    auto_context=False,
+                    session_id=session_id,
+                    model_preference="fast",
+                    llm_kwargs={"model": voting_model} if voting_model else None,
+                    **kwargs
+                )
+                votes.append(vote["selected_id"])
+
+        vote_result = self._first_to_ahead_by_k(votes, k_margin)
+
+        # Phase 3: Optional final construction
+        final_output = None
+        if final_construction:
+            # Use fast model for final construction
+            construct_prompt = f"""Create a final polished output based on the winning selection:
+
+    Winner: {vote_result['winner']}
+    Context: {vote_on_parts and 'individual parts' or 'complete structures'}
+
+    Synthesize the best elements into a coherent final result."""
+
+            # Use a_run_llm_completion for natural language final output
+            final_text = await self.a_run_llm_completion(
+                node_name="VotingConstruct",
+                task_id=task_id,
+                model_preference="fast",
+                with_context=False,
+                auto_fallbacks=True,
+                llm_kwargs={"model": voting_model} if voting_model else None,
+                messages=[{"role": "user", "content": construct_prompt}],
+                session_id=session_id,
+                **kwargs
+            )
+
+            final_output = {
+                "output": final_text,
+                "winner_used": vote_result["winner"],
+                "vote_on_parts": vote_on_parts
+            }
+
+        return {
+            "mode": "unstructured",
+            "winner": vote_result["winner"],
+            "votes": vote_result["votes"],
+            "margin": vote_result["margin"],
+            "k_margin": k_margin,
+            "total_votes": vote_result["total_votes"],
+            "reached_k_margin": vote_result["margin"] >= k_margin,
+            "details": {
+                "organized_versions": organized_versions,
+                "vote_on_parts": vote_on_parts,
+                "vote_history": vote_result["history"],
+                "final_construction": final_output
+            }
+        }
+
+    def _first_to_ahead_by_k(self, votes: list[str], k: int) -> dict[str, Any]:
+        """
+        First-to-ahead-by-k algorithm implementation.
+
+        Returns winner when one option has k more votes than the next best.
+        Based on: P(correct) = 1 / (1 + ((1-p)/p)^k)
+        """
+        counts = {}
+        history = []
+
+        for vote in votes:
+            counts[vote] = counts.get(vote, 0) + 1
+            history.append(dict(counts))
+
+            # Check if any option is k ahead
+            if len(counts) >= 2:
+                sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+                first, second = sorted_counts[0], sorted_counts[1]
+
+                if first[1] - second[1] >= k:
+                    return {
+                        "winner": first[0],
+                        "votes": first[1],
+                        "margin": first[1] - second[1],
+                        "history": history,
+                        "total_votes": len(votes)
+                    }
+            elif len(counts) == 1:
+                only_option = list(counts.items())[0]
+                if only_option[1] >= k:
+                    return {
+                        "winner": only_option[0],
+                        "votes": only_option[1],
+                        "margin": only_option[1],
+                        "history": history,
+                        "total_votes": len(votes)
+                    }
+
+        # Fallback: return most voted (k-margin not reached)
+        if counts:
+            winner = max(counts.items(), key=lambda x: x[1])
+            return {
+                "winner": winner[0],
+                "votes": winner[1],
+                "margin": 0,
+                "history": history,
+                "total_votes": len(votes)
+            }
+
+        raise ValueError("No votes collected")
 
     @property
     def total_cost(self) -> float:

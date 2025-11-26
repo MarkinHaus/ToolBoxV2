@@ -1,166 +1,287 @@
-# toolboxv2/mods/CloudM/UI/user_account_manager.py
+"""
+ToolBox V2 - User Account Manager
+Provides account management endpoints for the web dashboard with Clerk integration
+"""
 
-from dataclasses import asdict
-
-from toolboxv2 import TBEF, App, RequestData, Result, get_app
-from toolboxv2.mods.CloudM.AuthManager import (
-    db_helper_save_user,  # Assuming AuthManager functions are accessible
-)
-
-from .types import User  # From toolboxv2/mods/CloudM/types.py
+from toolboxv2 import App, RequestData, Result, get_app
 
 Name = 'CloudM.UserAccountManager'
 export = get_app(f"{Name}.Export").tb
-version = '0.0.1'
+version = '0.1.0'
 
 
-# Helper to get current user from request
-async def get_current_user_from_request(app: App, request: RequestData) -> User | None:
+async def get_current_user_from_request(app: App, request: RequestData):
+    """
+    Get current user from Clerk session in request.
+    Returns user data from local BlobFile storage.
+    """
     if not request or not hasattr(request, 'session') or not request.session:
         app.logger.warning("No session found in request for UAM")
         return None
 
-    username_c = request.session.user_name
-    if not username_c or username_c == "Cud be ur name":  # "Cud be ur name" is a default/guest
-        # app.print(f"No valid user_name in session for UAM: {username_c}", level="DEBUG")
+    # Try to get Clerk user ID from session
+    # The session might have user_name or clerk_user_id depending on how it's set
+    user_identifier = None
+
+    if hasattr(request.session, 'clerk_user_id'):
+        user_identifier = request.session.clerk_user_id
+    elif hasattr(request.session, 'user_name'):
+        user_identifier = request.session.user_name
+    elif hasattr(request.session, 'user_id'):
+        user_identifier = request.session.user_id
+
+    if not user_identifier or user_identifier == "Cud be ur name":
         return None
 
-    # No need to decode here if session.user_name is already the plain username
-    # If session.user_name is still encoded from an older system part, then decode
-    # Assuming session.user_name IS the actual username
-    decoded_username = username_c
-    # if app.config_fh.is_encoded(username_c): # Hypothetical check
-    #    decoded_username = app.config_fh.decode_code(username_c)
-    #    if not decoded_username:
-    #        app.print(f"Failed to decode username_c for UAM: {username_c}", level="WARNING")
-    #        return None
+    # Load user data from AuthClerk
+    try:
+        from .AuthClerk import load_local_user_data, _db_load_user_sync_data
 
-    if not decoded_username:  # Should not happen if username_c is valid
+        # Try to load local data
+        local_data = load_local_user_data(user_identifier)
+
+        if local_data:
+            return local_data
+
+        # Try to load from database
+        db_data = _db_load_user_sync_data(app, user_identifier)
+        if db_data:
+            from .AuthClerk import LocalUserData
+            return LocalUserData.from_dict(db_data)
+
         return None
 
-    user_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=decoded_username, get_results=True)
-    if user_result.is_error() or not user_result.get():
-        app.logger.warning(f"UAM: Failed to get user by name '{decoded_username}': {user_result.info}")
+    except Exception as e:
+        app.logger.error(f"UAM: Error loading user data: {e}")
         return None
 
-    retrieved_user = user_result.get()
-    #if not hasattr(retrieved_user, 'user_pass_pub_persona'):
-    #    app.logger.warning(f"UAM: Retrieved data for '{decoded_username}' is not a User instance. is {type(retrieved_user)}")
-    #    return None
 
-    return retrieved_user
-
-
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True, level=1)
-async def update_email(app: App, request: RequestData, new_email: str):
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=False)
+async def get_current_user(app: App, request: RequestData):
+    """
+    API endpoint to get current user data.
+    Used by frontend to display user information.
+    """
     user = await get_current_user_from_request(app, request)
+
     if not user:
-        # This response is for HTMX. If called from tbjs, it might prefer JSON.
+        return Result.default_user_error(
+            info="User not authenticated or found.",
+            data=None,
+            exec_code=401
+        )
+
+    # Return public user data
+    user_data = {
+        "clerk_user_id": user.clerk_user_id,
+        "username": user.username,
+        "email": user.email,
+        "level": user.level,
+        "settings": user.settings,
+        "mod_data": user.mod_data
+    }
+
+    return Result.ok(data=user_data)
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True)
+async def update_email(app: App, request: RequestData, new_email: str):
+    """
+    Update user email address.
+    Note: With Clerk, email changes should go through Clerk's UI/API.
+    This is kept for compatibility but redirects to Clerk.
+    """
+    user = await get_current_user_from_request(app, request)
+
+    if not user:
         return """
-            <p class='text-red-500'>Error: User not authenticated or found.</p>
-            <input type="email" name="new_email_admin" value="" class="tb-input tb-border tb-p-1 tb-my-1">
-            <button class="tb-btn tb-btn-disabled" disabled>Update Email</button>
+            <p class='text-red-500'>Error: User not authenticated.</p>
+            <p class='text-yellow-500'>Please use Clerk's profile settings to update your email.</p>
         """
 
-    if not new_email or "@" not in new_email:  # Basic validation
-        # For HTMX, returning HTML that includes the input field again
-        return f"""
-            <p><strong>Current:</strong> {user.email if user.email else "Not set"} <span class='text-red-500 ml-2'>Invalid email format.</span></p>
-            <input type="email" name="new_email_admin" value="{new_email}" class="tb-input tb-border-red-500 tb-p-1 tb-my-1">
-            <button data-hx-post="/api/{Name}/update_email" data-hx-include="[name='new_email_admin']"
-                    data-hx-target="closest div" data-hx-swap="innerHTML" class="tb-btn tb-btn-primary">Update Email</button>
-        """
-
-    user.email = new_email
-    save_result = db_helper_save_user(app, asdict(user))  # db_helper_save_user is sync
-
-    # Simulate async save if db_helper_save_user were async:
-    # save_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.DB_HELPER_SAVE_USER_ASYNC_WRAPPER, user_data=asdict(user))
-
-    if save_result.is_error():
-        return f"""
-            <p><strong>Current:</strong> {user.email if user.email else "Not set"} <span class='text-red-500 ml-2'>Error saving: {save_result.info}.</span></p>
-            <input type="email" name="new_email_admin" value="{user.email}" class="tb-input tb-border tb-p-1 tb-my-1">
-            <button data-hx-post="/api/{Name}/update_email" data-hx-include="[name='new_email_admin']"
-                    data-hx-target="closest div" data-hx-swap="innerHTML" class="tb-btn tb-btn-primary">Update Email</button>
-        """
-
+    # With Clerk, email changes are managed through Clerk's dashboard
     return f"""
-        <p><strong>Current:</strong> {user.email} <span class='text-green-500 ml-2'>Updated!</span></p>
-        <input type="email" name="new_email_admin" value="{user.email}" class="tb-input tb-border tb-p-1 tb-my-1">
-        <button data-hx-post="/api/{Name}/update_email" data-hx-include="[name='new_email_admin']"
-                data-hx-target="closest div" data-hx-swap="innerHTML" class="tb-btn tb-btn-primary">Update Email</button>
+        <div class='text-yellow-500'>
+            <p><strong>Current Email:</strong> {user.email}</p>
+            <p class='text-sm mt-2'>
+                Email changes are managed through Clerk's security settings.
+                <a href='#' onclick='window.TB?.user?.getClerkInstance()?.openUserProfile()'
+                   class='text-blue-500 underline'>
+                    Open Profile Settings
+                </a>
+            </p>
+        </div>
     """
 
 
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True, level=1)
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True)
 async def update_setting(app: App, request: RequestData, setting_key: str, setting_value: str):
-    if request is None:
-        return "<div class='text-red-500'>Error: No request data provided.</div>"
+    """
+    Update a user setting.
+    Settings are stored in local BlobFile and synced to database.
+    """
     user = await get_current_user_from_request(app, request)
-    # hx_trigger might not be reliable or always present if not an HTMX direct call.
-    # Use a fixed or uniquely generated ID from the tbjs side if needed, or ensure HTMX context.
-    target_id_suffix = request.request.headers.hx_trigger
-    if target_id_suffix:
-        target_id_suffix = target_id_suffix.split("-")[-1] if "-" in target_id_suffix else target_id_suffix
-    else:
-        target_id_suffix = "default"  # Fallback
 
     if not user:
-        return "<div class='text-red-500'>Error: User not authenticated or found.</div>"  # Basic error for HTMX
+        return "<div class='text-red-500'>Error: User not authenticated.</div>"
 
-    if setting_key == "experimental_features":
-        actual_value = setting_value.lower() == 'true'
+    # Parse value
+    if setting_value.lower() == 'true':
+        actual_value = True
+    elif setting_value.lower() == 'false':
+        actual_value = False
+    elif setting_value.isdigit():
+        actual_value = int(setting_value)
     else:
-        actual_value = setting_value  # Handle other types if necessary
+        actual_value = setting_value
 
+    # Update settings
     if user.settings is None:
         user.settings = {}
 
     user.settings[setting_key] = actual_value
-    save_result = db_helper_save_user(app, asdict(user))  # db_helper_save_user is sync
 
-    if save_result.is_error():
-        # Return state that reflects error, possibly including the input to retry
-        return f"""
-            <label class="tb-label tb-flex tb-items-center tb-text-red-500">
-                <input type="checkbox" name="exp_features_admin_val" class="tb-checkbox tb-mr-2">
-                Error saving setting {setting_key}: {save_result.info}. Retry.
-            </label>
-        """
+    # Save
+    try:
+        from .AuthClerk import save_local_user_data, _db_save_user_sync_data
+        import time
 
-    if setting_key == "experimental_features":
-        is_checked = "checked" if actual_value else ""
-        # Note: hx-target needs to be stable or passed correctly if this widget is reused.
-        # For the admin panel, the target_id_suffix logic might need adjustment based on how it's embedded.
-        return f"""
-            <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
-                <input type="checkbox" name="exp_features_admin_val" {is_checked}
-                       data-hx-post="/api/{Name}/update_setting"
-                       data-hx-vals='{{"setting_key": "experimental_features", "setting_value": event.target.checked ? "true" : "false"}}'
-                       data-hx-target="closest div" data-hx-swap="innerHTML" class="tb-checkbox tb-mr-2">
-                Enable Experimental Features
-            </label>
-            <span class='text-green-500 ml-2 text-xs'>Saved!</span>
-        """
-    # Fallback for other settings if ever used this way by HTMX
-    return f"<div class='text-green-500'>Setting {setting_key} updated. Refresh may be needed.</div>"
+        user.last_sync = time.time()
+        save_local_user_data(user)
+        _db_save_user_sync_data(app, user.clerk_user_id, user.to_dict())
+
+        # Return success HTML for HTMX
+        if setting_key == "experimental_features":
+            is_checked = "checked" if actual_value else ""
+            return f"""
+                <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
+                    <input type="checkbox" name="exp_features_val" {is_checked}
+                           data-hx-post="/api/{Name}/update_setting"
+                           data-hx-vals='{{"setting_key": "experimental_features", "setting_value": "{'false' if actual_value else 'true'}"}}'
+                           data-hx-target="closest div" data-hx-swap="innerHTML"
+                           class="tb-checkbox tb-mr-2">
+                    Enable Experimental Features
+                </label>
+                <span class='text-green-500 ml-2 text-xs'>Saved!</span>
+            """
+
+        return f"<div class='text-green-500'>Setting '{setting_key}' updated to '{actual_value}'</div>"
+
+    except Exception as e:
+        return f"<div class='text-red-500'>Error saving setting: {str(e)}</div>"
 
 
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=False)  # row=False to return JSON
-async def get_current_user_from_request_api_wrapper(app: App, request: RequestData):
-    """ API callable version of get_current_user_from_request for tbjs/admin panel """
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=False)
+async def update_mod_data(app: App, request: RequestData, mod_name: str, data: dict):
+    """
+    Update mod-specific data for the current user.
+    """
     user = await get_current_user_from_request(app, request)
-    if not user:
-        # Return error that tbjs can handle
-        return Result.default_user_error(info="User not authenticated or found.", data=None, exec_code=401)
-    user_dict = asdict(user)
-    pub_user_data = {}
-    for key in ['name','pub_key','email','creation_time','is_persona','level','log_level','settings']:
-        pub_user_data[key] = user_dict.get(key, None)
-    return Result.ok(data=pub_user_data)
 
-# get_account_management_section_html is now largely obsolete.
-# Its functionality will be replicated by client-side JS (tbjs) in the Admin Dashboard,
-# calling the API endpoints above (update_email, update_setting, get_current_user_for_persona).
-# The Persona registration button logic will also be in tbjs, calling TB.user.registerWebAuthnForCurrentUser.
+    if not user:
+        return Result.default_user_error(info="User not authenticated", exec_code=401)
+
+    try:
+        from .AuthClerk import save_local_user_data, _db_save_user_sync_data
+        import time
+
+        # Update mod data
+        if user.mod_data is None:
+            user.mod_data = {}
+
+        if mod_name not in user.mod_data:
+            user.mod_data[mod_name] = {}
+
+        user.mod_data[mod_name].update(data)
+        user.last_sync = time.time()
+
+        # Save
+        save_local_user_data(user)
+        _db_save_user_sync_data(app, user.clerk_user_id, user.to_dict())
+
+        return Result.ok(data=user.mod_data[mod_name])
+
+    except Exception as e:
+        return Result.default_internal_error(f"Error updating mod data: {str(e)}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=False)
+async def get_mod_data(app: App, request: RequestData, mod_name: str):
+    """
+    Get mod-specific data for the current user.
+    """
+    user = await get_current_user_from_request(app, request)
+
+    if not user:
+        return Result.default_user_error(info="User not authenticated", exec_code=401)
+
+    mod_data = user.mod_data.get(mod_name, {}) if user.mod_data else {}
+    return Result.ok(data=mod_data)
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, row=True)
+async def get_account_section_html(app: App, request: RequestData):
+    """
+    Get HTML for the account management section in the dashboard.
+    Uses Clerk's user management UI.
+    """
+    user = await get_current_user_from_request(app, request)
+
+    if not user:
+        return """
+            <div class="tb-card tb-p-4">
+                <h3 class="tb-text-lg tb-font-semibold tb-mb-4">Account Settings</h3>
+                <p class="text-yellow-500">Please sign in to view account settings.</p>
+                <button onclick="window.TB?.user?.signIn()" class="tb-btn tb-btn-primary tb-mt-4">
+                    Sign In
+                </button>
+            </div>
+        """
+
+    return f"""
+        <div class="tb-card tb-p-4">
+            <h3 class="tb-text-lg tb-font-semibold tb-mb-4">Account Settings</h3>
+
+            <div class="tb-space-y-4">
+                <!-- User Info -->
+                <div class="tb-border-b tb-pb-4">
+                    <p><strong>Username:</strong> {user.username}</p>
+                    <p><strong>Email:</strong> {user.email}</p>
+                    <p><strong>Level:</strong> {user.level}</p>
+                </div>
+
+                <!-- Clerk Profile Button -->
+                <div>
+                    <button onclick="window.TB?.user?.getClerkInstance()?.openUserProfile()"
+                            class="tb-btn tb-btn-secondary">
+                        Open Clerk Profile Settings
+                    </button>
+                </div>
+
+                <!-- Settings -->
+                <div class="tb-border-t tb-pt-4">
+                    <h4 class="tb-font-semibold tb-mb-2">Application Settings</h4>
+
+                    <div id="setting-experimental" class="tb-mb-2">
+                        <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
+                            <input type="checkbox"
+                                   {'checked' if user.settings.get('experimental_features') else ''}
+                                   data-hx-post="/api/{Name}/update_setting"
+                                   data-hx-vals='{{"setting_key": "experimental_features", "setting_value": "{'false' if user.settings.get('experimental_features') else 'true'}"}}'
+                                   data-hx-target="closest div"
+                                   data-hx-swap="innerHTML"
+                                   class="tb-checkbox tb-mr-2">
+                            Enable Experimental Features
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Sign Out -->
+                <div class="tb-border-t tb-pt-4">
+                    <button onclick="window.TB?.user?.signOut()" class="tb-btn tb-btn-danger">
+                        Sign Out
+                    </button>
+                </div>
+            </div>
+        </div>
+    """
