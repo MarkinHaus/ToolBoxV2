@@ -9286,6 +9286,7 @@ class FlowAgent:
                 "groq": os.getenv("GROQ_API_KEY"),
             }
             kwargs["api_key"] = model_prefix_map.get(prefix)
+            print(f"Using api_key: {kwargs['api_key']} for model: {kwargs['model']}")
 
         if self.active_session and with_context:
             # Add context to fist messages as system message
@@ -9304,6 +9305,7 @@ class FlowAgent:
             for model, key in zip(fallbacks, fallbacks_keys):
                 fallbacks_dict_list.append({"model": model, "api_key": os.getenv(key, kwargs.get("api_key", None))})
             kwargs['fallbacks'] = fallbacks_dict_list
+
         try:
             # P1 - HOCH: LLM Rate Limiting to prevent cost explosions
             await self.llm_rate_limiter.acquire()
@@ -10565,6 +10567,7 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 7. Tool Capabilities wiederherstellen
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
+            self._tool_capabilities.update(self._load_tool_analysis())
 
             # 8. Session Tool Restrictions wiederherstellen
             if hasattr(checkpoint, 'session_tool_restrictions') and checkpoint.session_tool_restrictions:
