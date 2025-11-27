@@ -53,7 +53,7 @@ async def get_main_ui(app: App):
         font-size: 1.875rem;
         font-weight: 700;
         margin: 0;
-        color: var(--text-color);
+        color: var(--text-primary);
     }
 
     .card {
@@ -87,7 +87,7 @@ async def get_main_ui(app: App):
         border: 1px solid var(--theme-text-muted);
         background-color: var(--background-color);
         font-size: 1rem;
-        color: var(--text-color);
+        color: var(--text-primary);
         transition: border-color 0.2s;
     }
 
@@ -247,11 +247,11 @@ async def get_main_ui(app: App):
     .insight-card h3 {
         margin-top: 0;
         margin-bottom: 0.5rem;
-        color: var(--text-color);
+        color: var(--text-primary);
     }
 
     .insight-card p {
-        color: var(--text-color);
+        color: var(--text-primary);
         margin: 0.5rem 0;
     }
 
@@ -270,12 +270,12 @@ async def get_main_ui(app: App):
 
     .paper-item p {
         margin: 0;
-        color: var(--text-color);
+        color: var(--text-primary);
         font-size: 0.875rem;
     }
 
     .paper-item a {
-        color: var(--text-color);
+        color: var(--text-primary);
         text-decoration: none;
     }
 

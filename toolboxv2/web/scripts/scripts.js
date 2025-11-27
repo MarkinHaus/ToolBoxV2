@@ -102,50 +102,86 @@ function initRenderer() {
 initRenderer()
 
 // Functions to load dark mode state
-export function toggleDarkMode(init=false, theme='') {
-    if (!init){
-        theme = document.body.getAttribute("data-theme")
-        theme = theme === "light" ? "dark" : "light"
-        document.body.setAttribute('data-theme', theme)
-        sessionStorage.setItem("darkModeStatus", theme);
+export function toggleDarkMode(init = false, theme = '') {
+    const html = document.documentElement;
 
-    }else{
-        document.body.setAttribute('data-theme', theme)
-        sessionStorage.setItem("darkModeStatus", theme);
+    if (!init) {
+        // Toggle: aktuelles Theme umkehren
+        const currentTheme = html.getAttribute('data-theme') || 'light';
+        theme = currentTheme === 'light' ? 'dark' : 'light';
     }
-    loadDarkModeState(theme)
+
+    // Theme setzen (EINZIGER Switch: data-theme)
+    html.setAttribute('data-theme', theme);
+    sessionStorage.setItem('darkModeStatus', theme);
+
+    // 3D-Szene updaten
+    loadDarkModeState(theme);
+
+    // Event emittieren für andere Komponenten (Clerk, etc.)
+    document.dispatchEvent(new CustomEvent('theme:changed', {
+        detail: { theme, isUserAction: !init },
+        bubbles: true
+    }));
+
+    // TB.events falls verfügbar
+    if (window.TB?.events?.emit) {
+        window.TB.events.emit('theme:changed', {
+            mode: theme,
+            theme: theme,
+            isUserAction: !init
+        });
+    }
 }
 
 function loadDarkModeState(theme) {
-    let darkModeStatus = theme? theme: sessionStorage.getItem("darkModeStatus");
-    let color = 0x181823
-    if (darkModeStatus === "dark") {
-        document.body.classList.add("dark-mode");
-        renderer.setClearColor(0x000000)
-        scene.remove(ambientLightSto)
-        color = 0x181823
+    const html = document.documentElement;
+    let darkModeStatus = theme || sessionStorage.getItem('darkModeStatus');
 
-    } else {
-        document.body.classList.remove("dark-mode");
-        renderer.setClearColor(0xcccccc)
-        color = 0x537FE7
-
+    // Fallback auf System-Präferenz
+    if (!darkModeStatus) {
+        darkModeStatus = window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light';
     }
-    scene.remove(ambientLightSto)
-    ambientLightSto = new AmbientLight(color);
-    scene.add(ambientLightSto)
-    let position = [0,0,0]
-    let new_pointLightSto = []
+
+    // data-theme Attribut setzen (falls noch nicht gesetzt)
+    if (html.getAttribute('data-theme') !== darkModeStatus) {
+        html.setAttribute('data-theme', darkModeStatus);
+    }
+
+    // 3D-Szene Farben
+    const isDark = darkModeStatus === 'dark';
+
+    // Renderer Hintergrund
+    renderer.setClearColor(isDark ? 0x0d0d12 : 0xf8f9fa);
+
+    // Ambient Light
+    scene.remove(ambientLightSto);
+    ambientLightSto = new AmbientLight(isDark ? 0x181823 : 0x537FE7);
+    scene.add(ambientLightSto);
+
+    // Point Lights aktualisieren
+    const newPointLightSto = [];
     for (let i = 0; i < pointLightSto.length; i++) {
-        position = [pointLightSto[i].position.x,pointLightSto[i].position.y,pointLightSto[i].position.z];
+        const position = [
+            pointLightSto[i].position.x,
+            pointLightSto[i].position.y,
+            pointLightSto[i].position.z
+        ];
         scene.remove(pointLightSto[i]);
+
+        // Erstes Licht: Theme-abhängig, weitere: Weiß
+        const color = i === 0 ? (isDark ? 0x181823 : 0x537FE7) : 0xffffff;
         const pointLight = new PointLight(color, 1, 100);
-        color = 0xffffff
-        pointLight.position.set(position[0],position[1],position[2]);
-        new_pointLightSto.push(pointLight);
+        pointLight.position.set(position[0], position[1], position[2]);
+        newPointLightSto.push(pointLight);
         scene.add(pointLight);
     }
-    pointLightSto = new_pointLightSto;
+    pointLightSto = newPointLightSto;
+
+    // ENTFERNT: body.classList.add/remove('dark-mode')
+    // Wir nutzen nur noch data-theme!
 }
 
 // Animation loop

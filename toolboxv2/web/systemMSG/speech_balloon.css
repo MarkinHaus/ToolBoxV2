@@ -16,7 +16,7 @@
 }
 
 .speech-balloon-sys{
-    border: 1px solid var(--text-color);
+    border: 1px solid var(--text-primary);
 }
 
 .speech-balloon-isaa{
@@ -95,7 +95,7 @@
 }
 
 .speech-balloon-progress-sys {
-    background-color: var(--text-color);
+    background-color: var(--text-primary);
 }
 
 .speech-balloon-progress-isaa {
@@ -116,7 +116,7 @@
     width: 5px;
     height: 5px;
     cursor: pointer;
-    background-color: var(--text-color);
+    background-color: var(--text-primary);
     border-radius: 50%;
     animation: speech-balloon-fadeOut 15s forwards;
     transition: 0.25s;

@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaboration Hub | SimpleCore</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+
+    <style>
+        /* ================================================
+           Collaboration Hub Layout
+           ================================================ */
+        .collab-layout {
+            min-height: 100vh;
+            min-height: 100dvh;
+            background: var(--bg-base);
+        }
+
+        /* Header */
+        .collab-header {
+            position: sticky;
+            top: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--space-4);
+            padding: var(--space-4) var(--space-5);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: var(--border-width) solid var(--border-subtle);
+            z-index: var(--z-sticky);
+        }
+
+        .collab-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .collab-title .material-symbols-outlined {
+            font-size: 1.5rem;
+            color: var(--color-primary-500);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        /* Main Content Grid */
+        .collab-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: var(--space-5);
+            padding: var(--space-5);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Section Cards */
+        .collab-section {
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-subtle);
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+
+            box-shadow: var(--highlight-subtle), var(--shadow-sm);
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-4) var(--space-5);
+
+            background: var(--bg-elevated);
+            border-bottom: var(--border-width) solid var(--border-subtle);
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+
+            font-size: var(--text-base);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .section-title .material-symbols-outlined {
+            font-size: 1.25rem;
+            color: var(--interactive);
+        }
+
+        .section-content {
+            padding: var(--space-4);
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Connection Card */
+        .connection-card {
+            display: flex;
+            align-items: center;
+            gap: var(--space-4);
+            padding: var(--space-4);
+            margin-bottom: var(--space-3);
+
+            background: var(--bg-elevated);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-lg);
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .connection-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .connection-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+            border-color: var(--interactive);
+        }
+
+        .user-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: var(--radius-full);
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+            color: var(--text-inverse);
+            font-size: var(--text-xl);
+            font-weight: var(--weight-bold);
+
+            flex-shrink: 0;
+        }
+
+        .user-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .user-name {
+            font-size: var(--text-base);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            margin-bottom: var(--space-1);
+        }
+
+        .user-meta {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            margin-bottom: var(--space-2);
+        }
+
+        .compatibility-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-1);
+            padding: var(--space-1) var(--space-2);
+
+            background: var(--color-success);
+            color: white;
+            border-radius: var(--radius-full);
+
+            font-size: var(--text-xs);
+            font-weight: var(--weight-semibold);
+        }
+
+        .connection-actions {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+
+        .btn-connect {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-1);
+            padding: var(--space-2) var(--space-3);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-inverse);
+
+            background: linear-gradient(to bottom, var(--color-primary-400), var(--color-primary-600));
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .btn-connect:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-message {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-1);
+            padding: var(--space-2) var(--space-3);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .btn-message:hover {
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            border-color: var(--interactive);
+        }
+
+        /* Workspace Card */
+        .workspace-card {
+            padding: var(--space-4);
+            margin-bottom: var(--space-3);
+
+            background: var(--bg-elevated);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-lg);
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .workspace-card:hover {
+            border-color: var(--interactive);
+        }
+
+        .workspace-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: var(--space-2);
+        }
+
+        .workspace-title {
+            font-size: var(--text-base);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .workspace-participants {
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+        }
+
+        .workspace-description {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
+            margin-bottom: var(--space-3);
+        }
+
+        .workspace-actions {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        .btn-join {
+            padding: var(--space-2) var(--space-3);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: white;
+            background: var(--color-success);
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+        }
+
+        .btn-view {
+            padding: var(--space-2) var(--space-3);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+        }
+
+        /* Stats Section */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: var(--space-3);
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: var(--space-4);
+            background: var(--bg-elevated);
+            border-radius: var(--radius-lg);
+        }
+
+        .stat-value {
+            font-size: var(--text-3xl);
+            font-weight: var(--weight-bold);
+            color: var(--interactive);
+            line-height: 1;
+            margin-bottom: var(--space-1);
+        }
+
+        .stat-label {
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-8);
+            text-align: center;
+        }
+
+        .empty-state__icon {
+            font-size: 3rem;
+            margin-bottom: var(--space-3);
+            opacity: 0.5;
+        }
+
+        .empty-state__title {
+            font-size: var(--text-base);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            margin-bottom: var(--space-2);
+        }
+
+        .empty-state__desc {
+            font-size: var(--text-sm);
+            color: var(--text-muted);
+        }
+
+        /* Loading State */
+        .loading-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-3);
+            padding: var(--space-8);
+            color: var(--text-muted);
+        }
+
+        .loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border-default);
+            border-top-color: var(--interactive);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .collab-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .connection-card {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .connection-actions {
+                flex-direction: row;
+                justify-content: center;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .collab-header {
+                flex-direction: column;
+                gap: var(--space-3);
+            }
+
+            .header-actions {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="collab-layout">
+        <!-- Header -->
+        <header class="collab-header">
+            <h1 class="collab-title">
+                <span class="material-symbols-outlined">diversity_3</span>
+                Collaboration Hub
+            </h1>
+            <div class="header-actions">
+                <button class="btn-primary" id="refreshBtn">
+                    <span class="material-symbols-outlined">refresh</span>
+                    Refresh
+                </button>
+                <button class="btn-ghost" id="backBtn">
+                    <span class="material-symbols-outlined">arrow_back</span>
+                    Back
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="collab-grid">
+            <!-- Potential Collaborators -->
+            <section class="collab-section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="material-symbols-outlined">person_search</span>
+                        Potential Collaborators
+                    </h2>
+                    <button class="btn-ghost" id="suggestBtn" style="padding: var(--space-2);">
+                        <span class="material-symbols-outlined">auto_awesome</span>
+                    </button>
+                </div>
+                <div class="section-content" id="collaboratorsContainer">
+                    <div class="loading-state">
+                        <div class="loading-spinner"></div>
+                        <span>Finding collaborators...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Shared Workspaces -->
+            <section class="collab-section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="material-symbols-outlined">workspaces</span>
+                        Shared Workspaces
+                    </h2>
+                </div>
+                <div class="section-content" id="workspacesContainer">
+                    <div class="empty-state">
+                        <div class="empty-state__icon">🏢</div>
+                        <div class="empty-state__title">Shared workspaces coming soon!</div>
+                        <div class="empty-state__desc">Collaborate in real-time on idea development.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- My Connections -->
+            <section class="collab-section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="material-symbols-outlined">hub</span>
+                        My Connections
+                    </h2>
+                </div>
+                <div class="section-content" id="connectionsContainer">
+                    <div class="loading-state">
+                        <div class="loading-spinner"></div>
+                        <span>Loading connections...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Collaboration Stats -->
+            <section class="collab-section">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="material-symbols-outlined">analytics</span>
+                        Collaboration Stats
+                    </h2>
+                </div>
+                <div class="section-content">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="ideasCount">0</div>
+                            <div class="stat-label">Ideas Shared</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="connectionsCount">0</div>
+                            <div class="stat-label">Active Connections</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="workspacesCount">0</div>
+                            <div class="stat-label">Shared Workspaces</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script type="module" unSave="true">
+        // ================================================
+        // Collaboration Hub Application
+        // ================================================
+
+        // API Base URL
+        const API_BASE = '/api/SimpleCore';
+
+        // State
+        let collaborators = [];
+        let connections = [];
+        let workspaces = [];
+        let userIdeas = [];
+
+        // ========== API Functions ==========
+
+        async function apiRequest(endpoint, method = 'GET') {
+            try {
+                const response = await fetch(`${API_BASE}/${endpoint}`, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || data.error !== 'none') {
+                    throw new Error(data.info?.help_text || 'Request failed');
+                }
+
+                return data.result?.data || data.result || [];
+            } catch (error) {
+                console.error(`API Error [${endpoint}]:`, error);
+                throw error;
+            }
+        }
+
+        // ========== Data Loading ==========
+
+        async function loadCollaborators() {
+            const container = document.getElementById('collaboratorsContainer');
+            showLoading(container, 'Finding collaborators...');
+
+            try {
+                collaborators = await apiRequest('suggest_collaborations');
+                displayCollaborators();
+            } catch (error) {
+                showError(container, 'Failed to load collaborators');
+            }
+        }
+
+        async function loadConnections() {
+            const container = document.getElementById('connectionsContainer');
+            showLoading(container, 'Loading connections...');
+
+            try {
+                connections = await apiRequest('find_connections');
+                displayConnections();
+            } catch (error) {
+                showError(container, 'Failed to load connections');
+            }
+        }
+
+        async function loadUserIdeas() {
+            try {
+                userIdeas = await apiRequest('get_user_ideas');
+                updateStats();
+            } catch (error) {
+                console.error('Failed to load user ideas:', error);
+            }
+        }
+
+        // ========== Display Functions ==========
+
+        function displayCollaborators() {
+            const container = document.getElementById('collaboratorsContainer');
+
+            if (!collaborators.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">🔍</div>
+                        <div class="empty-state__title">No collaboration suggestions found</div>
+                        <div class="empty-state__desc">Add more ideas to find potential collaborators!</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = collaborators.map(collab => `
+                <div class="connection-card" data-user-id="${collab.user_id || collab.user2_id}">
+                    <div class="user-avatar">
+                        ${(collab.user_id || collab.user2_id || 'U')[0].toUpperCase()}
+                    </div>
+                    <div class="user-info">
+                        <div class="user-name">${collab.user_id || collab.user2_id || 'User'}</div>
+                        <div class="user-meta">Shared Ideas: ${(collab.shared_ideas || []).length}</div>
+                        <div class="compatibility-badge">
+                            <span class="material-symbols-outlined" style="font-size: 12px;">star</span>
+                            ${Math.round((collab.compatibility_score || collab.connection_strength || 0) * 100)}% Match
+                        </div>
+                    </div>
+                    <div class="connection-actions">
+                        <button class="btn-connect" onclick="sendConnectionRequest('${collab.user_id || collab.user2_id}')">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">person_add</span>
+                            Connect
+                        </button>
+                        <button class="btn-message" onclick="startConversation('${collab.user_id || collab.user2_id}')">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">chat</span>
+                            Message
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function displayConnections() {
+            const container = document.getElementById('connectionsContainer');
+
+            if (!connections.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state__icon">👥</div>
+                        <div class="empty-state__title">No connections yet</div>
+                        <div class="empty-state__desc">Start connecting with potential collaborators!</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = connections.map(conn => `
+                <div class="connection-card">
+                    <div class="user-avatar">
+                        ${(conn.user2_id || conn.user_id || 'U')[0].toUpperCase()}
+                    </div>
+                    <div class="user-info">
+                        <div class="user-name">${conn.user2_id || conn.user_id || 'User'}</div>
+                        <div class="user-meta">
+                            Shared Ideas: ${(conn.shared_ideas || []).length}
+                            <br>
+                            Connection: ${Math.round((conn.connection_strength || 0) * 100)}%
+                        </div>
+                    </div>
+                    <div class="connection-actions">
+                        <button class="btn-message" onclick="startConversation('${conn.user2_id || conn.user_id}')">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">chat</span>
+                            Message
+                        </button>
+                        <button class="btn-view" onclick="viewSharedIdeas('${conn.user2_id || conn.user_id}')">
+                            <span class="material-symbols-outlined" style="font-size: 14px;">visibility</span>
+                            Ideas
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateStats() {
+            document.getElementById('ideasCount').textContent = userIdeas.length;
+            document.getElementById('connectionsCount').textContent = connections.length;
+            document.getElementById('workspacesCount').textContent = workspaces.length;
+        }
+
+        // ========== UI Helpers ==========
+
+        function showLoading(container, message) {
+            container.innerHTML = `
+                <div class="loading-state">
+                    <div class="loading-spinner"></div>
+                    <span>${message}</span>
+                </div>
+            `;
+        }
+
+        function showError(container, message) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state__icon">❌</div>
+                    <div class="empty-state__title">${message}</div>
+                </div>
+            `;
+        }
+
+        function showToast(message, type = 'info') {
+            // Remove existing toasts
+            document.querySelectorAll('.toast').forEach(t => t.remove());
+
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+
+            const colors = {
+                success: '#22c55e',
+                error: '#ef4444',
+                info: '#3b82f6'
+            };
+
+            Object.assign(toast.style, {
+                position: 'fixed',
+                top: '24px',
+                right: '24px',
+                padding: '12px 24px',
+                background: 'var(--glass-bg)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid var(--glass-border)',
+                borderLeft: `4px solid ${colors[type] || colors.info}`,
+                borderRadius: '12px',
+                boxShadow: 'var(--shadow-lg)',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: 'var(--text-primary)',
+                zIndex: '10000',
+                opacity: '0',
+                transform: 'translateX(20px)',
+                transition: 'all 0.3s ease'
+            });
+
+            document.body.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(0)';
+            });
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // ========== Action Handlers ==========
+
+        window.sendConnectionRequest = function(userId) {
+            showToast(`Connection request sent to ${userId}!`, 'success');
+            // TODO: Implement actual connection request API
+        };
+
+        window.startConversation = function(userId) {
+            showToast(`Starting conversation with ${userId}...`, 'info');
+            // TODO: Implement messaging system
+        };
+
+        window.viewSharedIdeas = function(userId) {
+            showToast(`Viewing shared ideas with ${userId}...`, 'info');
+            // TODO: Implement shared ideas view
+        };
+
+        // ========== Initialize ==========
+
+        async function init() {
+            // Theme init
+            const saved = localStorage.getItem('theme');
+            const system = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            document.documentElement.setAttribute('data-theme', saved || (system ? 'dark' : 'light'));
+
+            // Load all data
+            await Promise.all([
+                loadCollaborators(),
+                loadConnections(),
+                loadUserIdeas()
+            ]);
+
+            updateStats();
+        }
+
+        // ========== Event Handlers ==========
+
+        document.getElementById('refreshBtn')?.addEventListener('click', init);
+        document.getElementById('suggestBtn')?.addEventListener('click', loadCollaborators);
+        document.getElementById('backBtn')?.addEventListener('click', () => {
+            window.location.href = '/web/pages/simplecore/index.html';
+        });
+
+        // Start
+        window.TB.onLoaded(init());
+    </script>
+</body>
+</html>

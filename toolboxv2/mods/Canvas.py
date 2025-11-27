@@ -3462,6 +3462,6 @@ async function handleAddMarkdown() {
         initializeCanvasStudio();
         checkAndJoinCollabSessionFromUrl();
     }
-    window.TB.once(init);
+    window.TB.onLoaded(init);
 </script>
 """

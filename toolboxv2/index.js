@@ -86,6 +86,8 @@ async function initializeApp() {
          if (initializedTB.ui.DarkModeToggle) {
             initializedTB.ui.DarkModeToggle.init();
         }
+         initializedTB.ui.theme.setPreference(initializedTB.ui.theme.getCurrentMode())
+        // initializedTB.ui.theme.togglePreference()
         // Optional: Speichere die Instanz, wenn du später darauf zugreifen musst
         // initializedTB.mainNavMenu = mainNavMenu;
         loadPlatformSpecificFeatures(initializedTB);

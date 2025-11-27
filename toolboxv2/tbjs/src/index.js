@@ -34,7 +34,12 @@ const TB = {
         // Add the function to the tracking set to prevent future executions.
         onceRunFunctions.add(fn);
 
-        if (this.isInit) {
+        this.onLoaded(fn);
+
+
+    },
+    onLoaded: function(fn) {
+         if (this.isInit) {
             try {
                 // If already initialized, run the function immediately.
                 fn();

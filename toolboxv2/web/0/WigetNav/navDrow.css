@@ -11,7 +11,7 @@
 
 
 .plus {
-    color: var(--text-color);
+    color: var(--text-primary);
     font-size: 24px;
     font-weight: bold;
     scale: 2;
@@ -39,7 +39,7 @@
 }
 
 .dropdown-item:hover {
-    border: 1px var(--text-color) dashed;
+    border: 1px var(--text-primary) dashed;
     scale: 1.08;
 }
 

@@ -9,7 +9,7 @@
     padding: 20px;
     animation: widget-fadeIn 0.5s;
     margin: 15px;
-    border: 1px solid var(--text-color);
+    border: 1px solid var(--text-primary);
     resize: both;
     overflow: auto;
     max-height: 90vh;
@@ -22,7 +22,7 @@
     left: 50%;
     transform: translateX(-50%);
     background: var(--background-color);
-    color: var(--text-color);
+    color: var(--text-primary);
     z-index: 1;
     border-radius: 5px;
     font-size: 0.7rem;
@@ -106,7 +106,7 @@
 .widget-resize-handle::after {
     content: "";
     position: absolute;
-    background-color: var(--text-color); /* Passt die Farbe entsprechend Ihrem Design an */
+    background-color: var(--text-primary); /* Passt die Farbe entsprechend Ihrem Design an */
 }
 
 

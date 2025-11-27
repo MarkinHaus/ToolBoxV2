@@ -2688,7 +2688,7 @@ body {
         </div>
     </div>
     <div id="rulesContainer" style="font-family: Arial, Helvetica, sans-serif; margin-bottom: 15px; max-width: 400px;">
-        <button id="toggleRulesButton" onclick="toggleRulesVisibility()" style="padding: 8px 12px; cursor: pointer; border: 1px solid #bbb; background-color: var(--theme-secondary); border-radius: 4px; font-size: 0.9em; color:var(--text-color);">
+        <button id="toggleRulesButton" onclick="toggleRulesVisibility()" style="padding: 8px 12px; cursor: pointer; border: 1px solid #bbb; background-color: var(--theme-secondary); border-radius: 4px; font-size: 0.9em; color:var(--text-primary);">
             Show Rules
         </button>
        <div id="rulesContent" style="display: none; border: 1px solid #d0d0d0; padding: 10px 15px; margin-top: 10px; background-color: var(--theme-bg);color:var(--text-color); border-radius: 4px; font-size: 0.95em; line-height: 1.4;">

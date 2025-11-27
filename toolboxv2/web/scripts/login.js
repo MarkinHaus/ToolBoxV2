@@ -10,6 +10,9 @@ function setupLogin() {
         window.TB.graphics.playAnimationSequence("Z0+12");
     }
 
+    // Setup theme listener for Clerk UI
+    setupThemeListener();
+
     // Initialize Login
     initializeClerkLogin();
 }
@@ -82,7 +85,32 @@ async function initializeClerkLogin() {
     }
 }
 
-// NEUE FUNKTION: Handhabt Clerk's #/continue Route
+/**
+ * Setup listener for theme changes to update Clerk UI
+ */
+function setupThemeListener() {
+    // Listen for theme:changed events
+    document.addEventListener('theme:changed', async (event) => {
+        console.log('[Login] Theme changed to:', event.detail?.theme);
+
+        if (window.TB?.user?.refreshClerkTheme) {
+            await window.TB.user.refreshClerkTheme();
+        }
+    });
+
+    // Also listen for TB.events if available
+    if (window.TB?.events?.on) {
+        window.TB.events.on('theme:changed', async (data) => {
+            console.log('[Login] Theme changed (TB.events):', data.theme);
+
+            if (window.TB?.user?.refreshClerkTheme) {
+                await window.TB.user.refreshClerkTheme();
+            }
+        });
+    }
+}
+
+
 function setupClerkContinueHandler() {
     // Check immediately if we're on a continue route
     checkAndHandleContinueRoute();
@@ -171,7 +199,7 @@ function showSuccess(container, message) {
 
 // Initialization when TB is ready
 if (window.TB?.once) {
-    window.TB.once(setupLogin);
+    window.TB.onLoaded(setupLogin);
 } else {
     // Fallback: wait for DOMContentLoaded
     if (document.readyState === 'loading') {

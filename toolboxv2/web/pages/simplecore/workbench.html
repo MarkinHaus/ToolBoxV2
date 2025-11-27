@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Workbench | SimpleCore</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+
+    <!-- Fabric.js for Canvas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js" defer></script>
+
+    <style>
+        /* ================================================
+           Workbench Layout
+           ================================================ */
+        .workbench-layout {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            height: 100dvh;
+            background: var(--bg-base);
+        }
+
+        /* Header */
+        .workbench-header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: var(--space-3) var(--space-5);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: var(--border-width) solid var(--border-subtle);
+            z-index: var(--z-sticky);
+        }
+
+        .workbench-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .workbench-title .material-symbols-outlined {
+            font-size: 1.5rem;
+            color: var(--interactive);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        /* Canvas Area */
+        .canvas-area {
+            position: relative;
+            background: var(--bg-sunken);
+            overflow: hidden;
+        }
+
+        .canvas-area canvas {
+            display: block;
+        }
+
+        /* Canvas Controls Overlay */
+        .canvas-controls {
+            position: absolute;
+            bottom: var(--space-4);
+            left: 50%;
+            transform: translateX(-50%);
+
+            display: flex;
+            gap: var(--space-2);
+            padding: var(--space-2);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .canvas-controls button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            padding: 0;
+
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            color: var(--text-secondary);
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .canvas-controls button:hover {
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            border-color: var(--interactive);
+        }
+
+        .canvas-controls button.active {
+            background: var(--interactive);
+            color: var(--text-inverse);
+            border-color: var(--interactive);
+        }
+
+        /* Sidebar */
+        .workbench-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-4);
+            padding: var(--space-4);
+
+            background: var(--bg-surface);
+            border-left: var(--border-width) solid var(--border-subtle);
+            overflow-y: auto;
+        }
+
+        /* Sidebar Sections */
+        .sidebar-section {
+            padding: var(--space-4);
+            background: var(--bg-elevated);
+            border: var(--border-width) solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+        }
+
+        .sidebar-section-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+
+            margin-bottom: var(--space-3);
+            padding-bottom: var(--space-2);
+            border-bottom: var(--border-width) solid var(--border-subtle);
+        }
+
+        .sidebar-section-title .material-symbols-outlined {
+            font-size: 1.125rem;
+            color: var(--interactive);
+        }
+
+        /* Tool Buttons */
+        .tool-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: var(--space-2);
+        }
+
+        .tool-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-1);
+            padding: var(--space-3);
+
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .tool-btn:hover {
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            border-color: var(--interactive);
+            transform: translateY(-1px);
+        }
+
+        .tool-btn .material-symbols-outlined {
+            font-size: 1.25rem;
+        }
+
+        /* Ideas List */
+        .ideas-list {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .idea-item {
+            padding: var(--space-3);
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .idea-item:hover {
+            background: var(--interactive-muted);
+            border-color: var(--interactive);
+            transform: translateX(2px);
+        }
+
+        .idea-item-title {
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-primary);
+            margin-bottom: var(--space-1);
+        }
+
+        .idea-item-desc {
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+            line-height: var(--leading-snug);
+        }
+
+        /* Collaborators List */
+        .collaborator-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            padding: var(--space-2);
+            border-radius: var(--radius-md);
+        }
+
+        .collaborator-item:hover {
+            background: var(--bg-sunken);
+        }
+
+        .collaborator-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-full);
+            background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-inverse);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-semibold);
+        }
+
+        .collaborator-info {
+            flex: 1;
+        }
+
+        .collaborator-name {
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-primary);
+        }
+
+        .collaborator-score {
+            font-size: var(--text-xs);
+            color: var(--color-success);
+        }
+
+        /* Status Messages */
+        .status-message {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: var(--space-4);
+
+            font-size: var(--text-sm);
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .status-message.loading::before {
+            content: '';
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-default);
+            border-top-color: var(--interactive);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-message.error {
+            color: var(--color-error);
+        }
+
+        .status-message.success {
+            color: var(--color-success);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .workbench-layout {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr auto;
+            }
+
+            .workbench-sidebar {
+                grid-row: 3;
+                flex-direction: row;
+                overflow-x: auto;
+                padding: var(--space-3);
+                border-left: none;
+                border-top: var(--border-width) solid var(--border-subtle);
+            }
+
+            .sidebar-section {
+                min-width: 250px;
+                flex-shrink: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="workbench-layout">
+        <!-- Header -->
+        <header class="workbench-header">
+            <h1 class="workbench-title">
+                <span class="material-symbols-outlined">construction</span>
+                Digital Workbench
+            </h1>
+            <div class="header-actions">
+                <button class="btn-secondary" id="saveBtn">
+                    <span class="material-symbols-outlined">save</span>
+                    Save
+                </button>
+                <button class="btn-ghost" id="backBtn">
+                    <span class="material-symbols-outlined">arrow_back</span>
+                    Back
+                </button>
+            </div>
+        </header>
+
+        <!-- Canvas Area -->
+        <main class="canvas-area">
+            <canvas id="canvas"></canvas>
+
+            <!-- Canvas Controls -->
+            <div class="canvas-controls">
+                <button id="selectTool" class="active" title="Select">
+                    <span class="material-symbols-outlined">arrow_selector_tool</span>
+                </button>
+                <button id="panTool" title="Pan">
+                    <span class="material-symbols-outlined">pan_tool</span>
+                </button>
+                <button id="zoomIn" title="Zoom In">
+                    <span class="material-symbols-outlined">zoom_in</span>
+                </button>
+                <button id="zoomOut" title="Zoom Out">
+                    <span class="material-symbols-outlined">zoom_out</span>
+                </button>
+                <button id="deleteTool" title="Delete Selected">
+                    <span class="material-symbols-outlined">delete</span>
+                </button>
+            </div>
+        </main>
+
+        <!-- Sidebar -->
+        <aside class="workbench-sidebar">
+            <!-- Basic Shapes -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">shapes</span>
+                    Shapes
+                </h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-action="addRectangle">
+                        <span class="material-symbols-outlined">rectangle</span>
+                        Rectangle
+                    </button>
+                    <button class="tool-btn" data-action="addCircle">
+                        <span class="material-symbols-outlined">circle</span>
+                        Circle
+                    </button>
+                    <button class="tool-btn" data-action="addText">
+                        <span class="material-symbols-outlined">text_fields</span>
+                        Text
+                    </button>
+                    <button class="tool-btn" data-action="addLine">
+                        <span class="material-symbols-outlined">horizontal_rule</span>
+                        Line
+                    </button>
+                </div>
+            </section>
+
+            <!-- Idea Components -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">lightbulb</span>
+                    Idea Tools
+                </h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-action="addIdeaBox">
+                        <span class="material-symbols-outlined">sticky_note_2</span>
+                        Idea Box
+                    </button>
+                    <button class="tool-btn" data-action="addConnection">
+                        <span class="material-symbols-outlined">line_end_arrow</span>
+                        Connect
+                    </button>
+                </div>
+            </section>
+
+            <!-- My Ideas -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">inventory_2</span>
+                    My Ideas
+                </h3>
+                <button class="btn-secondary" id="loadIdeasBtn" style="width: 100%; margin-bottom: var(--space-3);">
+                    <span class="material-symbols-outlined">refresh</span>
+                    Load Ideas
+                </button>
+                <div id="ideasContainer" class="ideas-list">
+                    <div class="status-message">Click "Load Ideas" to see your ideas</div>
+                </div>
+            </section>
+
+            <!-- Collaborators -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">group</span>
+                    Collaborators
+                </h3>
+                <button class="btn-secondary" id="findCollabBtn" style="width: 100%; margin-bottom: var(--space-3);">
+                    <span class="material-symbols-outlined">person_search</span>
+                    Find Collaborators
+                </button>
+                <div id="collaboratorsContainer">
+                    <div class="status-message">No collaborators online</div>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    <script type="module" unSave="true">
+        // ================================================
+        // Workbench Application
+        // ================================================
+
+        let canvas;
+        let userIdeas = [];
+        let isLoading = false;
+
+        // ========== Canvas Initialization ==========
+
+        function initCanvas() {
+            const container = document.querySelector('.canvas-area');
+            const rect = container.getBoundingClientRect();
+
+            canvas = new fabric.Canvas('canvas', {
+                width: rect.width,
+                height: rect.height,
+                backgroundColor: getComputedStyle(document.documentElement)
+                    .getPropertyValue('--bg-sunken').trim() || '#f8f9fa',
+                selection: true
+            });
+
+            // Resize handler
+            const resizeObserver = new ResizeObserver(entries => {
+                for (const entry of entries) {
+                    canvas.setDimensions({
+                        width: entry.contentRect.width,
+                        height: entry.contentRect.height
+                    });
+                    canvas.renderAll();
+                }
+            });
+            resizeObserver.observe(container);
+
+            // Load saved state
+            loadWorkbenchState();
+        }
+
+        // ========== Shape Functions ==========
+
+        const shapeActions = {
+            addRectangle() {
+                const rect = new fabric.Rect({
+                    left: 100 + Math.random() * 100,
+                    top: 100 + Math.random() * 100,
+                    width: 120,
+                    height: 80,
+                    fill: '#6366f1',
+                    stroke: '#4f46e5',
+                    strokeWidth: 2,
+                    rx: 8,
+                    ry: 8
+                });
+                canvas.add(rect);
+                canvas.setActiveObject(rect);
+            },
+
+            addCircle() {
+                const circle = new fabric.Circle({
+                    left: 150 + Math.random() * 100,
+                    top: 150 + Math.random() * 100,
+                    radius: 50,
+                    fill: '#22c55e',
+                    stroke: '#16a34a',
+                    strokeWidth: 2
+                });
+                canvas.add(circle);
+                canvas.setActiveObject(circle);
+            },
+
+            addText() {
+                const text = new fabric.IText('Double-click to edit', {
+                    left: 200 + Math.random() * 100,
+                    top: 200 + Math.random() * 100,
+                    fontSize: 18,
+                    fill: '#1f2937',
+                    fontFamily: 'Roboto, sans-serif'
+                });
+                canvas.add(text);
+                canvas.setActiveObject(text);
+            },
+
+            addLine() {
+                const line = new fabric.Line([50, 50, 200, 200], {
+                    stroke: '#64748b',
+                    strokeWidth: 3,
+                    selectable: true
+                });
+                canvas.add(line);
+                canvas.setActiveObject(line);
+            },
+
+            addIdeaBox() {
+                const box = new fabric.Rect({
+                    width: 160,
+                    height: 100,
+                    fill: '#f59e0b',
+                    stroke: '#d97706',
+                    strokeWidth: 2,
+                    rx: 12,
+                    ry: 12
+                });
+
+                const title = new fabric.IText('New Idea', {
+                    fontSize: 14,
+                    fontWeight: 'bold',
+                    fill: 'white',
+                    fontFamily: 'Roboto, sans-serif',
+                    left: 12,
+                    top: 12
+                });
+
+                const desc = new fabric.IText('Description...', {
+                    fontSize: 11,
+                    fill: 'rgba(255,255,255,0.8)',
+                    fontFamily: 'Roboto, sans-serif',
+                    left: 12,
+                    top: 35
+                });
+
+                const group = new fabric.Group([box, title, desc], {
+                    left: 100 + Math.random() * 200,
+                    top: 100 + Math.random() * 200
+                });
+
+                canvas.add(group);
+                canvas.setActiveObject(group);
+            },
+
+            addConnection() {
+                const line = new fabric.Line([50, 50, 200, 50], {
+                    stroke: '#6366f1',
+                    strokeWidth: 3,
+                    selectable: true,
+                    strokeDashArray: [5, 5]
+                });
+
+                // Arrow head
+                const triangle = new fabric.Triangle({
+                    width: 15,
+                    height: 15,
+                    fill: '#6366f1',
+                    left: 200,
+                    top: 50,
+                    angle: 90,
+                    originX: 'center',
+                    originY: 'center'
+                });
+
+                const arrow = new fabric.Group([line, triangle], {
+                    left: 100 + Math.random() * 100,
+                    top: 100 + Math.random() * 100
+                });
+
+                canvas.add(arrow);
+                canvas.setActiveObject(arrow);
+            }
+        };
+
+        // ========== API Functions ==========
+
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            const response = await fetch(`/api/SimpleCore/${endpoint}`, options);
+            const data = await response.json();
+
+            if (!response.ok || data.error !== 'none') {
+                throw new Error(data.info?.help_text || 'Request failed');
+            }
+
+            return data.result?.data || data.result || [];
+        }
+
+        async function loadUserIdeas() {
+            if (isLoading) return;
+
+            isLoading = true;
+            const container = document.getElementById('ideasContainer');
+            container.innerHTML = '<div class="status-message loading">Loading ideas...</div>';
+
+            try {
+                userIdeas = await apiRequest('get_user_ideas');
+                displayIdeas();
+            } catch (error) {
+                console.error('Error loading ideas:', error);
+                container.innerHTML = `<div class="status-message error">Error: ${error.message}</div>`;
+            } finally {
+                isLoading = false;
+            }
+        }
+
+        function displayIdeas() {
+            const container = document.getElementById('ideasContainer');
+
+            if (!userIdeas.length) {
+                container.innerHTML = '<div class="status-message">No ideas yet. Create some first!</div>';
+                return;
+            }
+
+            container.innerHTML = userIdeas.map(idea => `
+                <div class="idea-item" data-idea-id="${idea.id}">
+                    <div class="idea-item-title">${idea.title || 'Untitled'}</div>
+                    <div class="idea-item-desc">${(idea.description || '').substring(0, 60)}...</div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            container.querySelectorAll('.idea-item').forEach(item => {
+                item.addEventListener('click', () => addIdeaToCanvas(item.dataset.ideaId));
+            });
+        }
+
+        function addIdeaToCanvas(ideaId) {
+            const idea = userIdeas.find(i => i.id === ideaId);
+            if (!idea) return;
+
+            const box = new fabric.Rect({
+                width: 180,
+                height: 110,
+                fill: '#8b5cf6',
+                stroke: '#7c3aed',
+                strokeWidth: 2,
+                rx: 12,
+                ry: 12
+            });
+
+            const title = new fabric.Text(idea.title || 'Idea', {
+                fontSize: 13,
+                fontWeight: 'bold',
+                fill: 'white',
+                fontFamily: 'Roboto, sans-serif',
+                left: 12,
+                top: 12
+            });
+
+            const desc = new fabric.Text(
+                (idea.description || '').substring(0, 50) + '...',
+                {
+                    fontSize: 10,
+                    fill: 'rgba(255,255,255,0.85)',
+                    fontFamily: 'Roboto, sans-serif',
+                    left: 12,
+                    top: 35,
+                    width: 156
+                }
+            );
+
+            const group = new fabric.Group([box, title, desc], {
+                left: 50 + Math.random() * 300,
+                top: 50 + Math.random() * 200
+            });
+
+            // Store idea reference
+            group.set('ideaId', ideaId);
+
+            canvas.add(group);
+            canvas.setActiveObject(group);
+        }
+
+        async function findCollaborators() {
+            const container = document.getElementById('collaboratorsContainer');
+            container.innerHTML = '<div class="status-message loading">Finding collaborators...</div>';
+
+            try {
+                const collaborators = await apiRequest('find_connections');
+
+                if (!collaborators.length) {
+                    container.innerHTML = '<div class="status-message">No collaborators found</div>';
+                    return;
+                }
+
+                container.innerHTML = collaborators.map(c => `
+                    <div class="collaborator-item">
+                        <div class="collaborator-avatar">${(c.user_id || 'U')[0].toUpperCase()}</div>
+                        <div class="collaborator-info">
+                            <div class="collaborator-name">${c.user_id || 'User'}</div>
+                            <div class="collaborator-score">${Math.round((c.compatibility_score || 0) * 100)}% match</div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error finding collaborators:', error);
+                container.innerHTML = `<div class="status-message error">Error: ${error.message}</div>`;
+            }
+        }
+
+        // ========== Workbench State ==========
+
+        function saveWorkbenchState() {
+            const state = {
+                canvas: canvas.toJSON(['ideaId']),
+                timestamp: new Date().toISOString()
+            };
+
+            localStorage.setItem('simplecore_workbench', JSON.stringify(state));
+            showToast('Workbench saved!', 'success');
+        }
+
+        function loadWorkbenchState() {
+            try {
+                const saved = localStorage.getItem('simplecore_workbench');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    canvas.loadFromJSON(data.canvas, canvas.renderAll.bind(canvas));
+                }
+            } catch (error) {
+                console.error('Error loading workbench:', error);
+            }
+        }
+
+        // ========== Toast Notifications ==========
+
+        function showToast(message, type = 'info') {
+            // Use TB.ui.Toast if available, otherwise simple alert
+            if (window.TB?.ui?.Toast) {
+                window.TB.ui.Toast[`show${type.charAt(0).toUpperCase() + type.slice(1)}`]?.(message);
+            } else {
+                // Simple toast implementation
+                const toast = document.createElement('div');
+                toast.textContent = message;
+                toast.style.cssText = `
+                    position: fixed;
+                    bottom: 24px;
+                    left: 50%;
+                    transform: translateX(-50%) translateY(20px);
+                    padding: 12px 24px;
+                    background: var(--glass-bg);
+                    backdrop-filter: blur(12px);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 12px;
+                    box-shadow: var(--shadow-lg);
+                    color: var(--text-primary);
+                    font-size: 14px;
+                    font-weight: 500;
+                    z-index: 10000;
+                    opacity: 0;
+                    transition: all 0.3s ease;
+                `;
+
+                document.body.appendChild(toast);
+                requestAnimationFrame(() => {
+                    toast.style.opacity = '1';
+                    toast.style.transform = 'translateX(-50%) translateY(0)';
+                });
+
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(-50%) translateY(20px)';
+                    setTimeout(() => toast.remove(), 300);
+                }, 2500);
+            }
+        }
+
+        // ========== Event Handlers ==========
+
+        function setupEventHandlers() {
+            // Tool buttons
+            document.querySelectorAll('[data-action]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.action;
+                    if (shapeActions[action]) {
+                        shapeActions[action]();
+                    }
+                });
+            });
+
+            // Canvas controls
+            document.getElementById('selectTool')?.addEventListener('click', () => {
+                canvas.isDrawingMode = false;
+                setActiveControl('selectTool');
+            });
+
+            document.getElementById('zoomIn')?.addEventListener('click', () => {
+                canvas.setZoom(canvas.getZoom() * 1.2);
+            });
+
+            document.getElementById('zoomOut')?.addEventListener('click', () => {
+                canvas.setZoom(canvas.getZoom() / 1.2);
+            });
+
+            document.getElementById('deleteTool')?.addEventListener('click', () => {
+                const active = canvas.getActiveObjects();
+                if (active.length) {
+                    active.forEach(obj => canvas.remove(obj));
+                    canvas.discardActiveObject();
+                    canvas.renderAll();
+                }
+            });
+
+            // Sidebar buttons
+            document.getElementById('loadIdeasBtn')?.addEventListener('click', loadUserIdeas);
+            document.getElementById('findCollabBtn')?.addEventListener('click', findCollaborators);
+            document.getElementById('saveBtn')?.addEventListener('click', saveWorkbenchState);
+            document.getElementById('backBtn')?.addEventListener('click', () => {
+                window.location.href = '/web/pages/simplecore/index.html';
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                    const active = canvas.getActiveObjects();
+                    if (active.length && document.activeElement === document.body) {
+                        active.forEach(obj => canvas.remove(obj));
+                        canvas.discardActiveObject();
+                        canvas.renderAll();
+                    }
+                }
+
+                if (e.ctrlKey && e.key === 's') {
+                    e.preventDefault();
+                    saveWorkbenchState();
+                }
+            });
+        }
+
+        function setActiveControl(id) {
+            document.querySelectorAll('.canvas-controls button').forEach(btn => {
+                btn.classList.toggle('active', btn.id === id);
+            });
+        }
+
+        // ========== Theme Sync ==========
+
+        function syncCanvasTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            canvas.setBackgroundColor(isDark ? '#1f2937' : '#f8fafc');
+            canvas.renderAll();
+        }
+
+        document.addEventListener('theme:changed', syncCanvasTheme);
+
+        // ========== Initialize ==========
+
+        window.TB.onLoaded(() => {
+            initCanvas();
+            setupEventHandlers();
+        });
+    </script>
+</body>
+</html>

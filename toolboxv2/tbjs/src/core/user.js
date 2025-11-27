@@ -731,66 +731,194 @@ const user = {
         return clerkInstance !== null;
     },
 
+    // =================== Clerk Theming ===================
+
+    /**
+     * Generiert Clerk appearance config basierend auf aktuellem Theme
+     * @returns {Object} Clerk appearance configuration
+     */
+    _getClerkAppearance() {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+        return {
+            baseTheme: isDark ? 'dark' : undefined,
+            variables: {
+                // Farben aus Design System
+                colorPrimary: isDark ? '#818cf8' : '#6366f1',
+                colorBackground: isDark ? '#1f2937' : '#ffffff',
+                colorInputBackground: isDark ? '#374151' : '#f9fafb',
+                colorInputText: isDark ? '#f3f4f6' : '#1f2937',
+                colorText: isDark ? '#f3f4f6' : '#1f2937',
+                colorTextSecondary: isDark ? '#9ca3af' : '#6b7280',
+                colorDanger: '#ef4444',
+                colorSuccess: '#22c55e',
+                colorWarning: '#f59e0b',
+
+                // Border & Radius
+                borderRadius: '8px',
+
+                // Fonts
+                fontFamily: 'Roboto, system-ui, sans-serif',
+                fontSize: '15px'
+            },
+            elements: {
+                // Root Container
+                rootBox: {
+                    width: '100%'
+                },
+
+                // Card (transparent für Glass-Effekt)
+                card: {
+                    background: 'transparent',
+                    boxShadow: 'none',
+                    border: 'none'
+                },
+
+                // Form Container
+                formContainer: {
+                    gap: '16px'
+                },
+
+                // Input Fields
+                formFieldInput: {
+                    backgroundColor: isDark ? '#374151' : '#ffffff',
+                    borderColor: isDark ? '#4b5563' : '#d1d5db',
+                    color: isDark ? '#f3f4f6' : '#1f2937',
+                    transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+
+                    '&:focus': {
+                        borderColor: isDark ? '#818cf8' : '#6366f1',
+                        boxShadow: isDark
+                            ? '0 0 0 3px rgba(129, 140, 248, 0.15)'
+                            : '0 0 0 3px rgba(99, 102, 241, 0.15)'
+                    }
+                },
+
+                // Labels
+                formFieldLabel: {
+                    color: isDark ? '#d1d5db' : '#374151',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                },
+
+                // Primary Button (mit Gradient)
+                formButtonPrimary: {
+                    background: isDark
+                        ? 'linear-gradient(to bottom, #818cf8, #6366f1)'
+                        : 'linear-gradient(to bottom, #818cf8, #4f46e5)',
+                    color: '#ffffff',
+                    border: 'none',
+                    boxShadow: isDark
+                        ? '0 2px 8px rgba(129, 140, 248, 0.3)'
+                        : '0 2px 8px rgba(99, 102, 241, 0.3)',
+                    transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+
+                    '&:hover': {
+                        background: isDark
+                            ? 'linear-gradient(to bottom, #a5b4fc, #818cf8)'
+                            : 'linear-gradient(to bottom, #6366f1, #4338ca)',
+                        transform: 'translateY(-1px)',
+                        boxShadow: isDark
+                            ? '0 4px 12px rgba(129, 140, 248, 0.4)'
+                            : '0 4px 12px rgba(99, 102, 241, 0.4)'
+                    }
+                },
+
+                // Secondary/Social Buttons
+                socialButtonsBlockButton: {
+                    backgroundColor: isDark ? '#374151' : '#ffffff',
+                    borderColor: isDark ? '#4b5563' : '#d1d5db',
+                    color: isDark ? '#f3f4f6' : '#1f2937',
+
+                    '&:hover': {
+                        backgroundColor: isDark ? '#4b5563' : '#f3f4f6'
+                    }
+                },
+
+                // Divider
+                dividerLine: {
+                    backgroundColor: isDark ? '#4b5563' : '#e5e7eb'
+                },
+                dividerText: {
+                    color: isDark ? '#9ca3af' : '#6b7280'
+                },
+
+                // Footer Links
+                footerActionLink: {
+                    color: isDark ? '#818cf8' : '#6366f1',
+
+                    '&:hover': {
+                        color: isDark ? '#a5b4fc' : '#4f46e5'
+                    }
+                },
+
+                // Error States
+                formFieldErrorText: {
+                    color: '#ef4444'
+                },
+
+                // Header (optional ausblenden)
+                headerTitle: {
+                    display: 'none'
+                },
+                headerSubtitle: {
+                    display: 'none'
+                }
+            }
+        };
+    },
+
     // =================== UI Mount Points ===================
 
     async mountSignIn(elementOrSelector, options = {}) {
-        if (!clerkInstance) {
-            const success = await this._initClerk();
-            if (!success) {
-                const element = typeof elementOrSelector === 'string'
-                    ? document.querySelector(elementOrSelector)
-                    : elementOrSelector;
+    if (!clerkInstance) {
+        const success = await this._initClerk();
+        if (!success) {
+            const element = typeof elementOrSelector === 'string'
+                ? document.querySelector(elementOrSelector)
+                : elementOrSelector;
 
-                if (element) {
-                    element.innerHTML = `
-                        <div style="text-align: center; color: #ef4444; padding: 20px;">
-                            <p>❌ Authentication service not available</p>
-                            <button onclick="location.reload()" style="margin-top: 16px; padding: 8px 16px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 6px;">
-                                Retry
-                            </button>
-                        </div>
-                    `;
-                }
-                return;
+            if (element) {
+                element.innerHTML = `
+                    <div style="text-align: center; color: var(--color-error, #ef4444); padding: 20px;">
+                        <p>❌ Authentication service not available</p>
+                        <button onclick="location.reload()" class="btn-primary" style="margin-top: 16px;">
+                            Retry
+                        </button>
+                    </div>
+                `;
             }
-        }
-
-        const element = typeof elementOrSelector === 'string'
-            ? document.querySelector(elementOrSelector)
-            : elementOrSelector;
-
-        if (!element) {
-            TB.logger.error('[User] Element not found for sign-in mount');
             return;
         }
+    }
 
-        element.innerHTML = '';
+    const element = typeof elementOrSelector === 'string'
+        ? document.querySelector(elementOrSelector)
+        : elementOrSelector;
 
-        // Get redirect URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
+    if (!element) {
+        TB.logger.error('[User] Element not found for sign-in mount');
+        return;
+    }
 
-        clerkInstance.mountSignIn(element, {
-            // WICHTIG: Nutze die AKTUELLE URL als afterSignInUrl
-            // Clerk wird dann zu unserer Seite zurückkehren und wir handhaben den Redirect
-            afterSignUpUrl: window.location.pathname + '?next=' + encodeURIComponent(redirectUrl),
-            signUpUrl: options.signUpUrl || clerkConfig?.sign_up_url || '/web/assets/signup.html',
-            appearance: {
-                elements: {
-                    rootBox: { width: '100%' },
-                    card: {
-                        background: 'transparent',
-                        boxShadow: 'none',
-                        border: 'none'
-                    },
-                    formButtonPrimary: {
-                        backgroundColor: '#6366f1'
-                    }
-                }
-            },
-            ...options
-        });
-    },
+    element.innerHTML = '';
+
+    // Get redirect URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const redirectUrl = urlParams.get('next') || options.afterSignInUrl || '/web/mainContent.html';
+
+    // Mount mit dynamischem Theme
+    clerkInstance.mountSignIn(element, {
+        afterSignUpUrl: window.location.pathname + '?next=' + encodeURIComponent(redirectUrl),
+        signUpUrl: options.signUpUrl || clerkConfig?.sign_up_url || '/web/assets/signup.html',
+        appearance: this._getClerkAppearance(),
+        ...options
+    });
+
+    // Store element reference für Theme-Updates
+    this._signInElement = element;
+    this._signInOptions = options;
+},
 
     async mountSignUp(elementOrSelector, options = {}) {
     if (!clerkInstance) {
@@ -802,9 +930,9 @@ const user = {
 
             if (element) {
                 element.innerHTML = `
-                    <div style="text-align: center; color: #ef4444; padding: 20px;">
+                    <div style="text-align: center; color: var(--color-error, #ef4444); padding: 20px;">
                         <p>❌ Authentication service not available</p>
-                        <button onclick="location.reload()" style="margin-top: 16px; padding: 8px 16px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 6px;">
+                        <button onclick="location.reload()" class="btn-primary" style="margin-top: 16px;">
                             Retry
                         </button>
                     </div>
@@ -825,30 +953,22 @@ const user = {
 
     element.innerHTML = '';
 
-    // Get redirect URL from options or URL params
+    // Get redirect URL
     const urlParams = new URLSearchParams(window.location.search);
     const redirectUrl = options.afterSignUpUrl || urlParams.get('next') || '/web/mainContent.html';
 
+    // Mount mit dynamischem Theme
     clerkInstance.mountSignUp(element, {
-        // Nach erfolgreichem Signup: direkt zur App, NICHT zu Login
         afterSignUpUrl: redirectUrl,
         afterSignInUrl: redirectUrl,
         signInUrl: options.signInUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
-        appearance: {
-            elements: {
-                rootBox: { width: '100%' },
-                card: {
-                    background: 'transparent',
-                    boxShadow: 'none',
-                    border: 'none'
-                },
-                formButtonPrimary: {
-                    backgroundColor: '#6366f1'
-                }
-            }
-        },
+        appearance: this._getClerkAppearance(),
         ...options
     });
+
+    // Store element reference für Theme-Updates
+    this._signUpElement = element;
+    this._signUpOptions = options;
 },
 
     async mountUserButton(elementOrSelector, options = {}) {
@@ -874,6 +994,36 @@ const user = {
             afterSignOutUrl: options.afterSignOutUrl || clerkConfig?.sign_in_url || '/web/assets/login.html',
             ...options
         });
+    },
+
+    /**
+     * Remount Clerk components when theme changes
+     * Call this when user toggles dark/light mode
+     */
+    async refreshClerkTheme() {
+        if (!clerkInstance) return;
+
+        TB.logger.debug('[User] Refreshing Clerk theme...');
+
+        // Remount SignIn if mounted
+        if (this._signInElement && document.contains(this._signInElement)) {
+            clerkInstance.unmountSignIn(this._signInElement);
+            clerkInstance.mountSignIn(this._signInElement, {
+                ...this._signInOptions,
+                appearance: this._getClerkAppearance()
+            });
+        }
+
+        // Remount SignUp if mounted
+        if (this._signUpElement && document.contains(this._signUpElement)) {
+            clerkInstance.unmountSignUp(this._signUpElement);
+            clerkInstance.mountSignUp(this._signUpElement, {
+                ...this._signUpOptions,
+                appearance: this._getClerkAppearance()
+            });
+        }
+
+        TB.logger.debug('[User] Clerk theme refreshed.');
     },
 
     unmountAll() {

@@ -88,15 +88,13 @@ const ThemeManager = {
             newMode = ThemeManager._preference;
         }
 
-        if (newMode !== ThemeManager._currentMode) {
-            ThemeManager._currentMode = newMode;
-            document.documentElement.classList.remove('light', 'dark');
-            document.documentElement.classList.add(ThemeManager._currentMode);
-            document.documentElement.setAttribute('data-theme', ThemeManager._currentMode);
+        ThemeManager._currentMode = newMode;
+        document.documentElement.classList.remove('light', 'dark');
+        document.documentElement.classList.add(ThemeManager._currentMode);
+        document.documentElement.setAttribute('data-theme', ThemeManager._currentMode);
 
-            TB.logger.log(`[Theme] Effective mode changed to: ${ThemeManager._currentMode}`);
-            TB.events.emit('theme:changed', { mode: ThemeManager._currentMode }); // Event mit Mode-Objekt
-        }
+        TB.logger.log(`[Theme] Effective mode changed to: ${ThemeManager._currentMode}`);
+        TB.events.emit('theme:changed', { mode: ThemeManager._currentMode }); // Event mit Mode-Objekt
         // Hintergrund immer anwenden, da er sich auch ohne Mode-Wechsel ändern könnte (z.B. 3D wird bereit)
         ThemeManager._applyBackground();
     },
@@ -178,7 +176,7 @@ const ThemeManager = {
                     break;
             }
         }
-        TB.logger.log(`[Theme] Background applied: ${appliedBgType}`);
+        TB.logger.log(`[Theme] Background applied: ${appliedBgType} ${bgConfig.type} ${showPlaceholder}`);
     },
 
     togglePreference: () => {

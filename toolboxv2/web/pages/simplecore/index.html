@@ -1,146 +1,459 @@
-<div>
+<div class="simplecore-page">
     <style>
-        .idea-input-container {
-            background: var(--theme-bg);
-            padding: 2rem;
-            border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            margin-top: 2rem;
-            margin-bottom: 2rem;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
+        /* ================================================
+           SimpleCore Page Styles
+           Nutzt TBJS Design System Variablen
+           ================================================ */
+
+        .simplecore-page {
+            min-height: 100vh;
+            min-height: 100dvh;
         }
-        .idea-input-container textarea {
-            width: 100%;
-            min-height: 100px;
-            padding: 1rem;
-            border: 1px solid var(--input-border, #d9d9d9);
-            border-radius: 8px;
-            font-size: 1.1em;
-            background-color: var(--input-bg, #f5f5f5);
-            color: var(--theme-text, #262626);
-            resize: vertical;
-        }
-        .btn-primary {
-            padding: 12px 24px;
-            border-radius: 8px;
-            border: none;
-            cursor: pointer;
-            font-weight: 500;
-            background: var(--theme-primary, #1890ff);
-            color: var(--theme-text-on-primary, white);
-            font-size: 1.1em;
-            align-self: flex-end;
-        }
-         .btn-primary:hover {
-            background: var(--link-hover-color, #096dd9);
-        }
-        #response-message {
-            margin-top: 1rem;
+
+        /* Hero Section */
+        .simplecore-hero {
+            padding-top: 15vh;
+            padding-bottom: var(--space-8);
             text-align: center;
         }
-        .reward-container {
+
+        .simplecore-title {
+            font-size: clamp(3rem, 10vw, 5rem);
+            font-weight: var(--weight-bold);
+            color: var(--text-primary);
+            margin-bottom: var(--space-4);
+            letter-spacing: var(--tracking-tight);
+        }
+
+        /* Animated Words */
+
+        .words-wrapper {
+            height: clamp(3rem, 8vw, 5rem);
+            overflow: hidden;
+            position: relative;
+            line-height: 1.2;
+        }
+
+        .words {
+            display: flex;
+            flex-direction: column;
+            animation: word-cycle 10s infinite ease-in-out;
+        }
+
+        .words span {
+            display: flex;
+            align-items: baseline;
+            justify-content: center;
+            gap: var(--space-2);
+            height: clamp(3rem, 8vw, 5rem);
+            line-height: 1.2;
+            padding: 0;
+            margin: 0;
+            font-size: var(--text-4xl);
+            font-weight: var(--weight-bold);
+            background: linear-gradient(
+                135deg,
+                var(--color-primary-400) 0%,
+                var(--color-primary-600) 50%,
+                var(--color-accent) 100%
+            );
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: var(--tracking-tight);
+        }
+
+        .words span small {
+            font-size: 0.5em;
+            font-weight: var(--weight-semibold);
+            opacity: 0.8;
+        }
+
+        @keyframes word-cycle {
+            0%, 18% { transform: translateY(0); }
+            20%, 38% { transform: translateY(-20%); }
+            40%, 58% { transform: translateY(-40%); }
+            60%, 78% { transform: translateY(-60%); }
+            80%, 100% { transform: translateY(-80%); }
+        }
+
+
+        /* Idea Input Container */
+        .idea-input-container {
+            max-width: 700px;
+            margin: var(--space-8) auto;
+            padding: var(--space-6);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--glass-shadow);
+        }
+
+        .idea-form {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-4);
+        }
+
+        .idea-textarea {
+            width: 100%;
+            min-height: 140px;
+            padding: var(--space-4);
+
+            font-family: inherit;
+            font-size: var(--text-base);
+            line-height: var(--leading-relaxed);
+            color: var(--text-primary);
+
+            background: var(--input-bg);
+            border: var(--border-width) solid var(--input-border);
+            border-radius: var(--radius-lg);
+
+            resize: vertical;
+            transition:
+                border-color var(--duration-fast) var(--ease-default),
+                box-shadow var(--duration-fast) var(--ease-default);
+        }
+
+        .idea-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .idea-textarea:focus {
+            outline: none;
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 3px oklch(from var(--color-primary-500) l c h / 0.15);
+        }
+
+        .idea-form-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--space-4);
+        }
+
+        #response-message {
+            flex: 1;
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+        }
+
+        #response-message:empty {
+            display: none;
+        }
+
+        .btn-submit {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-3) var(--space-6);
+
+            font-size: var(--text-base);
+            font-weight: var(--weight-medium);
+            color: var(--text-inverse);
+
+            background: linear-gradient(
+                to bottom,
+                var(--color-primary-400),
+                var(--color-primary-600)
+            );
+            border: none;
+            border-radius: var(--radius-lg);
+            cursor: pointer;
+
+            box-shadow:
+                var(--highlight-strong),
+                var(--shadow-sm),
+                0 2px 8px oklch(from var(--color-primary-500) l c h / 0.3);
+
+            transition:
+                transform var(--duration-fast) var(--ease-default),
+                box-shadow var(--duration-fast) var(--ease-default);
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+            box-shadow:
+                var(--highlight-strong),
+                var(--shadow-md),
+                0 4px 12px oklch(from var(--color-primary-500) l c h / 0.4);
+        }
+
+        .btn-submit:active {
+            transform: translateY(0);
+            box-shadow:
+                inset 0 2px 4px oklch(0% 0 0 / 0.2),
+                var(--shadow-xs);
+        }
+
+        /* Reward Toast */
+        .reward-toast {
             position: fixed;
             top: 50%;
             left: 50%;
-            transform: translate(-50%, -50%) scale(0.5);
-            background-color: rgba(0,0,0,0.8);
-            color: white;
-            padding: 2rem 3rem;
-            border-radius: 20px;
+            transform: translate(-50%, -50%) scale(0.8);
+            z-index: var(--z-toast);
+
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            gap: var(--space-3);
+            padding: var(--space-6) var(--space-8);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-2xl);
+
             opacity: 0;
             visibility: hidden;
-            transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s;
-            z-index: 2000;
+            transition:
+                opacity var(--duration-normal) var(--ease-out),
+                transform var(--duration-normal) var(--ease-out),
+                visibility var(--duration-normal);
         }
-        .reward-container.visible {
+
+        .reward-toast.visible {
             opacity: 1;
             visibility: visible;
             transform: translate(-50%, -50%) scale(1);
         }
+
         .reward-icon {
-            font-size: 4rem;
-            animation: sparkle 1.5s infinite;
-        }
-        .reward-text {
-            font-size: 1.5rem;
-            margin-top: 1rem;
-            font-weight: bold;
+            font-size: 3.5rem;
+            animation: reward-pulse 1.5s ease-in-out infinite;
         }
 
-        @keyframes sparkle {
-            0%, 100% { transform: scale(1); text-shadow: 0 0 10px #fff, 0 0 20px #fff, 0 0 30px #007AFF; }
-            50% { transform: scale(1.2); text-shadow: 0 0 20px #fff, 0 0 30px #007AFF, 0 0 40px #007AFF; }
+        .reward-text {
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        @keyframes reward-pulse {
+            0%, 100% {
+                transform: scale(1);
+                filter: drop-shadow(0 0 8px oklch(from var(--color-primary-500) l c h / 0.5));
+            }
+            50% {
+                transform: scale(1.15);
+                filter: drop-shadow(0 0 16px oklch(from var(--color-primary-500) l c h / 0.7));
+            }
+        }
+
+        /* Footer Navigation */
+        .simplecore-footer {
+            max-width: 700px;
+            margin: var(--space-10) auto var(--space-8);
+            padding: 0 var(--space-4);
+        }
+
+        .footer-nav {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--space-4);
+            margin-bottom: var(--space-8);
+        }
+
+        .footer-nav-link {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            padding: var(--space-4);
+
+            font-size: var(--text-base);
+            font-weight: var(--weight-medium);
+            color: var(--text-primary);
+            text-decoration: none;
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-lg);
+
+            box-shadow: var(--highlight-subtle), var(--shadow-sm);
+            transition:
+                transform var(--duration-fast) var(--ease-default),
+                box-shadow var(--duration-fast) var(--ease-default),
+                border-color var(--duration-fast) var(--ease-default);
+        }
+
+        .footer-nav-link:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--highlight-subtle), var(--shadow-md);
+            border-color: var(--interactive);
+            color: var(--interactive);
+            text-decoration: none;
+        }
+
+        .footer-nav-link .icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .footer-meta {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: var(--space-4);
+
+            font-size: var(--text-sm);
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .footer-meta a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color var(--duration-fast);
+        }
+
+        .footer-meta a:hover {
+            color: var(--interactive);
+        }
+
+        .footer-divider {
+            color: var(--border-default);
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .simplecore-hero {
+                padding-top: 10vh;
+            }
+
+            .idea-input-container {
+                margin-left: var(--space-4);
+                margin-right: var(--space-4);
+                padding: var(--space-4);
+            }
+
+            .idea-form-footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .btn-submit {
+                justify-content: center;
+            }
+
+            .footer-nav {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Reduced Motion */
+        @media (prefers-reduced-motion: reduce) {
+            .words {
+                animation: none;
+            }
+
+            .words span:not(:first-child) {
+                display: none;
+            }
+
+            .reward-icon {
+                animation: none;
+            }
         }
     </style>
 
+    <!-- Hero Section -->
+    <section class="simplecore-hero">
+        <h1 class="simplecore-title">SimpleCore</h1>
 
-    <div class="main-page hide-scrollbar" style="padding-top: 15vh; padding-bottom: 15vh;
-    background-color: transparent;
-    background: rgba(var(--text-color), 0.8);
-    background-image: radial-gradient(var(--text-color) 2px, transparent 0);
-    background-size: 40px 40px;
-    background-position: -20px -20px;
-    width: 100vw;
-    min-height: 100vh;
-    ">
-        <div class="wrapper fade-class">
-            <div class="welcome-message">
-                <h1 style="font-size: 460%; color:var(--text-color)">SimpleCore</h1>
-                <div class="words">
-                    <span>      </span>
-                    <span>ideate</span>
-                    <span>expand</span>
-                    <span>connect</span>
-                    <span>create</span>
-                </div>
-            </div>
-
-            <div class="idea-input-container">
-                <form hx-post="/api/SimpleCore/create_idea"
-                      hx-target="#response-message"
-                      hx-swap="innerHTML"
-                      hx-on::after-request="this.reset()">
-                    <textarea name="content" placeholder="What's on your mind? Capture your next big idea here..."></textarea>
-                    <button class="btn btn-primary" type="submit">Save Idea</button>
-                </form>
-                <div id="response-message"></div>
-            </div>
-
-            <div id="reward-container" class="reward-container">
-                <div class="reward-icon">✨</div>
-                <div class="reward-text">Idea Captured!</div>
+        <div class="words-wrapper" aria-label="ideate, expand, connect, create">
+            <div class="words">
+                <span>ideate</span>
+                <span>expand</span>
+                <span>connect</span>
+                <span>create</span>
+                <span>ideate</span>
             </div>
         </div>
-        <footer style="position: relative; padding-top: 5%;">
-            <h3>🛠️ <a href="/web/pages/simplecore/workbench.html">Digital Workbench</a></h3>
-            <h3>🌳 <a href="/web/pages/simplecore/innovation_tree.html">Innovation Tree</a></h3>
-            <h3>🤝 <a href="/web/pages/simplecore/collaboration.html">Collaboration Hub</a></h3>
-            <h3>📱 <a href="/web/mainContent.html">All Apps</a></h3>
-            <h4>Powered by ToolBoxV2 <a href="https://github.com/MarkinHaus/ToolBoxV2">Git</a> || <a
-                href="https://markinhaus.github.io/ToolBoxV2/">Docs</a></h4>
-            <p>
-            <h5><a href="/web/core0/kontakt.html">Contact</a> || <a href="/web/assets/terms.html">Impressum</a>
-            </h5>
-            </p>
-        </footer>
+    </section>
+
+    <!-- Idea Input -->
+    <div class="idea-input-container">
+        <form class="idea-form"
+              hx-post="/api/SimpleCore/create_idea"
+              hx-target="#response-message"
+              hx-swap="innerHTML"
+              hx-on::after-request="this.reset()">
+
+            <textarea
+                class="idea-textarea"
+                name="content"
+                placeholder="What's on your mind? Capture your next big idea here..."
+                aria-label="Your idea"
+            ></textarea>
+
+            <div class="idea-form-footer">
+                <div id="response-message" role="status" aria-live="polite"></div>
+                <button class="btn-submit" type="submit">
+                    <span class="material-symbols-outlined" aria-hidden="true">lightbulb</span>
+                    Save Idea
+                </button>
+            </div>
+        </form>
     </div>
-    <script unSave="true">
+
+    <!-- Reward Toast -->
+    <div id="reward-toast" class="reward-toast" role="alert" aria-live="assertive">
+        <div class="reward-icon">✨</div>
+        <div class="reward-text">Idea Captured!</div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="simplecore-footer">
+        <nav class="footer-nav" aria-label="SimpleCore navigation">
+            <a href="/web/pages/simplecore/workbench.html" class="footer-nav-link">
+                <span class="icon">🛠️</span>
+                <span>Digital Workbench</span>
+            </a>
+            <a href="/web/pages/simplecore/innovation_tree.html" class="footer-nav-link">
+                <span class="icon">🌳</span>
+                <span>Innovation Tree</span>
+            </a>
+            <a href="/web/pages/simplecore/collaboration.html" class="footer-nav-link">
+                <span class="icon">🤝</span>
+                <span>Collaboration Hub</span>
+            </a>
+            <a href="/web/mainContent.html" class="footer-nav-link">
+                <span class="icon">📱</span>
+                <span>All Apps</span>
+            </a>
+        </nav>
+
+        <div class="footer-meta">
+            <span>Powered by ToolBoxV2</span>
+            <span class="footer-divider">•</span>
+            <a href="https://github.com/MarkinHaus/ToolBoxV2">GitHub</a>
+            <span class="footer-divider">•</span>
+            <a href="https://markinhaus.github.io/ToolBoxV2/">Docs</a>
+            <span class="footer-divider">•</span>
+            <a href="/web/core0/kontakt.html">Contact</a>
+            <span class="footer-divider">•</span>
+            <a href="/web/assets/terms.html">Impressum</a>
+        </div>
+    </footer>
+
+    <script>
+        // Reward Toast Handler
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             if (evt.detail.target.id === 'response-message' && !evt.detail.failed) {
-                const rewardContainer = document.getElementById('reward-container');
-                rewardContainer.classList.add('visible');
+                const toast = document.getElementById('reward-toast');
+                toast.classList.add('visible');
+
                 setTimeout(() => {
-                    rewardContainer.classList.remove('visible');
-                }, 3000); // Hide after 3 seconds
+                    toast.classList.remove('visible');
+                }, 2500);
             }
         });
     </script>

@@ -1,72 +1,317 @@
-h1{
-    font-size: 2rem;
-    margin: 0;
-}
+/* ============================================================================
+   Welcome Page Styles
+   Erweitert das TBJS Design System für die Landing Page
+   ============================================================================ */
 
-p{
-    font-size: 1.25rem;
-}
+/* ========== Hero Section ========== */
 
-.fade_in {
-    animation: fadeIn 1.25s ease-out;
-}
-
-.fade {
-    opacity: 0;
-    animation: fadeOut 0.55s ease-in;
-}
-
-.fade2 {
-    opacity: 0;
-    animation: fadeOut 1.95s ease-in-out;
-}
-
-@keyframes fadeIn {
-    0% {
-        opacity: 0;
-        scale: 1.25;
-    }
-    50% {
-        opacity: 0.5;
-    }
-    97% {
-        scale: 0.98;
-    }
-    99% {
-        scale: 0.99;
-    }
-    100% {
-        opacity: 1;
-        scale: 1;
-    }
-}
-
-@keyframes fadeOut {
-    0% {
-        opacity: 1;
-    }
-    55% {
-        opacity: 0.1;
-    }
-    100% {
-        opacity: 0;
-        scale: 2;
-    }
-}
-
-.center {
-    height: 50vh;
-    animation: fadeIn 1.25s ease-in-out;
+.hero-section {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: max-content;
+    padding: var(--space-8) var(--space-4);
+    text-align: center;
 }
 
-.options {
-    display: none;
-    margin-bottom: 20px;
+/* ========== Welcome Message ========== */
+
+.welcome-container {
+    margin-bottom: var(--space-10);
 }
 
-.input-container {
-    display: none;
+.welcome-title {
+    font-size: var(--text-4xl);
+    font-weight: var(--weight-bold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+    letter-spacing: var(--tracking-tight);
+}
+
+/* ========== Animated Word Carousel ========== */
+
+.words-wrapper {
+    height: 1.3em;
+    overflow: hidden;
+    position: relative;
+}
+
+.words {
+    display: flex;
+    flex-direction: column;
+    animation: word-cycle 10s infinite ease-in-out;
+}
+
+.words span {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 1.3em;
+
+    font-size: var(--text-4xl);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-tight);
+
+    /* Gradient Text */
+    background: linear-gradient(
+        135deg,
+        var(--color-primary-400) 0%,
+        var(--color-primary-600) 50%,
+        var(--color-accent) 100%
+    );
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.words span small {
+    font-size: 0.5em;
+    font-weight: var(--weight-semibold);
+    opacity: 0.8;
+}
+
+@keyframes word-cycle {
+    0%, 18%   { transform: translateY(0); }
+    20%, 38%  { transform: translateY(-20%); }
+    40%, 58%  { transform: translateY(-40%); }
+    60%, 78%  { transform: translateY(-60%); }
+    80%, 100% { transform: translateY(-80%); }
+}
+
+/* ========== Entrance Animations ========== */
+
+.fade-in {
+    animation: fade-in-up 1s var(--ease-out) both;
+}
+
+.fade-out {
+    animation: fade-out 0.5s var(--ease-in) forwards;
+}
+
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fade-out {
+    from {
+        opacity: 1;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(1.05);
+    }
+}
+
+/* Staggered animations */
+.animate-on-load {
+    opacity: 0;
+    animation: fade-in-up 0.6s var(--ease-out) forwards;
+}
+
+.fade-delay-1 { animation-delay: 0.1s; }
+.fade-delay-2 { animation-delay: 0.2s; }
+.fade-delay-3 { animation-delay: 0.3s; }
+.fade-delay-4 { animation-delay: 0.4s; }
+.fade-delay-5 { animation-delay: 0.5s; }
+
+/* ========== Background Pattern ========== */
+
+.hero-background {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-behind);
+
+    background-color: var(--bg-base);
+    background-image: radial-gradient(
+        var(--border-subtle) 1.5px,
+        transparent 1.5px
+    );
+    background-size: 32px 32px;
+    background-position: -16px -16px;
+
+    transition: background-color var(--duration-slow) var(--ease-default);
+}
+
+/* Gradient Overlay */
+.hero-background::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(
+            ellipse 80% 50% at 50% 0%,
+            oklch(from var(--color-primary-500) l c h / 0.08) 0%,
+            transparent 60%
+        ),
+        radial-gradient(
+            ellipse 60% 40% at 80% 100%,
+            oklch(from var(--color-accent) l c h / 0.05) 0%,
+            transparent 50%
+        );
+    pointer-events: none;
+}
+
+/* ========== Footer Navigation ========== */
+
+.page-footer {
+    padding: var(--space-8) var(--space-4);
+    text-align: center;
+}
+
+.footer-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+}
+
+.footer-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
+
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
+    color: var(--text-primary);
+    text-decoration: none;
+
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: var(--border-width) solid var(--glass-border);
+    border-radius: var(--radius-lg);
+
+    box-shadow: var(--highlight-subtle), var(--shadow-sm);
+
+    transition:
+        transform var(--duration-fast) var(--ease-default),
+        box-shadow var(--duration-fast) var(--ease-default),
+        background-color var(--duration-fast) var(--ease-default);
+}
+
+.footer-link:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--highlight-subtle), var(--shadow-md);
+    background: var(--bg-elevated);
+    text-decoration: none;
+    color: var(--interactive);
+}
+
+/* Primary CTA Button */
+.footer-link.primary {
+    background: linear-gradient(
+        to bottom,
+        var(--color-primary-400),
+        var(--color-primary-600)
+    );
+    color: var(--text-inverse);
+    border-color: transparent;
+    box-shadow:
+        var(--highlight-strong),
+        var(--shadow-sm),
+        0 4px 12px oklch(from var(--color-primary-500) l c h / 0.3);
+}
+
+.footer-link.primary:hover {
+    background: linear-gradient(
+        to bottom,
+        var(--color-primary-500),
+        var(--color-primary-700)
+    );
+    color: var(--text-inverse);
+    box-shadow:
+        var(--highlight-strong),
+        var(--shadow-md),
+        0 6px 20px oklch(from var(--color-primary-500) l c h / 0.4);
+}
+
+/* Footer Meta Links */
+.footer-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.footer-meta a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color var(--duration-fast);
+}
+
+.footer-meta a:hover {
+    color: var(--interactive);
+}
+
+.footer-divider {
+    color: var(--border-default);
+}
+
+/* ========== Responsive ========== */
+
+@media (min-width: 768px) {
+    .footer-nav {
+        flex-direction: row;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .welcome-title,
+    .words span {
+        font-size: clamp(3rem, 8vw, 5rem);
+    }
+}
+
+@media (max-width: 480px) {
+    .welcome-title,
+    .words span {
+        font-size: var(--text-3xl);
+    }
+
+    .footer-link {
+        width: 100%;
+        max-width: 280px;
+    }
+
+    .footer-meta {
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+
+    .footer-divider {
+        display: none;
+    }
+}
+
+/* ========== Reduced Motion ========== */
+
+@media (prefers-reduced-motion: reduce) {
+    .words {
+        animation: none;
+    }
+
+    .words span:not(:first-child) {
+        display: none;
+    }
+
+    .animate-on-load,
+    .fade-in {
+        animation: none;
+        opacity: 1;
+    }
 }

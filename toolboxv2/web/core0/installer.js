@@ -10,6 +10,22 @@ setTimeout(() => {
     const GITHUB_REPO_OWNER = 'MarkinHaus';
     const GITHUB_REPO_NAME = 'ToolBoxV2';
 
+
+    const OS_OPTIONS = [
+        'Automatic',
+        'CLI (Python)',
+        'Windows',
+        'MacOS-ARM',
+        'MacOS-Intel',
+        'Linux',
+        'Android',
+        'Web-App',
+        'Server (Rust)'
+    ];
+
+    // Populate select with styled options
+    osSelection.innerHTML = OS_OPTIONS.map(v => `<option value="${v}">${v}</option>`).join('');
+
     // Prioritized suffixes for better matching
     const osAssetPatterns = {
         'Windows': [/simple-core_.*_x64-setup\.exe$/, /simple-core_.*\.msi\.zip$/, /simple-core_.*\.exe$/],

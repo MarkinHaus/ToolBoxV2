@@ -201,7 +201,7 @@ function showInfo(message) {
 
 // Initialize when TB is ready
 if (window.TB?.once) {
-    window.TB.once(setupSignup);
+    window.TB.onLoaded(setupSignup);
 } else {
     // Fallback: wait for DOMContentLoaded
     if (document.readyState === 'loading') {

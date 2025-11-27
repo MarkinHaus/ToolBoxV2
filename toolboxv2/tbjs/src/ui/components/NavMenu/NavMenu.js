@@ -5,43 +5,38 @@ import TB from '../../../index.js';
 const DEFAULT_NAVMENU_OPTIONS = {
     triggerSelector: '#links', // Selector for the menu toggle button
     menuContentHtml: `
-            <ul class="py-2" style="list-style-type: none;">
-                <li>
-                    <a href="/web/core0/index.html"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-blue-500">home</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Home</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="/web/assets/login.html"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-purple-500">login</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Login</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="/web/mainContent.html"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-green-500">apps</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Apps</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="/api/CloudM.UI.widget/get_widget"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-orange-500">settings</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Config</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="/web/assets/terms.html"
-                       class="flex items-center space-x-3 px-4 py-3 text-sm hover:bg-gray-50 transition-colors group">
-                        <span class="material-icons text-lg text-gray-400 group-hover:text-red-500">description</span>
-                        <span class="text-gray-700 group-hover:text-gray-900">Terms and Conditions</span>
-                    </a>
-                </li>
-            </ul>
+           <ul class="nav-list" style="list-style: none; padding: 0; margin: 0;">
+            <li>
+                <a href="/web/core0/index.html" class="nav-item">
+                    <span class="material-symbols-outlined nav-icon">home</span>
+                    <span class="nav-text">Home</span>
+                </a>
+            </li>
+            <li>
+                <a href="/web/assets/login.html" class="nav-item">
+                    <span class="material-symbols-outlined nav-icon">login</span>
+                    <span class="nav-text">Login</span>
+                </a>
+            </li>
+            <li>
+                <a href="/web/mainContent.html" class="nav-item">
+                    <span class="material-symbols-outlined nav-icon">apps</span>
+                    <span class="nav-text">Apps</span>
+                </a>
+            </li>
+            <li>
+                <a href="/api/CloudM.UI.widget/get_widget" class="nav-item">
+                    <span class="material-symbols-outlined nav-icon">settings</span>
+                    <span class="nav-text">Config</span>
+                </a>
+            </li>
+            <li>
+                <a href="/web/assets/terms.html" class="nav-item">
+                    <span class="material-symbols-outlined nav-icon">description</span>
+                    <span class="nav-text">Terms & Conditions</span>
+                </a>
+            </li>
+        </ul>
     `,
     menuId: 'tb-nav-menu-modal',
     openIconClass: 'menu', // Material Symbols class

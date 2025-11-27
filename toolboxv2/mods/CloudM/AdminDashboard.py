@@ -48,7 +48,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
 body {
     margin: 0;
     font-family: var(--font-family-base);
-    background-color: var(--theme-bg);
+    background-color: var(--bg-base);
     color: var(--theme-text);
     transition: background-color var(--transition-medium), color var(--transition-medium);
 }
@@ -436,7 +436,7 @@ th {
         left: 0;
         width: 100%;
         height: 100%;
-        background-color: color-mix(in srgb, var(--theme-bg) 50%, black 50%);
+        background-color: color-mix(in srgb, var(--bg-base) 50%, black 50%);
         opacity: 0; /* Start transparent */
         z-index: calc(var(--z-modal) - 1); /* Below sidebar */
         transition: opacity var(--transition-medium);

@@ -12,7 +12,7 @@ const EventBus = {
             EventBus._listeners[eventName] = [];
         }
         EventBus._listeners[eventName].push(callback);
-        // logger.debug(`[Events] Listener added for: ${eventName}`);
+        logger.debug(`[Events] Listener added for: ${eventName}`);
     },
 
     off: (eventName, callback) => {

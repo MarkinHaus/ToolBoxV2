@@ -1,72 +1,176 @@
-<title>ToolBoxV2 - Flexible Modular Framework</title>
-<link rel="stylesheet" type="text/css" href="styles.css?v=1.0">
-<div id="main-idea" class="stylesheet" style="    background-color: transparent; /* Hintergrund transparent machen */
-    background: rgba(var(--text-color), 0.8); /* Hintergrundfarbe auf Weiß setzen */
-    background-image: radial-gradient(var(--text-color) 2px, transparent 0); /* Hintergrundbild mit größeren schwarzen Punkten erstellen */
-    background-size: 40px 40px; /* Größe des Hintergrundbilds anpassen */
-    background-position: -20px -20px; /* Position des Hintergrundbilds anpassen */
-        width: 100vw;
-    ">
-    <div class="main-content" style="padding-top: 5vh;padding-bottom: 5vh;">
-        <header>
-            <h1>ToolBoxV2 🧰</h1>
-            <p>A flexible modular framework for tools, functions, and complete applications – deployable locally, on the web, or as a desktop/mobile app.</p>
-        </header>
+<!DOCTYPE html>
+<html lang="de" data-theme="light">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ToolBoxV2 – Flexible Modular Framework</title>
 
-        <section class="introduction">
-            <h2>Overview</h2>
-            <p>ToolBoxV2 combines a Python backend library with a Rust web/desktop server (Actix) and a cross-platform UI framework (Tauri + tbjs). This architecture enables the creation of versatile applications accessible through various interfaces.</p>
-        </section>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
 
-        <section class="details">
-            <h2>Goal 🎯</h2>
-            <p>The primary goal of ToolBoxV2 is to provide a flexible platform that enables developers, end-users, and small to medium-sized businesses to efficiently create, customize, and use applications. It aims to:</p>
-            <ul>
-                <li>Execute applications seamlessly.</li>
-                <li>Integrate diverse functionalities.</li>
-                <li>Ensure system-independence.</li>
-            </ul>
-            <p>The underlying system, built on a monolithic modular architecture, combines the advantages of both approaches, enabling intuitive interaction with the digital world. It connects various components and provides utility functions accessible from anywhere. This platform promotes creative collaboration and eases access to digital resources.</p>
-        </section>
+    <style>
+        /* Page Wrapper */
+        .page-wrapper {
+            min-height: 100dvh;
+            width: 100%;
+            padding: var(--space-10) var(--space-4);
+        }
 
-        <section class="benefits">
-            <h2>Target Audiences & Use Cases</h2>
+        /* Hero-Like Pattern for Intro Background */
+        #main-idea {
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            box-shadow: var(--glass-shadow);
+            border-radius: var(--radius-lg);
+            padding: var(--space-8) var(--space-4);
+        }
 
-            <h3>For Developers</h3>
-            <p>Utilize ToolBoxV2 as a framework to:</p>
-            <ul>
-                <li>Create custom functions, widgets, or complete mini-applications.</li>
-                <li>Leverage existing modules (`mods`) or extend them with new components.</li>
-                <li>Build web, desktop, or mobile applications using a unified code stack.</li>
-                <li>Customize the user interface via the web frontend (tbjs).</li>
-            </ul>
+        header h1 {
+            font-size: var(--text-4xl);
+            font-weight: var(--weight-bold);
+            color: var(--text-primary);
+            margin-bottom: var(--space-4);
+            text-align: center;
+        }
 
-            <h3>For End Users</h3>
-            <p>Access and use a variety of pre-built applications and functions:</p>
-            <ul>
-                <li>Directly in a web browser, or as a native desktop/mobile application.</li>
-                <li>No prior technical knowledge required.</li>
-                <li>Access flexible tools for tasks such as calendar management, note-taking, and more.</li>
-                <li>Personalize the user interface to meet individual needs.</li>
-            </ul>
+        header p {
+            font-size: var(--text-lg);
+            color: var(--text-secondary);
+            max-width: 70ch;
+            margin-inline: auto;
+            text-align: center;
+            margin-bottom: var(--space-8);
+        }
 
-            <h3>For Businesses / Operators</h3>
-            <p>Deploy ToolBoxV2 as a customizable internal management system for:</p>
-            <ul>
-                <li>Self-hosted and highly adaptable solutions.</li>
-                <li>Project, process, or employee management.</li>
-                <li>Integration of proprietary modules and functions.</li>
-                <li>Scalability suitable for small to medium-sized enterprises.</li>
-                <li>Modular, API-ready, and easily extensible.</li>
-            </ul>
-        </section>
+        section {
+            margin-bottom: var(--space-10);
+        }
 
-        <footer style="position: relative;padding-top: 35%;">
-            <p>Git <a href="https://github.com/MarkinHaus/ToolBoxV2">src</a> or check our <a href="https://markinhaus.github.io/ToolBoxV2/">Documentation (WIP)</a>.</p>
-            <p>Discover where we currently stand and what our next goals are on our <a href="/web/core0/roadmap.html">roadmap</a>.</p>
-            <p>If you have any questions or suggestions, feel free to contact us through our <a href="/web/core0/kontakt.html">contact page</a>.</p>
-            <p>Support us on <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a> or <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>.</p>
-            <p>© 2022–2025 Markin Hausmanns – All rights reserved.</p>
-        </footer>
+        section h2 {
+            font-size: var(--text-2xl);
+            font-weight: var(--weight-semibold);
+            margin-bottom: var(--space-3);
+            color: var(--text-primary);
+        }
+
+        section h3 {
+            font-size: var(--text-xl);
+            font-weight: var(--weight-medium);
+            margin-top: var(--space-5);
+            margin-bottom: var(--space-2);
+            color: var(--text-secondary);
+        }
+
+        p, li {
+            font-size: var(--text-base);
+            color: var(--text-primary);
+            line-height: var(--leading-normal);
+        }
+
+        ul {
+            padding-left: var(--space-5);
+            margin-bottom: var(--space-4);
+        }
+
+        footer {
+            margin-top: var(--space-12);
+            text-align: center;
+            color: var(--text-muted);
+            padding-bottom: var(--space-8);
+        }
+
+        footer a {
+            color: var(--interactive);
+        }
+    </style>
+</head>
+<body>
+    <div class="page-wrapper">
+        <div id="main-idea" class="main-content">
+            <header>
+                <h1>ToolBoxV2 🧰</h1>
+                <p>
+                    A flexible modular framework for tools, functions, and complete applications – deployable locally, on the web, or as a desktop/mobile app.
+                </p>
+            </header>
+
+            <section class="introduction">
+                <h2>Overview</h2>
+                <p>
+                    ToolBoxV2 combines a Python backend library with a Rust web/desktop server (Actix) and a cross-platform UI framework (Tauri + tbjs). This architecture enables the creation of versatile applications accessible through various interfaces.
+                </p>
+            </section>
+
+            <section class="details">
+                <h2>Goal 🎯</h2>
+                <p>
+                    The primary goal of ToolBoxV2 is to provide a flexible platform that enables developers, end-users, and small to medium-sized businesses to efficiently create, customize, and use applications. It aims to:
+                </p>
+                <ul>
+                    <li>Execute applications seamlessly.</li>
+                    <li>Integrate diverse functionalities.</li>
+                    <li>Ensure system-independence.</li>
+                </ul>
+                <p>
+                    The underlying system, built on a monolithic modular architecture, combines the advantages of both approaches, enabling intuitive interaction with the digital world. It connects various components and provides utility functions accessible from anywhere. This platform promotes creative collaboration and eases access to digital resources.
+                </p>
+            </section>
+
+            <section class="benefits">
+                <h2>Target Audiences & Use Cases</h2>
+
+                <h3>For Developers</h3>
+                <p>Utilize ToolBoxV2 as a framework to:</p>
+                <ul>
+                    <li>Create custom functions, widgets, or complete mini-applications.</li>
+                    <li>Leverage existing modules (`mods`) or extend them with new components.</li>
+                    <li>Build web, desktop, or mobile applications using a unified code stack.</li>
+                    <li>Customize the user interface via the web frontend (tbjs).</li>
+                </ul>
+
+                <h3>For End Users</h3>
+                <p>Access and use a variety of pre-built applications and functions:</p>
+                <ul>
+                    <li>Directly in a web browser, or as a native desktop/mobile application.</li>
+                    <li>No prior technical knowledge required.</li>
+                    <li>Access flexible tools for tasks such as calendar management, note-taking, and more.</li>
+                    <li>Personalize the user interface to meet individual needs.</li>
+                </ul>
+
+                <h3>For Businesses / Operators</h3>
+                <p>Deploy ToolBoxV2 as a customizable internal management system for:</p>
+                <ul>
+                    <li>Self-hosted and highly adaptable solutions.</li>
+                    <li>Project, process, or employee management.</li>
+                    <li>Integration of proprietary modules and functions.</li>
+                    <li>Scalability suitable for small to medium-sized enterprises.</li>
+                    <li>Modular, API-ready, and easily extensible.</li>
+                </ul>
+            </section>
+
+            <footer>
+                <p>
+                    Git <a href="https://github.com/MarkinHaus/ToolBoxV2">src</a> • Check our
+                    <a href="https://markinhaus.github.io/ToolBoxV2/">Documentation (WIP)</a>
+                </p>
+                <p>
+                    Roadmap: <a href="/web/core0/roadmap.html">roadmap</a>
+                </p>
+                <p>
+                    Questions? Suggestions? <a href="/web/core0/kontakt.html">Contact us</a>
+                </p>
+                <p>
+                    Support us on <a href="https://www.buymeacoffee.com/markinhaus" target="_blank">BuyMeACoffee</a>
+                    or <a href="https://www.patreon.com/de-DE" target="_blank">Patreon</a>
+                </p>
+                <p>© 2022–2025 Markin Hausmanns – All rights reserved.</p>
+            </footer>
+        </div>
     </div>
-</div>
+</body>
+</html>

@@ -1,682 +1,928 @@
-
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Innovation Tree - SimpleCore</title>
-    <link rel="stylesheet" type="text/css" href="/web/core0/styles.css?v=1.2">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.1/cytoscape.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+    <title>Innovation Tree | SimpleCore</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+
+    <!-- Cytoscape.js for Graph -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js" defer></script>
+
     <style>
-        body {
-            background-color: var(--theme-bg);
-            color: var(--theme-text);
-            display: flex;
-            flex-direction: column;
+        /* ================================================
+           Innovation Tree Layout
+           ================================================ */
+        .tree-layout {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            grid-template-rows: auto 1fr;
             height: 100vh;
-            margin: 0;
-            font-family: 'Roboto', sans-serif;
+            height: 100dvh;
+            background: var(--bg-base);
         }
-        .header {
-            padding: 1rem 2rem;
-            background: var(--theme-bg-light);
-            border-bottom: 1px solid var(--theme-border);
+
+        /* Header */
+        .tree-header {
+            grid-column: 1 / -1;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            flex-shrink: 0;
+            gap: var(--space-4);
+            padding: var(--space-3) var(--space-5);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: var(--border-width) solid var(--border-subtle);
+            z-index: var(--z-sticky);
         }
-        .main-container {
+
+        .tree-title {
             display: flex;
-            flex-grow: 1;
+            align-items: center;
+            gap: var(--space-3);
+            font-size: var(--text-xl);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+        }
+
+        .tree-title .material-symbols-outlined {
+            font-size: 1.5rem;
+            color: var(--color-success);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        /* Graph Container */
+        .graph-container {
+            position: relative;
+            background: var(--bg-sunken);
             overflow: hidden;
         }
+
         #cy {
-            flex-grow: 1;
-            position: relative;
-            background-color: var(--theme-bg-lighter, #f0f2f5);
+            width: 100%;
+            height: 100%;
         }
-        .sidebar {
-            width: 380px;
-            padding: 1.5rem;
-            background: var(--theme-bg-light);
+
+        /* Graph Legend */
+        .graph-legend {
+            position: absolute;
+            bottom: var(--space-4);
+            left: var(--space-4);
+
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-3);
+            padding: var(--space-3);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-md);
+
+            font-size: var(--text-xs);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: var(--radius-full);
+        }
+
+        .legend-line {
+            width: 24px;
+            height: 3px;
+            border-radius: 2px;
+        }
+
+        /* Sidebar */
+        .tree-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-4);
+            padding: var(--space-4);
+
+            background: var(--bg-surface);
+            border-left: var(--border-width) solid var(--border-subtle);
             overflow-y: auto;
-            flex-shrink: 0;
-            border-left: 1px solid var(--theme-border);
         }
-        .sidebar h2, .sidebar h3 {
-            margin-top: 0;
-            color: var(--theme-accent);
-        }
+
+        /* Sidebar Sections */
         .sidebar-section {
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--theme-border);
+            padding: var(--space-4);
+            background: var(--bg-elevated);
+            border: var(--border-width) solid var(--border-subtle);
+            border-radius: var(--radius-lg);
         }
-        .sidebar-section:last-child {
-            border-bottom: none;
+
+        .sidebar-section-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+
+            margin-bottom: var(--space-3);
+            padding-bottom: var(--space-2);
+            border-bottom: var(--border-width) solid var(--border-subtle);
         }
-        .btn {
-            padding: 0.5rem 1rem;
-            border: none;
-            border-radius: 4px;
+
+        .sidebar-section-title .material-symbols-outlined {
+            font-size: 1.125rem;
+            color: var(--interactive);
+        }
+
+        /* Input Group */
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+
+        .input-group textarea,
+        .input-group input {
+            width: 100%;
+            padding: var(--space-3);
+            font-size: var(--text-sm);
+            color: var(--text-primary);
+            background: var(--input-bg);
+            border: var(--border-width) solid var(--input-border);
+            border-radius: var(--radius-md);
+            resize: vertical;
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .input-group textarea:focus,
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--input-focus);
+            box-shadow: 0 0 0 3px oklch(from var(--color-primary-500) l c h / 0.15);
+        }
+
+        .input-group textarea::placeholder,
+        .input-group input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn-row {
+            display: flex;
+            gap: var(--space-2);
+        }
+
+        .btn-row > * {
+            flex: 1;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+
+        .action-btn {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-3);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-secondary);
+            text-align: left;
+
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
             cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.2s ease;
+
+            transition: all var(--duration-fast) var(--ease-default);
         }
-        .btn-primary {
-            background: var(--theme-accent);
-            color: white;
+
+        .action-btn:hover {
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            border-color: var(--interactive);
         }
-        .btn-primary:hover {
-            background: var(--theme-accent-hover);
+
+        .action-btn .material-symbols-outlined {
+            font-size: 1.125rem;
         }
-        .btn-secondary {
-            background: var(--theme-bg);
-            color: var(--theme-text);
-            border: 1px solid var(--theme-border);
+
+        /* Details Panel */
+        .details-content {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
         }
-        .btn-secondary:hover {
-            background: var(--theme-bg-hover);
+
+        .details-content h4 {
+            color: var(--text-primary);
+            font-weight: var(--weight-semibold);
+            margin-bottom: var(--space-2);
         }
-        .btn-accent {
-            background: var(--theme-primary);
-            color: white;
+
+        .details-content p {
+            margin-bottom: var(--space-3);
         }
-        .btn-accent:hover {
-            background: var(--theme-primary-hover);
+
+        .details-content .tag {
+            display: inline-block;
+            padding: var(--space-1) var(--space-2);
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            border-radius: var(--radius-sm);
+            font-size: var(--text-xs);
+            font-weight: var(--weight-medium);
+            margin-right: var(--space-1);
+            margin-bottom: var(--space-1);
         }
-        .sidebar-content p {
-            margin-bottom: 0.5rem;
+
+        .details-content .article {
+            margin-top: var(--space-4);
+            padding-top: var(--space-4);
+            border-top: var(--border-width) solid var(--border-subtle);
+            white-space: pre-wrap;
         }
-        .sidebar-content strong {
-            color: var(--theme-primary);
+
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-6);
+            text-align: center;
+            color: var(--text-muted);
         }
-        .article {
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--theme-border);
-            white-space: pre-wrap; /* Respects newlines in the article */
+
+        .empty-state .material-symbols-outlined {
+            font-size: 3rem;
+            margin-bottom: var(--space-3);
+            opacity: 0.5;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: var(--space-5);
+            right: var(--space-5);
+            padding: var(--space-3) var(--space-5);
+
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            border: var(--border-width) solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            color: var(--text-primary);
+
+            opacity: 0;
+            transform: translateX(20px);
+            transition: all var(--duration-normal) var(--ease-out);
+            z-index: var(--z-toast);
+        }
+
+        .toast.visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .toast.success { border-left: 4px solid var(--color-success); }
+        .toast.error { border-left: 4px solid var(--color-error); }
+        .toast.info { border-left: 4px solid var(--color-info); }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .tree-layout {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr auto;
+            }
+
+            .tree-sidebar {
+                grid-row: 3;
+                max-height: 40vh;
+                border-left: none;
+                border-top: var(--border-width) solid var(--border-subtle);
+            }
+
+            .header-actions .btn-text {
+                display: none;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Innovation Graph</h1>
-        <div class="header-controls">
-            <button onclick="loadGraphData()" class="btn btn-primary">Refresh Graph</button>
-            <button onclick="showCollaborationSuggestions()" class="btn btn-accent">Find Collaborators</button>
-            <a href="/web/pages/simplecore/index.html" class="btn btn-secondary">Back to Home</a>
-        </div>
-    </div>
-    <div class="main-container">
-        <div id="cy"></div>
-        <div id="sidebar" class="sidebar">
-            <!-- Input & Scraper Section -->
-            <div class="sidebar-section">
-                <h3>🔍 Idea Input & Scraper</h3>
+    <div class="tree-layout">
+        <!-- Header -->
+        <header class="tree-header">
+            <h1 class="tree-title">
+                <span class="material-symbols-outlined">account_tree</span>
+                Innovation Graph
+            </h1>
+            <div class="header-actions">
+                <button class="btn-primary" id="refreshGraphBtn">
+                    <span class="material-symbols-outlined">refresh</span>
+                    <span class="btn-text">Refresh</span>
+                </button>
+                <button class="btn-secondary" id="findCollabBtn">
+                    <span class="material-symbols-outlined">group_add</span>
+                    <span class="btn-text">Collaborators</span>
+                </button>
+                <button class="btn-ghost" id="backBtn">
+                    <span class="material-symbols-outlined">arrow_back</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Graph Container -->
+        <main class="graph-container">
+            <div id="cy"></div>
+
+            <!-- Legend -->
+            <div class="graph-legend">
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #6366f1;"></div>
+                    <span>Idea</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: #22c55e;"></div>
+                    <span>Component</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #22c55e;"></div>
+                    <span>Direct</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #3b82f6; border-style: dashed;"></div>
+                    <span>Logical</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #f59e0b; border-style: dotted;"></div>
+                    <span>Hypothetical</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Sidebar -->
+        <aside class="tree-sidebar">
+            <!-- Input Section -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">add_circle</span>
+                    Add Idea
+                </h3>
                 <div class="input-group">
-                    <textarea id="idea-input" placeholder="Enter your idea or paste URL/text to analyze..." rows="3" style="width: 100%; margin-bottom: 0.5rem; padding: 0.5rem; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-bg); color: var(--theme-text);"></textarea>
-                    <div class="button-group" style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                        <button id="add-idea-btn" class="btn btn-primary" style="flex: 1;">Add Idea</button>
-                        <button id="scrape-url-btn" class="btn btn-secondary" style="flex: 1;">Scrape URL</button>
+                    <textarea
+                        id="ideaInput"
+                        rows="3"
+                        placeholder="Enter your idea or paste content to analyze..."
+                    ></textarea>
+                    <div class="btn-row">
+                        <button class="btn-primary" id="addIdeaBtn">
+                            <span class="material-symbols-outlined">add</span>
+                            Add
+                        </button>
+                        <button class="btn-secondary" id="analyzeBtn">
+                            <span class="material-symbols-outlined">psychology</span>
+                            Analyze
+                        </button>
                     </div>
                 </div>
 
-                <!-- URL Scraper -->
-                <div class="scraper-section" style="margin-bottom: 1rem;">
-                    <input type="url" id="url-input" placeholder="https://example.com/article" style="width: 100%; margin-bottom: 0.5rem; padding: 0.5rem; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-bg); color: var(--theme-text);">
-                    <button id="analyze-url-btn" class="btn btn-accent" style="width: 100%;">🌐 Analyze Web Content</button>
+                <div class="input-group" style="margin-top: var(--space-4);">
+                    <input
+                        type="url"
+                        id="urlInput"
+                        placeholder="https://example.com/article"
+                    >
+                    <button class="btn-secondary" id="scrapeUrlBtn" style="width: 100%;">
+                        <span class="material-symbols-outlined">language</span>
+                        Analyze Web Content
+                    </button>
                 </div>
+            </section>
 
-                <!-- Quick Actions -->
-                <div class="quick-actions" style="margin-bottom: 1rem;">
-                    <h4>Quick Actions</h4>
-                    <button id="refresh-graph-btn" class="btn btn-secondary" style="width: 100%; margin-bottom: 0.25rem;">🔄 Refresh Graph</button>
-                    <button id="find-connections-btn" class="btn btn-secondary" style="width: 100%; margin-bottom: 0.25rem;">🔗 Find Connections</button>
-                    <button id="suggest-collaborations-btn" class="btn btn-secondary" style="width: 100%;">🤝 Suggest Collaborations</button>
+            <!-- Quick Actions -->
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">bolt</span>
+                    Quick Actions
+                </h3>
+                <div class="quick-actions">
+                    <button class="action-btn" id="actionRefresh">
+                        <span class="material-symbols-outlined">sync</span>
+                        Refresh Graph
+                    </button>
+                    <button class="action-btn" id="actionConnections">
+                        <span class="material-symbols-outlined">hub</span>
+                        Find Connections
+                    </button>
+                    <button class="action-btn" id="actionCollaborations">
+                        <span class="material-symbols-outlined">diversity_3</span>
+                        Suggest Collaborations
+                    </button>
+                    <button class="action-btn" id="actionExport">
+                        <span class="material-symbols-outlined">download</span>
+                        Export Graph
+                    </button>
                 </div>
-            </div>
+            </section>
 
             <!-- Details Section -->
-            <div class="sidebar-section">
-                <h3>📋 Details</h3>
-                <div id="sidebar-content" class="sidebar-content">
-                    <p>Select a node to see its details and connections.</p>
+            <section class="sidebar-section">
+                <h3 class="sidebar-section-title">
+                    <span class="material-symbols-outlined">info</span>
+                    Details
+                </h3>
+                <div id="detailsContent" class="details-content">
+                    <div class="empty-state">
+                        <span class="material-symbols-outlined">touch_app</span>
+                        <p>Select a node to see details</p>
+                    </div>
                 </div>
-            </div>
-        </div>
+            </section>
+        </aside>
     </div>
 
     <script type="module" unSave="true">
-        // Initialize ToolBox
-        // await TB.init();
+        // ================================================
+        // Innovation Tree Application
+        // ================================================
 
-        const sidebarContent = document.getElementById('sidebar-content');
+        let cy;
 
-        // Get DOM elements for new features
-        const ideaInput = document.getElementById('idea-input');
-        const urlInput = document.getElementById('url-input');
-        const addIdeaBtn = document.getElementById('add-idea-btn');
-        const scrapeUrlBtn = document.getElementById('scrape-url-btn');
-        const analyzeUrlBtn = document.getElementById('analyze-url-btn');
-        const refreshGraphBtn = document.getElementById('refresh-graph-btn');
-        const findConnectionsBtn = document.getElementById('find-connections-btn');
-        const suggestCollaborationsBtn = document.getElementById('suggest-collaborations-btn');
+        // ========== Cytoscape Initialization ==========
 
-        const cy = cytoscape({
-            container: document.getElementById('cy'),
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'background-color': 'var(--theme-primary)',
-                        'label': 'data(name)',
-                        'color': 'var(--theme-text)',
-                        'text-valign': 'bottom',
-                        'text-halign': 'center',
-                        'font-size': '12px',
-                        'text-margin-y': '5px'
+        function initGraph() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+            cy = cytoscape({
+                container: document.getElementById('cy'),
+                style: [
+                    // Node styles
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': '#6366f1',
+                            'label': 'data(name)',
+                            'color': isDark ? '#f3f4f6' : '#1f2937',
+                            'text-valign': 'bottom',
+                            'text-halign': 'center',
+                            'font-size': '12px',
+                            'text-margin-y': '8px',
+                            'font-family': 'Roboto, sans-serif',
+                            'width': 40,
+                            'height': 40,
+                            'border-width': 3,
+                            'border-color': '#4f46e5'
+                        }
+                    },
+                    {
+                        selector: 'node[type="component"]',
+                        style: {
+                            'background-color': '#22c55e',
+                            'border-color': '#16a34a',
+                            'width': 30,
+                            'height': 30
+                        }
+                    },
+                    {
+                        selector: 'node:selected',
+                        style: {
+                            'border-width': 4,
+                            'border-color': '#f59e0b',
+                            'background-color': '#fbbf24'
+                        }
+                    },
+                    // Edge styles
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 2,
+                            'curve-style': 'bezier',
+                            'target-arrow-shape': 'triangle',
+                            'target-arrow-color': '#94a3b8',
+                            'line-color': '#94a3b8',
+                            'opacity': 0.7
+                        }
+                    },
+                    {
+                        selector: 'edge[connection_type="DIRECT"]',
+                        style: {
+                            'line-color': '#22c55e',
+                            'target-arrow-color': '#22c55e',
+                            'width': 3
+                        }
+                    },
+                    {
+                        selector: 'edge[connection_type="LOGICAL"]',
+                        style: {
+                            'line-style': 'dashed',
+                            'line-color': '#3b82f6',
+                            'target-arrow-color': '#3b82f6'
+                        }
+                    },
+                    {
+                        selector: 'edge[connection_type="HYPOTHETICAL"]',
+                        style: {
+                            'line-style': 'dotted',
+                            'line-color': '#f59e0b',
+                            'target-arrow-color': '#f59e0b'
+                        }
                     }
+                ],
+                layout: {
+                    name: 'cose',
+                    animate: true,
+                    animationDuration: 500,
+                    nodeRepulsion: 8000,
+                    idealEdgeLength: 100
                 },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 3,
-                        'curve-style': 'bezier',
-                        'target-arrow-shape': 'triangle',
-                        'target-arrow-color': '#ccc',
-                        'line-color': '#ccc'
-                    }
-                },
-                {
-                    selector: 'edge[connection_type="DIRECT"]',
-                    style: { 'line-color': '#2ecc71', 'target-arrow-color': '#2ecc71' }
-                },
-                {
-                    selector: 'edge[connection_type="LOGICAL"]',
-                    style: { 'line-style': 'dashed', 'line-color': '#3498db', 'target-arrow-color': '#3498db' }
-                },
-                {
-                    selector: 'edge[connection_type="HYPOTHETICAL"]',
-                     style: { 'line-style': 'dotted', 'line-color': '#f1c40f', 'target-arrow-color': '#f1c40f' }
-                },
-                {
-                    selector: 'edge[connection_type="ABSTRACT"]',
-                    style: { 'line-style': 'dotted', 'line-color': '#9b59b6', 'target-arrow-color': '#9b59b6' }
-                },
-                {
-                    selector: 'node:selected',
-                    style: {
-                        'border-width': 3,
-                        'border-color': 'var(--theme-accent)'
-                    }
+                wheelSensitivity: 0.3
+            });
+
+            // Node click handler
+            cy.on('tap', 'node', (evt) => {
+                const node = evt.target;
+                showNodeDetails(node.data());
+            });
+
+            // Background click
+            cy.on('tap', (evt) => {
+                if (evt.target === cy) {
+                    clearDetails();
                 }
-            ],
-            layout: {
-                name: 'cose',
-                idealEdgeLength: 100,
-                nodeOverlap: 20,
-                refresh: 20,
-                fit: true,
-                padding: 30,
-                randomize: false,
-                componentSpacing: 100,
-                nodeRepulsion: 400000,
-                edgeElasticity: 100,
-                nestingFactor: 5,
-                gravity: 80,
-                numIter: 1000,
-                initialTemp: 200,
-                coolingFactor: 0.95,
-                minTemp: 1.0
+            });
+
+            // Initial load
+            loadGraphData();
+        }
+
+        // ========== API Functions ==========
+
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
+            };
+
+            if (body && method !== 'GET') {
+                options.body = JSON.stringify(body);
             }
-        });
+
+            const response = await fetch(`/api/SimpleCore/${endpoint}`, options);
+            const data = await response.json();
+
+            if (!response.ok || data.error !== 'none') {
+                throw new Error(data.info?.help_text || 'Request failed');
+            }
+
+            return data.result?.data || data.result || [];
+        }
 
         async function loadGraphData() {
+            showToast('Loading graph...', 'info');
+
             try {
-                const response = await TB.api.request('SimpleCore', 'get_innovation_graph');
-                if (response.error !== 'none') {
-                    TB.ui.Toast.showError("Failed to load graph data: " + (response.info?.help_text || "Unknown error"));
-                    return;
-                }
-                const graphData = response.get();
+                const graphData = await apiRequest('get_innovation_graph');
 
-                const elements = [
-                    ...graphData.nodes.map(node => ({
-                        data: {
-                            id: node.id,
-                            name: node.title || node.name,
-                            title: node.title,
-                            description: node.description,
-                            creator_id: node.creator_id,
-                            tags: node.tags || [],
-                            components: node.components || [],
-                            created_at: node.created_at
-                        }
-                    })),
-                    ...graphData.edges.map(edge => ({
-                        data: {
-                            id: edge.id,
-                            source: edge.source,
-                            target: edge.target,
-                            connection_type: edge.connection_type || 'similarity'
-                        }
-                    }))
-                ];
-
+                // Clear existing elements
                 cy.elements().remove();
-                cy.add(elements);
-                cy.layout({ name: 'cose' }).run();
 
-                console.log(`Loaded ${graphData.nodes.length} nodes and ${graphData.edges.length} edges`);
-            } catch (error) {
-                console.error('Error loading graph data:', error);
-                TB.ui.Toast.showError("Failed to load graph data: " + error.message);
-            }
-        }
-
-        async function showNodeDetails(nodeId) {
-            try {
-                TB.ui.Loader.show("Fetching details...");
-
-                // Get idea tree visualization data
-                const treeResponse = await TB.api.request('SimpleCore', 'visualize_idea_tree', { idea_id: nodeId }, 'GET');
-
-                if (treeResponse.error !== 'none') {
-                    TB.ui.Toast.showError(treeResponse.info?.help_text || "Could not fetch node details.");
-                    TB.ui.Loader.hide();
-                    return;
+                // Add nodes
+                if (graphData.nodes) {
+                    graphData.nodes.forEach(node => {
+                        cy.add({
+                            group: 'nodes',
+                            data: {
+                                id: node.id,
+                                name: node.title || node.name || 'Unnamed',
+                                type: node.type || 'idea',
+                                description: node.description || '',
+                                components: node.components || [],
+                                tags: node.tags || []
+                            }
+                        });
+                    });
                 }
 
-                const treeData = treeResponse.get();
-                const idea = treeData.root;
-                const connectedIdeas = treeData.connected_ideas || [];
-                const components = treeData.components || [];
-
-                let connectedHtml = connectedIdeas.map(conn =>
-                    `<li><strong>${conn.title}</strong> - ${conn.description.substring(0, 100)}...</li>`
-                ).join('');
-
-                let componentsHtml = components.map(comp =>
-                    `<li><strong>${comp.name}</strong> (Level ${comp.complexity_level}) - ${comp.description}</li>`
-                ).join('');
-
-                sidebarContent.innerHTML = `
-                    <h3>${idea.title}</h3>
-                    <p><strong>Creator:</strong> ${idea.creator_id}</p>
-                    <p><strong>Created:</strong> ${new Date(idea.created_at).toLocaleDateString()}</p>
-                    <p><strong>Tags:</strong> ${idea.tags.join(', ') || 'None'}</p>
-                    <p><strong>Description:</strong></p>
-                    <p>${idea.description}</p>
-
-                    <h4>Connected Ideas (${connectedIdeas.length})</h4>
-                    <ul>${connectedHtml || '<li>No connected ideas</li>'}</ul>
-
-                    <h4>Components (${components.length})</h4>
-                    <ul>${componentsHtml || '<li>No components extracted</li>'}</ul>
-
-                    <div class="actions" style="margin-top: 1rem;">
-                        <button onclick="findSimilarIdeas('${nodeId}')" class="btn btn-primary">Find Similar Ideas</button>
-                        <button onclick="getComponentDependencies('${nodeId}')" class="btn btn-secondary">View Dependencies</button>
-                    </div>
-                `;
-
-                TB.ui.Loader.hide();
-            } catch (error) {
-                console.error('Error showing node details:', error);
-                TB.ui.Toast.showError("Failed to load node details: " + error.message);
-                TB.ui.Loader.hide();
-            }
-        }
-
-        cy.on('tap', 'node', function(evt){
-            const node = evt.target;
-            showNodeDetails(node.id());
-        });
-
-        cy.on('tap', function(evt){
-            if(evt.target === cy){
-                 sidebarContent.innerHTML = '<p>Select a node to see its details and connections.</p>';
-            }
-        });
-
-        // Helper functions for new features
-        async function findSimilarIdeas(ideaId) {
-            try {
-                TB.ui.Loader.show("Finding similar ideas...");
-                const response = await TB.api.request('SimpleCore', 'get_similar_ideas', { idea_id: ideaId }, 'GET');
-                TB.ui.Loader.hide();
-
-                if (response.error !== 'none') {
-                    TB.ui.Toast.showError("Failed to find similar ideas: " + (response.info?.help_text || "Unknown error"));
-                    return;
+                // Add edges
+                if (graphData.edges) {
+                    graphData.edges.forEach(edge => {
+                        cy.add({
+                            group: 'edges',
+                            data: {
+                                id: `${edge.source}-${edge.target}`,
+                                source: edge.source,
+                                target: edge.target,
+                                connection_type: edge.type || 'DIRECT'
+                            }
+                        });
+                    });
                 }
 
-                const similarIdeas = response.get();
+                // Run layout
+                cy.layout({
+                    name: 'cose',
+                    animate: true,
+                    animationDuration: 800
+                }).run();
 
-                // Highlight similar ideas in the graph
-                cy.elements().removeClass('highlighted');
-                similarIdeas.forEach(idea => {
-                    cy.getElementById(idea.id).addClass('highlighted');
-                });
-
-                TB.ui.Toast.showSuccess(`Found ${similarIdeas.length} similar ideas (highlighted in graph)`);
+                showToast('Graph loaded successfully!', 'success');
             } catch (error) {
-                console.error('Error finding similar ideas:', error);
-                TB.ui.Toast.showError("Failed to find similar ideas: " + error.message);
-                TB.ui.Loader.hide();
+                console.error('Error loading graph:', error);
+                showToast('Error loading graph: ' + error.message, 'error');
+
+                // Show demo data if API fails
+                loadDemoData();
             }
         }
 
-        async function getComponentDependencies(ideaId) {
-            try {
-                TB.ui.Loader.show("Loading component dependencies...");
-                // This would need the component ID, but for now we'll show a placeholder
-                TB.ui.Loader.hide();
-                TB.ui.Toast.showInfo("Component dependency visualization coming soon!");
-            } catch (error) {
-                console.error('Error getting component dependencies:', error);
-                TB.ui.Toast.showError("Failed to load dependencies: " + error.message);
-                TB.ui.Loader.hide();
-            }
+        function loadDemoData() {
+            cy.add([
+                { data: { id: '1', name: 'Akku-Schrauber', type: 'idea' } },
+                { data: { id: '2', name: 'Batterie', type: 'component' } },
+                { data: { id: '3', name: 'Motor', type: 'component' } },
+                { data: { id: '4', name: 'Schraubenschlüssel', type: 'component' } },
+                { data: { id: 'e1', source: '1', target: '2', connection_type: 'DIRECT' } },
+                { data: { id: 'e2', source: '1', target: '3', connection_type: 'DIRECT' } },
+                { data: { id: 'e3', source: '1', target: '4', connection_type: 'DIRECT' } },
+                { data: { id: 'e4', source: '2', target: '3', connection_type: 'LOGICAL' } }
+            ]);
+
+            cy.layout({ name: 'cose', animate: true }).run();
         }
 
-        async function showCollaborationSuggestions() {
-            try {
-                TB.ui.Loader.show("Finding collaboration opportunities...");
-                const response = await TB.api.request('SimpleCore', 'suggest_collaborations', {}, 'GET');
-                TB.ui.Loader.hide();
+        async function addIdea() {
+            const input = document.getElementById('ideaInput');
+            const content = input.value.trim();
 
-                if (response.error !== 'none') {
-                    TB.ui.Toast.showError("Failed to get collaboration suggestions: " + (response.info?.help_text || "Unknown error"));
-                    return;
-                }
-
-                const suggestions = response.get();
-
-                if (suggestions.length === 0) {
-                    TB.ui.Toast.showInfo("No collaboration suggestions found. Try adding more ideas!");
-                    return;
-                }
-
-                let suggestionsHtml = suggestions.map(sugg =>
-                    `<div class="suggestion-card">
-                        <strong>User: ${sugg.user_id}</strong><br>
-                        Compatibility: ${(sugg.compatibility_score * 100).toFixed(1)}%<br>
-                        Shared Ideas: ${sugg.shared_ideas.length}
-                    </div>`
-                ).join('');
-
-                sidebarContent.innerHTML = `
-                    <h3>Collaboration Suggestions</h3>
-                    <div class="suggestions-container">
-                        ${suggestionsHtml}
-                    </div>
-                    <button onclick="loadGraphData(); sidebarContent.innerHTML = '<p>Select a node to see its details and connections.</p>';" class="btn btn-secondary" style="margin-top: 1rem;">Back to Graph</button>
-                `;
-
-            } catch (error) {
-                console.error('Error getting collaboration suggestions:', error);
-                TB.ui.Toast.showError("Failed to get suggestions: " + error.message);
-                TB.ui.Loader.hide();
-            }
-        }
-
-        // Add CSS for highlighted nodes and suggestions
-        const additionalStyles = `
-            .suggestion-card {
-                background: var(--theme-bg-light);
-                border: 1px solid var(--theme-border);
-                border-radius: 8px;
-                padding: 1rem;
-                margin-bottom: 0.5rem;
-            }
-            .header-controls {
-                display: flex;
-                gap: 0.5rem;
-                align-items: center;
-            }
-        `;
-
-        const styleSheet = document.createElement('style');
-        styleSheet.textContent = additionalStyles;
-        document.head.appendChild(styleSheet);
-
-        // Add highlighted style to cytoscape
-        cy.style().selector('.highlighted').style({
-            'border-width': 4,
-            'border-color': '#ff6b6b',
-            'background-color': '#ff6b6b'
-        }).update();
-
-        // === NEW INPUT & SCRAPER FUNCTIONALITY ===
-
-        // Add Idea Function
-        async function addNewIdea() {
-            const content = ideaInput.value.trim();
             if (!content) {
                 showToast('Please enter an idea', 'error');
                 return;
             }
 
             try {
+                showToast('Adding idea...', 'info');
+
                 const response = await fetch('/api/SimpleCore/create_idea', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: `content=${encodeURIComponent(content)}`
                 });
 
                 const result = await response.json();
+
                 if (response.ok && result.error === 'none') {
+                    input.value = '';
                     showToast('Idea added successfully!', 'success');
-                    ideaInput.value = '';
-                    loadGraphData(); // Refresh the graph
+                    loadGraphData();
                 } else {
                     throw new Error(result.info?.help_text || 'Failed to add idea');
                 }
             } catch (error) {
                 console.error('Error adding idea:', error);
-                showToast('Error adding idea: ' + error.message, 'error');
+                showToast('Error: ' + error.message, 'error');
             }
         }
 
-        // URL Scraper Function
-        async function scrapeUrl() {
-            const content = ideaInput.value.trim();
+        async function analyzeContent() {
+            const input = document.getElementById('ideaInput');
+            const content = input.value.trim();
+
             if (!content) {
-                showToast('Please enter text or URL to scrape', 'error');
+                showToast('Please enter content to analyze', 'error');
                 return;
             }
 
-            try {
-                // Check if it's a URL
-                const urlPattern = /https?:\/\/[^\s]+/g;
-                const urls = content.match(urlPattern);
+            showToast('Analyzing content...', 'info');
 
-                if (urls && urls.length > 0) {
-                    showToast('Scraping URL content...', 'info');
-                    // Use web-fetch to get content
-                    const response = await fetch('/api/web-fetch', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ url: urls[0] })
-                    });
+            // Check for URLs
+            const urlPattern = /https?:\/\/[^\s]+/g;
+            const urls = content.match(urlPattern);
 
-                    if (response.ok) {
-                        const data = await response.text();
-                        ideaInput.value = `Scraped from ${urls[0]}:\n\n${data.substring(0, 500)}...`;
-                        showToast('Content scraped successfully!', 'success');
-                    } else {
-                        throw new Error('Failed to scrape URL');
-                    }
-                } else {
-                    // Just add as regular idea
-                    await addNewIdea();
-                }
-            } catch (error) {
-                console.error('Error scraping URL:', error);
-                showToast('Error scraping URL: ' + error.message, 'error');
+            if (urls) {
+                await scrapeUrl(urls[0]);
+            } else {
+                await addIdea();
             }
         }
 
-        // Analyze Web Content Function
-        async function analyzeWebContent() {
-            const url = urlInput.value.trim();
-            if (!url) {
-                showToast('Please enter a URL to analyze', 'error');
+        async function scrapeUrl(url) {
+            const urlInput = document.getElementById('urlInput');
+            const targetUrl = url || urlInput.value.trim();
+
+            if (!targetUrl) {
+                showToast('Please enter a URL', 'error');
                 return;
             }
 
             try {
-                showToast('Analyzing web content...', 'info');
+                showToast('Scraping URL...', 'info');
 
-                // Use web-fetch to get content
+                // This would call a web scraping endpoint
                 const response = await fetch('/api/web-fetch', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ url: url })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: targetUrl })
                 });
 
                 if (response.ok) {
                     const content = await response.text();
+                    const ideas = extractIdeas(content);
 
-                    // Extract key ideas from the content
-                    const ideas = extractIdeasFromContent(content);
-
-                    // Add each idea to the graph
                     for (const idea of ideas) {
-                        await addIdeaToGraph(idea, url);
+                        await addIdeaToGraph(idea, targetUrl);
                     }
 
-                    showToast(`Analyzed and added ${ideas.length} ideas from ${url}`, 'success');
+                    showToast(`Added ${ideas.length} ideas from URL`, 'success');
                     urlInput.value = '';
-                    loadGraphData(); // Refresh the graph
+                    loadGraphData();
                 } else {
-                    throw new Error('Failed to fetch URL content');
+                    throw new Error('Failed to fetch URL');
                 }
             } catch (error) {
-                console.error('Error analyzing web content:', error);
-                showToast('Error analyzing web content: ' + error.message, 'error');
+                console.error('Error scraping URL:', error);
+                showToast('Error: ' + error.message, 'error');
             }
         }
 
-        // Extract ideas from content (simple implementation)
-        function extractIdeasFromContent(content) {
-            const ideas = [];
-            const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20);
-
-            // Take the first few meaningful sentences as ideas
-            for (let i = 0; i < Math.min(3, sentences.length); i++) {
-                const sentence = sentences[i].trim();
-                if (sentence.length > 30 && sentence.length < 200) {
-                    ideas.push(sentence);
-                }
-            }
-
-            return ideas;
+        function extractIdeas(content) {
+            const sentences = content.split(/[.!?]+/)
+                .filter(s => s.trim().length > 30 && s.trim().length < 200);
+            return sentences.slice(0, 3).map(s => s.trim());
         }
 
-        // Add idea to graph via API
         async function addIdeaToGraph(content, source = '') {
-            try {
-                const fullContent = source ? `${content} (Source: ${source})` : content;
-                const response = await fetch('/api/SimpleCore/create_idea', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: `content=${encodeURIComponent(fullContent)}`
-                });
+            const fullContent = source ? `${content} (Source: ${source})` : content;
 
-                const result = await response.json();
-                if (!response.ok || result.error !== 'none') {
-                    throw new Error(result.info?.help_text || 'Failed to add idea');
+            await fetch('/api/SimpleCore/create_idea', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `content=${encodeURIComponent(fullContent)}`
+            });
+        }
+
+        async function showCollaborations() {
+            try {
+                showToast('Finding collaborators...', 'info');
+                const collaborations = await apiRequest('suggest_collaborations');
+
+                if (collaborations.length) {
+                    const content = collaborations.map(c => `
+                        <div style="margin-bottom: var(--space-3); padding: var(--space-3); background: var(--bg-surface); border-radius: var(--radius-md);">
+                            <strong>${c.user_id || 'User'}</strong>
+                            <div style="color: var(--color-success); font-size: var(--text-xs);">
+                                ${Math.round((c.compatibility_score || 0) * 100)}% match
+                            </div>
+                        </div>
+                    `).join('');
+
+                    document.getElementById('detailsContent').innerHTML = `
+                        <h4>Potential Collaborators</h4>
+                        ${content}
+                    `;
+                } else {
+                    showToast('No collaborators found', 'info');
                 }
             } catch (error) {
-                console.error('Error adding idea to graph:', error);
-                throw error;
+                console.error('Error finding collaborators:', error);
+                showToast('Error: ' + error.message, 'error');
             }
         }
 
-        // Toast notification function
-        function showToast(message, type = 'info') {
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.textContent = message;
-            toast.style.cssText = `
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                padding: 12px 20px;
-                border-radius: 4px;
-                color: white;
-                font-weight: 500;
-                z-index: 1000;
-                opacity: 0;
-                transition: opacity 0.3s ease;
-                max-width: 300px;
+        function exportGraph() {
+            const png = cy.png({ scale: 2, bg: 'white' });
+            const link = document.createElement('a');
+            link.href = png;
+            link.download = 'innovation-graph.png';
+            link.click();
+            showToast('Graph exported!', 'success');
+        }
+
+        // ========== UI Functions ==========
+
+        function showNodeDetails(data) {
+            const content = `
+                <h4>${data.name}</h4>
+                <p><strong>Type:</strong> ${data.type || 'idea'}</p>
+                ${data.description ? `<p>${data.description}</p>` : ''}
+                ${data.components?.length ? `
+                    <p><strong>Components:</strong></p>
+                    <div>${data.components.map(c => `<span class="tag">${c}</span>`).join('')}</div>
+                ` : ''}
+                ${data.tags?.length ? `
+                    <p><strong>Tags:</strong></p>
+                    <div>${data.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+                ` : ''}
             `;
 
-            switch (type) {
-                case 'success':
-                    toast.style.backgroundColor = '#2ecc71';
-                    break;
-                case 'error':
-                    toast.style.backgroundColor = '#e74c3c';
-                    break;
-                case 'info':
-                    toast.style.backgroundColor = '#3498db';
-                    break;
-                default:
-                    toast.style.backgroundColor = '#95a5a6';
-            }
+            document.getElementById('detailsContent').innerHTML = content;
+        }
 
+        function clearDetails() {
+            document.getElementById('detailsContent').innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">touch_app</span>
+                    <p>Select a node to see details</p>
+                </div>
+            `;
+        }
+
+        function showToast(message, type = 'info') {
+            // Remove existing toasts
+            document.querySelectorAll('.toast').forEach(t => t.remove());
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
             document.body.appendChild(toast);
 
-            // Fade in
-            setTimeout(() => toast.style.opacity = '1', 100);
+            requestAnimationFrame(() => toast.classList.add('visible'));
 
-            // Remove after 3 seconds
             setTimeout(() => {
-                toast.style.opacity = '0';
-                setTimeout(() => document.body.removeChild(toast), 300);
+                toast.classList.remove('visible');
+                setTimeout(() => toast.remove(), 300);
             }, 3000);
         }
 
-        // Event Listeners
-        addIdeaBtn.addEventListener('click', addNewIdea);
-        scrapeUrlBtn.addEventListener('click', scrapeUrl);
-        analyzeUrlBtn.addEventListener('click', analyzeWebContent);
-        refreshGraphBtn.addEventListener('click', loadGraphData);
-        findConnectionsBtn.addEventListener('click', () => {
-            showToast('Finding connections...', 'info');
-            loadGraphData();
+        // ========== Theme Sync ==========
+
+        function syncGraphTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+            cy.style()
+                .selector('node')
+                .style('color', isDark ? '#f3f4f6' : '#1f2937')
+                .update();
+        }
+
+        document.addEventListener('theme:changed', syncGraphTheme);
+
+        // ========== Event Handlers ==========
+
+        function setupEventHandlers() {
+            // Input actions
+            document.getElementById('addIdeaBtn')?.addEventListener('click', addIdea);
+            document.getElementById('analyzeBtn')?.addEventListener('click', analyzeContent);
+            document.getElementById('scrapeUrlBtn')?.addEventListener('click', () => scrapeUrl());
+
+            // Quick actions
+            document.getElementById('actionRefresh')?.addEventListener('click', loadGraphData);
+            document.getElementById('refreshGraphBtn')?.addEventListener('click', loadGraphData);
+            document.getElementById('actionConnections')?.addEventListener('click', loadGraphData);
+            document.getElementById('actionCollaborations')?.addEventListener('click', showCollaborations);
+            document.getElementById('findCollabBtn')?.addEventListener('click', showCollaborations);
+            document.getElementById('actionExport')?.addEventListener('click', exportGraph);
+
+            // Navigation
+            document.getElementById('backBtn')?.addEventListener('click', () => {
+                window.location.href = '/web/pages/simplecore/index.html';
+            });
+
+            // Keyboard shortcuts
+            document.getElementById('ideaInput')?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    addIdea();
+                }
+            });
+
+            document.getElementById('urlInput')?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    scrapeUrl();
+                }
+            });
+        }
+
+        // ========== Initialize ==========
+        window.TB.onLoaded(() => {
+            initGraph();
+            setupEventHandlers();
         });
-        suggestCollaborationsBtn.addEventListener('click', showCollaborationSuggestions);
-
-        // Enter key support for inputs
-        ideaInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && e.ctrlKey) {
-                addNewIdea();
-            }
-        });
-
-        urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                analyzeWebContent();
-            }
-        });
-
-        loadGraphData();
-
     </script>
 </body>
 </html>

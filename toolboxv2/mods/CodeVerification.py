@@ -424,7 +424,7 @@ html_template = """<!DOCTYPE html>
 
         body {
             background-color: var(--background-color);
-            color: var(--text-color);
+            color: var(--text-primary);
             line-height: 1.6;
         }
 
