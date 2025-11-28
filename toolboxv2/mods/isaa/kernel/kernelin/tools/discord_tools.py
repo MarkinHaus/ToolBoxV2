@@ -19,7 +19,7 @@ except ImportError:
 class DiscordKernelTools:
     """Discord-specific tools for kernel integration"""
 
-    def __init__(self, bot: discord.ext.commands.Bot, kernel, output_router):
+    def __init__(self, bot: 'discord.discord.ext.commands.Bot', kernel, output_router):
         self.bot = bot
         self.kernel = kernel
         self.output_router = output_router

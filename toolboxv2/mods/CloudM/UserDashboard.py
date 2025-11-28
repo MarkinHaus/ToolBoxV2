@@ -1,5 +1,14 @@
 # toolboxv2/mods/CloudM/UserDashboard.py
+"""
+ToolBox V2 - Enhanced User Dashboard
+Benutzerfreundliches Dashboard für:
+- Profil-Verwaltung
+- Mod-Interaktion und Konfiguration
+- Einstellungen ohne technisches Wissen
+- Appearance/Theme-Customization
+"""
 
+import json
 from dataclasses import asdict
 
 from toolboxv2 import App, RequestData, Result, get_app
@@ -12,29 +21,23 @@ from .UserAccountManager import get_current_user_from_request
 from .UserInstances import close_user_instance as close_user_instance_internal
 from .UserInstances import get_user_instance as get_user_instance_internal
 
-# We'll need a new function in UserInstances or a dedicated module manager for user instances
-# from .UserInstanceManager import update_active_modules_for_user_instance # Placeholder
-
 Name = 'CloudM.UserDashboard'
 export = get_app(Name + ".Export").tb
-version = '0.1.1'  # Incremented version
+version = '0.2.0'
 
+
+# =================== Haupt-Dashboard ===================
 
 @export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True, row=True)
 async def get_user_dashboard_main_page(app: App, request: RequestData):
-    #current_user = await get_current_user_from_request(app, request)
-    #if not current_user:
-    #    return Result.html("<h1>Access Denied</h1><p>Please log in to view your dashboard.</p>", status_code=401)
+    """Haupt-Dashboard Seite - vollständig responsive und benutzerfreundlich"""
 
-    # HTML structure for the User Dashboard
-    # Using Python's triple-quoted string for the main HTML block.
     html_content = """
-    <style>
-        /* Refactored styles for Ansyb Page, based on tbjs-main.css principles */
-
+<style>
+/* ========== User Dashboard Styles ========== */
 body {
     margin: 0;
-    font-family: var(--font-family-base); /* Use main style's base font family */
+    font-family: var(--font-family-base);
     background-color: var(--theme-bg);
     color: var(--theme-text);
     transition: background-color var(--transition-medium), color var(--transition-medium);
@@ -46,113 +49,487 @@ body {
     min-height: 100vh;
 }
 
+/* Header */
 #user-header {
-    background-color: var(--theme-primary);
-    color: var(--theme-text-on-primary); /* Text on primary background */
+    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+    color: var(--theme-text-on-primary);
     padding: var(--spacing) calc(var(--spacing) * 1.5);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 4px color-mix(in srgb, var(--theme-text) 10%, transparent); /* Subtle shadow adapting to theme */
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-text) 15%, transparent);
 }
 
 #user-header h1 {
     margin: 0;
-    font-size: var(--font-size-xl); /* Using responsive font size from main styles */
+    font-size: var(--font-size-xl);
     font-weight: var(--font-weight-semibold);
     display: flex;
     align-items: center;
+    gap: 0.5rem;
 }
 
-#user-header h1 .material-symbols-outlined {
-    vertical-align: middle;
-    font-size: 1.5em; /* Keeps original icon sizing relative to h1 */
-    margin-right: 0.3em;
-}
-
-#user-header .header-actions {
+.user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--theme-text-on-primary);
+    color: var(--theme-primary);
     display: flex;
     align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1.2rem;
 }
 
-#user-nav ul {
+/* Sidebar */
+#user-sidebar {
+    width: 260px;
+    background-color: var(--input-bg);
+    padding: calc(var(--spacing) * 1.5) var(--spacing);
+    border-right: 1px solid var(--theme-border);
+    transition: all var(--transition-medium);
+}
+
+#user-sidebar ul {
     list-style: none;
     padding: 0;
-    margin: 0 0 0 calc(var(--spacing) * 1.5);
-    display: flex;
+    margin: 0;
 }
 
-#user-nav li {
-    margin-left: var(--spacing);
+#user-sidebar li {
+    padding: calc(var(--spacing) * 0.9) var(--spacing);
+    margin-bottom: calc(var(--spacing) * 0.5);
     cursor: pointer;
-    padding: calc(var(--spacing) * 0.6) var(--spacing);
-    border-radius: var(--radius-sm); /* Using 4px radius from main styles */
-    transition: background-color var(--transition-fast);
-    font-weight: var(--font-weight-medium);
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
+    gap: 0.75rem;
+    font-weight: var(--font-weight-medium);
+    color: var(--theme-text);
+    transition: all var(--transition-fast);
 }
 
-#user-nav li .material-symbols-outlined {
-    vertical-align: text-bottom;
-    margin-right: 0.3em;
+#user-sidebar li:hover {
+    background-color: color-mix(in srgb, var(--theme-primary) 12%, transparent);
+    color: var(--theme-primary);
+    transform: translateX(4px);
 }
 
-#user-nav li:hover {
-    /* Subtle hover effect, derived from the text color on primary */
-    background-color: color-mix(in srgb, var(--theme-text-on-primary) 15%, transparent);
+#user-sidebar li.active {
+    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+    color: var(--theme-text-on-primary) !important;
+    font-weight: var(--font-weight-semibold);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-primary) 30%, transparent);
 }
 
+#user-sidebar li .material-symbols-outlined {
+    font-size: 1.3rem;
+}
+
+/* Main Container */
 #user-container {
     display: flex;
     flex-grow: 1;
 }
 
-#user-sidebar {
-    display: none;
-    position: fixed;
-    left: -250px;
-    top: 0;
-    bottom: 0;
-    width: 240px;
-    z-index: var(--z-navigation); /* Using z-index from main styles */
-    transition: left var(--transition-medium); /* Using transition speed from main styles */
+#user-content {
+    flex-grow: 1;
+    padding: calc(var(--spacing) * 2);
     overflow-y: auto;
-    /* Background and border will be applied below, respecting media queries and themes */
 }
 
-#user-sidebar.open {
+/* Content Sections */
+.content-section {
+    display: none;
+}
+
+.content-section.active {
+    display: block;
+    animation: fadeSlideIn 0.4s ease-out;
+}
+
+@keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(15px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.content-section h2 {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--theme-text);
+    margin-bottom: calc(var(--spacing) * 1.5);
+    padding-bottom: var(--spacing);
+    border-bottom: 2px solid var(--theme-primary);
     display: flex;
-    left: 0;
-    box-shadow: 2px 0 5px color-mix(in srgb, var(--theme-text) 20%, transparent); /* Adapting shadow */
+    align-items: center;
+    gap: 0.5rem;
 }
 
-#sidebar-toggle-btn {
-    display: inline-flex;
-    padding: calc(var(--spacing) * 0.5);
+/* Cards */
+.dashboard-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    border-radius: var(--radius-lg);
+    padding: calc(var(--spacing) * 1.5);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    margin-bottom: calc(var(--spacing) * 1.5);
+    transition: all var(--transition-fast);
+}
+
+.dashboard-card:hover {
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--theme-text) 12%, transparent);
+    transform: translateY(-2px);
+}
+
+.dashboard-card h3 {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    margin: 0 0 var(--spacing) 0;
+    color: var(--theme-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Module Cards */
+.module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--spacing);
+}
+
+.module-card {
+    background: var(--input-bg);
+    border-radius: var(--radius-md);
+    padding: var(--spacing);
+    border: 1px solid var(--theme-border);
+    transition: all var(--transition-fast);
+}
+
+.module-card:hover {
+    border-color: var(--theme-primary);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-primary) 15%, transparent);
+}
+
+.module-card.active {
+    border-color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 8%, var(--input-bg));
+}
+
+.module-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: calc(var(--spacing) * 0.5);
+}
+
+.module-name {
+    font-weight: var(--font-weight-semibold);
+    color: var(--theme-text);
+}
+
+.module-status {
+    font-size: var(--font-size-xs);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-weight: var(--font-weight-medium);
+}
+
+.module-status.loaded {
+    background: var(--color-success);
+    color: white;
+}
+
+.module-status.available {
+    background: var(--theme-border);
+    color: var(--theme-text-muted);
+}
+
+.module-description {
+    font-size: var(--font-size-sm);
+    color: var(--theme-text-muted);
+    margin-bottom: calc(var(--spacing) * 0.75);
+}
+
+.module-actions {
+    display: flex;
+    gap: calc(var(--spacing) * 0.5);
+    flex-wrap: wrap;
+}
+
+/* Settings Grid */
+.settings-section {
+    margin-bottom: calc(var(--spacing) * 2);
+}
+
+.settings-section h4 {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    margin-bottom: var(--spacing);
+    color: var(--theme-text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing);
+    background: var(--input-bg);
+    border-radius: var(--radius-md);
+    margin-bottom: calc(var(--spacing) * 0.5);
+    border: 1px solid var(--theme-border);
+}
+
+.setting-item:hover {
+    border-color: var(--theme-primary);
+}
+
+.setting-info {
+    flex: 1;
+}
+
+.setting-label {
+    font-weight: var(--font-weight-medium);
+    color: var(--theme-text);
+    margin-bottom: 2px;
+}
+
+.setting-description {
+    font-size: var(--font-size-sm);
+    color: var(--theme-text-muted);
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    width: 52px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
     cursor: pointer;
-    z-index: var(--z-nav-controls); /* Ensure it's above sidebar when closed */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--theme-border);
+    transition: var(--transition-fast);
+    border-radius: 28px;
 }
 
-@media (min-width: 768px) {
-    #sidebar-toggle-btn {
-        display: none;
-    }
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 22px;
+    width: 22px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: var(--transition-fast);
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+input:checked + .toggle-slider {
+    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+/* Buttons */
+.tb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1);
+    border-radius: var(--radius-md);
+    font-weight: var(--font-weight-medium);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    border: 1px solid transparent;
+    gap: 0.35rem;
+}
+
+.tb-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px color-mix(in srgb, var(--theme-text) 12%, transparent);
+}
+
+.tb-btn-primary {
+    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+    color: var(--theme-text-on-primary);
+}
+
+.tb-btn-secondary {
+    background: var(--input-bg);
+    color: var(--theme-text);
+    border-color: var(--theme-border);
+}
+
+.tb-btn-success {
+    background: var(--color-success);
+    color: white;
+}
+
+.tb-btn-danger {
+    background: var(--color-error);
+    color: white;
+}
+
+.tb-btn-sm {
+    padding: calc(var(--spacing) * 0.35) calc(var(--spacing) * 0.75);
+    font-size: var(--font-size-xs);
+}
+
+/* Input Styles */
+.tb-input {
+    width: 100%;
+    padding: calc(var(--spacing) * 0.75) var(--spacing);
+    font-size: var(--font-size-base);
+    color: var(--theme-text);
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.tb-input:focus {
+    outline: none;
+    border-color: var(--theme-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 20%, transparent);
+}
+
+/* Stats Cards */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--spacing);
+    margin-bottom: calc(var(--spacing) * 1.5);
+}
+
+.stat-card {
+    background: var(--input-bg);
+    border-radius: var(--radius-md);
+    padding: var(--spacing);
+    text-align: center;
+    border: 1px solid var(--theme-border);
+}
+
+.stat-value {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--theme-primary);
+}
+
+.stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--theme-text-muted);
+}
+
+/* Mod Data Panel */
+.mod-data-panel {
+    background: var(--input-bg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--theme-border);
+    overflow: hidden;
+}
+
+.mod-data-header {
+    background: color-mix(in srgb, var(--theme-primary) 10%, var(--input-bg));
+    padding: calc(var(--spacing) * 0.75) var(--spacing);
+    font-weight: var(--font-weight-semibold);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.mod-data-content {
+    padding: var(--spacing);
+    display: none;
+}
+
+.mod-data-content.open {
+    display: block;
+}
+
+.mod-data-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: calc(var(--spacing) * 0.5) 0;
+    border-bottom: 1px solid var(--theme-border);
+}
+
+.mod-data-item:last-child {
+    border-bottom: none;
+}
+
+.mod-data-key {
+    font-weight: var(--font-weight-medium);
+    color: var(--theme-text-muted);
+}
+
+.mod-data-value {
+    color: var(--theme-text);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
     #user-sidebar {
-        display: flex;
-        position: static;
-        left: auto;
-        width: 230px;
-        transition: none;
-        background-color: var(--theme-bg); /* Sidebar background for desktop */
-        border-right: 1px solid var(--theme-border); /* Sidebar border for desktop */
+        position: fixed;
+        left: -280px;
+        top: 0;
+        bottom: 0;
+        z-index: var(--z-modal);
+        transition: left var(--transition-medium);
     }
-    /* This rule was : display:table - kept it as per instruction but display:grid is in the base .settings-grid */
-    .settings-grid {
-        display: table;
+
+    #user-sidebar.open {
+        left: 0;
+        box-shadow: 4px 0 20px color-mix(in srgb, var(--theme-text) 25%, transparent);
     }
-    #user-container.sidebar-present #user-content {
-        margin-left: 230px;
+
+    #sidebar-toggle-btn {
+        display: inline-flex !important;
+    }
+
+    #sidebar-backdrop.active {
+        display: block;
+    }
+
+    .module-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (min-width: 769px) {
+    #sidebar-toggle-btn {
+        display: none !important;
+    }
+
+    #sidebar-backdrop {
+        display: none !important;
     }
 }
 
@@ -161,1420 +538,1267 @@ body {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: color-mix(in srgb, var(--theme-bg) 50%, black 50%); /* Semi-transparent backdrop */
-    opacity: 0.7; /* Adjust opacity as needed */
-    z-index: calc(var(--z-navigation) - 1); /* Below sidebar, above content */
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: calc(var(--z-modal) - 1);
 }
 
-#sidebar-backdrop.active {
-    display: block;
+/* Toast/Notification */
+.toast-success {
+    background: var(--color-success) !important;
 }
 
-@media (max-width: 767.98px) {
-    #user-sidebar { /* Styles for mobile overlay sidebar */
-        display: flex;
-        position: fixed;
-        left: -250px;
-        top: 0;
-        bottom: 0;
-        width: 240px;
-        z-index: var(--z-modal); /* Higher z-index for mobile overlay */
-        transition: left var(--transition-medium);
-        overflow-y: auto;
-        background-color: var(--theme-bg); /* Mobile sidebar uses theme background */
-        border-right: 1px solid var(--theme-border); /* And theme border */
-    }
-}
-/* No specific body[data-theme="dark"] #user-sidebar needed if using --theme-bg and --theme-border */
-
-#user-sidebar ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    width: 100%; /* Ensure list takes full width for items */
+.toast-error {
+    background: var(--color-error) !important;
 }
 
-#user-sidebar li {
-    padding: calc(var(--spacing) * 0.9) var(--spacing);
-    margin-bottom: calc(var(--spacing) * 0.6);
-    cursor: pointer;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    font-weight: var(--font-weight-medium);
-    color: var(--theme-text); /* Text color from theme */
-    transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-
-#user-sidebar li .material-symbols-outlined {
-    margin-right: calc(var(--spacing) * 0.85);
-    font-size: 1.4rem; /* Original size */
-}
-
-#user-sidebar li:hover {
-    background-color: color-mix(in srgb, var(--theme-primary) 15%, transparent); /* Subtle primary hover */
-    color: var(--theme-primary); /* Text color changes to primary on hover */
-}
-
-#user-sidebar li.active {
-    background-color: var(--theme-primary);
-    color: var(--theme-text-on-primary) !important;
-    font-weight: var(--font-weight-semibold);
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-primary) 30%, transparent);
-}
-/* No specific body[data-theme="dark"] needed for .active li if vars handle it */
-
-#user-content {
-    flex-grow: 1;
-    padding: calc(var(--spacing) * 2);
-}
-
-.content-section {
-    display: none;
-}
-
-.content-section.active {
-    display: block;
-    animation: fadeIn 0.5s ease-out; /* Original animation */
-}
-
-@keyframes fadeIn { /* Kept original keyframes */
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.content-section h2 {
-    font-size: var(--font-size-3xl); /* Using responsive font size */
-    font-weight: var(--font-weight-semibold);
-    color: var(--theme-text);
-    margin-bottom: calc(var(--spacing) * 1.8);
-    padding-bottom: var(--spacing);
-    border-bottom: 1px solid var(--theme-border);
-    display: flex;
-    align-items: center;
-}
-
-.content-section h2 .material-symbols-outlined {
-    font-size: 1.3em; /* Original size */
-    margin-right: 0.5em;
-}
-/* No specific body[data-theme="dark"] needed for h2 if vars handle it */
-
-.frosted-glass-pane {
-    background-color: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
-    border-radius: var(--radius-lg); /* Using main style's large radius */
-    padding: calc(var(--spacing) * 2);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-}
-/* No specific body[data-theme="dark"] needed for .frosted-glass-pane */
-
-.instance-card,
-.module-card {
-    border: 1px solid var(--theme-border);
-    border-radius: var(--radius-md);
-    padding: var(--spacing);
-    margin-bottom: var(--spacing);
-    /* Using input-bg as a slightly offset background, common for cards */
-    background-color: var(--input-bg);
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--theme-text) 10%, transparent); /* Softer, theme-adaptive shadow */
-}
-/* No specific body[data-theme="dark"] needed for cards if vars handle it */
-
-.instance-card h4,
-.module-card h4 {
-    margin-top: 0;
-    color: var(--theme-primary); /* Titles in primary color */
-}
-
-.instance-card .module-list,
-.module-card .module-status {
-    list-style: disc;
-    margin-left: calc(var(--spacing) * 1.5);
-    font-size: var(--font-size-sm); /* Using responsive small font size */
-}
-
-.module-card {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.settings-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: calc(var(--spacing) * 1.5);
-}
-
-.setting-item {
-    padding: var(--spacing);
-    border: 1px solid var(--theme-border);
-    border-radius: var(--radius-md);
-    background-color: var(--input-bg); /* To make it consistent with other interactive element backgrounds */
-}
-/* No specific body[data-theme="dark"] needed for .setting-item */
-
-.setting-item label {
-    display: block;
-    margin-bottom: calc(var(--spacing) * 0.5); /* Original was 0.5rem */
-    font-weight: var(--font-weight-medium);
-}
-
-/* Inputs within setting-item will inherit from global input styles (section 4 of main.css) */
-/* Overrides for sizing or specific padding if needed: */
-.setting-item input[type="text"],
-.setting-item input[type="number"],
-.setting-item select,
-.setting-item input[type="color"] { /* Apply consistent styling to color input too if desired */
-    width: 100%;
-    padding: calc(var(--spacing) * 0.5); /* Smaller padding as per original */
-    margin-bottom: calc(var(--spacing) * 0.5);
-    /* border, border-radius, focus will come from global input styles */
-    /* If input[type="color"] needs specific dimensions different from main styles: */
-}
-
-
-.tb-label { /* Corresponds to main 'label' style */
-    font-weight: var(--font-weight-medium);
-    margin-bottom: calc(var(--spacing) * 0.3); /* From main 'label' style */
-    display: block; /* From main 'label' style */
-    font-size: var(--font-size-sm); /* From main 'label' style */
-}
-
-/* .tb-input should leverage main input styles and customize if needed */
-.tb-input {
-    display: block;
-    width: 100%;
-    padding: calc(var(--spacing) * 0.75) var(--spacing); /* Custom padding */
-    font-family: inherit;
-    font-size: var(--font-size-base);
-    line-height: var(--line-height-normal);
-    color: var(--theme-text); /* Text color from theme, will be on --input-bg */
-    background-color: var(--input-bg);
-    background-clip: padding-box;
-    border: 1px solid var(--input-border);
-    border-radius: var(--radius-md); /* Original was 6px, md is 8px */
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-    appearance: none;
-    box-sizing: border-box;
-}
-.tb-input:focus {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 25%, transparent);
-}
-/* No specific body[data-theme="dark"] needed for .tb-input */
-
-
-.tb-checkbox-label {
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    /* For styling the checkbox itself, refer to main styles input[type="checkbox"] */
-}
-
-.tb-checkbox { /* The actual input element */
-    /* Inherits from main input[type="checkbox"] styles */
-    margin-right: calc(var(--spacing) * 0.5); /* Original was 0.5rem */
-}
-
-.tb-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: calc(var(--spacing) * 0.6) calc(var(--spacing) * 1.2); /* Matches main button */
-    border-radius: var(--radius-md); /* Matches main button */
-    font-weight: var(--font-weight-medium); /* Matches main button */
-    cursor: pointer;
-    transition: background-color var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-    border: 1px solid transparent; /* Matches main button */
-    text-align: center;
-    vertical-align: middle;
-    user-select: none;
-}
-.tb-btn:focus-visible { /* From main button style */
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 35%, transparent);
-}
-.tb-btn .material-symbols-outlined {
-    margin-right: 0.4em;
-    font-size: 1.2em; /* Original size */
-}
-
-.tb-btn-primary {
-    background-color: var(--button-bg); /* Uses main button vars */
-    color: var(--button-text);
-    border-color: var(--button-bg);
-}
-.tb-btn-primary:hover {
-    background-color: var(--button-hover-bg);
-    border-color: var(--button-hover-bg);
-}
-
-.tb-btn-secondary {
-    background-color: var(--theme-secondary);
-    color: var(--theme-text-on-primary); /* Assuming contrast similar to primary */
-    border-color: var(--theme-secondary);
-}
-.tb-btn-secondary:hover {
-    background-color: color-mix(in srgb, var(--theme-secondary) 80%, var(--theme-bg) 20%); /* Mix with bg for hover */
-    border-color: color-mix(in srgb, var(--theme-secondary) 80%, var(--theme-bg) 20%);
-}
-
-.tb-btn-danger {
-    background-color: var(--color-error);
-    color: var(--theme-text-on-primary); /* Standard white text on status colors */
-    border-color: var(--color-error);
-}
-.tb-btn-danger:hover {
-    background-color: color-mix(in srgb, var(--color-error) 80%, black 20%);
-    border-color: color-mix(in srgb, var(--color-error) 80%, black 20%);
-}
-
-.tb-btn-success {
-    background-color: var(--color-success);
-    color: var(--theme-text-on-primary);
-    border-color: var(--color-success);
-}
-.tb-btn-success:hover {
-    background-color: color-mix(in srgb, var(--color-success) 80%, black 20%);
-    border-color: color-mix(in srgb, var(--color-success) 80%, black 20%);
-}
-
-/* Utility Classes - map to main styles if possible, or keep if specific */
-.tb-space-y-6 > *:not([hidden]) ~ *:not([hidden]) { margin-top: calc(var(--spacing) * 1.5); } /* Original was 1.5rem */
-.tb-mt-2 { margin-top: calc(var(--spacing) * 0.5); }
-.tb-mb-1 { margin-bottom: calc(var(--spacing) * 0.25); }
-.tb-mb-2 { margin-bottom: calc(var(--spacing) * 0.5); }
-.tb-mr-1 { margin-right: calc(var(--spacing) * 0.25); }
-
-/* This class name is kept as is. If responsive behavior is needed, a media query wrapping would be required. */
-.md\\:tb-w-2\\/3 { width: 66.666667%; }
-
-.tb-text-red-500 { color: var(--color-error); } /* Using main error color */
-.tb-text-green-600 { color: var(--color-success); } /* Using main success color */
-.tb-text-blue-500 { color: var(--tb-color-primary-500); } /* Using specific primary shade from main palette */
-.tb-text-gray-500 { color: var(--theme-text-muted); } /* Using main muted text color */
-/* No specific body[data-theme="dark"] needed for .tb-text-gray-500 */
-
-.tb-text-sm { font-size: var(--font-size-sm); }
-.tb-text-md { font-size: var(--font-size-base); } /* base is the equivalent of md */
-.tb-text-lg { font-size: var(--font-size-lg); }
-
-.tb-font-semibold { font-weight: var(--font-weight-semibold); }
-
-.tb-flex { display: flex; }
-.tb-items-center { align-items: center; }
-.tb-cursor-pointer { cursor: pointer; }
-.tb-space-x-2 > *:not([hidden]) ~ *:not([hidden]) { margin-left: calc(var(--spacing) * 0.5); } /* Original was 0.5rem */
-
-.toggle-switch {
-    display: inline-flex;
-    align-items: center;
-    cursor: pointer;
-}
-.toggle-switch input { /* Hidden checkbox */
-    opacity: 0;
-    width: 0;
-    height: 0;
-    position: absolute;
-}
-.toggle-slider {
-    width: 40px; /* Original size */
-    height: 20px; /* Original size */
-    background-color: var(--input-border); /* Off state using input border color */
-    border-radius: 20px; /* Original radius */
-    position: relative;
-    transition: background-color var(--transition-fast);
-}
-.toggle-slider:before { /* The knob */
-    content: "";
-    position: absolute;
-    height: 16px; /* Original size */
-    width: 16px; /* Original size */
-    left: 2px;   /* Original position */
-    bottom: 2px; /* Original position */
-    background-color: var(--theme-bg-sun); /* Knob color, light in light-mode, darkish in dark-mode */
+/* Loading Spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--theme-border);
+    border-top-color: var(--theme-primary);
     border-radius: 50%;
-    transition: transform var(--transition-fast), background-color var(--transition-fast);
+    animation: spin 0.8s linear infinite;
 }
-.toggle-switch input:checked + .toggle-slider {
-    background-color: var(--theme-primary); /* On state using theme primary */
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
-.toggle-switch input:checked + .toggle-slider:before {
-    transform: translateX(20px); /* Original translation */
-    background-color: var(--theme-text-on-primary); /* Knob color when active */
-}
-    </style>
-</head>
-<body data-theme="system">
-    <div id="user-dashboard">
-        <div id="user-header">
-            <h1><span class="material-symbols-outlined">dashboard</span>User Dashboard</h1>
-            <button id="sidebar-toggle-btn" class="tb-btn" style="margin-right: 1rem; display: none; background: none; border: none; color: white;">
+
+/* Helper Classes */
+.text-muted { color: var(--theme-text-muted); }
+.text-success { color: var(--color-success); }
+.text-error { color: var(--color-error); }
+.text-sm { font-size: var(--font-size-sm); }
+.mt-2 { margin-top: calc(var(--spacing) * 0.5); }
+.mt-4 { margin-top: var(--spacing); }
+.mb-2 { margin-bottom: calc(var(--spacing) * 0.5); }
+.mb-4 { margin-bottom: var(--spacing); }
+.flex { display: flex; }
+.gap-2 { gap: calc(var(--spacing) * 0.5); }
+.items-center { align-items: center; }
+</style>
+
+<div id="user-dashboard">
+    <header id="user-header">
+        <div class="flex items-center gap-2">
+            <button id="sidebar-toggle-btn" class="tb-btn tb-btn-secondary" style="display:none;">
                 <span class="material-symbols-outlined">menu</span>
             </button>
+            <h1>
+                <span class="material-symbols-outlined">dashboard</span>
+                <span id="welcome-text">Willkommen!</span>
+            </h1>
+        </div>
+        <div class="flex items-center gap-2">
+            <div id="darkModeToggleContainer"></div>
+            <button id="logoutButtonUser" class="tb-btn tb-btn-secondary">
+                <span class="material-symbols-outlined">logout</span>
+                <span class="logout-text">Abmelden</span>
+            </button>
+        </div>
+    </header>
 
-            <div class="header-actions">
-                 <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center; margin-right: 1.5rem;"></div>
-                <nav id="user-nav">
-                    <ul>
-                        <li id="logoutButtonUser"><span class="material-symbols-outlined">logout</span>Logout</li>
-                    </ul>
-                </nav>
-            </div>
-        </div>
-        <div id="user-container">
-            <aside id="user-sidebar">
-                 <ul>
-                    <li data-section="my-profile" class="active"><span class="material-symbols-outlined">account_box</span>My Profile</li>
-                    <li data-section="my-instances"><span class="material-symbols-outlined">dns</span>My Instances & Modules</li>
-                    <li data-section="app-appearance"><span class="material-symbols-outlined">palette</span>Appearance</li>
-                    <li data-section="user-settings"><span class="material-symbols-outlined">tune</span>Settings</li>
-                </ul>
-            </aside>
-            <main id="user-content">
-                <section id="my-profile-section" class="content-section active frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">badge</span>My Profile</h2>
-                    <div id="my-profile-content"><p class="tb-text-gray-500">Loading profile...</p></div>
-                </section>
-                <section id="my-instances-section" class="content-section frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">developer_board</span>Active Instances & Modules</h2>
-                    <div id="my-instances-content"><p class="tb-text-gray-500">Loading active instances and modules...</p></div>
-                </section>
-                <section id="app-appearance-section" class="content-section frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">visibility</span>Application Appearance</h2>
-                    <div id="app-appearance-content"><p class="tb-text-gray-500">Loading appearance settings...</p></div>
-                </section>
-                <section id="user-settings-section" class="content-section frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">settings_applications</span>User Settings</h2>
-                    <div id="user-settings-content"><p class="tb-text-gray-500">Loading user settings...</p></div>
-                </section>
-            </main>
-        </div>
-        <div id="sidebar-backdrop"></div>
+    <div id="user-container">
+        <aside id="user-sidebar">
+            <ul>
+                <li data-section="overview" class="active">
+                    <span class="material-symbols-outlined">home</span>
+                    Übersicht
+                </li>
+                <li data-section="my-modules">
+                    <span class="material-symbols-outlined">extension</span>
+                    Meine Module
+                </li>
+                <li data-section="mod-data">
+                    <span class="material-symbols-outlined">database</span>
+                    Mod-Daten
+                </li>
+                <li data-section="settings">
+                    <span class="material-symbols-outlined">settings</span>
+                    Einstellungen
+                </li>
+                <li data-section="appearance">
+                    <span class="material-symbols-outlined">palette</span>
+                    Erscheinungsbild
+                </li>
+                <li data-section="profile">
+                    <span class="material-symbols-outlined">person</span>
+                    Mein Profil
+                </li>
+            </ul>
+        </aside>
+
+        <main id="user-content">
+            <!-- Übersicht -->
+            <section id="overview-section" class="content-section active">
+                <h2><span class="material-symbols-outlined">home</span>Übersicht</h2>
+                <div id="overview-content">
+                    <p class="text-muted">Lädt...</p>
+                </div>
+            </section>
+
+            <!-- Meine Module -->
+            <section id="my-modules-section" class="content-section">
+                <h2><span class="material-symbols-outlined">extension</span>Meine Module</h2>
+                <div id="my-modules-content">
+                    <p class="text-muted">Lädt Module...</p>
+                </div>
+            </section>
+
+            <!-- Mod-Daten -->
+            <section id="mod-data-section" class="content-section">
+                <h2><span class="material-symbols-outlined">database</span>Mod-Daten</h2>
+                <div id="mod-data-content">
+                    <p class="text-muted">Lädt Mod-Daten...</p>
+                </div>
+            </section>
+
+            <!-- Einstellungen -->
+            <section id="settings-section" class="content-section">
+                <h2><span class="material-symbols-outlined">settings</span>Einstellungen</h2>
+                <div id="settings-content">
+                    <p class="text-muted">Lädt Einstellungen...</p>
+                </div>
+            </section>
+
+            <!-- Erscheinungsbild -->
+            <section id="appearance-section" class="content-section">
+                <h2><span class="material-symbols-outlined">palette</span>Erscheinungsbild</h2>
+                <div id="appearance-content">
+                    <p class="text-muted">Lädt Theme-Einstellungen...</p>
+                </div>
+            </section>
+
+            <!-- Profil -->
+            <section id="profile-section" class="content-section">
+                <h2><span class="material-symbols-outlined">person</span>Mein Profil</h2>
+                <div id="profile-content">
+                    <p class="text-muted">Lädt Profil...</p>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <script type="module">
-        if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
-            console.error('CRITICAL: TB (tbjs) or its core modules are not defined.');
-            document.body.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 1.2em; color: red;">Critical Error: Frontend library (tbjs) failed to load.</div>';
-        } else {
-            console.log('TB object found. Initializing User Dashboard.');
-            let currentUserDetails = null;
-            let allAvailableModules = []; // To store modules from app.get_all_mods()
+    <div id="sidebar-backdrop"></div>
+</div>
 
-            async function initializeUserDashboard() {
-                console.log("User Dashboard Initializing with tbjs...");
-                TB.ui.DarkModeToggle.init();
-                setupUserNavigation();
-                await setupUserLogout();
+<script type="module">
+if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
+    console.error('CRITICAL: TB (tbjs) not loaded.');
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:red;">Fehler: Frontend-Bibliothek konnte nicht geladen werden.</div>';
+} else {
+    console.log('TB object found. Initializing User Dashboard v2...');
 
-                try {
-                    const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                    if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
-                        currentUserDetails = userRes.get();
-                        if (currentUserDetails.name) {
-                            const userHeaderTitle = document.querySelector('#user-header h1');
-                            if (userHeaderTitle) {
-                                userHeaderTitle.innerHTML = `<span class="material-symbols-outlined">dashboard</span>Welcome, ${TB.utils.escapeHtml(currentUserDetails.name)}!`;
-                            }
-                        }
-                        // Load all available modules for the "My Instances" section
-                        const modulesRes = await TB.api.request('CloudM.UserDashboard', 'get_all_available_modules', null, 'GET');
-                        if (modulesRes.error === TB.ToolBoxError.none) {
-                            allAvailableModules = modulesRes.get() || [];
-                        } else {
-                            console.warn("Could not fetch all available modules list:", modulesRes.info.help_text);
-                        }
+    let currentUser = null;
+    let allModules = [];
+    let userInstance = null;
+    let modDataCache = {};
 
-                        await showUserSection('my-profile'); // Default section
-                    } else {
-                        console.error("Failed to load current user for dashboard:", userRes.info.help_text);
-                        document.getElementById('user-content').innerHTML = '<p class="tb-text-red-500">Error: Could not load your details. Please try logging in again.</p>';
-                    }
-                } catch (e) {
-                    console.error("Error fetching current user for dashboard:", e);
-                    document.getElementById('user-content').innerHTML = '<p class="tb-text-red-500">Network error loading your details.</p>';
-                }
-                setupMobileSidebar();
-            }
+    // ========== Initialization ==========
+    async function initDashboard() {
+        console.log("Dashboard wird initialisiert...");
+        TB.ui.DarkModeToggle.init();
+        setupNavigation();
+        setupMobileSidebar();
+        setupLogout();
 
+        try {
+            // Benutzer laden
+            const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user', null, 'GET');
+            if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
+                currentUser = userRes.get();
+                updateWelcomeText();
 
-            function setupMobileSidebar() {
-            const sidebar = document.getElementById('user-sidebar');
-            const toggleBtn = document.getElementById('sidebar-toggle-btn');
-            const backdrop = document.getElementById('sidebar-backdrop'); // Get the backdrop
-
-            if (!sidebar || !toggleBtn || !backdrop) { // Check for backdrop too
-                console.warn("Mobile sidebar elements (sidebar, toggle button, or backdrop) not found. Skipping mobile sidebar setup.");
-                // If toggle button isn't there, ensure it's not shown via CSS either if it was meant to be.
-                if(toggleBtn) toggleBtn.style.display = 'none';
-                return;
-            }
-
-            // Show toggle button only on smaller screens
-            function updateToggleBtnVisibility() {
-                if (window.innerWidth < 768) { // Your mobile breakpoint
-                    toggleBtn.style.display = 'inline-flex';
-                } else {
-                    toggleBtn.style.display = 'none';
-                    sidebar.classList.remove('open'); // Ensure sidebar is closed if screen resizes to desktop
-                    backdrop.classList.remove('active');
-                    document.body.style.overflow = '';
-                }
-            }
-
-            updateToggleBtnVisibility(); // Initial check
-            window.addEventListener('resize', updateToggleBtnVisibility);
-
-
-            toggleBtn.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevent click from bubbling if needed
-                sidebar.classList.toggle('open');
-                backdrop.classList.toggle('active');
-                document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
-            });
-
-            backdrop.addEventListener('click', () => {
-                sidebar.classList.remove('open');
-                backdrop.classList.remove('active');
-                document.body.style.overflow = '';
-            });
-
-            sidebar.querySelectorAll('li[data-section]').forEach(item => {
-                item.addEventListener('click', () => {
-                    // Only close if it's mobile view and sidebar is open
-                    if (window.innerWidth < 768 && sidebar.classList.contains('open')) {
-                        sidebar.classList.remove('open');
-                        backdrop.classList.remove('active');
-                        document.body.style.overflow = '';
-                    }
-                });
-            });
-             console.log("Mobile sidebar setup complete.");
-        }
-
-            function _waitForTbInitUser(callback) {
-                 if (window.TB?.events && window.TB.config?.get('appRootId')) {
-                    callback();
-                } else {
-                    document.addEventListener('tbjs:initialized', callback, { once: true });
-                }
-            }
-            _waitForTbInitUser(initializeUserDashboard);
-
-            function setupUserNavigation() {
-                const navItems = document.querySelectorAll('#user-sidebar li[data-section]');
-                navItems.forEach(item => {
-                    item.addEventListener('click', async () => {
-                        navItems.forEach(i => i.classList.remove('active'));
-                        item.classList.add('active');
-                        const sectionId = item.getAttribute('data-section');
-                        await showUserSection(sectionId);
-                    });
-                });
-            }
-
-            async function showUserSection(sectionId) {
-                document.querySelectorAll('#user-content .content-section').forEach(s => s.classList.remove('active'));
-                const activeSection = document.getElementById(`${sectionId}-section`);
-                if (activeSection) {
-                    activeSection.classList.add('active');
-                    const contentDivId = `${sectionId}-content`;
-                    const contentDiv = document.getElementById(contentDivId);
-                    if (!contentDiv) { console.error(`Content div ${contentDivId} not found.`); return; }
-
-                    contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading ${sectionId.replace(/-/g, " ")}...</p>`;
-                    if (sectionId === 'my-profile') await loadMyProfileSection(contentDivId);
-                    else if (sectionId === 'my-instances') await loadMyInstancesAndModulesSection(contentDivId);
-                    else if (sectionId === 'app-appearance') await loadAppearanceSection(contentDivId);
-                    else if (sectionId === 'user-settings') await loadGenericUserSettingsSection(contentDivId);
-                }
-            }
-
-            async function setupUserLogout() {
-                const logoutButton = document.getElementById('logoutButtonUser');
-                if (logoutButton) {
-                    logoutButton.addEventListener('click', async () => {
-                        TB.ui.Loader.show("Logging out...");
-                        await TB.user.logout();
-                        window.location.href = '/';
-                        TB.ui.Loader.hide();
-                    });
-                }
-            }
-
-            async function loadMyProfileSection(targetDivId = 'my-profile-content') {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!currentUserDetails) { contentDiv.innerHTML = "<p class='tb-text-red-500'>Profile details not available.</p>"; return; }
-                const user = currentUserDetails;
-                const emailSectionId = `user-email-updater-${TB.utils.uniqueId()}`;
-                const expFeaturesIdUser = `user-exp-features-${TB.utils.uniqueId()}`;
-                const personaStatusIdUser = `user-persona-status-${TB.utils.uniqueId()}`;
-                const magicLinkIdUser = `user-magic-link-${TB.utils.uniqueId()}`;
-
-                let personaBtnHtmlUser = !user.is_persona ?
-                    `<button id="registerPersonaBtnUser" class="tb-btn tb-btn-success tb-mt-2"><span class="material-symbols-outlined tb-mr-1">fingerprint</span>Add Persona Device</button><div id="${personaStatusIdUser}" class="tb-text-sm tb-mt-1"></div><input id='invitation-key' placeholder="Invitation Key"></input>` :
-                    `<p class='tb-text-md tb-text-green-600 dark:tb-text-green-400'><span class="material-symbols-outlined tb-mr-1" style="vertical-align: text-bottom;">verified_user</span>Persona (WebAuthn) is configured.</p>`;
-
-                contentDiv.innerHTML = `
-                    <div class="tb-space-y-6">
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Email Address</h4>
-                            <div id="${emailSectionId}" class="tb-space-y-2">
-                                 <p class="tb-text-md"><strong>Current Email:</strong> ${user.email ? TB.utils.escapeHtml(user.email) : "Not set"}</p>
-                                 <input type="email" name="new_email_user" value="${user.email ? TB.utils.escapeHtml(user.email) : ''}" class="tb-input md:tb-w-2/3" placeholder="Enter new email">
-                                 <button class="tb-btn tb-btn-primary tb-mt-2"
-                                    data-hx-post="/api/CloudM.UserAccountManager/update_email"
-                                    data-hx-include="[name='new_email_user']"
-                                    data-hx-target="#${emailSectionId}" data-hx-swap="innerHTML"><span class="material-symbols-outlined tb-mr-1">save</span>Update Email</button>
-                            </div>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Magic Link</h4>
-                            <div id="${magicLinkIdUser}">
-                                <button id="requestMagicLinkBtnUser" class="tb-btn tb-btn-secondary"><span class="material-symbols-outlined tb-mr-1">link</span>Request New Magic Link</button>
-                                <p class="tb-text-sm tb-mt-1">Request a new magic link to log in on other devices.</p>
-                            </div>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Persona Device (WebAuthn)</h4>
-                            ${personaBtnHtmlUser}
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Application Settings</h4>
-                            <div id="${expFeaturesIdUser}">
-                                <label class="tb-label tb-checkbox-label">
-                                    <input type="checkbox" name="exp_features_user_val" ${user.settings && user.settings.experimental_features ? "checked" : ""}
-                                           class="tb-checkbox"
-                                           data-hx-post="/api/CloudM.UserAccountManager/update_setting"
-                                           data-hx-vals='{"setting_key": "experimental_features", "setting_value": event.target.checked ? "true" : "false"}'
-                                           data-hx-target="#${expFeaturesIdUser}" data-hx-swap="innerHTML">
-                                    <span class="tb-text-md">Enable Experimental Features</span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>`;
-                if (window.htmx) window.htmx.process(contentDiv);
-
-                document.getElementById('requestMagicLinkBtnUser')?.addEventListener('click', async () => {
-                    TB.ui.Loader.show("Requesting magic link...");
-                    const magicLinkRes = await TB.api.request('CloudM.UserDashboard', 'request_my_magic_link', null, 'POST');
-                    TB.ui.Loader.hide();
-                    if (magicLinkRes.error === TB.ToolBoxError.none) {
-                        TB.ui.Toast.showSuccess(magicLinkRes.info.help_text || "Magic link request sent to your email.");
-                    } else {
-                        TB.ui.Toast.showError(`Failed to request magic link: ${TB.utils.escapeHtml(magicLinkRes.info.help_text)}`);
-                    }
-                });
-
-                const personaBtnUsr = document.getElementById('registerPersonaBtnUser');
-                if (personaBtnUsr) {
-                    personaBtnUsr.addEventListener('click', async () => {
-                        const statusDiv = document.getElementById(personaStatusIdUser);
-                        if (!statusDiv) return;
-                        statusDiv.innerHTML = '<p class="tb-text-sm tb-text-blue-500">Initiating WebAuthn registration...</p>';
-                        if (window.TB?.user && user.name) {
-                            const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name, document.getElementById('invitation-key').value);
-                            if (result.success) {
-                                statusDiv.innerHTML = `<p class="tb-text-sm tb-text-green-500">${TB.utils.escapeHtml(result.message)} Refreshing details...</p>`;
-                                TB.ui.Toast.showSuccess("Persona registered! Refreshing...");
-                                setTimeout(async () => {
-                                    const updatedUserRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                                    if (updatedUserRes.error === TB.ToolBoxError.none && updatedUserRes.get()) {
-                                        currentUserDetails = updatedUserRes.get();
-                                        await loadMyProfileSection();
-                                    }
-                                }, 1500);
-                            } else {
-                                statusDiv.innerHTML = `<p class="tb-text-sm tb-text-red-500">Error: ${TB.utils.escapeHtml(result.message)}</p>`;
-                            }
-                        } else { statusDiv.innerHTML = '<p class="tb-text-sm tb-text-red-500">User details unavailable for WebAuthn.</p>'; }
-                    });
-                }
-            }
-
-            async function loadMyInstancesAndModulesSection(targetDivId = 'my-instances-content') {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) return;
-                try {
-                    const response = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances_with_cli', null, 'GET');
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderMyInstancesAndModules(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error loading instances: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch(e) {
-                    contentDiv.innerHTML = '<p class="tb-text-red-500">Network error fetching instances.</p>'; console.error(e);
-                }
-            }
-
-            function renderMyInstancesAndModules(instances, contentDiv) {
-                if (!instances || instances.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">You have no active instances.</p>'; return;
+                // Module laden
+                const modulesRes = await TB.api.request('CloudM.UserDashboard', 'get_all_available_modules', null, 'GET');
+                if (modulesRes.error === TB.ToolBoxError.none) {
+                    allModules = modulesRes.get() || [];
                 }
 
-                const primaryInstance = instances[0];
-                let html = `
-                    <div class="instance-card">
-                        <h4>Web Instance (Session ID: ${TB.utils.escapeHtml(primaryInstance.SiID)})</h4>
-                        <p class="tb-text-sm">WebSocket ID: ${TB.utils.escapeHtml(primaryInstance.webSocketID)}</p>
-                        <button class="tb-btn tb-btn-danger tb-mt-2" data-instance-siid="${primaryInstance.SiID}">
-                            <span class="material-symbols-outlined tb-mr-1">close</span>Close Web Instance
+                // Instanz laden
+                const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
+                if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
+                    userInstance = instanceRes.get()[0];
+                }
+
+                // Erste Sektion laden
+                await showSection('overview');
+            } else {
+                document.getElementById('user-content').innerHTML = `
+                    <div class="dashboard-card" style="text-align:center; padding:40px;">
+                        <span class="material-symbols-outlined" style="font-size:64px; color:var(--color-warning);">login</span>
+                        <h3 style="margin-top:16px;">Nicht angemeldet</h3>
+                        <p class="text-muted">Bitte melden Sie sich an, um fortzufahren.</p>
+                        <button onclick="TB.user.signIn()" class="tb-btn tb-btn-primary mt-4">
+                            <span class="material-symbols-outlined">login</span>
+                            Anmelden
                         </button>
-                    </div>`;
-
-                // CLI Sessions Section
-                if (primaryInstance.cli_sessions && primaryInstance.cli_sessions.length > 0) {
-                    html += `
-                        <div class="cli-sessions-card tb-mt-4">
-                            <h4>Active CLI Sessions (${primaryInstance.active_cli_sessions})</h4>
-                            <div class="cli-sessions-list">`;
-
-                    primaryInstance.cli_sessions.forEach(session => {
-                        const createdAt = new Date(session.created_at * 1000).toLocaleString();
-                        const lastActivity = new Date(session.last_activity * 1000).toLocaleString();
-                        const statusColor = session.status === 'active' ? 'tb-text-green-600' : 'tb-text-gray-500';
-
-                        html += `
-                            <div class="cli-session-item tb-p-3 tb-border tb-rounded tb-mb-2">
-                                <div class="tb-flex tb-justify-between tb-items-center">
-                                    <div>
-                                        <span class="tb-font-medium">CLI Session</span>
-                                        <span class="tb-text-sm ${statusColor}">${session.status}</span>
-                                    </div>
-                                    <button class="tb-btn tb-btn-sm tb-btn-danger"
-                                            onclick="closeCLISession('${session.cli_session_id}')">
-                                        <span class="material-symbols-outlined">close</span>
-                                    </button>
-                                </div>
-                                <div class="tb-text-xs tb-text-gray-600 tb-mt-1">
-                                    <div>Created: ${createdAt}</div>
-                                    <div>Last Activity: ${lastActivity}</div>
-                                </div>
-                            </div>`;
-                    });
-
-                    html += `</div></div>`;
-                } else {
-                    html += `
-                        <div class="cli-sessions-card tb-mt-4">
-                            <h4>CLI Sessions</h4>
-                            <p class="tb-text-gray-500">No active CLI sessions</p>
-                        </div>`;
-                }
-
-                // Modules section
-                html += `
-                    <h3 class="tb-text-lg tb-font-semibold tb-mt-4 tb-mb-2">Available Modules</h3>
-                    <div class="settings-grid">`;
-
-                const activeModuleNames = primaryInstance.live_modules.map(m => m.name);
-
-                allAvailableModules.forEach(modName => {
-                    const isActive = activeModuleNames.includes(modName);
-                    html += `
-                        <div class="module-card">
-                            <h4>${TB.utils.escapeHtml(modName)}</h4>
-                            <label class="toggle-switch">
-                                <input type="checkbox" data-module-name="${TB.utils.escapeHtml(modName)}" ${isActive ? 'checked' : ''}>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>`;
-                });
-                html += '</div>';
-                contentDiv.innerHTML = html;
-
-                // Event listeners
-                contentDiv.querySelector(`button[data-instance-siid="${primaryInstance.SiID}"]`)?.addEventListener('click', async (e) => {
-                    // Same close instance logic as before
-                    const siidToClose = e.currentTarget.dataset.instanceSiid;
-                        TB.ui.Modal.show({
-                            title: "Confirm Instance Closure",
-                            content: `<p>Are you sure you want to close instance <strong>${siidToClose}</strong>? This may log you out from that session.</p>`,
-                            buttons: [
-                                { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
-                                { text: 'Close Instance', variant: 'danger', action: async m => {
-                                    TB.ui.Loader.show("Closing instance...");
-                                    const closeRes = await TB.api.request('CloudM.UserDashboard', 'close_my_instance', { siid: siidToClose }, 'POST');
-                                    if (closeRes.error === TB.ToolBoxError.none) {
-                                        TB.ui.Toast.showSuccess("Instance closed successfully.");
-                                        await loadMyInstancesAndModulesSection();
-                                    } else { TB.ui.Toast.showError(`Error closing instance: ${TB.utils.escapeHtml(closeRes.info.help_text)}`); }
-                                    TB.ui.Loader.hide(); m.close();
-                                }}
-                            ]
-                        });
-                });
-
-                contentDiv.querySelectorAll('.toggle-switch input[data-module-name]').forEach(toggle => {
-                    toggle.addEventListener('change', async (e) => {
-                        const moduleName = e.target.dataset.moduleName;
-                        const activate = e.target.checked;
-                        TB.ui.Loader.show(`${activate ? 'Activating' : 'Deactivating'} ${moduleName}...`);
-                        const apiPayload = { module_name: moduleName, activate: activate, siid: primaryInstance.SiID };
-                        const modUpdateRes = await TB.api.request('CloudM.UserDashboard', 'update_my_instance_modules', apiPayload, 'POST');
-                        TB.ui.Loader.hide();
-                        if (modUpdateRes.error === TB.ToolBoxError.none) {
-                            TB.ui.Toast.showSuccess(`Module ${moduleName} ${activate ? 'activated' : 'deactivated'}.`);
-                            // Refresh instance data to reflect change
-                            const updatedInstanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
-                             if (updatedInstanceRes.error === TB.ToolBoxError.none) {
-                                const updatedInstances = updatedInstanceRes.get();
-                                if (updatedInstances && updatedInstances.length > 0) {
-                                    // Update the displayed active modules without full re-render for smoother UX if possible
-                                    const currentInstanceDisplay = updatedInstances.find(inst => inst.SiID === primaryInstance.SiID);
-                                    if (currentInstanceDisplay) {
-                                        primaryInstance.live_modules = currentInstanceDisplay.live_modules; // Update local cache
-                                        // For a full refresh: renderMyInstancesAndModules(updatedInstances, contentDiv);
-                                    }
-                                }
-                            }
-                        } else {
-                            TB.ui.Toast.showError(`Failed to update module ${moduleName}: ${TB.utils.escapeHtml(modUpdateRes.info.help_text)}`);
-                            e.target.checked = !activate; // Revert toggle on error
-                        }
-                    });
-                });
-            }
-
-            async function closeCLISession(cliSessionId) {
-                TB.ui.Modal.show({
-                    title: "Close CLI Session",
-                    content: `<p>Are you sure you want to close this CLI session?</p>`,
-                    buttons: [
-                        { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
-                        { text: 'Close Session', variant: 'danger', action: async m => {
-                            TB.ui.Loader.show("Closing CLI session...");
-                            const closeRes = await TB.api.request('CloudM.UserDashboard', 'close_cli_session',
-                                { cli_session_id: cliSessionId }, 'POST');
-
-                            if (closeRes.error === TB.ToolBoxError.none) {
-                                TB.ui.Loader.hide();
-                                TB.ui.showToast('CLI session closed successfully', 'success');
-                                loadMyInstancesAndModulesSection(); // Refresh the view
-                            } else {
-                                TB.ui.Loader.hide();
-                                TB.ui.showToast('Failed to close CLI session: ' + closeRes.info.help_text, 'error');
-                            }
-                            m.close();
-                        }}
-                    ]
-                });
-            }
-
-            async function loadAppearanceSection(targetDivId = 'app-appearance-content') {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv || !currentUserDetails) return;
-
-                const userSettings = currentUserDetails.settings || {};
-                const themeOverrides = userSettings.theme_overrides || {};
-                const graphicsSettings = userSettings.graphics_settings || {};
-
-                const themeVars = [
-                    { name: 'Theme Background', key: '--theme-bg', type: 'color', default: '#f8f9fa' },
-                    { name: 'Theme Text', key: '--theme-text', type: 'color', default: '#181823' },
-                    { name: 'Theme Primary', key: '--theme-primary', type: 'color', default: '#3a5fcd' },
-                    { name: 'Theme Secondary', key: '--theme-secondary', type: 'color', default: '#537FE7' },
-                    { name: 'Theme Accent', key: '--theme-accent', type: 'color', default: '#045fab' },
-                    { name: 'Theme Accent', key: '--theme-bg-light', type: 'color', default: '#537FE7' },
-                    { name: 'Theme Accent', key: '--theme-bg-sun', type: 'color', default: '#ffffff' },
-                    { name: 'Glass BG', key: '--glass-bg', type: 'text', placeholder: 'rgba(255,255,255,0.6)', default: 'rgba(255,255,255,0.75)'},
-                    // Add more theme variables as needed
-                ];
-
-                let themeVarsHtml = themeVars.map(v => `
-                    <div class="setting-item">
-                        <label for="theme-var-${v.key}">${v.name} (${v.key}):</label>
-                        <input type="${v.type}" id="theme-var-${v.key}" data-var-key="${v.key}"
-                               value="${TB.utils.escapeHtml(themeOverrides[v.key] || v.default)}"
-                               ${v.placeholder ? `placeholder="${v.placeholder}"` : ''}>
-                    </div>
-                `).join('');
-
-                contentDiv.innerHTML = `
-                    <div class="tb-space-y-6">
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Site Theme Preference</h4>
-                            <p class="tb-text-sm tb-mb-2">Current site theme preference: <strong id="currentThemePreferenceText">${TB.ui.theme.getPreference()}</strong></p>
-                            <div class="tb-flex tb-space-x-2">
-                                <button class="tb-btn" data-theme-set="light">Light</button>
-                                <button class="tb-btn" data-theme-set="dark">Dark</button>
-                                <button class="tb-btn" data-theme-set="system">System Default</button>
-                            </div>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Custom Colors & Styles</h4>
-                            <div class="settings-grid">${themeVarsHtml}</div>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Background Settings</h4>
-                            <div class="settings-grid">
-                                <div class="setting-item">
-                                    <label for="bgTypeSelect">Background Type:</label>
-                                    <select id="bgTypeSelect" class="tb-input">
-                                        <option value="color" ${(graphicsSettings.type || 'color') === 'color' ? 'selected':''}>Color</option>
-                                        <option value="image" ${graphicsSettings.type === 'image' ? 'selected':''}>Image</option>
-                                        <option value="3d" ${graphicsSettings.type === '3d' ? 'selected':''}>3D Animated</option>
-                                    </select>
-                                </div>
-                                <div class="setting-item" id="bgColorSetting" style="display: ${(graphicsSettings.type || 'color') === 'color' ? 'block':'none'};">
-                                    <label for="bgColorInput">Background Color (Light Mode):</label>
-                                    <input type="color" id="bgColorInputLight" value="${graphicsSettings.bgColorLight || '#FFFFFF'}">
-                                    <label for="bgColorInputDark" class="tb-mt-2">Background Color (Dark Mode):</label>
-                                    <input type="color" id="bgColorInputDark" value="${graphicsSettings.bgColorDark || '#121212'}">
-                                </div>
-                                <div class="setting-item" id="bgImageSetting" style="display: ${graphicsSettings.type === 'image' ? 'block':'none'};">
-                                    <label for="bgImageUrlInputLight">Background Image URL (Light Mode):</label>
-                                    <input type="text" id="bgImageUrlInputLight" class="tb-input" value="${graphicsSettings.bgImageUrlLight || ''}" placeholder="https://example.com/light.jpg">
-                                     <label for="bgImageUrlInputDark" class="tb-mt-2">Background Image URL (Dark Mode):</label>
-                                    <input type="text" id="bgImageUrlInputDark" class="tb-input" value="${graphicsSettings.bgImageUrlDark || ''}" placeholder="https://example.com/dark.jpg">
-                                </div>
-                                <div class="setting-item" id="bg3dSetting" style="display: ${graphicsSettings.type === '3d' ? 'block':'none'};">
-                                    <label for="sierpinskiDepthInput">3D Sierpinski Depth (0-5):</label>
-                                    <input type="number" id="sierpinskiDepthInput" class="tb-input" min="0" max="5" value="${graphicsSettings.sierpinskiDepth || 2}">
-                                    <label for="animationSpeedFactorInput" class="tb-mt-2">3D Animation Speed Factor (0.1-2.0):</label>
-                                    <input type="number" id="animationSpeedFactorInput" class="tb-input" min="0.1" max="2.0" step="0.1" value="${graphicsSettings.animationSpeedFactor || 1.0}">
-                                </div>
-                            </div>
-                        </div>
-                        <button id="saveAppearanceSettingsBtn" class="tb-btn tb-btn-primary tb-mt-4"><span class="material-symbols-outlined">save</span>Save Appearance Settings</button>
                     </div>
                 `;
-
-                document.getElementById('bgTypeSelect').addEventListener('change', function() {
-                    document.getElementById('bgColorSetting').style.display = this.value === 'color' ? 'block' : 'none';
-                    document.getElementById('bgImageSetting').style.display = this.value === 'image' ? 'block' : 'none';
-                    document.getElementById('bg3dSetting').style.display = this.value === '3d' ? 'block' : 'none';
-                });
-
-                contentDiv.querySelectorAll('button[data-theme-set]').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        const newPref = btn.dataset.themeSet;
-                        TB.ui.theme.setPreference(newPref); // This updates tbjs internal and applies system-wide
-                        document.getElementById('currentThemePreferenceText').textContent = newPref;
-                        TB.ui.Toast.showInfo(`Site theme preference set to ${newPref}`);
-                    });
-                });
-
-                document.getElementById('saveAppearanceSettingsBtn').addEventListener('click', async () => {
-                    TB.ui.Loader.show("Saving appearance settings...");
-                    let newThemeOverrides = {};
-                    themeVars.forEach(v => {
-                        newThemeOverrides[v.key] = document.getElementById(`theme-var-${v.key}`).value;
-                    });
-
-                    let newGraphicsSettings = {
-                        type: document.getElementById('bgTypeSelect').value,
-                        bgColorLight: document.getElementById('bgColorInputLight').value,
-                        bgColorDark: document.getElementById('bgColorInputDark').value,
-                        bgImageUrlLight: document.getElementById('bgImageUrlInputLight').value,
-                        bgImageUrlDark: document.getElementById('bgImageUrlInputDark').value,
-                        sierpinskiDepth: parseInt(document.getElementById('sierpinskiDepthInput').value),
-                        animationSpeedFactor: parseFloat(document.getElementById('animationSpeedFactorInput').value)
-                    };
-
-                    const payload = {
-                        settings: { // Assuming settings are namespaced on the backend
-                            theme_overrides: newThemeOverrides,
-                            graphics_settings: newGraphicsSettings,
-                            // Important: include the current site theme preference from TB.ui.theme
-                            site_theme_preference: TB.ui.theme.getPreference()
-                        }
-                    };
-
-                    const result = await TB.api.request('CloudM.UserDashboard', 'update_my_appearance_settings', payload, 'POST');
-                    TB.ui.Loader.hide();
-                    if (result.error === TB.ToolBoxError.none) {
-                        TB.ui.Toast.showSuccess("Appearance settings saved!");
-                        // Update currentUserDetails and re-apply settings client-side
-                        if(currentUserDetails.settings) {
-                            currentUserDetails.settings.theme_overrides = newThemeOverrides;
-                            currentUserDetails.settings.graphics_settings = newGraphicsSettings;
-                            currentUserDetails.settings.site_theme_preference = TB.ui.theme.getPreference();
-                        } else {
-                            currentUserDetails.settings = payload.settings;
-                        }
-                        // Trigger tbjs to re-apply these settings from TB.state if it supports it,
-                        // or manually apply them now.
-                        _applyCustomThemeVariables(newThemeOverrides);
-                        _applyCustomBackgroundSettings(newGraphicsSettings); // Requires TB.graphics to use these
-                         TB.ui.theme.setPreference(newGraphicsSettings.site_theme_preference || 'system'); // Re-apply base theme choice
-
-                    } else {
-                        TB.ui.Toast.showError(`Failed to save settings: ${TB.utils.escapeHtml(result.info.help_text)}`);
-                    }
-                });
             }
+        } catch (e) {
+            console.error("Fehler beim Initialisieren:", e);
+            document.getElementById('user-content').innerHTML = `
+                <div class="dashboard-card" style="text-align:center; padding:40px;">
+                    <span class="material-symbols-outlined" style="font-size:64px; color:var(--color-error);">error</span>
+                    <h3 style="margin-top:16px;">Verbindungsfehler</h3>
+                    <p class="text-muted">Die Verbindung zum Server konnte nicht hergestellt werden.</p>
+                </div>
+            `;
+        }
+    }
 
-            // Inside your _applyCustomThemeVariables function in the User Dashboard JS
-            function _applyCustomThemeVariables(themeOverrides) {
-                if (!themeOverrides) return;
-                const rootStyle = document.documentElement.style;
-                for (const [key, value] of Object.entries(themeOverrides)) {
-                    if (key.startsWith('--theme-') || key.startsWith('--glass-') || key.startsWith('--sidebar-')) { // Be specific
-                        rootStyle.setProperty(key, value);
-                    }
+    function updateWelcomeText() {
+        const welcomeEl = document.getElementById('welcome-text');
+        if (welcomeEl && currentUser) {
+            const name = currentUser.username || currentUser.name || 'Benutzer';
+            welcomeEl.textContent = `Willkommen, ${name}!`;
+        }
+    }
+
+    // ========== Navigation ==========
+    function setupNavigation() {
+        document.querySelectorAll('#user-sidebar li[data-section]').forEach(item => {
+            item.addEventListener('click', async () => {
+                document.querySelectorAll('#user-sidebar li').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                await showSection(item.dataset.section);
+
+                // Mobile: Sidebar schließen
+                if (window.innerWidth < 769) {
+                    document.getElementById('user-sidebar').classList.remove('open');
+                    document.getElementById('sidebar-backdrop').classList.remove('active');
                 }
-                console.log("Applied custom theme variables:", themeOverrides);
-                // Additionally, you might need to inform tbjs.ui.theme if its internal state
-                // or background calculations depend on these specific CSS variables.
-                // This might involve emitting an event or calling a theme refresh method if available.
-                // For example, if TB.ui.theme._applyBackground() reads these vars.
-                if (TB.ui.theme?._applyBackground) {
-                    TB.ui.theme._applyBackground(); // If safe to call directly
-                } else if (TB.events) {
-                    TB.events.emit('customTheme:variablesApplied', themeOverrides);
-                }
+            });
+        });
+    }
+
+    function setupMobileSidebar() {
+        const toggleBtn = document.getElementById('sidebar-toggle-btn');
+        const sidebar = document.getElementById('user-sidebar');
+        const backdrop = document.getElementById('sidebar-backdrop');
+
+        toggleBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            backdrop.classList.toggle('active');
+        });
+
+        backdrop.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            backdrop.classList.remove('active');
+        });
+    }
+
+    function setupLogout() {
+        document.getElementById('logoutButtonUser').addEventListener('click', async () => {
+            TB.ui.Loader.show("Abmelden...");
+            await TB.user.logout();
+            window.location.href = '/';
+        });
+    }
+
+    // ========== Section Loading ==========
+    async function showSection(sectionId) {
+        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+        const section = document.getElementById(`${sectionId}-section`);
+        if (section) {
+            section.classList.add('active');
+
+            switch(sectionId) {
+                case 'overview': await loadOverview(); break;
+                case 'my-modules': await loadModules(); break;
+                case 'mod-data': await loadModData(); break;
+                case 'settings': await loadSettings(); break;
+                case 'appearance': await loadAppearance(); break;
+                case 'profile': await loadProfile(); break;
             }
+        }
+    }
 
-            // Inside your _applyCustomBackgroundSettings function
-            function _applyCustomBackgroundSettings(graphicsSettings) {
-                if (!graphicsSettings) return;
-                console.log("Applying user-defined background settings:", graphicsSettings);
+    // ========== Übersicht ==========
+    async function loadOverview() {
+        const content = document.getElementById('overview-content');
+        const loadedModsCount = userInstance?.live_modules?.length || 0;
+        const savedModsCount = userInstance?.saved_modules?.length || 0;
+        const cliSessions = userInstance?.active_cli_sessions || 0;
 
-                // 1. Update tbjs's internal config for theme/background so it persists across reloads/theme toggles
-                // This part is tricky as TB.config is usually set at init.
-                // A better approach would be for TB.ui.theme to listen to state changes for these settings.
-                // For now, let's assume TB.state is the source of truth for these overrides.
+        content.innerHTML = `
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">${loadedModsCount}</div>
+                    <div class="stat-label">Aktive Module</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${savedModsCount}</div>
+                    <div class="stat-label">Gespeicherte Module</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${cliSessions}</div>
+                    <div class="stat-label">CLI Sitzungen</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${currentUser?.level || 1}</div>
+                    <div class="stat-label">Benutzer-Level</div>
+                </div>
+            </div>
 
-                // Example: Saving to TB.state (which should then be read by TB.ui.theme)
-                TB.state.set('user.settings.graphics_settings', graphicsSettings, { persist: true });
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">speed</span>Schnellzugriff</h3>
+                <div class="flex gap-2" style="flex-wrap:wrap;">
+                    <button class="tb-btn tb-btn-primary" onclick="showSection('my-modules')">
+                        <span class="material-symbols-outlined">extension</span>
+                        Module verwalten
+                    </button>
+                    <button class="tb-btn tb-btn-secondary" onclick="showSection('settings')">
+                        <span class="material-symbols-outlined">settings</span>
+                        Einstellungen
+                    </button>
+                    <button class="tb-btn tb-btn-secondary" onclick="showSection('appearance')">
+                        <span class="material-symbols-outlined">palette</span>
+                        Theme ändern
+                    </button>
+                </div>
+            </div>
 
-
-                // 2. Directly trigger TB.ui.theme to re-evaluate its background
-                //    This requires TB.ui.theme to be able to consume these settings.
-                if (TB.ui.theme && typeof TB.ui.theme.updateBackgroundConfiguration === 'function') {
-                    // Ideal: TB.ui.theme has a method to accept new background config parts
-                    TB.ui.theme.updateBackgroundConfiguration({
-                        type: graphicsSettings.type,
-                        light: {
-                            color: graphicsSettings.bgColorLight,
-                            image: graphicsSettings.bgImageUrlLight
-                        },
-                        dark: {
-                            color: graphicsSettings.bgColorDark,
-                            image: graphicsSettings.bgImageUrlDark
-                        }
-                        // ... and potentially placeholder settings if user can configure them
-                    });
-                } else if (TB.ui.theme?._applyBackground) {
-                    // Less ideal, but might work if _applyBackground re-reads from a source affected by the state update
-                    TB.ui.theme._applyBackground();
-                }
-
-
-                // 3. Directly interact with TB.graphics for 3D specific settings
-                if (graphicsSettings.type === '3d' && TB.graphics) {
-                    if (typeof graphicsSettings.sierpinskiDepth === 'number' && TB.graphics.setSierpinskiDepth) {
-                        TB.graphics.setSierpinskiDepth(graphicsSettings.sierpinskiDepth);
-                    }
-                    if (typeof graphicsSettings.animationSpeedFactor === 'number' && TB.graphics.setAnimationSpeed) {
-                        // Assuming default base speeds and only factor is changed by user
-                        TB.graphics.setAnimationSpeed( // Use existing animParams or defaults if available
-                            TB.graphics.animParams?.x || 0.0001,
-                            TB.graphics.animParams?.y || 0.0002,
-                            TB.graphics.animParams?.z || 0.00005,
-                            graphicsSettings.animationSpeedFactor
-                        );
-                    }
-                }
-                TB.logger.log("[UserDashboard] User background settings applied/updated.");
-            }
-
-
-            async function loadGenericUserSettingsSection(targetDivId = 'user-settings-content') {
-                 const contentDiv = document.getElementById(targetDivId);
-                 if (!contentDiv || !currentUserDetails) return;
-                 const userSettings = currentUserDetails.settings || {};
-
-                 // Example: Storing arbitrary JSON data by the user
-                 const customJsonData = userSettings.custom_json_data || {};
-
-                 contentDiv.innerHTML = `
-                    <div class="tb-space-y-4">
-                        <h4 class="tb-text-lg tb-font-semibold">Custom User Data (JSON)</h4>
-                        <p class="tb-text-sm">Store arbitrary JSON data for your use. This is saved to your account.</p>
-                        <textarea id="customJsonDataInput" class="tb-input" rows="8" placeholder='${JSON.stringify({"myKey": "myValue", "nested": {"num": 123}}, null, 2)}'>${TB.utils.escapeHtml(JSON.stringify(customJsonData, null, 2))}</textarea>
-                        <button id="saveCustomJsonDataBtn" class="tb-btn tb-btn-primary tb-mt-2"><span class="material-symbols-outlined">save</span>Save Custom Data</button>
-                        <p id="customJsonDataStatus" class="tb-text-sm tb-mt-1"></p>
+            ${userInstance?.live_modules?.length > 0 ? `
+                <div class="dashboard-card">
+                    <h3><span class="material-symbols-outlined">play_circle</span>Aktive Module</h3>
+                    <div class="module-grid">
+                        ${userInstance.live_modules.map(mod => `
+                            <div class="module-card active">
+                                <div class="module-header">
+                                    <span class="module-name">${TB.utils.escapeHtml(mod.name)}</span>
+                                    <span class="module-status loaded">Aktiv</span>
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
-                 `;
-                 document.getElementById('saveCustomJsonDataBtn').addEventListener('click', async () => {
-                    const textarea = document.getElementById('customJsonDataInput');
-                    const statusEl = document.getElementById('customJsonDataStatus');
-                    let jsonData;
-                    try {
-                        jsonData = JSON.parse(textarea.value);
-                    } catch (err) {
-                        statusEl.textContent = 'Error: Invalid JSON format.';
-                        TB.ui.Toast.showError('Invalid JSON format provided.');
-                        return;
-                    }
-                    statusEl.textContent = 'Saving...';
+                </div>
+            ` : ''}
 
-                    const saveResult = await TB.api.request('CloudM.UserAccountManager', 'update_user_specific_setting',
-                        { setting_key: 'custom_json_data', setting_value: jsonData }, // Send parsed JSON
-                        'POST'
-                    );
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">info</span>Konto-Info</h3>
+                <table style="width:100%;">
+                    <tr><td class="text-muted">Benutzername</td><td><strong>${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</strong></td></tr>
+                    <tr><td class="text-muted">E-Mail</td><td>${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</td></tr>
+                    <tr><td class="text-muted">Level</td><td>${currentUser?.level || 1}</td></tr>
+                </table>
+            </div>
+        `;
+    }
 
-                    if (saveResult.error === TB.ToolBoxError.none) {
-                        statusEl.textContent = 'Custom data saved successfully!';
-                        TB.ui.Toast.showSuccess('Custom data saved.');
-                        if(currentUserDetails.settings) currentUserDetails.settings['custom_json_data'] = jsonData;
-                        else currentUserDetails.settings = {'custom_json_data': jsonData};
-                    } else {
-                        statusEl.textContent = `Error: ${TB.utils.escapeHtml(saveResult.info.help_text)}`;
-                        TB.ui.Toast.showError('Failed to save custom data.');
-                    }
-                 });
+    // ========== Module ==========
+    async function loadModules() {
+        const content = document.getElementById('my-modules-content');
+
+        // Aktuelle Instanz-Daten neu laden
+        try {
+            const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
+            if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
+                userInstance = instanceRes.get()[0];
             }
-        } // End of TB check
-    </script>
+        } catch(e) {}
+
+        const liveModNames = (userInstance?.live_modules || []).map(m => m.name);
+        const savedModNames = userInstance?.saved_modules || [];
+
+        // Kategorien erstellen
+        const categories = {};
+        allModules.forEach(mod => {
+            const category = mod.split('.')[0] || 'Andere';
+            if (!categories[category]) categories[category] = [];
+            categories[category].push(mod);
+        });
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">info</span>Hinweis</h3>
+                <p class="text-sm text-muted">
+                    Hier können Sie Module aktivieren oder deaktivieren. Aktive Module stehen Ihnen sofort zur Verfügung.
+                    Gespeicherte Module werden bei der nächsten Anmeldung automatisch geladen.
+                </p>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">bookmark</span>Meine gespeicherten Module (${savedModNames.length})</h3>
+                ${savedModNames.length > 0 ? `
+                    <div class="module-grid">
+                        ${savedModNames.map(modName => {
+                            const isLive = liveModNames.includes(modName);
+                            return `
+                                <div class="module-card ${isLive ? 'active' : ''}">
+                                    <div class="module-header">
+                                        <span class="module-name">${TB.utils.escapeHtml(modName)}</span>
+                                        <span class="module-status ${isLive ? 'loaded' : 'available'}">${isLive ? 'Aktiv' : 'Gespeichert'}</span>
+                                    </div>
+                                    <div class="module-actions mt-2">
+                                        ${!isLive ? `
+                                            <button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule('${TB.utils.escapeHtml(modName)}')">
+                                                <span class="material-symbols-outlined">play_arrow</span>
+                                                Laden
+                                            </button>
+                                        ` : `
+                                            <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule('${TB.utils.escapeHtml(modName)}')">
+                                                <span class="material-symbols-outlined">stop</span>
+                                                Entladen
+                                            </button>
+                                        `}
+                                        <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="removeFromSaved('${TB.utils.escapeHtml(modName)}')">
+                                            <span class="material-symbols-outlined">delete</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                ` : '<p class="text-muted">Keine Module gespeichert.</p>'}
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">apps</span>Verfügbare Module (${allModules.length})</h3>
+                <div class="mb-4">
+                    <input type="text" id="module-search" class="tb-input" placeholder="Module durchsuchen..." oninput="filterModules(this.value)">
+                </div>
+                <div id="module-categories">
+                    ${Object.entries(categories).map(([cat, mods]) => `
+                        <details class="mb-4" ${cat === 'CloudM' ? 'open' : ''}>
+                            <summary style="cursor:pointer; font-weight:var(--font-weight-semibold); padding:var(--spacing) 0;">
+                                <span class="material-symbols-outlined" style="vertical-align:middle;">folder</span>
+                                ${TB.utils.escapeHtml(cat)} (${mods.length})
+                            </summary>
+                            <div class="module-grid" style="margin-top:var(--spacing);">
+                                ${mods.map(modName => {
+                                    const isLive = liveModNames.includes(modName);
+                                    const isSaved = savedModNames.includes(modName);
+                                    return `
+                                        <div class="module-card module-item ${isLive ? 'active' : ''}" data-name="${modName.toLowerCase()}">
+                                            <div class="module-header">
+                                                <span class="module-name">${TB.utils.escapeHtml(modName)}</span>
+                                                ${isLive ? '<span class="module-status loaded">Aktiv</span>' :
+                                                  isSaved ? '<span class="module-status available">Gespeichert</span>' : ''}
+                                            </div>
+                                            <div class="module-actions mt-2">
+                                                ${!isSaved ? `
+                                                    <button class="tb-btn tb-btn-primary tb-btn-sm" onclick="addToSaved('${TB.utils.escapeHtml(modName)}')">
+                                                        <span class="material-symbols-outlined">bookmark_add</span>
+                                                        Speichern
+                                                    </button>
+                                                ` : ''}
+                                                ${!isLive ? `
+                                                    <button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule('${TB.utils.escapeHtml(modName)}')">
+                                                        <span class="material-symbols-outlined">play_arrow</span>
+                                                        Laden
+                                                    </button>
+                                                ` : `
+                                                    <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule('${TB.utils.escapeHtml(modName)}')">
+                                                        <span class="material-symbols-outlined">stop</span>
+                                                        Entladen
+                                                    </button>
+                                                `}
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </details>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Modul-Funktionen global machen
+    window.filterModules = function(query) {
+        const q = query.toLowerCase();
+        document.querySelectorAll('.module-item').forEach(item => {
+            const name = item.dataset.name;
+            item.style.display = name.includes(q) ? '' : 'none';
+        });
+    };
+
+    window.loadModule = async function(modName) {
+        TB.ui.Loader.show(`Lade ${modName}...`);
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_instance', {module_name: modName}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`${modName} wurde geladen`);
+                await loadModules();
+            } else {
+                TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Laden');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.unloadModule = async function(modName) {
+        TB.ui.Loader.show(`Entlade ${modName}...`);
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_instance', {module_name: modName}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`${modName} wurde entladen`);
+                await loadModules();
+            } else {
+                TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Entladen');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.addToSaved = async function(modName) {
+        TB.ui.Loader.show('Speichere...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_saved', {module_name: modName}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`${modName} gespeichert`);
+                await loadModules();
+            } else {
+                TB.ui.Toast.showError(res.info.help_text || 'Fehler');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.removeFromSaved = async function(modName) {
+        if (!confirm(`Möchten Sie "${modName}" wirklich aus den gespeicherten Modulen entfernen?`)) return;
+        TB.ui.Loader.show('Entferne...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_saved', {module_name: modName}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess(`${modName} entfernt`);
+                await loadModules();
+            } else {
+                TB.ui.Toast.showError(res.info.help_text || 'Fehler');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    // ========== Mod-Daten ==========
+    async function loadModData() {
+        const content = document.getElementById('mod-data-content');
+
+        // Mod-Daten laden
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'get_all_mod_data', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                modDataCache = res.get() || {};
+            }
+        } catch(e) {}
+
+        const modNames = Object.keys(modDataCache);
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>
+                <p class="text-sm text-muted">
+                    Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese Daten einsehen und bei Bedarf bearbeiten.
+                    Diese Daten sind nur für Sie sichtbar und werden sicher gespeichert.
+                </p>
+            </div>
+
+            ${modNames.length > 0 ? modNames.map(modName => {
+                const data = modDataCache[modName] || {};
+                const entries = Object.entries(data);
+                return `
+                    <div class="mod-data-panel mb-4">
+                        <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.material-symbols-outlined').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
+                            <span>
+                                <span class="material-symbols-outlined" style="vertical-align:middle;">extension</span>
+                                ${TB.utils.escapeHtml(modName)}
+                            </span>
+                            <span class="material-symbols-outlined">expand_more</span>
+                        </div>
+                        <div class="mod-data-content">
+                            ${entries.length > 0 ? entries.map(([key, value]) => `
+                                <div class="mod-data-item">
+                                    <span class="mod-data-key">${TB.utils.escapeHtml(key)}</span>
+                                    <span class="mod-data-value">
+                                        ${typeof value === 'boolean' ?
+                                            `<span class="${value ? 'text-success' : 'text-error'}">${value ? 'Ja' : 'Nein'}</span>` :
+                                            TB.utils.escapeHtml(String(value).substring(0, 100))}
+                                    </span>
+                                </div>
+                            `).join('') : '<p class="text-muted text-sm">Keine Daten gespeichert.</p>'}
+                            <div class="mt-4 flex gap-2">
+                                <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="editModData('${TB.utils.escapeHtml(modName)}')">
+                                    <span class="material-symbols-outlined">edit</span>
+                                    Bearbeiten
+                                </button>
+                                <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="clearModData('${TB.utils.escapeHtml(modName)}')">
+                                    <span class="material-symbols-outlined">delete</span>
+                                    Löschen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('') : `
+                <div class="dashboard-card" style="text-align:center; padding:40px;">
+                    <span class="material-symbols-outlined" style="font-size:48px; color:var(--theme-text-muted);">folder_off</span>
+                    <p class="text-muted mt-4">Noch keine Mod-Daten vorhanden.</p>
+                    <p class="text-sm text-muted">Module speichern hier automatisch Ihre Einstellungen und Fortschritte.</p>
+                </div>
+            `}
+        `;
+    }
+
+    window.editModData = async function(modName) {
+        const data = modDataCache[modName] || {};
+        const json = JSON.stringify(data, null, 2);
+
+        TB.ui.Modal.show({
+            title: `${modName} - Daten bearbeiten`,
+            content: `
+                <p class="text-sm text-muted mb-4">Vorsicht: Änderungen können die Funktionalität des Moduls beeinflussen.</p>
+                <textarea id="mod-data-editor" style="width:100%; height:200px; font-family:monospace; padding:8px; border:1px solid var(--theme-border); border-radius:var(--radius-md);">${TB.utils.escapeHtml(json)}</textarea>
+            `,
+            buttons: [
+                { text: 'Abbrechen', action: m => m.close(), variant: 'secondary' },
+                {
+                    text: 'Speichern',
+                    variant: 'primary',
+                    action: async m => {
+                        try {
+                            const newData = JSON.parse(document.getElementById('mod-data-editor').value);
+                            TB.ui.Loader.show('Speichere...');
+                            const res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: newData}, 'POST');
+                            TB.ui.Loader.hide();
+                            if (res.error === TB.ToolBoxError.none) {
+                                TB.ui.Toast.showSuccess('Daten gespeichert');
+                                modDataCache[modName] = newData;
+                                m.close();
+                                await loadModData();
+                            } else {
+                                TB.ui.Toast.showError('Fehler beim Speichern');
+                            }
+                        } catch(e) {
+                            TB.ui.Toast.showError('Ungültiges JSON-Format');
+                        }
+                    }
+                }
+            ]
+        });
+    };
+
+    window.clearModData = async function(modName) {
+        if (!confirm(`Möchten Sie wirklich alle Daten von "${modName}" löschen?`)) return;
+        TB.ui.Loader.show('Lösche...');
+        try {
+            const res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: {}}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Daten gelöscht');
+                modDataCache[modName] = {};
+                await loadModData();
+            } else {
+                TB.ui.Toast.showError('Fehler beim Löschen');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    // ========== Einstellungen ==========
+    async function loadSettings() {
+        const content = document.getElementById('settings-content');
+        const settings = currentUser?.settings || {};
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">tune</span>Allgemeine Einstellungen</h3>
+
+                <div class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Experimentelle Funktionen</div>
+                            <div class="setting-description">Aktiviert neue Funktionen, die sich noch in der Testphase befinden</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${settings.experimental_features ? 'checked' : ''}
+                                   onchange="updateSetting('experimental_features', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Benachrichtigungen</div>
+                            <div class="setting-description">Erhalten Sie Benachrichtigungen über wichtige Ereignisse</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${settings.notifications !== false ? 'checked' : ''}
+                                   onchange="updateSetting('notifications', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Auto-Laden von Modulen</div>
+                            <div class="setting-description">Gespeicherte Module beim Anmelden automatisch laden</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${settings.auto_load_modules !== false ? 'checked' : ''}
+                                   onchange="updateSetting('auto_load_modules', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Detaillierte Protokolle</div>
+                            <div class="setting-description">Ausführliche Protokollierung für Fehlerbehebung aktivieren</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${settings.verbose_logging ? 'checked' : ''}
+                                   onchange="updateSetting('verbose_logging', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">language</span>Sprache & Region</h3>
+                <div class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Sprache</div>
+                            <div class="setting-description">Wählen Sie Ihre bevorzugte Sprache</div>
+                        </div>
+                        <select class="tb-input" style="width:auto;" onchange="updateSetting('language', this.value)">
+                            <option value="de" ${settings.language === 'de' || !settings.language ? 'selected' : ''}>Deutsch</option>
+                            <option value="en" ${settings.language === 'en' ? 'selected' : ''}>English</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">security</span>Datenschutz</h3>
+                <div class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Nutzungsstatistiken</div>
+                            <div class="setting-description">Anonyme Statistiken zur Verbesserung der Anwendung senden</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${settings.analytics !== false ? 'checked' : ''}
+                                   onchange="updateSetting('analytics', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    window.updateSetting = async function(key, value) {
+        try {
+            const res = await TB.api.request('CloudM.UserAccountManager', 'update_setting', {
+                setting_key: key,
+                setting_value: String(value)
+            }, 'POST');
+            if (res.error === TB.ToolBoxError.none) {
+                if (!currentUser.settings) currentUser.settings = {};
+                currentUser.settings[key] = value;
+                TB.ui.Toast.showSuccess('Einstellung gespeichert');
+            } else {
+                TB.ui.Toast.showError('Fehler beim Speichern');
+            }
+        } catch(e) {
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    // ========== Erscheinungsbild ==========
+    async function loadAppearance() {
+        const content = document.getElementById('appearance-content');
+        const themePreference = TB.ui.theme?.getPreference() || 'system';
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">contrast</span>Farbschema</h3>
+                <p class="text-sm text-muted mb-4">Wählen Sie Ihr bevorzugtes Farbschema für die Anwendung.</p>
+
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:var(--spacing);">
+                    <button class="theme-option ${themePreference === 'light' ? 'active' : ''}" onclick="setTheme('light')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'light' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
+                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">light_mode</span>
+                        <span>Hell</span>
+                    </button>
+                    <button class="theme-option ${themePreference === 'dark' ? 'active' : ''}" onclick="setTheme('dark')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'dark' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
+                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">dark_mode</span>
+                        <span>Dunkel</span>
+                    </button>
+                    <button class="theme-option ${themePreference === 'system' ? 'active' : ''}" onclick="setTheme('system')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'system' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
+                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">computer</span>
+                        <span>System</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>
+                <p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße nach Ihren Bedürfnissen an.</p>
+
+                <div class="flex items-center gap-2">
+                    <span class="text-sm">A</span>
+                    <input type="range" min="80" max="120" value="${currentUser?.settings?.font_scale || 100}"
+                           style="flex:1;" onchange="updateSetting('font_scale', this.value); document.documentElement.style.fontSize = this.value + '%';">
+                    <span style="font-size:1.2em;">A</span>
+                </div>
+            </div>
+        `;
+    }
+
+    window.setTheme = function(theme) {
+        if (TB.ui.theme?.setPreference) {
+            TB.ui.theme.setPreference(theme);
+            TB.ui.Toast.showSuccess(`Theme auf "${theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell'}" gesetzt`);
+            loadAppearance();
+        }
+    };
+
+    // ========== Profil ==========
+    async function loadProfile() {
+        const content = document.getElementById('profile-content');
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">account_circle</span>Profil-Informationen</h3>
+
+                <div class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Benutzername</div>
+                            <div class="setting-description">${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</div>
+                        </div>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">E-Mail-Adresse</div>
+                            <div class="setting-description">${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</div>
+                        </div>
+                        <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.() || TB.ui.Toast.showInfo('Profil-Einstellungen werden geladen...')">
+                            <span class="material-symbols-outlined">edit</span>
+                            Ändern
+                        </button>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Benutzer-Level</div>
+                            <div class="setting-description">Level ${currentUser?.level || 1}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">key</span>Sicherheit</h3>
+
+                <div class="flex gap-2" style="flex-wrap:wrap;">
+                    <button class="tb-btn tb-btn-secondary" onclick="requestMagicLink()">
+                        <span class="material-symbols-outlined">link</span>
+                        Magic Link anfordern
+                    </button>
+                    <button class="tb-btn tb-btn-secondary" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.()">
+                        <span class="material-symbols-outlined">security</span>
+                        Sicherheitseinstellungen
+                    </button>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">devices</span>Aktive Sitzungen</h3>
+                <p class="text-sm text-muted mb-4">Ihre aktuell angemeldeten Geräte und Sitzungen.</p>
+
+                <div id="sessions-list">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Diese Sitzung</div>
+                            <div class="setting-description">${navigator.userAgent.includes('Mobile') ? 'Mobiles Gerät' : 'Desktop-Browser'}</div>
+                        </div>
+                        <span class="module-status loaded">Aktiv</span>
+                    </div>
+                    ${userInstance?.cli_sessions?.length > 0 ? userInstance.cli_sessions.map(s => `
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <div class="setting-label">CLI Sitzung</div>
+                                <div class="setting-description">Gestartet: ${new Date(s.created_at * 1000).toLocaleString()}</div>
+                            </div>
+                            <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="closeCLISession('${s.cli_session_id}')">
+                                <span class="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+                    `).join('') : ''}
+                </div>
+            </div>
+
+            <div class="dashboard-card" style="border-color:var(--color-error);">
+                <h3 style="color:var(--color-error);"><span class="material-symbols-outlined">warning</span>Gefahrenzone</h3>
+
+                <button class="tb-btn tb-btn-danger" onclick="TB.user.logout().then(() => window.location.href = '/')">
+                    <span class="material-symbols-outlined">logout</span>
+                    Abmelden
+                </button>
+            </div>
+        `;
+    }
+
+    window.requestMagicLink = async function() {
+        TB.ui.Loader.show('Magic Link wird angefordert...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'request_my_magic_link', null, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Magic Link wurde an Ihre E-Mail gesendet');
+            } else {
+                TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Anfordern');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.closeCLISession = async function(sessionId) {
+        if (!confirm('Möchten Sie diese CLI-Sitzung wirklich beenden?')) return;
+        TB.ui.Loader.show('Beende Sitzung...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'close_cli_session', {cli_session_id: sessionId}, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Sitzung beendet');
+                await loadProfile();
+            } else {
+                TB.ui.Toast.showError('Fehler');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    // Make showSection global
+    window.showSection = showSection;
+
+    // ========== Start ==========
+    if (window.TB?.events && window.TB.config?.get('appRootId')) {
+        initDashboard();
+    } else {
+        document.addEventListener('tbjs:initialized', initDashboard, { once: true });
+    }
+}
+</script>
 """
     return Result.html(html_content)
 
 
-# --- API Endpoints for UserDashboard ---
+# =================== API Endpoints für Modul-Verwaltung ===================
 
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-async def get_my_active_instances(app: App, request: RequestData):
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
+async def get_all_available_modules(app: App, request: RequestData):
+    """Liste aller verfügbaren Module für den Benutzer"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    instance_data_result = get_user_instance_internal(current_user.uid,
-                                                      hydrate=True)  # hydrate=True to get live modules
+    try:
+        all_mods = app.get_all_mods()
+        # Filter basierend auf Benutzer-Level
+        user_level = getattr(current_user, 'level', 1)
+        # Für jetzt alle Module zurückgeben
+        return Result.ok(data=list(all_mods))
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler beim Laden der Module: {e}")
 
-    active_instances_output = []
-    if instance_data_result and isinstance(instance_data_result, dict):
-        live_modules_info = []
-        if instance_data_result.get("live"):  # 'live' contains {mod_name: spec, ...}
-            for mod_name, spec_val in instance_data_result.get("live").items():
-                live_modules_info.append({"name": mod_name, "spec": str(spec_val)})
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
+async def get_my_active_instances(app: App, request: RequestData):
+    """Aktive Instanzen des aktuellen Benutzers abrufen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not uid:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    from .UserInstances import get_user_instance_with_cli_sessions, get_user_cli_sessions
+
+    instance_data = get_user_instance_with_cli_sessions(uid, hydrate=True)
+    cli_sessions = get_user_cli_sessions(uid)
+
+    active_instances = []
+    if instance_data and isinstance(instance_data, dict):
+        live_modules = []
+        if instance_data.get("live"):
+            for mod_name, spec_val in instance_data.get("live").items():
+                live_modules.append({"name": mod_name, "spec": str(spec_val)})
 
         instance_summary = {
-            "SiID": instance_data_result.get("SiID"),
-            "VtID": instance_data_result.get("VtID"),  # Important for module context
-            "webSocketID": instance_data_result.get("webSocketID"),
-            "live_modules": live_modules_info,  # List of {"name": "ModName", "spec": "spec_id"}
-            "saved_modules": instance_data_result.get("save", {}).get("mods", [])  # List of mod_names
+            "SiID": instance_data.get("SiID"),
+            "VtID": instance_data.get("VtID"),
+            "webSocketID": instance_data.get("webSocketID"),
+            "live_modules": live_modules,
+            "saved_modules": instance_data.get("save", {}).get("mods", []),
+            "cli_sessions": cli_sessions,
+            "active_cli_sessions": len([s for s in cli_sessions if s.get('status') == 'active'])
         }
-        active_instances_output.append(instance_summary)
+        active_instances.append(instance_summary)
 
-    return Result.json(data=active_instances_output)
-
-
-@export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
-async def get_all_available_modules(app: App, request: RequestData):
-    current_user = await get_current_user_from_request(app, request)
-    if not current_user:  # Minimal auth check, could be stricter if needed
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
-
-    all_mods = app.get_all_mods()  # This is synchronous
-    return Result.json(data=all_mods)
+    return Result.ok(data=active_instances)
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def update_my_instance_modules(app: App, request: RequestData, data: dict):
+async def add_module_to_instance(app: App, request: RequestData, data: dict):
+    """Modul zur Benutzer-Instanz hinzufügen und laden"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
     module_name = data.get("module_name")
-    activate = data.get("activate", False)  # boolean
-    instance_siid = data.get("siid")  # The SiID of the instance to modify
+    if not module_name:
+        return Result.default_user_error(info="Modulname erforderlich")
 
-    if not module_name or not instance_siid:
-        return Result.default_user_error(info="Module name and instance SIID are required.")
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
 
-    # --- Placeholder for actual logic ---
-    # This is where the complex part of dynamically loading/unloading modules for a *specific user instance*
-    # (identified by SiID or its associated VtID) would go.
-    # 1. Validate that the instance_siid belongs to current_user.
-    # 2. Get the VtID associated with this SiID from UserInstances.
-    # 3. If activating:
-    #    - Check if module is already active for this VtID.
-    #    - Call something like `app.get_mod(module_name, spec=VtID)` or a dedicated
-    #      `UserInstanceManager.activate_module_for_instance(VtID, module_name)`
-    #    - Update the 'live' and 'save.mods' in the user's instance data in UserInstances and DB.
-    # 4. If deactivating:
-    #    - Call `app.remove_mod(module_name, spec=VtID)` or
-    #      `UserInstanceManager.deactivate_module_for_instance(VtID, module_name)`
-    #    - Update 'live' and 'save.mods'.
-    # This requires `UserInstances.py` to be significantly enhanced or a new manager.
-    app.print(
-        f"User '{current_user.name}' requested to {'activate' if activate else 'deactivate'} module '{module_name}' for instance '{instance_siid}'. (Placeholder)",
-        "INFO")
+    try:
+        instance = get_user_instance_internal(uid, hydrate=False)
+        if not instance:
+            return Result.default_internal_error("Instanz nicht gefunden")
 
-    # Simulate success for UI testing
-    # In reality, update the user's instance in UserInstances and persist it.
-    # The `get_user_instance_internal` should be modified or a new setter created
-    # to update the live and saved mods for the specific instance.
+        # Modul laden
+        if module_name not in app.get_all_mods():
+            return Result.default_user_error(f"Modul '{module_name}' nicht verfügbar")
 
-    # Example of how UserInstances might be updated (needs methods in UserInstances.py):
-    # from .UserInstances import update_module_in_instance
-    # update_success = update_module_in_instance(app, current_user.uid, instance_siid, module_name, activate)
-    # if update_success:
-    #    return Result.ok(info=f"Module {module_name} {'activated' if activate else 'deactivated'}.")
-    # else:
-    #    return Result.default_internal_error(info=f"Failed to update module {module_name}.")
+        spec = app.save_load(module_name)
+        if spec:
+            if 'live' not in instance:
+                instance['live'] = {}
+            instance['live'][module_name] = spec
 
-    return Result.ok(
-        info=f"Module {module_name} {'activation' if activate else 'deactivation'} request processed (simulated).")
+            from .UserInstances import save_user_instances
+            save_user_instances(instance)
+
+            return Result.ok(info=f"Modul '{module_name}' geladen")
+        else:
+            return Result.default_internal_error(f"Fehler beim Laden von '{module_name}'")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler: {e}")
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def close_my_instance(app: App, request: RequestData, data: dict):
+async def remove_module_from_instance(app: App, request: RequestData, data: dict):
+    """Modul aus Benutzer-Instanz entladen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    siid_to_close = data.get("siid")
-    if not siid_to_close:
-        return Result.default_user_error(info="Instance SIID is required.")
+    module_name = data.get("module_name")
+    if not module_name:
+        return Result.default_user_error(info="Modulname erforderlich")
 
-    # More robust check: Get the instance by UID, then check if the passed SIID matches that instance's SIID.
-    user_instance = get_user_instance_internal(current_user.uid, hydrate=False)
-    if not user_instance or user_instance.get("SiID") != siid_to_close:
-        return Result.default_user_error(info="Instance not found or does not belong to the current user.")
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
 
-    result_msg = close_user_instance_internal(
-        current_user.uid)  # Assumes this closes the instance associated with siid_to_close
+    try:
+        instance = get_user_instance_internal(uid, hydrate=False)
+        if not instance:
+            return Result.default_internal_error("Instanz nicht gefunden")
 
-    if result_msg == "User instance not found" or result_msg == "No modules to close":
-        return Result.ok(info="Instance already closed or not found: " + str(result_msg))
-    elif result_msg is None:
-        return Result.ok(info="Instance closed successfully.")
-    else:
-        return Result.default_internal_error(info="Could not close instance: " + str(result_msg))
+        if 'live' in instance and module_name in instance['live']:
+            spec = instance['live'][module_name]
+            app.remove_mod(mod_name=module_name, spec=spec, delete=False)
+            del instance['live'][module_name]
+
+            from .UserInstances import save_user_instances
+            save_user_instances(instance)
+
+            return Result.ok(info=f"Modul '{module_name}' entladen")
+        else:
+            return Result.default_user_error(f"Modul '{module_name}' nicht geladen")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def add_module_to_saved(app: App, request: RequestData, data: dict):
+    """Modul zu den gespeicherten Modulen hinzufügen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    module_name = data.get("module_name")
+    if not module_name:
+        return Result.default_user_error(info="Modulname erforderlich")
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+
+    try:
+        instance = get_user_instance_internal(uid, hydrate=False)
+        if not instance:
+            return Result.default_internal_error("Instanz nicht gefunden")
+
+        if 'save' not in instance:
+            instance['save'] = {'mods': [], 'uid': uid}
+        if 'mods' not in instance['save']:
+            instance['save']['mods'] = []
+
+        if module_name not in instance['save']['mods']:
+            instance['save']['mods'].append(module_name)
+
+            from .UserInstances import save_user_instances
+            save_user_instances(instance)
+
+            # In DB speichern
+            app.run_any('DB', 'set',
+                        query=f"User::Instance::{uid}",
+                        data=json.dumps({"saves": instance['save']}))
+
+            return Result.ok(info=f"Modul '{module_name}' gespeichert")
+        else:
+            return Result.ok(info=f"Modul '{module_name}' bereits gespeichert")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def remove_module_from_saved(app: App, request: RequestData, data: dict):
+    """Modul aus den gespeicherten Modulen entfernen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    module_name = data.get("module_name")
+    if not module_name:
+        return Result.default_user_error(info="Modulname erforderlich")
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+
+    try:
+        instance = get_user_instance_internal(uid, hydrate=False)
+        if not instance:
+            return Result.default_internal_error("Instanz nicht gefunden")
+
+        if 'save' in instance and 'mods' in instance['save']:
+            if module_name in instance['save']['mods']:
+                instance['save']['mods'].remove(module_name)
+
+                from .UserInstances import save_user_instances
+                save_user_instances(instance)
+
+                # In DB speichern
+                app.run_any('DB', 'set',
+                            query=f"User::Instance::{uid}",
+                            data=json.dumps({"saves": instance['save']}))
+
+                return Result.ok(info=f"Modul '{module_name}' entfernt")
+
+        return Result.default_user_error(f"Modul '{module_name}' nicht in gespeicherten Modulen")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
+async def get_all_mod_data(app: App, request: RequestData):
+    """Alle Mod-Daten des aktuellen Benutzers abrufen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    mod_data = {}
+    if hasattr(current_user, 'mod_data') and current_user.mod_data:
+        mod_data = current_user.mod_data
+    elif hasattr(current_user, 'settings') and current_user.settings:
+        mod_data = current_user.settings.get('mod_data', {})
+
+    return Result.ok(data=mod_data)
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def request_my_magic_link(app: App, request: RequestData):
+    """Magic Link für den aktuellen Benutzer anfordern"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    # Call the existing magic link function from AuthManager
-    magic_link_result = await request_magic_link_backend(app, username=current_user.name)
+    username = getattr(current_user, 'username', None) or getattr(current_user, 'name', None)
+    if not username:
+        return Result.default_user_error(info="Benutzername nicht gefunden")
+
+    magic_link_result = await request_magic_link_backend(app, username=username)
 
     if not magic_link_result.as_result().is_error():
-        return Result.ok(info="Magic link request sent to your email: " + current_user.email)
+        email = getattr(current_user, 'email', 'Ihre E-Mail')
+        return Result.ok(info=f"Magic Link wurde an {email} gesendet")
     else:
-        return Result.default_internal_error(info="Failed to send magic link: " + str(magic_link_result.info))
+        return Result.default_internal_error(f"Fehler: {magic_link_result.info}")
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def update_my_appearance_settings(app: App, request: RequestData, data: dict):
+async def update_my_settings(app: App, request: RequestData, data: dict):
+    """Benutzereinstellungen aktualisieren"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
     settings_payload = data.get("settings")
     if not isinstance(settings_payload, dict):
-        return Result.default_user_error(info="Invalid settings payload.")
-
-    # Validate and sanitize settings_payload before saving
-    # Example: theme_overrides should be a dict of string:string
-    # graphics_settings should have known keys with correct types
+        return Result.default_user_error(info="Ungültige Einstellungen")
 
     if current_user.settings is None:
         current_user.settings = {}
 
-    # Merge carefully, don't just overwrite all settings
-    if "theme_overrides" in settings_payload:
-        current_user.settings["theme_overrides"] = settings_payload["theme_overrides"]
-    if "graphics_settings" in settings_payload:
-        current_user.settings["graphics_settings"] = settings_payload["graphics_settings"]
-    if "site_theme_preference" in settings_payload:  # Save the general theme choice
-        current_user.settings["site_theme_preference"] = settings_payload["site_theme_preference"]
+    current_user.settings.update(settings_payload)
 
     save_result = db_helper_save_user(app, asdict(current_user))
     if save_result.is_error():
-        return Result.default_internal_error(info="Failed to save appearance settings: " + str(save_result.info))
+        return Result.default_internal_error(f"Fehler beim Speichern: {save_result.info}")
 
-    return Result.ok(info="Appearance settings saved successfully.",
-                     data=current_user.settings)  # Return updated settings
-
-
-# ///
-import jwt
-import time
+    return Result.ok(info="Einstellungen gespeichert", data=current_user.settings)
 
 
-@export(mod_name=Name, version=version, api=True)
-def configure_jwt_settings(app: App = None, ttl_hours: int = 24, allowed_mods: list = None):
-    """Configure JWT settings for CLI sessions"""
-    if app is None:
-        app = get_app("CloudM.configure_jwt_settings")
+# =================== CLI Session Management ===================
 
-    if allowed_mods is None:
-        allowed_mods = ["CloudM", "DB", "FileHandler"]
-
-    jwt_config = {
-        'ttl_hours': ttl_hours,
-        'allowed_mods': allowed_mods,
-        'secret_key': app.config_fh.get_file_handler("jwt_secret") or _generate_jwt_secret(app),
-        'algorithm': 'HS256'
-    }
-
-    app.config_fh.add_to_save_file_handler("jwt_config", jwt_config)
-    return Result.ok(data_info="JWT configuration updated", data=jwt_config)
-
-
-def _generate_jwt_secret(app: App) -> str:
-    """Generate and store JWT secret key"""
-    from toolboxv2 import Code
-    secret = Code.generate_random_string(64)
-    app.config_fh.add_to_save_file_handler("jwt_secret", secret)
-    return secret
-
-
-@export(mod_name=Name, version=version, api=True)
-def generate_cli_jwt(app: App = None, username: str = None, custom_ttl: int = None):
-    """Generate JWT token for CLI access"""
-    if app is None:
-        app = get_app("CloudM.generate_cli_jwt")
-
-    if not username:
-        return Result.default_user_error("Username required")
-
-    jwt_config = app.config_fh.get_file_handler("jwt_config")
-    if not jwt_config:
-        # Use default configuration
-        configure_jwt_settings(app)
-        jwt_config = app.config_fh.get_file_handler("jwt_config")
-
-    ttl_hours = custom_ttl or jwt_config.get('ttl_hours', 24)
-
-    payload = {
-        'username': username,
-        'iat': int(time.time()),
-        'exp': int(time.time()) + (ttl_hours * 3600),
-        'type': 'cli_access',
-        'allowed_mods': jwt_config.get('allowed_mods', [])
-    }
-
-    token = jwt.encode(
-        payload,
-        jwt_config['secret_key'],
-        algorithm=jwt_config['algorithm']
-    )
-
-    return Result.ok(data_info="JWT generated", data={'token': token, 'expires_in': ttl_hours * 3600})
-
-
-@export(mod_name=Name, version=version, api=True)
-def validate_cli_jwt(app: App = None, token: str = None):
-    """Validate CLI JWT token"""
-    if app is None:
-        app = get_app("CloudM.validate_cli_jwt")
-
-    if not token:
-        return Result.default_user_error("Token required")
-
-    jwt_config = app.config_fh.get_file_handler("jwt_config")
-    if not jwt_config:
-        return Result.default_internal_error("JWT configuration not found")
-
-    try:
-        payload = jwt.decode(
-            token,
-            jwt_config['secret_key'],
-            algorithms=[jwt_config['algorithm']]
-        )
-
-        # Check if token is for CLI access
-        if payload.get('type') != 'cli_access':
-            return Result.default_user_error("Invalid token type")
-
-        return Result.ok(data_info="Token valid", data=payload)
-
-    except jwt.ExpiredSignatureError:
-        return Result.default_user_error("Token expired")
-    except jwt.InvalidTokenError:
-        return Result.default_user_error("Invalid token")
-
-
-@export(mod_name=Name, version=version, api=True)
-def get_jwt_dashboard(app: App = None):
-    """Get JWT management dashboard data"""
-    if app is None:
-        app = get_app("CloudM.get_jwt_dashboard")
-
-    jwt_config = app.config_fh.get_file_handler("jwt_config")
-
-    dashboard_data = {
-        'jwt_configured': jwt_config is not None,
-        'current_config': jwt_config or {},
-        'active_sessions': _get_active_sessions(app),
-        'default_ttl': jwt_config.get('ttl_hours', 24) if jwt_config else 24
-    }
-
-    return Result.ok(data_info="Dashboard data", data=dashboard_data)
-
-
-def _get_active_sessions(app: App) -> list:
-    """Get list of active CLI sessions"""
-    # This would typically query a session store
-    # For now, return empty list
-    return []
-
-
-@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def get_my_active_instances_with_cli(app: App, request: RequestData):
-    """Get active instances including CLI sessions"""
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def close_cli_session(app: App, request: RequestData, data: dict):
+    """CLI-Sitzung schließen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    # Get enhanced instance data with CLI sessions
-    from .UserInstances import get_user_instance_with_cli_sessions, get_user_cli_sessions
-
-    instance_data_result = get_user_instance_with_cli_sessions(current_user.uid, hydrate=True)
-    cli_sessions = get_user_cli_sessions(current_user.uid)
-
-    active_instances_output = []
-    if instance_data_result and isinstance(instance_data_result, dict):
-        live_modules_info = []
-        if instance_data_result.get("live"):
-            for mod_name, spec_val in instance_data_result.get("live").items():
-                live_modules_info.append({"name": mod_name, "spec": str(spec_val)})
-
-        instance_summary = {
-            "SiID": instance_data_result.get("SiID"),
-            "VtID": instance_data_result.get("VtID"),
-            "webSocketID": instance_data_result.get("webSocketID"),
-            "live_modules": live_modules_info,
-            "saved_modules": instance_data_result.get("save", {}).get("mods", []),
-            "cli_sessions": cli_sessions,
-            "active_cli_sessions": len([s for s in cli_sessions if s.get('status') == 'active'])
-        }
-        active_instances_output.append(instance_summary)
-
-    return Result.ok(data_info="Active instances with CLI sessions retrieved", data=active_instances_output)
-
-
-@export(mod_name=Name, version=version, api=True, request_as_kwarg=True)
-async def close_cli_session(app: App, request: RequestData, cli_session_id: str):
-    """Close a specific CLI session"""
-    current_user = await get_current_user_from_request(app, request)
-    if not current_user:
-        return Result.default_user_error(info="User not authenticated.", exec_code=401)
+    cli_session_id = data.get("cli_session_id")
+    if not cli_session_id:
+        return Result.default_user_error(info="Session-ID erforderlich")
 
     from .UserInstances import close_cli_session as close_cli_session_internal, UserInstances
 
-    # Verify session belongs to current user
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+
+    # Überprüfen ob Sitzung dem Benutzer gehört
     if cli_session_id in UserInstances().cli_sessions:
         session_data = UserInstances().cli_sessions[cli_session_id]
-        if session_data['uid'] != current_user.uid:
-            return Result.default_user_error(info="Unauthorized to close this session.")
+        if session_data['uid'] != uid:
+            return Result.default_user_error(info="Nicht berechtigt, diese Sitzung zu schließen")
 
     result = close_cli_session_internal(cli_session_id)
-    return Result.ok(data_info="CLI session closed", data={"message": result})
+    return Result.ok(info=result)

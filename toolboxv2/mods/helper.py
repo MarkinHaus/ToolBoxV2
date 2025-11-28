@@ -223,10 +223,8 @@ async def update_settings(app: App, key: str, value: str):
         print("❌ Please login first with 'tb login'")
         return Result.default_user_error("Not authenticated")
 
-    username = app.session.username
-
     # Load local user data
-    local_data = load_local_user_data(username)
+    local_data = load_local_user_data(app.session.clerk_user_id)
     if not local_data:
         print("❌ User data not found. Please try logging in again.")
         return Result.default_user_error("User data not found")
@@ -276,7 +274,7 @@ async def sync_data(app: App):
     print(f"Syncing data for {username}...")
 
     # Load local data
-    local_data = load_local_user_data(username)
+    local_data = load_local_user_data(app.session.clerk_user_id)
     if not local_data:
         print("❌ No local data to sync")
         return Result.default_user_error("No local data")

@@ -369,7 +369,7 @@ show_help() {
     echo -e "Web: $WEBPAGE"
     echo -e "\nInstalls ToolBoxV2 Core and initializes it."
     echo -e "\n${C_YELLOW}USAGE:${C_RESET}"
-    echo -e "  ./install_toolbox.sh [OPTIONS]"
+    echo -e "  ./installer.sh [OPTIONS]"
     echo -e "\n${C_YELLOW}OPTIONS:${C_RESET}"
     echo -e "  ${C_CYAN}--version=<version>${C_RESET}   Specify ToolBoxV2 version (default: ${DEFAULT_TB_VERSION})."
     echo -e "  ${C_CYAN}--source=<src>${C_RESET}        Installation source: 'pip' or 'git' (default: ${DEFAULT_INSTALL_SOURCE})."

@@ -9122,6 +9122,7 @@ class FlowAgent:
 
         # Enhanced tool registry
         self._tool_registry = {}
+        self._all_tool_capabilities = {}
         self._tool_capabilities = {}
         self._tool_analysis_cache = {}
 
@@ -9286,7 +9287,6 @@ class FlowAgent:
                 "groq": os.getenv("GROQ_API_KEY"),
             }
             kwargs["api_key"] = model_prefix_map.get(prefix)
-            print(f"Using api_key: {kwargs['api_key']} for model: {kwargs['model']}")
 
         if self.active_session and with_context:
             # Add context to fist messages as system message
@@ -10567,7 +10567,6 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
             # 7. Tool Capabilities wiederherstellen
             if hasattr(checkpoint, 'tool_capabilities') and checkpoint.tool_capabilities:
                 self._tool_capabilities = checkpoint.tool_capabilities.copy()
-            self._tool_capabilities.update(self._load_tool_analysis())
 
             # 8. Session Tool Restrictions wiederherstellen
             if hasattr(checkpoint, 'session_tool_restrictions') and checkpoint.session_tool_restrictions:
@@ -10783,9 +10782,9 @@ Schreibe für einen technischen Nutzer, aber verständlich."""
     def _get_tool_analysis_path(self) -> str:
         """Get path for tool analysis cache"""
         from toolboxv2 import get_app
-        folder = str(get_app().data_dir) + '/Agents/capabilities/' + self.amd.name
+        folder = str(get_app().data_dir) + '/Agents/capabilities/'
         os.makedirs(folder, exist_ok=True)
-        return folder + '/tool_capabilities.json'
+        return folder + 'tool_capabilities.json'
 
     def _get_context_path(self, session_id=None) -> str:
         """Get path for tool analysis cache"""
@@ -10959,6 +10958,7 @@ tools:
                     rprint(f"Batch analyzed: {tool_name}")
 
             # Save to cache
+            self._all_tool_capabilities.update(self._tool_capabilities)
             await self._save_tool_analysis()
 
         except Exception as e:
@@ -11072,6 +11072,7 @@ tool_complexity: low/medium/high
                 self._tool_capabilities[tool_name] = analysis
 
                 # Save to cache
+                self._all_tool_capabilities[tool_name] = analysis
                 await self._save_tool_analysis()
 
                 validated_analysis = ToolAnalysis.model_validate(analysis)
@@ -11105,10 +11106,11 @@ tool_complexity: low/medium/high
             if os.path.exists(self.tool_analysis_file):
                 with open(self.tool_analysis_file) as f:
                     all_analyses = json.load(f)
-
+                self._all_tool_capabilities.update(all_analyses)
                 # If specific tools requested, filter to only those
                 if tool_names is not None:
                     return {name: analysis for name, analysis in all_analyses.items() if name in tool_names}
+
                 return all_analyses
         except Exception as e:
             wprint(f"Could not load tool analysis: {e}")
@@ -11134,9 +11136,11 @@ tool_complexity: low/medium/high
 
     async def _save_tool_analysis(self):
         """Save tool analysis to cache"""
+        if not self._all_tool_capabilities:
+            return
         try:
             with open(self.tool_analysis_file, 'w') as f:
-                json.dump(self._tool_capabilities, f, indent=2)
+                json.dump(self._all_tool_capabilities, f, indent=2)
         except Exception as e:
             eprint(f"Could not save tool analysis: {e}")
 
@@ -11687,14 +11691,6 @@ Respond in YAML format only:
             if deep_clean:
                 self._tool_capabilities = {}
                 self._tool_analysis_cache = {}
-
-                # Remove tool analysis file
-                if hasattr(self, 'tool_analysis_file') and os.path.exists(self.tool_analysis_file):
-                    try:
-                        os.remove(self.tool_analysis_file)
-                        rprint("Removed tool analysis cache file")
-                    except:
-                        pass
 
             # Clean checkpoint data
             self.checkpoint_data = {}

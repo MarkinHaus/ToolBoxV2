@@ -1,6 +1,7 @@
 # toolboxv2/mods/CloudM/UI/widget.py
 
 from toolboxv2 import App, RequestData, get_app, Result
+from toolboxv2.mods.CloudM.AuthClerk import LocalUserData
 
 Name = 'CloudM.UI.widget'
 export = get_app(f"{Name}.Export").tb
@@ -48,9 +49,9 @@ async def get_widget(app: App | None = None, request: RequestData = None, **kwar
 
     from ..UserAccountManager import get_current_user_from_request as get_user_for_widget
 
-    user = await get_user_for_widget(app, request)
+    user: LocalUserData = await get_user_for_widget(app, request)
     if user:
-        if user.name == 'root' or user.name == 'loot':  # Admin
+        if user.username == 'root' or user.username == 'loot':  # Admin
             from ..AdminDashboard import Name as AdminDashboard_ModuleName
             dashboard_result = await app.a_run_any(
                 AdminDashboard_ModuleName + ".main", request=request, get_results=True

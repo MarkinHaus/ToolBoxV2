@@ -1,5 +1,4 @@
 from .AdminDashboard import Name as AdminDashboard
-from .AuthManager import Name as AuthManagerName
 from .email_services import Name as EmailServicesName
 from .mini import *
 from .ModManager import Name as ModManagerName

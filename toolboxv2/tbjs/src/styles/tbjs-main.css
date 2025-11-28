@@ -676,7 +676,7 @@ button:disabled,
 
 /* Main Content Container */
 .main-content {
-  max-width: 900px;
+  max-width: 95vw;
   margin-inline: auto;
   padding: var(--space-6) var(--space-5);
 

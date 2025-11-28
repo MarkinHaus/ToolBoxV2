@@ -91,7 +91,7 @@ class Kernel(IProAKernel):
         self._current_user_id: Optional[str] = None
         self._pending_questions: dict[str, asyncio.Future] = {}
 
-        print(f"✓ ProA Kernel initialized for {agent.amd.name}")
+        print(f"✓ ProA Kernel initialized for {(agent.amd.name if agent and agent.amd else None) or 'self'}")
 
     async def _export_functions_to_agent(self):
         """Export kernel functions to agent for use in tools"""

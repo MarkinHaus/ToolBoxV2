@@ -1,4 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
+// toolboxv2/simple-core/src-tauri/src/lib.rs
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"

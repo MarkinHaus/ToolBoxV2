@@ -1,158 +1,484 @@
-name: build
+name: Build & Test
 
 on:
-    push:
-        branches:
-            - light-tb
-            - mod-server
-            - master
-    pull_request:
+  push:
+    branches:
+      - light-tb
+      - mod-server
+      - master
+      - main
+      - develop
+  pull_request:
 
+env:
+  PYTHON_VERSION_DEFAULT: "3.11"
+  NODE_VERSION: "lts/*"
 
 jobs:
-    py-check:
-        runs-on: ${{ matrix.config.os }}
-        name: ${{ matrix.config.os }} (${{ matrix.config.py }})
-        strategy:
-            fail-fast: false
-            matrix:
-                config:
-                    # - { os: ubuntu-latest, py: "3.9" }
-                    - { os: ubuntu-latest, py: "3.10" }
-                    - { os: ubuntu-latest, py: "3.11" }
-                    - { os: ubuntu-latest, py: "3.12" }
-                    - { os: ubuntu-latest, py: "3.13" }
-                   # - { os: windows-latest, py: "3.9" }
-                    - { os: windows-latest, py: "3.10" }
-                    - { os: windows-latest, py: "3.11" }
-                    - { os:  windows-latest, py: "3.12" }
-                    - { os:  windows-latest, py: "3.13" }
-                   # - { os: macOS-latest, py: "3.9" }
-                    - { os: macOS-latest, py: "3.10" }
-                    - { os: macOS-latest, py: "3.11" }
-                    - { os:  macOS-latest, py: "3.12" }
-                    - { os:  macOS-latest, py: "3.13" }
+  # ============================================================================
+  # PYTHON MATRIX BUILD & TEST
+  # ============================================================================
 
+  py-check:
+    runs-on: ${{ matrix.config.os }}
+    name: Python ${{ matrix.config.py }} on ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { os: ubuntu-latest, py: "3.10" }
+          - { os: ubuntu-latest, py: "3.11" }
+          - { os: ubuntu-latest, py: "3.12" }
+          - { os: ubuntu-latest, py: "3.13" }
+          - { os: windows-latest, py: "3.10" }
+          - { os: windows-latest, py: "3.11" }
+          - { os: windows-latest, py: "3.12" }
+          - { os: windows-latest, py: "3.13" }
+          - { os: macos-latest, py: "3.10" }
+          - { os: macos-latest, py: "3.11" }
+          - { os: macos-latest, py: "3.12" }
+          - { os: macos-latest, py: "3.13" }
+
+    env:
+      SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.config.py }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.config.py }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv
+          pip install --user --no-cache-dir Cython
+
+      - name: Install toolboxv2 with ISAA
+        run: |
+          python -m uv pip install -e toolboxv2/mods/isaa --system
+          python -m uv pip install . --system
+        working-directory: ${{ github.workspace }}
+
+      - name: Run Tests
+        run: python -m unittest discover -s toolboxv2/tests/
+
+  # ============================================================================
+  # NODE.JS / FRONTEND BUILDS
+  # ============================================================================
+
+  build-root:
+    name: Build Frontend (toolboxv2)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: toolboxv2
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install all packages
+        run: |
+          npm install
+          npm install --prefix ./tbjs
+          npm install --prefix ./web
+
+      - name: Build all
+        run: npm run build:tbjs && npm run build:web
+
+      - name: Upload dist folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-dist
+          path: toolboxv2/dist
+
+  test-root:
+    name: Test Frontend (tbjs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install tbjs dependencies
+        working-directory: ./toolboxv2/tbjs
+        run: npm install
+
+      - name: Run tbjs tests
+        working-directory: ./toolboxv2/tbjs
+        run: npm run test
+
+  # ============================================================================
+  # RUST SERVER BUILD & TEST
+  # ============================================================================
+
+  rust-server:
+    name: Rust Server Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            toolboxv2/src-core/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build Rust Server
+        working-directory: ./toolboxv2/src-core
+        run: cargo build --release
+
+      - name: Test Rust Server
+        working-directory: ./toolboxv2/src-core
+        run: cargo test
+
+      - name: Upload binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-server-${{ matrix.os }}
+          path: ./toolboxv2/src-core/target/release/simple-core-server
+
+      - name: Upload binary (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-server-${{ matrix.os }}
+          path: ./toolboxv2/src-core/target/release/simple-core-server.exe
+
+  # ============================================================================
+  # TBLANG BUILD & TEST
+  # ============================================================================
+
+  tblang:
+    name: TBLang Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for TBLang project
+        id: check
+        shell: bash
+        run: |
+          if [ -f "./toolboxv2/tb-exc/src/Cargo.toml" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          elif [ -f "./toolboxv2/tb-exc/Cargo.toml" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.check.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build TBLang
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/tb-exc/src
+        run: cargo build --release
+        continue-on-error: true
+
+      - name: Test TBLang
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/tb-exc/src
+        run: cargo test
+        continue-on-error: true
+
+  # ============================================================================
+  # BROWSER EXTENSION BUILD
+  # ============================================================================
+
+  browser-extension:
+    name: Browser Extension Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for browser extension
+        id: check
+        run: |
+          if [ -f "./toolboxv2/tb_browser/build.js" ] || [ -f "./toolboxv2/tb_browser/package.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/tb_browser
+        run: npm install || true
+
+      - name: Build extension
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/tb_browser
+        run: |
+          if [ -f "build.js" ]; then
+            node build.js
+          elif [ -f "package.json" ]; then
+            npm run build || true
+          fi
+
+      - name: Upload extension artifact
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension
+          path: |
+            ./toolboxv2/tb_browser/dist/
+            ./toolboxv2/tb_browser/build/
+
+  # ============================================================================
+  # NUITKA BUILD TEST (nur auf einem OS für CI)
+  # ============================================================================
+
+  nuitka-test:
+    name: Nuitka Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
+
+      - name: Install Nuitka
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install nuitka zstandard ordered-set
+          python -m pip install -e .
+
+      - name: Test Nuitka compilation
+        run: |
+          python -m nuitka \
+            --module \
+            --output-dir=nuitka-test \
+            --assume-yes-for-downloads \
+            toolboxv2/utils/__init__.py || true
+
+      - name: Verify compilation
+        run: |
+          ls -la nuitka-test/ || true
+
+  # ============================================================================
+  # TAURI BUILD TEST (nur macOS ARM für schnellen CI Check)
+  # ============================================================================
+
+  tauri-test:
+    name: Tauri Build Test
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        working-directory: ./toolboxv2/web
+        run: |
+          npm install
+          cd ../simple-core
+          npm install
+          cd ..
+          npm install
+          npm run build
+
+      - name: Build Tauri (dry-run)
+        uses: tauri-apps/tauri-action@v0
         env:
-            SDKROOT: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
-            OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        steps:
-        -   name: CHECKOUT CODE
-            uses: actions/checkout@v4
-        -   name: SETUP PYTHON
-            uses: actions/setup-python@v4
-            with:
-                python-version: ${{ matrix.config.py }}
-        -   name: Install dependencies
-            run: |
-                python -m pip install --upgrade pip
-                python -m pip install uv
-                pip install --user --no-cache-dir Cython
-        -   name: Install toolboxv2 with ISAA
-            run: |
-                python -m uv pip install -e toolboxv2/mods/isaa --system
-                python -m uv pip install . --system
-            working-directory: ${{ github.workspace }}
-        -   name: PKG-TEST
-            run: |
-                python -m unittest discover -s toolboxv2/tests/
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ./toolboxv2/simple-core
+          distPath: ./toolboxv2/dist
+          tagName: simple-v__VERSION__
+          releaseName: 'App v__VERSION__'
+          releaseBody: 'CI Test Build'
+          releaseDraft: true
+          prerelease: true
+          args: '--target aarch64-apple-darwin'
 
-    build-root:
-        name: Build Root (toolboxv2)
-        runs-on: ubuntu-latest
-        defaults:
-            run:
-                working-directory: toolboxv2
-        steps:
-            -   name: Checkout code
-                uses: actions/checkout@v4
+  # ============================================================================
+  # INTEGRATION TESTS
+  # ============================================================================
 
-            -   name: Setup Node.js
-                uses: actions/setup-node@v4
-                with:
-                    node-version: 'lts/*'
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [py-check, rust-server, build-root]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-            -   name: Install all packages
-                run: |
-                    npm install
-                    npm install --prefix ./tbjs
-                    npm install --prefix ./web
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
 
-            -   name: Build all
-                run: npm run build:tbjs && npm run build:web
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: root-dist
+          path: toolboxv2/dist
+        continue-on-error: true
 
-            -   name: Upload dist folder
-                uses: actions/upload-artifact@v4
-                with:
-                    name: root-dist
-                    path: toolboxv2/dist
+      - name: Install toolboxv2
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install uv
+          python -m uv pip install -e . --system
 
-    test-root:
-        name: Test Root (tbjs only for now)
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+      - name: Run integration tests
+        run: |
+          tb --test -n test || python -m pytest tests/integration/ || true
+        continue-on-error: true
 
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
-              with:
-                node-version: 'lts/*'
+  # ============================================================================
+  # CODE QUALITY CHECKS
+  # ============================================================================
 
-            - name: Install tbjs dependencies
-              working-directory: ./toolboxv2/tbjs
-              run: npm install
-            - name: Run tbjs tests
-              working-directory: ./toolboxv2/tbjs
-              run: npm run test
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    publish-tauri:
-       permissions:
-         contents: write
-       strategy:
-         fail-fast: false
-         matrix:
-           include:
-             - platform: 'macos-latest' # for Arm based macs (M1 and above).
-               args: '--target aarch64-apple-darwin'
-       runs-on: ${{ matrix.platform }}
-       steps:
-         - uses: actions/checkout@v4
-         - name: setup node
-           uses: actions/setup-node@v4
-           with:
-             node-version: lts/*
-         - name: install Rust stable
-           uses: dtolnay/rust-toolchain@stable
-           with:
-             # Those targets are only used on macos runners so it's in an `if` to slightly speed up windows and linux builds.
-             targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-         - name: install dependencies (ubuntu only)
-           if: matrix.platform == 'ubuntu-22.04' # This must match the platform value defined above.
-           run: |
-             sudo apt-get update
-             sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-           # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
-           # You can remove the one that doesn't apply to your app to speed up the workflow a bit.
-         - name: install frontend dependencies
-           working-directory: ./toolboxv2/web
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
 
-           run: |
-                npm install
-                cd ../simple-core
-                npm install
-                cd ..
-                npm install
-                npm run build
-         - uses: tauri-apps/tauri-action@v0
-           env:
-             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-           with:
-              projectPath: ./toolboxv2/simple-core
-              distPath: ./toolboxv2/dist
-              tagName: simple-v__VERSION__
-              releaseName: 'App v__VERSION__'
-              releaseBody: 'See the assets to download this version and install.'
-              releaseDraft: true
-              prerelease: false
-              args: ${{ matrix.args }}
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff mypy black isort
+
+      - name: Run Ruff
+        run: ruff check . || true
+        continue-on-error: true
+
+      - name: Run Black (check only)
+        run: black --check . || true
+        continue-on-error: true
+
+      - name: Check Rust formatting
+        run: |
+          cd toolboxv2/src-core
+          cargo fmt --check || true
+        continue-on-error: true
+
+  # ============================================================================
+  # SECURITY SCAN
+  # ============================================================================
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
+
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install safety bandit
+
+      - name: Run Safety check
+        run: safety check || true
+        continue-on-error: true
+
+      - name: Run Bandit
+        run: bandit -r toolboxv2/ -x toolboxv2/tests || true
+        continue-on-error: true
+
+      - name: Rust security audit
+        run: |
+          cargo install cargo-audit || true
+          cd toolboxv2/src-core
+          cargo audit || true
+        continue-on-error: true
+
+  # ============================================================================
+  # BUILD STATUS SUMMARY
+  # ============================================================================
+
+  build-status:
+    name: Build Status Summary
+    runs-on: ubuntu-latest
+    needs:
+      - py-check
+      - build-root
+      - test-root
+      - rust-server
+      - tblang
+      - browser-extension
+      - nuitka-test
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Tests | ${{ needs.py-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Build | ${{ needs.build-root.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Tests | ${{ needs.test-root.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust Server | ${{ needs.rust-server.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TBLang | ${{ needs.tblang.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Browser Extension | ${{ needs.browser-extension.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Nuitka Test | ${{ needs.nuitka-test.result }} |" >> $GITHUB_STEP_SUMMARY

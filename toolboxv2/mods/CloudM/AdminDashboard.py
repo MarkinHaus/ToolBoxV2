@@ -28,7 +28,7 @@ async def _is_admin(app: App, request: RequestData) -> User | None:
     current_user = await get_current_user_from_request(app, request)
     if not current_user:  # Level 0 is admin
         return None
-    if current_user.name == 'root' or current_user.name == 'loot':
+    if current_user.username == 'root' or current_user.username == 'loot':
         return current_user
     return None
 
@@ -1269,7 +1269,7 @@ async def list_users_admin(app: App, request: RequestData):
 async def list_modules_admin(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-    modules = list_all_modules(app)
+    modules = list_all_modules(app).get('modules')
     return Result.json(data=modules)
 
 
@@ -1319,9 +1319,9 @@ async def delete_user_admin(app: App, request: RequestData, data: dict):
         all_users_raw_res = await app.a_run_any(TBEF.DB.GET, query="USER::*::" + str(uid_to_delete), get_results=True)
         if not all_users_raw_res.is_error() and all_users_raw_res.get():
             try:
-                user_bytes = all_users_raw_res.get()[0];
+                user_bytes = all_users_raw_res.get()[0]
                 user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                user_dict_raw = {};
+                user_dict_raw = {}
                 try:
                     user_dict_raw = json.loads(user_str)
                 except json.JSONDecodeError:
