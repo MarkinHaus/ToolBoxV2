@@ -492,7 +492,7 @@ jobs:
       - rust-server
       - tblang
       - browser-extension
-      - nuitka-test
+      - nuitka-build
     if: always()
     steps:
       - name: Summary
@@ -507,4 +507,4 @@ jobs:
           echo "| Rust Server | ${{ needs.rust-server.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| TBLang | ${{ needs.tblang.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browser Extension | ${{ needs.browser-extension.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Nuitka Test | ${{ needs.nuitka-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Nuitka Test | ${{ needs.nuitka-build.result }} |" >> $GITHUB_STEP_SUMMARY
