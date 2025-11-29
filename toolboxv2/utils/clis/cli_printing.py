@@ -30,7 +30,30 @@ except ImportError:
 
             @staticmethod
             def BLUE(x): return x
+import os, sys
+if sys.platform == 'win32':
+    os.system('chcp 65001 >nul 2>&1')  # Change console to UTF-8
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
 
+def c_print(*args, **kwargs):
+    """Safe print with Unicode error handling."""
+    # Add errors='replace' to kwargs if not present
+    if "errors" not in kwargs:
+        kwargs["errors"] = "replace"
+
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        # Fallback: encode with errors='replace' to substitute unmappable chars
+        safe_args = []
+        for arg in args:
+            if isinstance(arg, str):
+                safe_args.append(arg.encode("cp1252", errors="replace").decode("cp1252"))
+            else:
+                safe_args.append(arg)
+        print(*safe_args, **kwargs)
 
 # =================== ANSI Color Codes ===================
 
@@ -128,14 +151,14 @@ def _strip_ansi(text: str) -> str:
 
 def print_box_header(title: str, icon: str = "ℹ", width: int = 76):
     """Print a minimal styled header"""
-    print()
-    print(f"{Colors.BOLD}{icon} {title}{Colors.RESET}")
-    print(f"{Colors.DIM}{'─' * width}{Colors.RESET}")
+    c_print()
+    c_print(f"{Colors.BOLD}{icon} {title}{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'─' * width}{Colors.RESET}")
 
 
 def print_box_footer(width: int = 76):
     """Print a minimal footer"""
-    print()
+    c_print()
 
 
 # =================== Content Display Functions ===================
@@ -151,9 +174,9 @@ def print_box_content(text: str, style: str = "", width: int = 76, auto_wrap: bo
 
     if style in style_config:
         config = style_config[style]
-        print(f"  {config['color']}{config['icon']}{Colors.RESET} {text}")
+        c_print(f"  {config['color']}{config['icon']}{Colors.RESET} {text}")
     else:
-        print(f"  {text}")
+        c_print(f"  {text}")
 
 
 def print_code_block(code: str, language: str = "text", width: int = 76, show_line_numbers: bool = False):
@@ -210,9 +233,9 @@ def print_code_block(code: str, language: str = "text", width: int = 76, show_li
 
     for i, line in enumerate(lines, 1):
         if show_line_numbers:
-            print(f"  {Colors.DIM}{i:3d}{Colors.RESET} {line}")
+            c_print(f"  {Colors.DIM}{i:3d}{Colors.RESET} {line}")
         else:
-            print(f"  {line}")
+            c_print(f"  {line}")
 
 
 # =================== Status Messages ===================
@@ -246,14 +269,14 @@ def print_status(message: str, status: str = "info"):
 
     config = status_config.get(status, {'icon': '•', 'color': ''})
 
-    print(f"{config['color']}{config['icon']}{Colors.RESET} {message}")
+    c_print(f"{config['color']}{config['icon']}{Colors.RESET} {message}")
 
 
 # =================== Separators ===================
 
 def print_separator(char: str = "─", width: int = 76):
     """Print a minimal separator line"""
-    print(f"{Colors.DIM}{char * width}{Colors.RESET}")
+    c_print(f"{Colors.DIM}{char * width}{Colors.RESET}")
 
 
 # =================== Table Printing ===================
@@ -264,10 +287,10 @@ def print_table_header(columns: list, widths: list):
     for (name, _), width in zip(columns, widths):
         header_parts.append(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}{name:<{width}}{Colors.RESET}")
 
-    print(f"  {' │ '.join(header_parts)}")
+    c_print(f"  {' │ '.join(header_parts)}")
 
     sep_parts = [f"{Colors.BRIGHT_CYAN}{'─' * w}{Colors.RESET}" for w in widths]
-    print(f"  {f'{Colors.BRIGHT_CYAN}─┼─{Colors.RESET}'.join(sep_parts)}")
+    c_print(f"  {f'{Colors.BRIGHT_CYAN}─┼─{Colors.RESET}'.join(sep_parts)}")
 
 
 def print_table_row(values: list, widths: list, styles: list = None):
@@ -296,20 +319,20 @@ def print_table_row(values: list, widths: list, styles: list = None):
         else:
             row_parts.append(f"{value:<{width}}")
 
-    print(f"  {f' {Colors.DIM}│{Colors.RESET} '.join(row_parts)}")
+    c_print(f"  {f' {Colors.DIM}│{Colors.RESET} '.join(row_parts)}")
 
 
 # =================== Visual Test ===================
 
 def run_visual_test():
     """Visual test for all UI components - for alignment and testing"""
-    print("\n" + f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE} VISUAL TEST - CLI UI COMPONENTS ".center(80, '='))
-    print(f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}\n")
+    c_print("\n" + f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}")
+    c_print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE} VISUAL TEST - CLI UI COMPONENTS ".center(80, '='))
+    c_print(f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}\n")
 
     # Test 1: Headers with different icons
-    print(f"{Colors.BOLD}TEST 1: Headers with Different Icons{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"{Colors.BOLD}TEST 1: Headers with Different Icons{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
 
     print_box_header("Standard Info Header", "ℹ")
     print_box_footer()
@@ -321,8 +344,8 @@ def run_visual_test():
     print_box_footer()
 
     # Test 2: Content with different styles
-    print(f"\n{Colors.BOLD}TEST 2: Content with Different Styles{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 2: Content with Different Styles{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     print_box_header("Content Styles Test", "🎨")
     print_box_content("This is a plain text without style")
     print_box_content("This is a success message", "success")
@@ -332,8 +355,8 @@ def run_visual_test():
     print_box_footer()
 
     # Test 3: Combined content
-    print(f"\n{Colors.BOLD}TEST 3: Combined Content{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 3: Combined Content{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     print_box_header("Server Status Example", "🖥️")
     print_box_content("Server Name: ToolBoxV2 API Server", "info")
     print_box_content("Status: Running", "success")
@@ -344,8 +367,8 @@ def run_visual_test():
     print_box_footer()
 
     # Test 4: Status messages
-    print(f"\n{Colors.BOLD}TEST 4: Status Messages{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 4: Status Messages{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     print_status("Success status message", "success")
     print_status("Error status message", "error")
     print_status("Warning status message", "warning")
@@ -356,15 +379,15 @@ def run_visual_test():
     print_status("Update status message", "update")
 
     # Test 5: Separators
-    print(f"\n{Colors.BOLD}TEST 5: Separators{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 5: Separators{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     print_separator("─")
     print_separator("═")
     print_separator("━")
 
     # Test 6: Tables
-    print(f"\n{Colors.BOLD}TEST 6: Table Display{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 6: Table Display{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     columns = [
         ("Property", 20),
         ("Value", 30),
@@ -379,8 +402,8 @@ def run_visual_test():
     print_table_row(["Port", "8080", "Open"], widths, ["white", "blue", "green"])
 
     # Test 7: Code blocks
-    print(f"\n\n{Colors.BOLD}TEST 7: Code & Config File Display{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n\n{Colors.BOLD}TEST 7: Code & Config File Display{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
 
     print_box_header("JSON Configuration", "📄")
     json_example = '''{
@@ -409,8 +432,8 @@ DATABASE_URL=postgresql://localhost/mydb'''
     print_box_footer()
 
     # Test 8: Real-world example
-    print(f"\n{Colors.BOLD}TEST 8: Real-World Server Start Example{Colors.RESET}")
-    print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
+    c_print(f"\n{Colors.BOLD}TEST 8: Real-World Server Start Example{Colors.RESET}")
+    c_print(f"{Colors.DIM}{'-' * 80}{Colors.RESET}")
     print_box_header("Starting Server v1.2.3", "🚀")
     print_box_content("Executable: /usr/local/bin/simple-core-server", "info")
     print_box_content("Host: 0.0.0.0:8080", "info")
@@ -419,7 +442,7 @@ DATABASE_URL=postgresql://localhost/mydb'''
 
     print_status("Launching server", "progress")
     print_status("Socket created - FD 3 saved to server_socket.fd", "success")
-    print()
+    c_print()
 
     print_box_header("Server Started", "✓")
     print_box_content("Version: 1.2.3", "success")
@@ -427,9 +450,9 @@ DATABASE_URL=postgresql://localhost/mydb'''
     print_box_content("Port: 8080", "success")
     print_box_footer()
 
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}")
-    print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE} END OF VISUAL TEST ".center(80, '='))
-    print(f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}\n")
+    c_print(f"\n{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}")
+    c_print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE} END OF VISUAL TEST ".center(80, '='))
+    c_print(f"{Colors.BOLD}{Colors.BRIGHT_CYAN}{'=' * 80}{Colors.RESET}\n")
 
 
 # =================== CLI Entry Point for Testing ===================

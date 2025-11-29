@@ -32,6 +32,14 @@ class UserInstances(metaclass=Singleton):
     cli_sessions: Dict[str, dict] = {}  # CLI session tracking
     clerk_sessions: Dict[str, dict] = {}  # Clerk session mapping
 
+    @property
+    def app(self):
+        return get_app("UserInstances")
+
+    @app.setter
+    def app(self, v):
+        pass
+
     @staticmethod
     @in_mem_cache_150
     def get_si_id(uid: str) -> Result:

@@ -51,7 +51,9 @@ class FileHandler(Code):
             logger.info(Style.YELLOW(f"Try Creating File: {self.file_handler_file_prefix}{self.file_handler_filename}"))
 
             if not os.path.exists(f"{self.file_handler_file_prefix}"):
-                os.makedirs(f"{self.file_handler_file_prefix}")
+                if os.path.isfile(f"{self.file_handler_file_prefix}"):
+                    os.remove(f"{self.file_handler_file_prefix}")
+                os.makedirs(f"{self.file_handler_file_prefix}", exist_ok=True)
 
             with open(self.file_handler_file_prefix + self.file_handler_filename, 'a'):
                 logger.info(Style.GREEN("File created successfully"))

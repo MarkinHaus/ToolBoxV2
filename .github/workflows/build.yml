@@ -253,7 +253,7 @@ jobs:
                   if [ -f "build.js" ]; then
                     # FIX: build.js requires 'dev', 'build', or 'zip' argument
                     # Use 'build' for production builds in CI
-                    node build.js build
+                    node build.js zip
                   elif [ -f "package.json" ]; then
                     npm run build || true
                   fi
@@ -268,11 +268,21 @@ jobs:
                       ./toolboxv2/tb_browser/build/
 
 
-      # ============================================================================
-      # NUITKA BUILD (FIXED)
-      # ============================================================================
-      # Using the official Nuitka-Action for proper compilation
-      # Supports Windows, macOS, and Linux with matrix strategy
+  # ============================================================================
+  # NUITKA BUILD (FIXED)
+  # ============================================================================
+  # Using the official Nuitka-Action for proper compilation
+  # Supports Windows, macOS, and Linux with matrix strategy
+
+
+  # ============================================================================
+  # NUITKA BUILD (FIXED)
+  # ============================================================================
+  # FIX: In Nuitka 2.x+, --onefile is a mode itself, cannot combine with --mode=standalone
+  # Use either:
+  #   --mode=onefile (single executable)
+  #   --mode=standalone (folder with exe + libs)
+  #   --mode=app (GUI app bundle)
 
   nuitka-build:
       name: Nuitka Build (${{ matrix.os }})
@@ -299,24 +309,21 @@ jobs:
                   python -m pip install --upgrade pip
                   pip install -r requirements.txt || pip install .
 
-          # Option 1: Using Nuitka-Action (recommended)
+          # Using Nuitka-Action with FIXED mode setting
           -   name: Build with Nuitka Action
               uses: Nuitka/Nuitka-Action@main
               with:
                   nuitka-version: main
                   script-name: toolboxv2/__main__.py
-                  # Choose mode: 'app' for GUI, 'standalone' for CLI
-                  mode: standalone
-                  # For onefile executable (single binary)
-                  onefile: true
+                  # FIX: Use mode=onefile for single binary (don't combine with onefile: true)
+                  # Options: 'onefile', 'standalone', 'app', 'module'
+                  mode: onefile
                   # Output directory
                   output-dir: build
                   # Include package data
                   include-package: toolboxv2
-                  # Optional: enable plugins if using specific frameworks
-                  # enable-plugins: tk-inter
-                  # Optional: for GUI apps without console
-                  # disable-console: true
+                  # Auto-download missing dependencies
+                  assume-yes-for-downloads: true
 
           -   name: Upload Nuitka Artifact
               uses: actions/upload-artifact@v4
@@ -326,8 +333,8 @@ jobs:
                       build/*.exe
                       build/*.bin
                       build/*.app/**/*
-                      build/*.dist/**/*
                   include-hidden-files: true
+
 
   tauri-test:
     name: Tauri Build Test
