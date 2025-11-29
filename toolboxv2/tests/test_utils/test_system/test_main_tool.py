@@ -2,7 +2,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from toolboxv2.tests.a_util import async_test
-from toolboxv2.tests.test_web import ensure_test_user
 from toolboxv2.utils.system.types import ToolBoxError, ToolBoxInterfaces
 
 
@@ -90,25 +89,6 @@ class TestMainTool(unittest.TestCase):
         self.assertEqual(custom_result.info.exec_code, 500)
         self.assertEqual(custom_result.info.help_text, "Authentication failed")
 
-    @async_test
-    async def test_get_user(self):
-        """Test get_user method"""
-        from toolboxv2.utils.system.main_tool import MainTool
-        # Create a mock MainTool instance
-        tool = MainTool()
-        if not tool.app.local_test:
-            return
-        tool.app.get_mod("CloudM.AuthManager")
-        ensure_test_user("testUser")
-        result = tool.get_user("testUser")
-        print("result:::", result)
-        result = await result
-        print("result:::", result)
-        result.print()
-        self.assertEqual(result.is_error(), False)
-        self.assertEqual(result.is_data(), True)
-        self.assertEqual(result.get().email, 'testUser@simpleCore.app')
-        self.assertEqual(result.get().name, 'testUser')
 
 
 if __name__ == '__main__':

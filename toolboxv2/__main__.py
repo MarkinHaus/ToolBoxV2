@@ -41,6 +41,16 @@ from .utils.toolbox import App as TbApp
 
 load_dotenv()
 
+import sys
+import os
+
+# Set UTF-8 encoding for Windows console (place at top of your script)
+if sys.platform == 'win32':
+    os.system('chcp 65001 >nul 2>&1')  # Change console to UTF-8
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+
 DEFAULT_MODI = "cli"
 
 _hook = [None]

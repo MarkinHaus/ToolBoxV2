@@ -220,88 +220,114 @@ jobs:
   # ============================================================================
 
   browser-extension:
-    name: Browser Extension Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      name: Browser Extension Build
+      runs-on: ubuntu-latest
+      steps:
+          -   name: Checkout Code
+              uses: actions/checkout@v4
 
-      - name: Check for browser extension
-        id: check
-        run: |
-          if [ -f "./toolboxv2/tb_browser/build.js" ] || [ -f "./toolboxv2/tb_browser/package.json" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
+          -   name: Check for browser extension
+              id: check
+              run: |
+                  if [ -f "./toolboxv2/tb_browser/build.js" ] || [ -f "./toolboxv2/tb_browser/package.json" ]; then
+                    echo "exists=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "exists=false" >> $GITHUB_OUTPUT
+                  fi
 
-      - name: Setup Node.js
-        if: steps.check.outputs.exists == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+          -   name: Setup Node.js
+              if: steps.check.outputs.exists == 'true'
+              uses: actions/setup-node@v4
+              with:
+                  node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
-        if: steps.check.outputs.exists == 'true'
-        working-directory: ./toolboxv2/tb_browser
-        run: npm install || true
+          -   name: Install dependencies
+              if: steps.check.outputs.exists == 'true'
+              working-directory: ./toolboxv2/tb_browser
+              run: npm install || true
 
-      - name: Build extension
-        if: steps.check.outputs.exists == 'true'
-        working-directory: ./toolboxv2/tb_browser
-        run: |
-          if [ -f "build.js" ]; then
-            node build.js
-          elif [ -f "package.json" ]; then
-            npm run build || true
-          fi
+          -   name: Build extension
+              if: steps.check.outputs.exists == 'true'
+              working-directory: ./toolboxv2/tb_browser
+              run: |
+                  if [ -f "build.js" ]; then
+                    # FIX: build.js requires 'dev', 'build', or 'zip' argument
+                    # Use 'build' for production builds in CI
+                    node build.js build
+                  elif [ -f "package.json" ]; then
+                    npm run build || true
+                  fi
 
-      - name: Upload extension artifact
-        if: steps.check.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-extension
-          path: |
-            ./toolboxv2/tb_browser/dist/
-            ./toolboxv2/tb_browser/build/
+          -   name: Upload extension artifact
+              if: steps.check.outputs.exists == 'true'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: browser-extension
+                  path: |
+                      ./toolboxv2/tb_browser/dist/
+                      ./toolboxv2/tb_browser/build/
 
-  # ============================================================================
-  # NUITKA BUILD TEST (nur auf einem OS für CI)
-  # ============================================================================
 
-  nuitka-test:
-    name: Nuitka Build Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      # ============================================================================
+      # NUITKA BUILD (FIXED)
+      # ============================================================================
+      # Using the official Nuitka-Action for proper compilation
+      # Supports Windows, macOS, and Linux with matrix strategy
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION_DEFAULT }}
+  nuitka-build:
+      name: Nuitka Build (${{ matrix.os }})
+      runs-on: ${{ matrix.os }}
+      strategy:
+          fail-fast: false
+          matrix:
+              os: [ ubuntu-latest, windows-latest, macos-latest ]
+              python-version: [ '3.11' ]
 
-      - name: Install Nuitka
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install nuitka zstandard ordered-set
-          python -m pip install -e .
+      steps:
+          -   name: Checkout Code
+              uses: actions/checkout@v4
 
-      - name: Test Nuitka compilation
-        run: |
-          python -m nuitka \
-            --module \
-            --output-dir=nuitka-test \
-            --assume-yes-for-downloads \
-            toolboxv2 || true
+          -   name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: ${{ matrix.python-version }}
+                  architecture: 'x64'
+                  cache: 'pip'
 
-      - name: Verify compilation
-        run: |
-          ls -la nuitka-test/ || true
+          -   name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements.txt || pip install .
 
-  # ============================================================================
-  # TAURI BUILD TEST (nur macOS ARM für schnellen CI Check)
-  # ============================================================================
+          # Option 1: Using Nuitka-Action (recommended)
+          -   name: Build with Nuitka Action
+              uses: Nuitka/Nuitka-Action@main
+              with:
+                  nuitka-version: main
+                  script-name: toolboxv2/__main__.py
+                  # Choose mode: 'app' for GUI, 'standalone' for CLI
+                  mode: standalone
+                  # For onefile executable (single binary)
+                  onefile: true
+                  # Output directory
+                  output-dir: build
+                  # Include package data
+                  include-package: toolboxv2
+                  # Optional: enable plugins if using specific frameworks
+                  # enable-plugins: tk-inter
+                  # Optional: for GUI apps without console
+                  # disable-console: true
+
+          -   name: Upload Nuitka Artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: nuitka-${{ runner.os }}-${{ matrix.python-version }}
+                  path: |
+                      build/*.exe
+                      build/*.bin
+                      build/*.app/**/*
+                      build/*.dist/**/*
+                  include-hidden-files: true
 
   tauri-test:
     name: Tauri Build Test

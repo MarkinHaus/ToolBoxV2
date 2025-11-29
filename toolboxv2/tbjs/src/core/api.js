@@ -66,7 +66,6 @@ const Api = {
         const token = TB.state.get('user.token');
         if (token) {
             headers['Authorization'] = `Bearer ${token}`;
-            TB.logger.debug('[API] Adding Authorization header');
         }
 
         return headers;
