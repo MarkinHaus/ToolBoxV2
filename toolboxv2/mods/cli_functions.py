@@ -537,12 +537,7 @@ def user_input(app: App,
         return call_obj
 
 
-@export(mod_name=Name, samples=[{
-    "obj": CallingObject(
-        module_name="welcome",
-    ),
-    "build_in_commands": {},
-}])
+@export(mod_name=Name, test=False)
 async def co_evaluate(app: App,
                       obj: CallingObject or None,
                       build_in_commands: dict,

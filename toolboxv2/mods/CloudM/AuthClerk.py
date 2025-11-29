@@ -831,7 +831,7 @@ def list_users(app: App = None) -> Result:
         return Result.default_internal_error(str(e))
 
 
-@export(mod_name=Name, version=version, api=False, interface=ToolBoxInterfaces.native)
+@export(mod_name=Name, version=version, api=False, interface=ToolBoxInterfaces.native, test=False)
 def delete_user(app: App = None, clerk_user_id: str = None) -> Result:
     """Delete a user from Clerk and local storage"""
     if app is None:

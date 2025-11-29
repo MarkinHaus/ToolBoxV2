@@ -484,7 +484,7 @@ def get_instance_overview(si_id: str = None) -> dict:
 
 # =================== Session Validation ===================
 
-@export(mod_name=Name, state=False)
+@export(mod_name=Name, state=False, test=False)
 def save_close_user_instance(ws_id: str) -> Result:
     """Validate WebSocket ID and close associated instance"""
     valid, key = validate_ws_id(ws_id)

@@ -295,34 +295,14 @@ class GraphVisualizer:
             return c
 
 
-class DynamicRateLimiter:
-    def __init__(self):
-        self.last_request_time = 0.0
-        self._lock = asyncio.Lock()
-
-    def update_rate(self, requests_per_second: float):
-        """Update rate limit dynamically"""
-        self.min_interval = 1.0 / requests_per_second if requests_per_second > 0 else float('inf')
-
-    async def acquire(self):
-        """Acquire permission to make a request"""
-        async with self._lock:
-            current_time = time.time()
-            time_since_last = current_time - self.last_request_time
-            if time_since_last < self.min_interval:
-                wait_time = self.min_interval - time_since_last
-                await asyncio.sleep(wait_time)
-            self.last_request_time = time.time()
-
 
 class ConceptExtractor:
     """Handles extraction of concepts and relationships from text"""
 
-    def __init__(self, knowledge_base, requests_per_second = 85.):
+    def __init__(self, knowledge_base):
         self.kb = knowledge_base
         self.concept_graph = ConceptGraph()
         self._results_lock = asyncio.Lock()
-        self.requests_per_second = requests_per_second
 
     async def extract_concepts(self, texts: list[str], metadatas: list[dict[str, Any]]) -> list[list[Concept]]:
         """
@@ -333,7 +313,6 @@ class ConceptExtractor:
         metadatas = metadatas + [{}] * (len(texts) - len(metadatas))
 
         # Initialize rate limiter
-        rate_limiter = DynamicRateLimiter()
 
         system_prompt = (
             "Analyze the given text and extract key concepts and their relationships. For each concept:\n"
@@ -364,7 +343,6 @@ class ConceptExtractor:
             """Process a single request with rate limiting"""
             try:
                 # Wait for rate limit
-                await rate_limiter.acquire()
                 self.kb.stats['concept_calls'] += 1
                 # Make API call without awaiting the response
 
@@ -383,22 +361,14 @@ class ConceptExtractor:
                 return idx, None
 
         async def process_response(idx: int, response) -> list[Concept]:
-                """Process the response once it's ready"""
-            #try:
-                if response is None:
-                    return []
+            """Process the response once it's ready"""
+            if response is None:
+                return []
 
-                return await self._process_response(response, metadatas[idx])
+            return await self._process_response(response, metadatas[idx])
 
-            #except Exception as e:
-            #    print(f"Error processing response {idx}: {str(e)}")
-            #    return []
-
-        # Create tasks for all requests
         request_tasks = []
         batch_size = self.kb.batch_size
-
-        rate_limiter.update_rate(self.requests_per_second)
 
         for batch_start in range(0, len(requests), batch_size):
             batch = requests[batch_start:batch_start + batch_size]
@@ -635,10 +605,9 @@ class KnowledgeBase:
                  embedding_model=os.getenv("DEFAULTMODELEMBEDDING"),
                  vis_class:str | None = "FaissVectorStore",
                  vis_kwargs:dict[str, Any] | None=None,
-                 requests_per_second=85.,
                  chunk_size: int = 3600,
                  chunk_overlap: int = 130,
-                 separator: str = "\n"
+                 separator: str = "\n", **kwargs
                  ):
         """Initialize the knowledge base with given parameters"""
 
@@ -649,7 +618,6 @@ class KnowledgeBase:
         self.deduplication_threshold = deduplication_threshold
         if model_name == "openrouter/mistralai/mistral-nemo":
             batch_size = 9
-            requests_per_second = 1.5
         self.batch_size = batch_size
         self.n_clusters = n_clusters
         self.model_name = model_name
@@ -664,15 +632,12 @@ class KnowledgeBase:
 
         self.text_splitter = TextSplitter(chunk_size=chunk_size,chunk_overlap=chunk_overlap, separator=separator)
         self.similarity_graph = {}
-        self.concept_extractor = ConceptExtractor(self, requests_per_second)
+        self.concept_extractor = ConceptExtractor(self)
 
         self.vis_class = None
         self.vis_kwargs = None
         self.vdb = None
         self.init_vis(vis_class, vis_kwargs)
-
-        self.llm_rate_limiter = DynamicRateLimiter()
-        self.llm_rate_limiter.update_rate(requests_per_second / 2)
 
     def init_vis(self, vis_class, vis_kwargs):
         if vis_class is None:
@@ -1934,7 +1899,6 @@ class KnowledgeBase:
 
         try:
             from toolboxv2 import get_app
-            await self.llm_rate_limiter.acquire()
             llm_response = await get_app().get_mod("isaa").mini_task_completion_format(
                 mini_task=system_prompt,
                 user_task=prompt,

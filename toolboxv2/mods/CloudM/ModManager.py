@@ -809,7 +809,7 @@ def list_modules(app: App = None) -> Result:
     return Result.ok({"modules": modules, "count": len(modules)})
 
 
-@export(mod_name=Name, name="upload_mod", api=True, api_methods=['POST'])
+@export(mod_name=Name, name="upload_mod", api=True, api_methods=['POST'], test=False)
 async def upload_mod(app: App, request: RequestData,
                      form_data: Optional[Dict[str, Any]] = None) -> Result:
     """

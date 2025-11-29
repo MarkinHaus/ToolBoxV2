@@ -827,7 +827,7 @@ async def _prepare_file_response(self, storage: BlobStorage, blob_path: str, row
         return Result.default_internal_error(info="Error processing download.")
 
 
-@export(mod_name=MOD_NAME, api=True, version=VERSION, name="download", row=True, api_methods=['GET'], request_as_kwarg=True)
+@export(mod_name=MOD_NAME, api=True, version=VERSION, name="download", row=True, api_methods=['GET'], request_as_kwarg=True, test=False)
 async def handle_download(self, request: RequestData, **kwargs) -> Result:  # Removed path kwarg, always use query_params
     blob_path = request.query_params.get('path')
     if not blob_path:

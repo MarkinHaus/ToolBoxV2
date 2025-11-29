@@ -393,12 +393,24 @@ def clear_db(self, do_root=False):
 
 # =================== Version & Status ===================
 
+
 @to_api
 def show_version(self):
     """Show module version"""
     self.print(f"Version: {self.version} {self.api_version}")
     return self.version
 
+
+LEN_FUNCTIONS = [0, None]
+@to_api
+def docs(app=None):
+    """Show APP api documentation"""
+    if app is None:
+        app = get_app()
+    if len(app.functions) != LEN_FUNCTIONS[0]:
+        LEN_FUNCTIONS[0] = len(app.functions)
+        LEN_FUNCTIONS[1] = app.generate_openapi_html()
+    return LEN_FUNCTIONS[1]
 
 @export(mod_name=Name, version=version, state=False, request_as_kwarg=True)
 async def get_eco(app=None, request=None):
@@ -438,3 +450,4 @@ def initialize_admin_panel(app: App):
             "version": version
         }
     ).set_origin("CloudM.initialize_admin_panel")
+

@@ -2264,7 +2264,8 @@ class AppType:
                                 infos['functions_fatal_error'] += 1
                                 infos['callse'][function_name] = [test_kwargs, str(e)]
                                 if test_class is not None:
-                                    test_class.fail(str(result))
+                                    import traceback
+                                    test_class.fail(str(result)+traceback.format_exc())
                             finally:
                                 infos['functions_run'] += 1
 
@@ -2441,7 +2442,9 @@ class AppType:
                 stats.errors += info.error
 
                 # Calculate coverage
-                coverage = (info.coverage[1] / info.coverage[0]) if info.coverage[0] > 0 else 0
+                coverage = (
+                    (info.coverage[1] / info.coverage[0]) if info.coverage[0] > 0 else 0
+                )
                 stats.coverage.append(f"{module_name}:{coverage:.2f}\n")
 
                 # Store module info
@@ -2450,7 +2453,8 @@ class AppType:
             # Calculate total coverage
             total_coverage = (
                 sum(float(t.split(":")[-1]) for t in stats.coverage) / len(stats.coverage)
-                if stats.coverage else 0
+                if stats.coverage
+                else 0
             )
 
             stats.total_execution_time = time.time() - start_time
@@ -2458,13 +2462,13 @@ class AppType:
             # Generate profiling stats if enabled
             if enable_profiling:
                 s = io.StringIO()
-                ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+                ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
                 ps.print_stats()
                 stats.profiling_data = {
-                    'detailed_stats': s.getvalue(),
-                    'total_time': stats.total_execution_time,
-                    'function_count': stats.modular_run,
-                    'successful_functions': stats.modular_sug
+                    "detailed_stats": s.getvalue(),
+                    "total_time": stats.total_execution_time,
+                    "function_count": stats.modular_run,
+                    "successful_functions": stats.modular_sug,
                 }
 
             print(
@@ -2483,6 +2487,137 @@ class AppType:
 
             analyzed_data = analyze_data(stats.__dict__)
             return Result.ok(data=stats.__dict__, data_info=analyzed_data)
+
+    def generate_openapi_html(self):
+        """
+        Generiert eine HTML-Datei mit OpenAPI/Swagger UI für API-Routen.
+
+        Args:
+        """
+
+        # OpenAPI Spec erstellen
+        openapi_spec = {
+            "openapi": "3.0.0",
+            "info": {
+                "title": "CloudM API Services",
+                "version": "0.1.24",
+                "description": "API Documentation für CloudM Email Services",
+            },
+            "servers": [{"url": "/api/v1", "description": "API Server"}],
+            "paths": {},
+        }
+
+        # Durch alle Services iterieren
+        for service_name, functions in self.functions.items():
+            for func_name, func_info in functions.items():
+                # Nur API-Funktionen verarbeiten
+                if not func_info.get("api", False):
+                    continue
+
+                # Parameter aus der Signatur extrahieren
+                params = func_info.get("params", [])
+                # 'app' Parameter ausschließen (interner Parameter)
+                api_params = [p for p in params if p != "app"]
+
+                # Request Body Schema erstellen
+                properties = {}
+                required = []
+
+                for param in api_params:
+                    properties[param] = {
+                        "type": "string",
+                        "description": f"Parameter: {param}",
+                    }
+                    # Prüfen ob Parameter optional ist (hat default value)
+                    if "=" not in str(func_info.get("signature", "")):
+                        required.append(param)
+
+                # API Path erstellen
+                path = f"/api/{service_name}/{func_name}"
+
+                # Path Operation definieren
+                openapi_spec["paths"][path] = {
+                    "post": {
+                        "summary": func_name.replace("_", " ").title(),
+                        "description": f"Funktion: {func_name} aus Modul {func_info.get('module_name', 'unknown')}",
+                        "tags": [service_name],
+                        "requestBody": {
+                            "required": True,
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": properties,
+                                        "required": required,
+                                    }
+                                }
+                            },
+                        },
+                        "responses": {
+                            "200": {
+                                "description": "Erfolgreiche Antwort",
+                                "content": {
+                                    "application/json": {"schema": {"type": "object"}}
+                                },
+                            },
+                            "400": {"description": "Ungültige Anfrage"},
+                            "500": {"description": "Serverfehler"},
+                        },
+                    }
+                }
+
+        # HTML Template mit Swagger UI
+        html_content = f"""<!DOCTYPE html>
+    <html lang="de">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>CloudM API Documentation</title>
+        <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.5/swagger-ui.min.css">
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+            }}
+            #swagger-ui {{
+                max-width: 1460px;
+                margin: 0 auto;
+            }}
+        </style>
+    </head>
+    <body>
+        <div id="swagger-ui"></div>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.5/swagger-ui-bundle.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.10.5/swagger-ui-standalone-preset.min.js"></script>
+        <script unsave="true">
+            const onload = function() {{
+                const spec = {json.dumps(openapi_spec, indent=2)};
+
+                window.ui = SwaggerUIBundle({{
+                    spec: spec,
+                    dom_id: '#swagger-ui',
+                    deepLinking: true,
+                    presets: [
+                        SwaggerUIBundle.presets.apis,
+                        SwaggerUIStandalonePreset
+                    ],
+                    plugins: [
+                        SwaggerUIBundle.plugins.DownloadUrl
+                    ],
+                    layout: "StandaloneLayout"
+                }});
+            }};
+            if (window.TB?.onLoaded) {{
+                window.TB.onLoaded(onload());
+            }} else {{
+               window.addEventListener('DOMContentLoaded', onload)
+            }}
+        </script>
+    </body>
+    </html>"""
+        print(f"✓ Gefundene API-Routen: {len(openapi_spec['paths'])}")
+        return Result.html(html_content)
 
 
 

@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import IntelligentRateLimiter, \
+    LiteLLMRateLimitHandler
 from toolboxv2.mods.isaa.base.tbpocketflow import AsyncFlow, AsyncNode
 
 from pydantic import BaseModel, ValidationError
@@ -220,59 +222,6 @@ def _get_image_mime_type(path: str) -> str:
     return ""
 
 
-# ===== LLM RATE LIMITER =====
-class LLMRateLimiter:
-    """Token bucket rate limiter for LLM API calls to prevent cost explosions"""
-
-    def __init__(self, max_requests_per_minute: int = 60, max_requests_per_second: int = 10):
-        self.max_rpm = max_requests_per_minute
-        self.max_rps = max_requests_per_second
-        self.minute_window = []  # List of timestamps
-        self.second_window = []
-        self.lock = asyncio.Lock()
-
-    async def acquire(self):
-        """Acquire permission to make an LLM call (blocks if rate limit exceeded)"""
-        async with self.lock:
-            now = time.time()
-
-            # Clean old entries from windows
-            self.minute_window = [t for t in self.minute_window if now - t < 60]
-            self.second_window = [t for t in self.second_window if now - t < 1]
-
-            # Check rate limits
-            while len(self.minute_window) >= self.max_rpm or len(self.second_window) >= self.max_rps:
-                # Wait until we can proceed
-                if len(self.second_window) >= self.max_rps:
-                    wait_time = 1.0 - (now - self.second_window[0])
-                    if wait_time > 0:
-                        await asyncio.sleep(wait_time)
-                elif len(self.minute_window) >= self.max_rpm:
-                    wait_time = 60.0 - (now - self.minute_window[0])
-                    if wait_time > 0:
-                        await asyncio.sleep(min(wait_time, 1.0))  # Max 1s wait per iteration
-
-                # Refresh windows
-                now = time.time()
-                self.minute_window = [t for t in self.minute_window if now - t < 60]
-                self.second_window = [t for t in self.second_window if now - t < 1]
-
-            # Record this request
-            self.minute_window.append(now)
-            self.second_window.append(now)
-
-    def get_stats(self) -> dict:
-        """Get current rate limiter statistics"""
-        now = time.time()
-        self.minute_window = [t for t in self.minute_window if now - t < 60]
-        self.second_window = [t for t in self.second_window if now - t < 1]
-
-        return {
-            "requests_last_minute": len(self.minute_window),
-            "requests_last_second": len(self.second_window),
-            "max_rpm": self.max_rpm,
-            "max_rps": self.max_rps
-        }
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
 iprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
@@ -1915,11 +1864,9 @@ confidence: 0.85
         llm_start = time.perf_counter()
 
         try:
-            # P1 - HOCH: LLM Rate Limiting
-            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
-                await self.agent_instance.llm_rate_limiter.acquire()
 
-            response = await litellm.acompletion(
+            response = await self.agent_instance.llm_handler.completion_with_rate_limiting(
+                                    litellm,
                 model=model_to_use,
                 messages=[{"role": "user", "content": final_prompt}],
                 temperature=llm_config.get("temperature", 0.7),
@@ -2069,11 +2016,8 @@ Your decision:"""
         model_to_use = self.fast_llm_model if hasattr(self, 'fast_llm_model') else "openrouter/anthropic/claude-3-haiku"
 
         try:
-            # P1 - HOCH: LLM Rate Limiting
-            if self.agent_instance and hasattr(self.agent_instance, 'llm_rate_limiter'):
-                await self.agent_instance.llm_rate_limiter.acquire()
-
-            response = await litellm.acompletion(
+            response = await self.agent_instance.llm_handler.completion_with_rate_limiting(
+                                    litellm,
                 model=model_to_use,
                 messages=[{"role": "user", "content": enhanced_prompt}],
                 temperature=0.1,
@@ -9135,10 +9079,9 @@ class FlowAgent:
         self.session_tool_restrictions = {}
 
         # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
-        self.llm_rate_limiter = LLMRateLimiter(
-            max_requests_per_minute=kwargs.get('max_llm_rpm', 60),
-            max_requests_per_second=kwargs.get('max_llm_rps', 10)
-        )
+        self.llm_rate_limiter = IntelligentRateLimiter()
+        self.llm_handler = LiteLLMRateLimitHandler(self.llm_rate_limiter, max_retries=3)
+
 
         # MCP Session Health Tracking (P0 - KRITISCH: Circuit breaker pattern)
         self.mcp_session_health = {}  # server_name -> {"failures": int, "last_failure": float, "state": "CLOSED|OPEN|HALF_OPEN"}
@@ -9308,14 +9251,15 @@ class FlowAgent:
 
         try:
             # P1 - HOCH: LLM Rate Limiting to prevent cost explosions
-            await self.llm_rate_limiter.acquire()
 
             if kwargs.get("stream", False):
                 kwargs["stream_options"] = {"include_usage": True}
 
             # detailed informations str
-            with Spinner(f"LLM Call {self.amd.name}@{node_name}#{task_id if task_id else model_preference}-{kwargs['model']}"):
-                response = await litellm.acompletion(**kwargs)
+            with (Spinner(f"LLM Call {self.amd.name}@{node_name}#{task_id if task_id else model_preference}-{kwargs['model']}")):
+                response = await self.llm_handler.completion_with_rate_limiting(
+                                    litellm,**kwargs
+                                )
 
             if not kwargs.get("stream", False):
                 result = response.choices[0].message.content

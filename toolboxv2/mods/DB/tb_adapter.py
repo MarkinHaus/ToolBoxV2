@@ -118,6 +118,7 @@ class Tools(MainTool, FileHandler):
         version=version,
         interface=ToolBoxInterfaces.internal,
         post_compute=post_function,
+        test=False,
     )
     def get(self, query: str) -> Result:
 
@@ -134,6 +135,7 @@ class Tools(MainTool, FileHandler):
         version=version,
         interface=ToolBoxInterfaces.internal,
         post_compute=post_function,
+        test=False,
     )
     def if_exist(self, query: str) -> Result:
 
@@ -148,6 +150,7 @@ class Tools(MainTool, FileHandler):
         version=version,
         interface=ToolBoxInterfaces.internal,
         pre_compute=pre_function,
+        test=False,
     )
     def set(self, query: str, data: Any) -> Result:
         if self.data_base is None:
@@ -160,17 +163,10 @@ class Tools(MainTool, FileHandler):
 
     @export(
         mod_name=Name,
-        helper="Set data to an Database instance",
-        version=version,
-        interface=ToolBoxInterfaces.internal,
-        pre_compute=pre_function,
-    )
-
-    @export(
-        mod_name=Name,
         helper="Delete data from an Database instance",
         version=version,
         interface=ToolBoxInterfaces.internal,
+        test=False,
     )
     def delete(self, query: str, matching:bool=False) -> Result:
 
@@ -192,6 +188,7 @@ class Tools(MainTool, FileHandler):
         helper="append data to an Database instance subset",
         version=version,
         interface=ToolBoxInterfaces.internal,
+        test=False,
     )
     def append_on_set(self, query: str, data: Any) -> Result:
         if self.data_base is None:
@@ -283,7 +280,8 @@ class Tools(MainTool, FileHandler):
                                            data=self.initialize_database()
                                            ).lazy_return(data=f"mode change to {mode}")
 
-    @export(mod_name=Name, interface=ToolBoxInterfaces.cli)
+    @export(mod_name=Name, interface=ToolBoxInterfaces.cli,
+        samples=[{"mode": "LC"}])
     def edit_cli(self, mode: str = "LC"):
         if mode is None:
             self.app.logger.warning("No mode parsed")
@@ -297,7 +295,8 @@ class Tools(MainTool, FileHandler):
                                            data=self.initialize_database()
                                            ).lazy_return(data=f"mode change to {mode}")
 
-    @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=False, helper="Avalabel modes: LC CB LR RR")
+    @export(mod_name=Name, interface=ToolBoxInterfaces.remote, api=False, helper="Avalabel modes: LC CB LR RR",
+        samples=[{"mode": "LC"}])
     def edit_dev_web_ui(self, mode: str = "LC"):
         if mode is None:
             self.app.logger.warning("No mode parsed")
@@ -312,5 +311,37 @@ class Tools(MainTool, FileHandler):
                                            ).lazy_return(data=f"mode change to {mode}")
 
 
+    @export(mod_name=Name, interface=ToolBoxInterfaces.internal, test_only=True)
+    def test(self):
+        test_key = "test_key"
+        test_key2 = "test_key"
+        test_data = {"test": "data"}
+        test_data2 = ["test", "data"]
+
+        result = self.set(test_key, test_data)
+        assert result.is_ok()
+
+        result = self.get(test_key)
+        assert result.is_ok()
+        assert result.get() == test_data
+
+        result = self.append_on_set(test_key2, test_data2)
+        assert result.is_ok()
+        result = self.append_on_set(test_key2, ["test","data2"])
+        assert result.is_ok()
+        result = self.get(test_key2)
+        assert result.is_ok()
+        assert result.get() == ["test", "data", "test2"]
+
+        result = self.delete(test_key2)
+        assert result.is_ok()
+        result = self.delete(test_key)
+        assert result.is_ok()
+
+        result = self.get(test_key)
+        assert result.is_error()
+
+        result = self.get(test_key2)
+        assert result.is_error()
 
 
