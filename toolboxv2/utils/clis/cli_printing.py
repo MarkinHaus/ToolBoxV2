@@ -39,10 +39,6 @@ if sys.platform == 'win32':
 
 def c_print(*args, **kwargs):
     """Safe print with Unicode error handling."""
-    # Add errors='replace' to kwargs if not present
-    if "errors" not in kwargs:
-        kwargs["errors"] = "replace"
-
     try:
         print(*args, **kwargs)
     except UnicodeEncodeError:

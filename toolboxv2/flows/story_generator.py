@@ -6873,8 +6873,3 @@ if __name__ == '__main__':
     import sys
     app_instance = App(instance_name="StoryGeneratorV5")
     asyncio.run(run(app_instance, *sys.argv[1:]))
-
-"""
-
-A weary soldier in the trenches of World War I reflects on the futility of conflict, trying to find a glimmer of hope amidst the grim reality. Genre: War Drama / Historical Fiction Getestete ImageStyle Kombination: Realistic (for the narrative tone) Getestete VideoStyle Kombination: Simpsons Style
-"""
