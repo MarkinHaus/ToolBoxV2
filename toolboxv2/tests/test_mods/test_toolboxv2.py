@@ -330,7 +330,8 @@ class TestToolboxv2Mods(unittest.TestCase):
         print("STARTING test")
         if "test" not in self.app.id:
             self.app.id += "test"
-        res = await self.app.execute_all_functions_()
+        await self.app.load_all_mods_in_file()
+        res = await self.app.execute_all_functions_(test_class=self)
         print("RES: ", res.result.data_info)
         # data = res.get()
         # print(res.result.data_info)

@@ -293,7 +293,7 @@ jobs:
             --module \
             --output-dir=nuitka-test \
             --assume-yes-for-downloads \
-            toolboxv2/utils/__init__.py || true
+            toolboxv2 || true
 
       - name: Verify compilation
         run: |

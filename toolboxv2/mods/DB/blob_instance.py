@@ -295,12 +295,11 @@ class BlobDB(DB):
                     current_data = [current_data] if current_data else []
 
                 if isinstance(value, list):
-                    current_data.extend(value)
-                else:
+                    for v in value:
+                        if v not in current_data:
+                            current_data.append(v)
+                elif value not in current_data:
                     current_data.append(value)
-
-                # Deduplizierung (optional, basierend auf deinem alten Code)
-                # current_data = list(set(current_data)) # Vorsicht bei nicht-hashbaren Typen
 
                 f.clear()
                 f.write_json(current_data)

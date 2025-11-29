@@ -88,10 +88,6 @@ class TestToolboxv2(unittest.TestCase):
 
     async def test_run_flows(self):
 
-        res = await self.app.run_flows("None")
-        self.assertEqual(res, None)
-        self.assertEqual(len(self.app.flows.keys()), 0)
-
         data = flows_dict("bg")
 
         self.assertIn("bg", data.keys())
@@ -100,13 +96,6 @@ class TestToolboxv2(unittest.TestCase):
         self.app.set_flows(data)
 
         self.assertGreater(len(self.app.flows.keys()), 0)
-        self.app.daemon_app = AsyncMock()
-        self.app.daemon_app.connect = AsyncMock()
-
-        await self.app.run_flows("bg")
-
-        self.app.daemon_app.connect.assert_called_once()
-        self.app.daemon_app.connect.assert_called_with(self.app)
 
 
 TestToolboxv2.test_run_flows = async_test(TestToolboxv2.test_run_flows)

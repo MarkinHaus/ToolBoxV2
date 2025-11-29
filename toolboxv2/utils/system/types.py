@@ -616,6 +616,10 @@ class ApiResult(BaseModel):
             res = res.to_api_result()
         return res
 
+    def __getattr__(self, name):
+        # proxy to result
+        return getattr(self.as_result(), name)
+
 
 from typing import TypeVar, Generic, List, Optional, Type, get_origin, get_args
 import inspect
@@ -2181,8 +2185,8 @@ class AppType:
     def save_registry_as_enums(self, directory: str, filename: str):
         """proxi attr"""
 
-    async def execute_all_functions_(self, m_query='', f_query=''):
-        print("Executing all functions")
+    async def execute_all_functions_(self, m_query='', f_query='', test_class=None):
+
         from ..extras import generate_test_cases
         all_data = {
             "modular_run": 0,
@@ -2193,6 +2197,8 @@ class AppType:
             "total_coverage": {},
         }
         items = list(self.functions.items()).copy()
+
+        print("Executing all functions", len(items))
         for module_name, functions in items:
             infos = {
                 "functions_run": 0,
@@ -2208,7 +2214,7 @@ class AppType:
                 all_data['modular_sug'] += 1
                 continue
 
-            with Spinner(message=f"In {module_name}| "):
+            with Spinner(message=f"In {module_name}|"):
                 f_items = list(functions.items()).copy()
                 for function_name, function_data in f_items:
                     if not isinstance(function_data, dict):
@@ -2221,7 +2227,7 @@ class AppType:
                     if test is False:
                         continue
 
-                    with Spinner(message=f"\t\t\t\t\t\tfuction {function_name}..."):
+                    with  (test_class.subTest(f"{module_name}.{function_name}") if test_class is not None else Spinner(message=f"\t\t\t\t\t\tfuction {function_name}...")):
                         params: list = function_data.get('params')
                         sig: signature = function_data.get('signature')
                         state: bool = function_data.get('state')
@@ -2237,6 +2243,7 @@ class AppType:
                         # print(module_name, function_name, test_kwargs_list)
                         infos["coverage"][1] += 1
                         for test_kwargs in test_kwargs_list:
+                            result = None
                             try:
                                 # print(f"test Running {state=} |{module_name}.{function_name}")
                                 result = await self.a_run_function((module_name, function_name),
@@ -2244,6 +2251,8 @@ class AppType:
                                                                    **test_kwargs)
                                 if not isinstance(result, Result):
                                     result = Result.ok(result)
+                                if test_class is not None:
+                                    test_class.assertTrue(not result.is_error())
                                 if result.info.exec_code == 0:
                                     infos['calls'][function_name] = [test_kwargs, str(result)]
                                     infos['functions_sug'] += 1
@@ -2254,6 +2263,8 @@ class AppType:
                             except Exception as e:
                                 infos['functions_fatal_error'] += 1
                                 infos['callse'][function_name] = [test_kwargs, str(e)]
+                                if test_class is not None:
+                                    test_class.fail(str(result))
                             finally:
                                 infos['functions_run'] += 1
 

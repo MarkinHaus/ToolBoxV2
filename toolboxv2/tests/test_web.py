@@ -2,8 +2,6 @@ import time
 
 from toolboxv2 import get_app
 from toolboxv2.mods.CloudM.AuthManager import (
-    crate_local_account,
-    get_invitation,
     get_user_by_name,
 )
 from toolboxv2.mods.CloudM.extras import create_magic_log_in
@@ -17,7 +15,7 @@ def ensure_test_user(user_name="testUser"):
     app.get_mod("DB").edit_cli("LC")
     user = get_user_by_name(app, user_name)
     if user.is_error():
-        crate_local_account(app, user_name, user_name + "@simpleCore.app", get_invitation(app).get())
+        raise ValueError(f"User {user_name} not found crate first in Clark dashboard")
     link = create_magic_log_in(app, user_name)
     app.get_mod("DB").close_db()
     app.get_mod("DB").edit_cli("LC")

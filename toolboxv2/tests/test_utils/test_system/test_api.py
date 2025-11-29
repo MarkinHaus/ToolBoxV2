@@ -2,7 +2,7 @@ import unittest
 
 from toolboxv2 import get_app
 from toolboxv2.utils.system import get_state_from_app
-from toolboxv2.utils.clis.api import find_highest_zip_version_entry
+from toolboxv2.utils.system.state_system import find_highest_zip_version_entry
 
 
 class TestFindHighestZipVersionEntry(unittest.TestCase):

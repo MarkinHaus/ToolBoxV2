@@ -322,7 +322,7 @@ def register_cli_session(
     )
 
     logger.info(f"CLI session registered for user {uid}")
-    return Result.ok("CLI session registered", data=session_data)
+    return Result.ok(info="CLI session registered", data=session_data)
 
 
 @e

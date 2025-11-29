@@ -183,7 +183,7 @@ class PasswordManagerCore:
                 return Result.default_user_error("Password entry already exists")
 
             # Store in database
-            self.password_db.data[entry.id] = entry.to_dict()
+            self.password_db.set(entry.id, entry.to_dict())
             self.password_db.exit()  # Save to blob storage
 
             return Result.ok(data=entry.to_dict(), info="Password added successfully")
@@ -194,15 +194,15 @@ class PasswordManagerCore:
     def get_password(self, entry_id: str) -> Result:
         """Get password entry by ID"""
         try:
-            if entry_id not in self.password_db.data:
+            if not self.password_db.if_exist(entry_id):
                 return Result.default_user_error("Password entry not found")
 
-            entry_data = self.password_db.data[entry_id]
+            entry_data = self.password_db.get(entry_id)
             entry = PasswordEntry.from_dict(entry_data)
 
             # Update last used timestamp
             entry.last_used = time.time()
-            self.password_db.data[entry_id] = entry.to_dict()
+            self.password_db.set(entry.id, entry.to_dict())
             self.password_db.exit()
 
             return Result.ok(data=entry.to_dict())
@@ -215,7 +215,7 @@ class PasswordManagerCore:
         try:
             domain = self._extract_domain(url)
 
-            for entry_data in self.password_db.data.values():
+            for entry_data in self.password_db.get('all'):
                 entry = PasswordEntry.from_dict(entry_data)
                 if (entry.get_domain() == domain and
                     entry.username.lower() == username.lower()):
@@ -232,7 +232,7 @@ class PasswordManagerCore:
             query = query.lower()
             results = []
 
-            for entry_data in self.password_db.data.values():
+            for entry_data in self.password_db.get('all'):
                 entry = PasswordEntry.from_dict(entry_data)
 
                 # Search in multiple fields
@@ -258,10 +258,10 @@ class PasswordManagerCore:
     def update_password(self, entry_id: str, updates: Dict) -> Result:
         """Update password entry"""
         try:
-            if entry_id not in self.password_db.data:
+            if not self.password_db.if_exist(entry_id):
                 return Result.default_user_error("Password entry not found")
 
-            entry_data = self.password_db.data[entry_id]
+            entry_data = self.password_db.get(entry_id)
             entry = PasswordEntry.from_dict(entry_data)
 
             # Update fields
@@ -273,7 +273,7 @@ class PasswordManagerCore:
                         setattr(entry, key, value)
 
             entry.updated_at = time.time()
-            self.password_db.data[entry_id] = entry.to_dict()
+            self.password_db.set(entry.id, entry.to_dict())
             self.password_db.exit()
 
             return Result.ok(data=entry.to_dict(), info="Password updated successfully")
@@ -284,10 +284,10 @@ class PasswordManagerCore:
     def delete_password(self, entry_id: str) -> Result:
         """Delete password entry"""
         try:
-            if entry_id not in self.password_db.data:
+            if not self.password_db.if_exist(entry_id):
                 return Result.default_user_error("Password entry not found")
 
-            del self.password_db.data[entry_id]
+            self.password_db.delete(entry_id)
             self.password_db.exit()
 
             return Result.ok(info="Password deleted successfully")
@@ -300,7 +300,7 @@ class PasswordManagerCore:
         try:
             results = []
 
-            for entry_data in self.password_db.data.values():
+            for entry_data in self.password_db.get('all'):
                 entry = PasswordEntry.from_dict(entry_data)
 
                 if folder and entry.folder != folder:
@@ -553,7 +553,7 @@ class PasswordImporter:
                     else:
                         # Eintrag existiert nicht -> neu hinzufügen
                         entry = PasswordEntry(
-                            id="",
+                            id=row.get('name', ''),
                             url=url,
                             username=username,
                             password=password,
@@ -837,7 +837,7 @@ def get_password_for_autofill(app: App, url: str) -> Result:
             return Result.default_user_error("Invalid URL provided")
 
         potential_matches = []
-        for entry_data in pm.password_db.data.values():
+        for entry_data in pm.password_db.get('all'):
             entry_domain = pm._extract_domain(entry_data['url'])
             if domain.endswith(entry_domain):
                 # Berechne einen Score basierend auf der Übereinstimmungslänge
