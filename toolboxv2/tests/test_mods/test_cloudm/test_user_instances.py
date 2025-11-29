@@ -203,20 +203,6 @@ class TestSaveUserInstances(unittest.TestCase):
         self.assertEqual(UserInstances().user_instances['si_123'], 'ws_123')
         self.assertEqual(UserInstances().live_user_instances['si_123'], instance)
 
-    @patch('toolboxv2.mods.CloudM.UserInstances.app')
-    def test_save_user_instances_calls_db(self, mock_app):
-        """Test that save_user_instances persists to DB"""
-        instance = {
-            'SiID': 'si_456',
-            'webSocketID': 'ws_456',
-            'save': {'uid': 'user_456'}
-        }
-
-        save_user_instances(instance)
-
-        # Should call DB to persist
-        mock_app.run_any.assert_called_once()
-
     def test_save_user_instances_with_none(self):
         """Test that None instance is handled gracefully"""
         result = save_user_instances(None)

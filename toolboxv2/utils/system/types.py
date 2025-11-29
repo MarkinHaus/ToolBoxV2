@@ -2511,6 +2511,8 @@ class AppType:
         for service_name, functions in self.functions.items():
             for func_name, func_info in functions.items():
                 # Nur API-Funktionen verarbeiten
+                if not isinstance(func_info, dict):
+                    continue
                 if not func_info.get("api", False):
                     continue
 
@@ -2617,7 +2619,7 @@ class AppType:
     </body>
     </html>"""
         print(f"✓ Gefundene API-Routen: {len(openapi_spec['paths'])}")
-        return Result.html(html_content)
+        return Result.html(html_content, row=True)
 
 
 

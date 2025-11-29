@@ -147,7 +147,7 @@ setTimeout(() => {
 
     function displayError(message) {
         autoDownloadOptions.innerHTML = `
-            <div style="padding:15px;border:1px solid #f5c6cb;background:#f8d7da;border-radius:8px;">
+            <div style="padding:15px;border:1px solid #f5c6cb;border-radius:8px;">
                 <p>⚠️ <strong>Fehler:</strong> ${message}</p>
                 <p>Bitte prüfe die <a href="https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/releases" target="_blank">GitHub Releases Seite</a> manuell.</p>
             </div>`;
@@ -165,7 +165,7 @@ setTimeout(() => {
         }).join('');
 
         return `
-            <div style="padding:15px;margin:10px 0;border:1px solid #ddd;border-radius:8px;background:#f9f9f9;">
+            <div style="padding:15px;margin:10px 0">
                 <h4 style="margin:0 0 10px 0;">${icon} ${title}</h4>
                 <p style="margin:0 0 10px 0;color:#666;font-size:0.9em;">${description}</p>
                 <div>${linksHtml}</div>
@@ -224,7 +224,7 @@ setTimeout(() => {
                         '🐍'
                     );
                     htmlOutput += `
-                        <div style="padding:15px;background:#e7f3ff;border-radius:8px;margin-top:10px;">
+                        <div style="padding:15px;border-radius:8px;margin-top:10px;">
                             <h5>Installation:</h5>
                             <pre style="background:#1e1e1e;color:#d4d4d4;padding:10px;border-radius:4px;overflow-x:auto;">
 # Option 1: Universal Installer (empfohlen)
@@ -251,7 +251,7 @@ pip install "ToolBoxV2[isaa]"</pre>
                         '🤖'
                     );
                     htmlOutput += `
-                        <div style="padding:15px;background:#e7f3ff;border-radius:8px;margin-top:10px;">
+                        <div style="padding:15px;border-radius:8px;margin-top:10px;">
                             <h5>Voraussetzungen:</h5>
                             <ol style="margin:10px 0;padding-left:20px;">
                                 <li>Installiere <a href="https://f-droid.org/packages/com.termux/" target="_blank">Termux von F-Droid</a> (nicht Play Store!)</li>
@@ -276,7 +276,7 @@ curl -sSL ${GITHUB_RAW_BASE}/termux-install.sh | bash -s -- --full --server --de
                         '🌐'
                     );
                     htmlOutput += `
-                        <div style="padding:15px;background:#fff3cd;border-radius:8px;margin-top:10px;">
+                        <div style="padding:15px;border-radius:8px;margin-top:10px;">
                             <p><strong>Hinweis:</strong> Die PWA funktioniert auf allen modernen Browsern und kann wie eine native App verwendet werden.</p>
                         </div>`;
                     break;
@@ -291,7 +291,7 @@ curl -sSL ${GITHUB_RAW_BASE}/termux-install.sh | bash -s -- --full --server --de
                         '📱'
                     );
                     htmlOutput += `
-                        <div style="padding:15px;background:#e7f3ff;border-radius:8px;margin-top:10px;">
+                        <div style="padding:15px;border-radius:8px;margin-top:10px;">
                             <h5>Alternative für Power User:</h5>
                             <p>Mit <a href="https://ish.app/" target="_blank">iSH Shell</a> kannst du die Python CLI installieren:</p>
                             <pre style="background:#1e1e1e;color:#d4d4d4;padding:10px;border-radius:4px;">apk add python3 py3-pip git
@@ -315,7 +315,7 @@ pip install ToolBoxV2</pre>
 
                     if (serverAssets.length === 0) {
                         htmlOutput += `
-                            <div style="padding:15px;background:#e7f3ff;border-radius:8px;margin-top:10px;">
+                            <div style="padding:15px;border-radius:8px;margin-top:10px;">
                                 <h5>Manueller Build:</h5>
                                 <pre style="background:#1e1e1e;color:#d4d4d4;padding:10px;border-radius:4px;">git clone https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}.git
 cd ToolBoxV2/toolboxv2/src-core
