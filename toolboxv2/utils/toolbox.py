@@ -1954,6 +1954,7 @@ class App(AppType, metaclass=Singleton):
                           memory_cache_max_size:int=100,
                           memory_cache_ttl:int=300,
                           websocket_handler: str | None = None,
+                          websocket_context: bool=False,
                           ):
 
         if isinstance(type_, Enum):
@@ -1980,6 +1981,18 @@ class App(AppType, metaclass=Singleton):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
                 parms = self.functions.get(module_name, {}).get(func_name, {}).get('params', [])
+                if websocket_context and "request" in kwargs_:
+                    # Prüfen ob es ein WebSocket-Request ist
+                    request_data = kwargs_.get("request", {})
+                    if isinstance(request_data, dict) and "websocket" in request_data:
+                        # WebSocket-Kontext erstellen
+                        ws_ctx = WebSocketContext.from_kwargs(kwargs_)
+                        kwargs_["ws_context"] = ws_ctx
+
+                        # Wenn der Parameter erwartet wird, Request-Object erstellen
+                        if "request" in parms or request_as_kwarg:
+                            kwargs_["request"] = RequestData.from_dict(request_data)
+
                 if request_as_kwarg and 'request' in kwargs_:
                     kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
                     if 'data' in kwargs_ and 'data' not in parms:
@@ -2058,6 +2071,18 @@ class App(AppType, metaclass=Singleton):
             def args_kwargs_helper(args_, kwargs_):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
+                if websocket_context and "request" in kwargs_:
+                    # Prüfen ob es ein WebSocket-Request ist
+                    request_data = kwargs_.get("request", {})
+                    if isinstance(request_data, dict) and "websocket" in request_data:
+                        # WebSocket-Kontext erstellen
+                        ws_ctx = WebSocketContext.from_kwargs(kwargs_)
+                        kwargs_["ws_context"] = ws_ctx
+
+                        # Wenn der Parameter erwartet wird, Request-Object erstellen
+                        if "request" in parms or request_as_kwarg:
+                            kwargs_["request"] = RequestData.from_dict(request_data)
+
                 if request_as_kwarg and 'request' in kwargs_:
                     kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
                     if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
@@ -2164,11 +2189,14 @@ class App(AppType, metaclass=Singleton):
                 "params": params,
                 "row": row,
                 "state": (
-                    False if len(params) == 0 else params[0] in ['self', 'state', 'app']) if state is None else state,
+                    False if len(params) == 0 else params[0] in ["self", "state", "app"]
+                )
+                if state is None
+                else state,
                 "do_test": test,
                 "samples": samples,
                 "request_as_kwarg": request_as_kwarg,
-
+                "websocket_context": websocket_context,
             }
 
             if websocket_handler:
@@ -2185,6 +2213,10 @@ class App(AppType, metaclass=Singleton):
 
                     for event_name, handler_func in handler_config.items():
                         if event_name in ["on_connect", "on_message", "on_disconnect"] and callable(handler_func):
+                            if asyncio.iscoroutinefunction(handler_func):
+                                handler_func = a_additional_process(handler_func)
+                            else:
+                                handler_func = additional_process(handler_func)
                             self.websocket_handlers[handler_id][event_name] = handler_func
                         else:
                             self.logger.warning(f"Invalid WebSocket handler event '{event_name}' in '{handler_id}'.")
@@ -2239,6 +2271,7 @@ class App(AppType, metaclass=Singleton):
            post_compute=None,
            api_methods=None,
            websocket_handler: str | None = None,
+           websocket_context: bool=False,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -2270,6 +2303,7 @@ class App(AppType, metaclass=Singleton):
         post_compute (callable, optional): A function to be called after the main function.
         api_methods (list[str], optional): default ["AUTO"] (GET if not params, POST if params) , GET, POST, PUT or DELETE.
         websocket_handler (str, optional): The name of the websocket handler to use.
+        websocket_context (bool, optional): Flag to indicate if the function should receive the websocket context.
 
     Returns:
         function: The decorated function with additional processing and registration capabilities.
@@ -2301,6 +2335,7 @@ class App(AppType, metaclass=Singleton):
                                       memory_cache_max_size=memory_cache_max_size,
                                       memory_cache_ttl=memory_cache_ttl,
                                       websocket_handler=websocket_handler,
+                                      websocket_context=websocket_context,
                                       )
 
     def save_autocompletion_dict(self):

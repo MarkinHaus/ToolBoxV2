@@ -63,16 +63,16 @@ jobs:
                   -   os: ubuntu-latest
                       artifact_name: toolbox-linux-x64
                       # FIX: Removed --standalone, --onefile is sufficient
-                      nuitka_args: --onefile --linux-icon=toolboxv2/assets/icon.png
+                      nuitka_args: --onefile --linux-icon=toolboxv2/web/webapp/icon-1024.png
                   -   os: windows-latest
                       artifact_name: toolbox-windows-x64
                       # FIX: Removed --standalone, --onefile is sufficient
-                      nuitka_args: --onefile --windows-icon-from-ico=toolboxv2/assets/icon.ico --windows-console-mode=attach
+                      nuitka_args: --onefile --windows-icon-from-ico=toolboxv2/web/favicon.ico --windows-console-mode=attach
                   -   os: macos-latest
                       artifact_name: toolbox-macos-arm64
                         # FIX: For macOS app bundle, use --macos-create-app-bundle with --onefile
                       # OR use --standalone --macos-create-app-bundle (folder-based)
-                      nuitka_args: --onefile --macos-app-icon=toolboxv2/assets/icon.icns --macos-create-app-bundle
+                      nuitka_args: --onefile --macos-app-icon=toolboxv2/web/favicon.icnos --macos-create-app-bundle
 
       steps:
           -   name: Checkout Code
@@ -378,11 +378,11 @@ jobs:
         if: steps.check_ext.outputs.exists == 'true'
         working-directory: ./toolboxv2/tb_browser
         run: |
-          if [ -f "build.js" ]; then
-            node build.js zip
-          elif [ -f "package.json" ]; then
-            npm run build || yarn build || true
-          fi
+            if [ -f "build.js" ]; then
+              node build.js zip
+            elif [ -f "package.json" ]; then
+              npm run build || true
+            fi
 
       - name: Package Chrome extension
         if: steps.check_ext.outputs.exists == 'true'

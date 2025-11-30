@@ -22,6 +22,7 @@ import AutocompleteWidget from './components/Autocomplete/Autocomplete.js'; // R
 import NavMenu from './components/NavMenu/NavMenu.js';
 import ChatWidget from './components/Chat/Chat.js';
 import {logger} from "../core/index.js";
+import { MinuRenderer, createMinuRenderer, mountMinuView } from './components/Minu/MinuRenderer.js';
 
 /**
  * Processes dynamic content added to the DOM (e.g., by HTMX or router).
@@ -107,5 +108,6 @@ export {
     MarkdownRenderer,
     AutocompleteWidget,
     NavMenu,
-    ChatWidget
+    ChatWidget,
+    MinuRenderer, createMinuRenderer, mountMinuView
 };

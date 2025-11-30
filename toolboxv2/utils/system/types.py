@@ -298,6 +298,9 @@ class Session:
     def valid(self):
         return int(self.level) > 0
 
+    def get(self, key, default=None):
+        return self.to_dict().get(key, default)
+
 
 @dataclass
 class RequestData:
@@ -1302,12 +1305,14 @@ class MainToolType:
     description: str
 
     @staticmethod
-    def return_result(error: ToolBoxError = ToolBoxError.none,
-                      exec_code: int = 0,
-                      help_text: str = "",
-                      data_info=None,
-                      data=None,
-                      data_to=None) -> Result:
+    def return_result(
+        error: ToolBoxError = ToolBoxError.none,
+        exec_code: int = 0,
+        help_text: str = "",
+        data_info=None,
+        data=None,
+        data_to=None,
+    ) -> Result:
         """proxi attr"""
 
     def load(self):
@@ -1327,6 +1332,30 @@ class MainToolType:
 
     async def get_user(self, username: str) -> Result:
         return self.app.a_run_any(CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=username, get_results=True)
+
+from typing import Callable, Any
+from dataclasses import dataclass
+from functools import wraps
+
+@dataclass
+class WebSocketContext:
+    """Kontext-Daten für WebSocket-Verbindungen"""
+    conn_id: str
+    channel_id: str
+    event_type: str  # 'connect', 'message', 'disconnect'
+    session: dict
+    request: 'RequestData'
+
+    @classmethod
+    def from_kwargs(cls, kwargs: dict) -> 'WebSocketContext':
+        """Erstellt WebSocketContext aus kwargs"""
+        return cls(
+            conn_id=kwargs.get('conn_id', ''),
+            channel_id=kwargs.get('request', {}).get('websocket', {}).get('channel_id', ''),
+            event_type=kwargs.get('event_type', ''),
+            session=kwargs.get('session', {}),
+            request=RequestData.from_dict(kwargs.get('request', {}))
+        )
 
 
 @dataclass
@@ -1980,10 +2009,16 @@ class AppType:
         proxi attr
         """
 
-    async def run_http(self, mod_function_name: Enum or str or tuple, function_name=None, method="GET",
-                       args_=None,
-                       kwargs_=None,
-                       *args, **kwargs):
+    async def run_http(
+        self,
+        mod_function_name: Enum or str or tuple,
+        function_name=None,
+        method="GET",
+        args_=None,
+        kwargs_=None,
+        *args,
+        **kwargs,
+    ):
         """run a function remote via http / https"""
 
     def run_any(self, mod_function_name: Enum or str or tuple, backwords_compability_variabel_string_holder=None,
@@ -2016,28 +2051,32 @@ class AppType:
     def _register_function(self, module_name, func_name, data):
         """proxi attr"""
 
-    def _create_decorator(self, type_: str,
-                          name: str = "",
-                          mod_name: str = "",
-                          level: int = -1,
-                          restrict_in_virtual_mode: bool = False,
-                          api: bool = False,
-                          helper: str = "",
-                          version: str or None = None,
-                          initial=False,
-                          exit_f=False,
-                          test=True,
-                          samples=None,
-                          state=None,
-                          pre_compute=None,
-                          post_compute=None,
-                          memory_cache=False,
-                          file_cache=False,
-                          row=False,
-                          request_as_kwarg=False,
-                          memory_cache_max_size=100,
-                          memory_cache_ttl=300,
-                          websocket_handler: str | None = None,):
+    def _create_decorator(
+        self,
+        type_: str,
+        name: str = "",
+        mod_name: str = "",
+        level: int = -1,
+        restrict_in_virtual_mode: bool = False,
+        api: bool = False,
+        helper: str = "",
+        version: str or None = None,
+        initial=False,
+        exit_f=False,
+        test=True,
+        samples=None,
+        state=None,
+        pre_compute=None,
+        post_compute=None,
+        memory_cache=False,
+        file_cache=False,
+        row=False,
+        request_as_kwarg=False,
+        memory_cache_max_size=100,
+        memory_cache_ttl=300,
+        websocket_handler: str | None = None,
+        websocket_context: bool = False,
+    ):
         """proxi attr"""
 
         # data = {
@@ -2085,6 +2124,7 @@ class AppType:
            post_compute=None,
            api_methods=None,
            websocket_handler: str | None = None,
+           websocket_context: bool = False,
            ):
         """
     A decorator for registering and configuring functions within a module.
@@ -2126,24 +2166,28 @@ class AppType:
         return self._create_decorator(interface,
                                       name,
                                       mod_name,
-                                      level=level,
-                                      restrict_in_virtual_mode=restrict_in_virtual_mode,
-                                      helper=helper,
-                                      api=api,
                                       version=version,
+                                      test=test,
+                                      restrict_in_virtual_mode=restrict_in_virtual_mode,
+                                      api=api,
                                       initial=initial,
                                       exit_f=exit_f,
-                                      test=test,
-                                      samples=samples,
-                                      state=state,
-                                      pre_compute=pre_compute,
-                                      post_compute=post_compute,
+                                      test_only=test_only,
                                       memory_cache=memory_cache,
                                       file_cache=file_cache,
                                       row=row,
                                       request_as_kwarg=request_as_kwarg,
+                                      state=state,
+                                      level=level,
                                       memory_cache_max_size=memory_cache_max_size,
-                                      memory_cache_ttl=memory_cache_ttl)
+                                      memory_cache_ttl=memory_cache_ttl,
+                                      samples=samples,
+                                      interface=interface,
+                                      pre_compute=pre_compute,
+                                      post_compute=post_compute,
+                                      api_methods=api_methods,
+                                      websocket_handler=websocket_handler,
+                                      websocket_context=websocket_context)
 
     def print_functions(self, name=None):
 

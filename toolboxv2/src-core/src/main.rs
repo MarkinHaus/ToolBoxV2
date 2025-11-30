@@ -1718,7 +1718,7 @@ async fn validate_session_handler(
     body: Option<web::Json<serde_json::Value>>,
     req_info: HttpRequest,
 ) -> HttpResponse {
-    // Extract client IP
+    // Client IP/Port extrahieren
     let client_ip = req_info.connection_info().realip_remote_addr()
         .unwrap_or_else(|| {
             req_info.headers()
@@ -1739,149 +1739,138 @@ async fn validate_session_handler(
         .unwrap_or("unknown")
         .to_string();
 
-    let current_session_id = session.get::<String>("ID").unwrap_or_else(|_| None);
+    // Token extrahieren (Body oder Authorization Header)
+    let clerk_session_token = body.as_ref()
+        .and_then(|b| b.get("session_token"))
+        .or_else(|| body.as_ref().and_then(|b| b.get("Jwt_claim")))
+        .and_then(|t| t.as_str())
+        .map(String::from)
+        .or_else(|| {
+            req_info.headers()
+                .get("Authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .map(String::from)
+        });
 
-    // Clerk-spezifische Felder extrahieren
-    let (clerk_session_token, clerk_user_id) = if let Some(body) = &body {
-        let token = body.get("session_token")
-            .or_else(|| body.get("Jwt_claim"))
-            .and_then(|t| t.as_str())
-            .map(String::from);
-        let user_id = body.get("clerk_user_id")
-            .or_else(|| body.get("Username"))
-            .and_then(|u| u.as_str())
-            .map(String::from);
-        (token, user_id)
-    } else {
-        // Versuche Token aus Authorization Header zu holen
-        let auth_header = req_info.headers()
-            .get("Authorization")
-            .and_then(|h| h.to_str().ok());
-
-        let token = auth_header
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .map(String::from);
-
-        (token, None)
-    };
+    let clerk_user_id = body.as_ref()
+        .and_then(|b| b.get("clerk_user_id"))
+        .or_else(|| body.as_ref().and_then(|b| b.get("Username")))
+        .and_then(|u| u.as_str())
+        .map(String::from);
 
     info!(
-        "Validating session - IP: {}, Current Session: {:?}, Clerk User: {:?}, Has Token: {}",
+        "[Session] Validation request - IP: {}, User: {:?}, Has Token: {}",
         client_ip,
-        current_session_id,
         clerk_user_id,
         clerk_session_token.is_some()
     );
 
-    // Wenn wir bereits eine Session haben, versuche sie zu erweitern
-    let session_id = if let Some(existing_id) = current_session_id {
-        info!("Extending existing session: {}", existing_id);
-
-        // Update session mit neuen Clerk-Daten falls vorhanden
-        if clerk_session_token.is_some() || clerk_user_id.is_some() {
-            let mut session_data = manager.get_session(&existing_id);
-
-            if let Some(token) = &clerk_session_token {
-                session_data.clerk_session_token = Some(token.clone());
-                // WICHTIG: Wenn Token vorhanden, ist Session nicht mehr anonym
-                session_data.anonymous = false;
-                session_data.new = false;
-            }
-            if let Some(user_id) = &clerk_user_id {
-                session_data.clerk_user_id = Some(user_id.clone());
-                // WICHTIG: Wenn User ID vorhanden, ist Session authentifiziert
-                session_data.anonymous = false;
-            }
-
-            manager.save_session(&existing_id, session_data);
-        }
-
-        existing_id
-    } else {
-        // Neue Session erstellen
-        info!("Creating new session");
-        manager.create_new_session(
-            client_ip,
-            client_port,
-            clerk_session_token.clone(),
-            clerk_user_id.clone(),
-            None,
-        ).await
-    };
-
-    // WICHTIG: Wenn Clerk-Daten vorhanden sind, Session-Flags aktualisieren bevor Validierung
-    if clerk_session_token.is_some() || clerk_user_id.is_some() {
-        let mut session_data = manager.get_session(&session_id);
-
-        // Session als nicht-anonym markieren wenn Clerk-Daten vorhanden
-        if clerk_session_token.is_some() {
-            session_data.anonymous = false;
-            session_data.new = false;
-        }
-        if clerk_user_id.is_some() {
-            session_data.anonymous = false;
-        }
-
-        manager.save_session(&session_id, session_data);
-    }
-
-    // Session validieren
-    let valid = manager.validate_session(&session_id).await;
-
-    info!("Session validation result - ID: {}, Valid: {}", session_id, valid);
-
-    // Update session cookie
-    if let Err(e) = session.insert("ID", &session_id) {
-        error!("Failed to update session: {}", e);
-    }
-
-    if let Err(e) = session.insert("valid", valid) {
-        error!("Failed to update session validity: {}", e);
-    }
-
-    // WICHTIG: anonymous Flag im Cookie auch aktualisieren
-    if valid {
-        if let Err(e) = session.insert("anonymous", false) {
-            error!("Failed to update session anonymous flag: {}", e);
-        }
-    }
-
-    if valid {
-        let session_data = manager.get_session(&session_id);
-        if let Err(e) = session.insert("live_data", session_data.live_data.clone()) {
-            error!("Failed to update session live data: {}", e);
-        }
-
-        info!("Session validation successful for {}", session_id);
-
-        HttpResponse::Ok().json(ApiResult {
-            error: Some("none".to_string()),
-            origin: None,
-            result: Some(ToolBoxResultBM {
-                data_to: "API".to_string(),
-                data_info: Some("Valid Session".to_string()),
-                data: Some(serde_json::json!({
-                    "session_id": session_id,
-                    "clerk_user_id": session_data.clerk_user_id,
-                    "user_name": session_data.user_name,
-                    "level": session_data.live_data.get("level").cloned(),
-                })),
-                data_type: None,
-            }),
-            info: Some(ToolBoxInfoBM {
-                exec_code: 0,
-                help_text: "Valid Session".to_string(),
-            }),
-        })
-    } else {
-        warn!("Session validation failed for {}", session_id);
-        HttpResponse::Unauthorized().json(ApiResult {
-            error: Some("Invalid Auth data.".to_string()),
+    // KRITISCH: Token muss vorhanden sein
+    if clerk_session_token.is_none() {
+        warn!("[Session] No token provided");
+        session.purge(); // Alte Session löschen
+        return HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("No authentication token provided".to_string()),
             origin: None,
             result: None,
             info: None,
-        })
+        });
     }
+
+    let token = clerk_session_token.unwrap();
+
+    // Bestehende Session-ID holen ODER neue erstellen
+    let session_id = match session.get::<String>("ID") {
+        Ok(Some(id)) => {
+            info!("[Session] Using existing session: {}", id);
+            id
+        },
+        _ => {
+            info!("[Session] Creating new session for validation");
+            manager.create_new_session(
+                client_ip.clone(),
+                client_port.clone(),
+                Some(token.clone()),
+                clerk_user_id.clone(),
+                None
+            ).await
+        }
+    };
+
+    // KRITISCH: Session mit Token validieren
+    info!("[Session] Verifying session {} with Clerk", session_id);
+    let verified_session_id = manager.verify_session_id(&session_id, &token).await;
+
+    if verified_session_id == "#0" {
+        warn!("[Session] Validation FAILED for session {}", session_id);
+
+        // Session komplett löschen
+        manager.delete_session(&session_id);
+        session.purge();
+
+        return HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("Invalid or expired session".to_string()),
+            origin: None,
+            result: None,
+            info: None,
+        });
+    }
+
+    info!("[Session] ✓ Validation SUCCESS for session {}", session_id);
+
+    // Session-Daten aus Manager holen
+    let session_data = manager.get_session(&session_id);
+
+    // KRITISCH: Prüfe ob Session wirklich authenticated ist
+    if session_data.anonymous || !session_data.validate {
+        warn!("[Session] Session {} not properly authenticated", session_id);
+        session.purge();
+        return HttpResponse::Unauthorized().json(ApiResult {
+            error: Some("Session not authenticated".to_string()),
+            origin: None,
+            result: None,
+            info: None,
+        });
+    }
+
+    // Session in Cookie speichern
+    if let Err(e) = session.insert("ID", &session_id) {
+        error!("[Session] Failed to store session ID: {}", e);
+    }
+    if let Err(e) = session.insert("valid", true) {
+        error!("[Session] Failed to set valid flag: {}", e);
+    }
+    if let Err(e) = session.insert("anonymous", false) {
+        error!("[Session] Failed to clear anonymous flag: {}", e);
+    }
+    if let Err(e) = session.insert("live_data", session_data.live_data.clone()) {
+        error!("[Session] Failed to store live_data: {}", e);
+    }
+
+    info!("[Session] ✓ Session {} fully validated and stored", session_id);
+
+    // Erfolgreiche Response
+    HttpResponse::Ok().json(ApiResult {
+        error: Some("none".to_string()),
+        origin: None,
+        result: Some(ToolBoxResultBM {
+            data_to: "API".to_string(),
+            data_info: Some("Valid Session".to_string()),
+            data: Some(serde_json::json!({
+                "authenticated": true,
+                "session_id": session_id,
+                "clerk_user_id": session_data.clerk_user_id,
+                "user_name": session_data.user_name,
+                "level": session_data.live_data.get("level").cloned(),
+            })),
+            data_type: None,
+        }),
+        info: Some(ToolBoxInfoBM {
+            exec_code: 0,
+            help_text: "Valid Session".to_string(),
+        }),
+    })
 }
 
 async fn is_valid_session_handler(

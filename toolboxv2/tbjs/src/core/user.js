@@ -280,134 +280,182 @@ const user = {
     // =================== Clerk Event Handlers ===================
 
     async _onClerkSignIn(clerkUser) {
-    // Prüfe ob wir bereits für diesen User authentifiziert sind
-    const currentUserId = this.getUserId();
-    const currentToken = this.getToken();
+        TB.logger.info('[User] Clerk sign-in detected:', clerkUser.id);
 
-    // Wenn gleicher User und wir haben bereits einen Token -> nur Token refreshen
-    if (currentUserId === clerkUser.id && currentToken && this.isAuthenticated()) {
-        TB.logger.debug('[User] Same user, just refreshing token...');
+        const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
+        const username = clerkUser.username || email.split('@')[0];
 
-        // Nur neuen Token holen und speichern
+        // WICHTIG: Noch NICHT als authenticated setzen!
+        TB.logger.debug('[User] Getting session token from Clerk...');
+
+        // 1. Token von Clerk holen
+        let token = null;
         if (clerkInstance?.session) {
             try {
-                const newToken = await clerkInstance.session.getToken();
-                this._updateUserState({ token: newToken });
-                TB.logger.debug('[User] Token refreshed');
+                token = await clerkInstance.session.getToken();
+                TB.logger.debug('[User] Token received, length:', token?.length);
             } catch (e) {
-                TB.logger.warn('[User] Token refresh failed:', e);
+                TB.logger.error('[User] Failed to get token:', e);
+                await this._handleAuthFailure('Failed to get authentication token');
+                return;
             }
         }
-        return; // Kein Backend-Call nötig!
-    }
 
-    // Neuer Login oder anderer User -> vollständige Authentifizierung
-    TB.logger.info('[User] New sign-in detected:', clerkUser.id);
+        if (!token) {
+            TB.logger.error('[User] No token available');
+            await this._handleAuthFailure('No authentication token available');
+            return;
+        }
 
-    const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
-    const username = clerkUser.username || email.split('@')[0];
+        // 2. ERST Backend validieren, DANN lokal setzen
+        TB.logger.info('[User] Validating session with backend...');
 
-    // Get session token
-    let token = null;
-    if (clerkInstance?.session) {
         try {
-            token = await clerkInstance.session.getToken();
-        } catch (e) {
-            TB.logger.warn('[User] Failed to get session token:', e);
+            // A. Backend über Sign-In informieren
+            const signInResponse = await fetch('/api/CloudM.AuthClerk/on_sign_in', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    user_data: {
+                        id: clerkUser.id,
+                        username: username,
+                        email_addresses: clerkUser.emailAddresses,
+                        session_token: token
+                    }
+                })
+            });
+
+            if (!signInResponse.ok) {
+                throw new Error(`Backend sign-in failed: ${signInResponse.status}`);
+            }
+
+            TB.logger.debug('[User] Backend notified, now validating session...');
+
+            // B. Session validieren - KRITISCH!
+            const validateResponse = await fetch('/validateSession', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    session_token: token,
+                    clerk_user_id: clerkUser.id
+                })
+            });
+
+            if (!validateResponse.ok) {
+                throw new Error(`Session validation failed: ${validateResponse.status}`);
+            }
+
+            const validationResult = await validateResponse.json();
+            TB.logger.debug('[User] Validation result:', validationResult);
+
+            // C. KRITISCH: Prüfe ob Server die Session als gültig bestätigt
+            if (validationResult.error !== "none") {
+                throw new Error(validationResult.error || 'Server rejected session');
+            }
+
+            if (!validationResult.result?.data) {
+                throw new Error('Invalid validation response structure');
+            }
+
+            const serverData = validationResult.result.data;
+
+            if (!serverData.authenticated) {
+                throw new Error('Server did not authenticate session');
+            }
+
+            TB.logger.info('[User] ✓ Server confirmed authentication');
+
+            // D. User-Daten vom Server laden
+            const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ clerk_user_id: clerkUser.id })
+            });
+
+            let settings = {};
+            let userLevel = 1;
+            let modData = {};
+
+            if (userDataResponse.ok) {
+                const userDataResult = await userDataResponse.json();
+                if (userDataResult.error === "none" && userDataResult.result?.data) {
+                    const data = userDataResult.result.data;
+                    settings = data.settings || {};
+                    userLevel = data.level || 1;
+                    modData = data.mod_data || {};
+                    TB.logger.debug('[User] User data loaded');
+                }
+            }
+
+            // E. NUR JETZT State als authenticated setzen!
+            this._updateUserState({
+                isAuthenticated: true,
+                username: username,
+                email: email,
+                userId: clerkUser.id,
+                userLevel: userLevel,
+                token: token,
+                settings: settings,
+                modData: modData,
+                userData: {
+                    firstName: clerkUser.firstName,
+                    lastName: clerkUser.lastName,
+                    imageUrl: clerkUser.imageUrl
+                }
+            });
+
+            TB.logger.info('[User] ✓ Login successful, user authenticated');
+            TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
+
+            // F. Redirect erst NACH erfolgreicher Validierung
+            this._handlePostAuthRedirect();
+
+        } catch (error) {
+            TB.logger.error('[User] ✗ Authentication failed:', error);
+            await this._handleAuthFailure(error.message);
         }
-    }
+    },
 
-    // Token sofort speichern
-    this._updateUserState({
-        token: token,
-        userId: clerkUser.id,
-    });
+    async _handleAuthFailure(message) {
+        TB.logger.error('[User] Handling auth failure:', message);
 
-    // Backend nur bei NEUEM Login informieren
-    try {
-        const userData = {
-            id: clerkUser.id,
-            username: username,
-            email_addresses: clerkUser.emailAddresses,
-            session_token: token
-        };
-
-        await fetch('/api/CloudM.AuthClerk/on_sign_in', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
-            body: JSON.stringify({ user_data: userData })
-        });
-
-        // Session validieren
-        const validateResponse = await fetch('/validateSession', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
-            body: JSON.stringify({
-                session_token: token,
-                clerk_user_id: clerkUser.id
-            })
-        });
-
-        if (!validateResponse.ok) {
-            TB.logger.warn('[User] Session validation failed');
+        // Clerk Session löschen
+        if (clerkInstance?.signOut) {
+            try {
+                await clerkInstance.signOut();
+                TB.logger.debug('[User] Clerk session cleared');
+            } catch (e) {
+                TB.logger.warn('[User] Failed to sign out from Clerk:', e);
+            }
         }
 
-    } catch (e) {
-        TB.logger.error('[User] Backend notification failed:', e);
-    }
+        // Lokalen State zurücksetzen
+        this._updateUserState({}, true); // true = clear existing
 
-    // User-Daten laden (nur einmal bei Login)
-    let settings = {};
-    let userLevel = 1;
-    let modData = {};
-
-    try {
-        const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
-            body: JSON.stringify({ clerk_user_id: clerkUser.id })
-        });
-        const userDataResult = await userDataResponse.json();
-
-        if (userDataResult.error === "none" && userDataResult.result?.data) {
-            const data = userDataResult.result.data;
-            settings = data.settings || {};
-            userLevel = data.level || 1;
-            modData = data.mod_data || {};
+        // User informieren
+        if (window.TB?.ui?.Toast?.showError) {
+            window.TB.ui.Toast.showError(`Login failed: ${message}`);
         }
-    } catch (e) {
-        TB.logger.warn('[User] Failed to load user data:', e);
-    }
 
-    // State finalisieren
-    this._updateUserState({
-        isAuthenticated: true,
-        username: username,
-        email: email,
-        userId: clerkUser.id,
-        userLevel: userLevel,
-        token: token,
-        settings: settings,
-        modData: modData,
-        userData: {
-            firstName: clerkUser.firstName,
-            lastName: clerkUser.lastName,
-            imageUrl: clerkUser.imageUrl
+        TB.events.emit('user:authError', { message });
+
+        // Zur Login-Seite wenn nötig
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/login.html') && !currentPath.includes('/signup.html')) {
+            setTimeout(() => {
+                window.location.href = '/web/assets/login.html';
+            }, 2000);
         }
-    });
-
-    TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
-    this._handlePostAuthRedirect();
-},
+    },
 
     _handlePostAuthRedirect() {
     const currentPath = window.location.pathname;

@@ -17,7 +17,7 @@ function setupLogin() {
     initializeClerkLogin();
 }
 
-// Ersetze diese Funktionen in login.js:
+// login.js - Ersetze initializeClerkLogin komplett
 
 async function initializeClerkLogin() {
     const container = document.getElementById('clerk-sign-in');
@@ -34,18 +34,64 @@ async function initializeClerkLogin() {
     }
 
     try {
-        // Check if already authenticated
-        if (window.TB.user.isAuthenticated()) {
-            const username = window.TB.user.getUsername();
-            showSuccess(container, `Already logged in as ${username}. Redirecting...`);
+        // WICHTIG: Prüfe Server-Status BEVOR Clerk UI
+        console.log('[Login] Checking authentication status with server...');
+
+        const serverCheckResponse = await fetch('/IsValidSession', {
+            method: 'GET',
+            credentials: 'include' // Session-Cookie mitsenden
+        });
+
+        let serverAuthenticated = false;
+
+        if (serverCheckResponse.ok) {
+            const serverCheckResult = await serverCheckResponse.json();
+            serverAuthenticated = (serverCheckResult.error === "none");
+        }
+
+        console.log('[Login] Server authentication status:', serverAuthenticated);
+
+        // Wenn Server sagt "authenticated" -> weiterleiten
+        if (serverAuthenticated) {
+            console.log('[Login] Already authenticated on server, redirecting...');
+            showSuccess(container, 'Already logged in. Redirecting...');
             redirectUser();
             return;
         }
 
-        // Setup hash change listener for Clerk's #/continue route
+        // Wenn Clerk LOKAL sagt "authenticated" aber Server nicht -> AUSLOGGEN
+        if (window.TB.user.isAuthenticated()) {
+            console.warn('[Login] Local auth state inconsistent with server, clearing...');
+
+            // Lokalen State löschen
+            window.TB.state.set('user', {
+                isAuthenticated: false,
+                username: null,
+                email: null,
+                userId: null,
+                userLevel: 1,
+                token: null,
+                userData: {},
+                settings: {},
+                modData: {}
+            });
+
+            // Clerk ausloggen
+            const clerkInstance = window.TB.user.getClerkInstance();
+            if (clerkInstance?.signOut) {
+                try {
+                    await clerkInstance.signOut();
+                    console.log('[Login] Cleared inconsistent Clerk session');
+                } catch (e) {
+                    console.warn('[Login] Failed to clear Clerk session:', e);
+                }
+            }
+        }
+
+        // Setup hash change listener für Clerk's continue route
         setupClerkContinueHandler();
 
-        // Mount sign-in
+        // Mount Clerk Sign-In UI
         await window.TB.user.mountSignIn(container, {
             appearance: {
                 elements: {
@@ -68,9 +114,15 @@ async function initializeClerkLogin() {
 
         // Listen for sign-in event
         window.TB.events.on('user:signedIn', (data) => {
-            console.log('[Login] User signed in:', data.userId);
+            console.log('[Login] ✓ User signed in successfully:', data.userId);
             showSuccess(container, 'Login successful! Redirecting...');
-            // Redirect wird jetzt von user.js._handlePostAuthRedirect() gehandhabt
+            // Redirect wird von _handlePostAuthRedirect gehandhabt
+        });
+
+        // Listen for auth errors
+        window.TB.events.on('user:authError', (data) => {
+            console.error('[Login] ✗ Authentication error:', data.message);
+            showError(container, data.message);
         });
 
     } catch (error) {
@@ -83,6 +135,47 @@ async function initializeClerkLogin() {
         retryBtn.onclick = () => window.location.reload();
         container.appendChild(retryBtn);
     }
+}
+
+// Hilfsfunktion für Continue-Route bleibt gleich
+function setupClerkContinueHandler() {
+    checkAndHandleContinueRoute();
+    window.addEventListener('hashchange', checkAndHandleContinueRoute);
+}
+
+function checkAndHandleContinueRoute() {
+    const hash = window.location.hash;
+
+    if (hash.includes('#/continue')) {
+        console.log('[Login] Detected Clerk continue route, checking auth status...');
+
+        setTimeout(() => {
+            const clerkInstance = window.TB?.user?.getClerkInstance();
+
+            if (clerkInstance?.user) {
+                if (!clerkInstance.user.username) {
+                    console.log('[Login] User needs to set username, redirecting to signup...');
+                    const nextUrl = getRedirectUrl();
+                    window.location.href = `/web/assets/signup.html?next=${encodeURIComponent(nextUrl)}`;
+                } else if (window.TB?.user?.isAuthenticated()) {
+                    console.log('[Login] User authenticated, redirecting...');
+                    redirectUser();
+                }
+            }
+        }, 1000);
+    }
+}
+
+function redirectUser() {
+    const nextUrl = getRedirectUrl();
+    setTimeout(() => {
+        window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
+    }, 500);
+}
+
+function getRedirectUrl() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('next') || '/web/mainContent.html';
 }
 
 /**
@@ -111,54 +204,6 @@ function setupThemeListener() {
 }
 
 
-function setupClerkContinueHandler() {
-    // Check immediately if we're on a continue route
-    checkAndHandleContinueRoute();
-
-    // Listen for hash changes
-    window.addEventListener('hashchange', checkAndHandleContinueRoute);
-}
-
-function checkAndHandleContinueRoute() {
-    const hash = window.location.hash;
-
-    if (hash.includes('#/continue')) {
-        console.log('[Login] Detected Clerk continue route, checking auth status...');
-
-        // Prüfe ob User zur Signup-Seite muss (fehlender Username)
-        setTimeout(() => {
-            const clerkInstance = window.TB?.user?.getClerkInstance();
-
-            if (clerkInstance?.user) {
-                // User ist bei Clerk eingeloggt
-                if (!clerkInstance.user.username) {
-                    // Kein Username - muss zu Signup für Username-Eingabe
-                    console.log('[Login] User needs to set username, redirecting to signup...');
-                    const nextUrl = getRedirectUrl();
-                    window.location.href = `/web/assets/signup.html?next=${encodeURIComponent(nextUrl)}`;
-                } else if (window.TB?.user?.isAuthenticated()) {
-                    // Vollständig authentifiziert - weiterleiten
-                    console.log('[Login] User is fully authenticated, redirecting...');
-                    redirectUser();
-                }
-            }
-        }, 1000);
-    }
-}
-
-function redirectUser() {
-    const nextUrl = getRedirectUrl();
-    setTimeout(() => {
-        window.TB?.router?.navigateTo(nextUrl) || (window.location.href = nextUrl);
-    }, 500);
-}
-/**
- * Helper to get the redirect URL from params or default
- */
-function getRedirectUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('next') || '/web/mainContent.html';
-}
 
 
 /**
