@@ -198,7 +198,7 @@ class App(AppType, metaclass=Singleton):
         from .system.session import Session
         self.session: Session = Session(self.get_username())
         from .extras.blobs import ApiKeyHandler
-        self.db_api_key_handler = ApiKeyHandler(self.info_dir+ '\\api_keys\\')
+        self.db_api_key_handler = ApiKeyHandler(self.start_dir + '\\.info\\'+ 'api_keys\\')
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
         from toolboxv2.utils.clis.db_cli_manager import ClusterManager, get_executable_path
@@ -208,7 +208,7 @@ class App(AppType, metaclass=Singleton):
             self.cluster_manager.start_all(get_executable_path(), self.version)
             _, server_list = self.cluster_manager.status_all()
         from .extras.blobs import BlobStorage
-        self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\')
+        self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\', db_api_key_handler=self.db_api_key_handler)
         self.mkdocs = add_to_app(self)
         # self._start_event_loop()
 

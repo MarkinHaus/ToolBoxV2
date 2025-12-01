@@ -755,7 +755,7 @@ async fn check_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> Result
             if blobs.contains(blob_id) {
                 Ok(())
             } else {
-                Err(AppError::Unauthorized)
+                Err(AppError::Forbidden)
             }
         },
         None => Err(AppError::Unauthorized),
@@ -788,7 +788,7 @@ async fn check_write_access(state: &Arc<AppState>, key: &str, blob_id: &str) -> 
                 Err(AppError::Unauthorized)
             }
         },
-        None => Err(AppError::Unauthorized),
+        None => Err(AppError::NotFound),
     }
 }
 

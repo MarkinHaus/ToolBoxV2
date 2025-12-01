@@ -401,8 +401,8 @@ class BlobStorage:
     """
 
     def __init__(self, servers: list[str], storage_directory: str = './.data/blob_cache',
-                 data_shards: int = 4, parity_shards: int = 2, api_key_dir: str = './.data/api_keys',
-                 auto_validate_keys: bool = True):
+                 data_shards: int = 4, parity_shards: int = 2,
+                 auto_validate_keys: bool = True, db_api_key_handler=None):
         self.servers = servers
         self.session = requests.Session()
         self.storage_directory = storage_directory
@@ -413,7 +413,10 @@ class BlobStorage:
         os.makedirs(storage_directory, exist_ok=True)
 
         # Initialize API key handler
-        self.api_key_handler = ApiKeyHandler(api_key_dir)
+        if db_api_key_handler is None:
+            from toolboxv2 import get_app
+            db_api_key_handler = get_app().db_api_key_handler
+        self.api_key_handler = db_api_key_handler
 
         # Server status tracking
         self._server_status: Dict[str, ServerStatus] = {
@@ -573,8 +576,11 @@ class BlobStorage:
                 try:
                     from toolboxv2 import get_app
                     get_app().sprint(
-                        f"[BloBDB] make_request {method} {url} {kwargs if method != 'PUT' else 'PUT_DATA'}")
-                    response = self.session.request(method, url, timeout=request_timeout, **kwargs)
+                        f"[BloBDB] make_request {method} {url} {kwargs if method != 'PUT' else 'PUT_DATA'}"
+                    )
+                    response = self.session.request(
+                        method, url, timeout=request_timeout, **kwargs
+                    )
                     get_app().sprint(f"response {response.status_code}")
 
                     if 500 <= response.status_code < 600:
@@ -582,16 +588,27 @@ class BlobStorage:
                         get_logger().warning(f"Server {server} returned {response.status_code}. Retrying...")
                         continue
 
+                    if response.status_code == 403:
+                        get_logger().error(
+                            f"Access denied for {server} on {endpoint}. Key is valid but insufficient permissions."
+                        )
+                        # DO NOT RECREATE KEY HERE
+                        response.raise_for_status()
+
                     if response.status_code == 401 and include_auth:
                         error_msg = f"API key invalid - {response.text}"
                         get_logger().error(f"API key invalid for {server} - {response.text} ({endpoint}, {method})")
                         self._server_status[server].mark_error(error_msg, ConnectionState.UNAUTHORIZED)
 
                         # Try to re-validate/recreate key for this server
-                        if self._auto_validate_keys:
+
+                        if not self._validate_key(server):
+                            # Nur wenn Validierung fehlschlägt: Neu erstellen
                             self.api_key_handler.remove_key(server)
+                            self._create_api_key(server)
+
+                        if self._auto_validate_keys:
                             try:
-                                self._create_api_key(server)
                                 # Retry with new key
                                 api_key = self.api_key_handler.get_key(server)
                                 if api_key:

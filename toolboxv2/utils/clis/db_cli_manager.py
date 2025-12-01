@@ -140,6 +140,9 @@ class DBInstanceManager:
             print_status(f"API key saved for instance '{self.id}'", "success")
         except Exception as e:
             print_status(f"Failed to save API key: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            exit(1)
 
     def ensure_api_key(self) -> bool:
         """Ensure this instance has an API key, creating one if needed"""

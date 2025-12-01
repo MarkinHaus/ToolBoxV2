@@ -7,7 +7,7 @@ from toolboxv2 import Spinner
 from ..utils.extras.gist_control import GistLoader
 
 
-def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
+def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False):
 
     if flows_dict_ is None:
         flows_dict_ = {}
@@ -39,8 +39,22 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
                     except Exception as e:
                         continue
 
-                    if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
-                        flows_dict_[module.NAME] = module.run
+                    if not ui:
+                        if (
+                            hasattr(module, "run")
+                            and callable(module.run)
+                            and hasattr(module, "NAME")
+                        ):
+                            flows_dict_[module.NAME] = module.run
+                    else:
+                        if (
+                            hasattr(module, "ui")
+                            and callable(module.ui)
+                            and hasattr(module, "NAME")
+                        ):
+                            flows_dict_[module.NAME] = module.ui
+
+
                 elif file_name.endswith('.py') and s in file_name:
                     name = os.path.splitext(file_name)[0]
                     spec = importlib.util.spec_from_file_location(name, os.path.join(dir_path, file_name))
@@ -51,7 +65,19 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None):
                         continue
 
                     # Füge das Modul der Dictionary hinzu
-                    if hasattr(module, 'run') and callable(module.run) and hasattr(module, 'NAME'):
-                        flows_dict_[module.NAME] = module.run
+                    if not ui:
+                        if (
+                            hasattr(module, "run")
+                            and callable(module.run)
+                            and hasattr(module, "NAME")
+                        ):
+                            flows_dict_[module.NAME] = module.run
+                    else:
+                        if (
+                            hasattr(module, "ui")
+                            and callable(module.ui)
+                            and hasattr(module, "NAME")
+                        ):
+                            flows_dict_[module.NAME] = module.ui
 
         return flows_dict_

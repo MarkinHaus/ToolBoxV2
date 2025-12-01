@@ -1,0 +1,1068 @@
+"""
+Minu UI Framework for Toolbox V2
+================================
+A lightweight, reactive UI framework that generates JSON-based UI definitions
+and sends them via WebSocket for real-time rendering in TBJS.
+
+Design Principles:
+1. Simple Python API - UI als Python-Objekte
+2. Reactive State - Automatische Updates bei Änderungen
+3. Minimal Payloads - Nur Diffs werden gesendet
+4. Native Toolbox - Volle Integration mit Result, Export, etc.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+import weakref
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from functools import wraps
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+
+# Type definitions
+T = TypeVar("T")
+EventHandler = Callable[..., Any]
+Children = Union["Component", List["Component"], str, None]
+
+
+# ============================================================================
+# REACTIVE STATE SYSTEM
+# ============================================================================
+
+
+class StateChange:
+    """Represents a single state change for diffing"""
+
+    __slots__ = ("path", "old_value", "new_value", "timestamp")
+
+    def __init__(self, path: str, old_value: Any, new_value: Any):
+        self.path = path
+        self.old_value = old_value
+        self.new_value = new_value
+        self.timestamp = (
+            asyncio.get_event_loop().time()
+            if asyncio.get_event_loop().is_running()
+            else 0
+        )
+
+
+class ReactiveState(Generic[T]):
+    """
+    A reactive state container that tracks changes and notifies observers.
+
+    Usage:
+        name = ReactiveState("initial")
+        name.value = "changed"  # Triggers observers
+    """
+
+    _observers: weakref.WeakSet
+    _value: T
+    _path: str
+
+    def __init__(self, initial: T, path: str = ""):
+        self._value = initial
+        self._path = path
+        self._observers = weakref.WeakSet()
+
+    @property
+    def value(self) -> T:
+        return self._value
+
+    @value.setter
+    def value(self, new_value: T):
+        if self._value != new_value:
+            old = self._value
+            self._value = new_value
+            change = StateChange(self._path, old, new_value)
+            self._notify(change)
+
+    def _notify(self, change: StateChange):
+        for observer in self._observers:
+            if hasattr(observer, "_on_state_change"):
+                observer._on_state_change(change)
+
+    def bind(self, observer: MinuView):
+        """Bind this state to a view for automatic updates"""
+        self._observers.add(observer)
+
+    def __repr__(self):
+        return f"ReactiveState({self._value!r})"
+
+
+def State(initial: T, path: str = "") -> ReactiveState[T]:
+    """Factory function for creating reactive state"""
+    return ReactiveState(initial, path)
+
+
+# ============================================================================
+# COMPONENT SYSTEM
+# ============================================================================
+
+
+class ComponentType(str, Enum):
+    """All supported component types"""
+
+    # Layout
+    CARD = "card"
+    ROW = "row"
+    COLUMN = "column"
+    GRID = "grid"
+    SPACER = "spacer"
+    DIVIDER = "divider"
+
+    # Content
+    TEXT = "text"
+    HEADING = "heading"
+    PARAGRAPH = "paragraph"
+    ICON = "icon"
+    IMAGE = "image"
+    BADGE = "badge"
+
+    # Input
+    BUTTON = "button"
+    INPUT = "input"
+    TEXTAREA = "textarea"
+    SELECT = "select"
+    CHECKBOX = "checkbox"
+    SWITCH = "switch"
+    SLIDER = "slider"
+
+    # Feedback
+    ALERT = "alert"
+    TOAST = "toast"
+    PROGRESS = "progress"
+    SPINNER = "spinner"
+
+    # Navigation
+    LINK = "link"
+    TABS = "tabs"
+    TAB = "tab"
+    NAV = "nav"
+
+    # Data
+    TABLE = "table"
+    LIST = "list"
+    LISTITEM = "listitem"
+
+    # Special
+    MODAL = "modal"
+    WIDGET = "widget"
+    FORM = "form"
+    CUSTOM = "custom"
+
+
+@dataclass
+class ComponentStyle:
+    """CSS-like styling for components"""
+
+    margin: str | None = None
+    padding: str | None = None
+    width: str | None = None
+    height: str | None = None
+    color: str | None = None
+    background: str | None = None
+    border: str | None = None
+    borderRadius: str | None = None
+    fontSize: str | None = None
+    fontWeight: str | None = None
+    display: str | None = None
+    flexDirection: str | None = None
+    alignItems: str | None = None
+    justifyContent: str | None = None
+    gap: str | None = None
+
+    def to_dict(self) -> Dict[str, str]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass
+class Component:
+    """
+    Base component class representing a UI element.
+
+    All components serialize to JSON for transport to the frontend.
+    """
+
+    type: ComponentType
+    id: str = field(default_factory=lambda: f"minu-{uuid.uuid4().hex[:8]}")
+    children: List[Component] = field(default_factory=list)
+    props: Dict[str, Any] = field(default_factory=dict)
+    style: ComponentStyle | None = None
+    className: str | None = None
+    events: Dict[str, str] = field(default_factory=dict)  # event -> handler_name
+    bindings: Dict[str, str] = field(default_factory=dict)  # prop -> state_path
+
+    def __post_init__(self):
+        # Normalize children
+        if isinstance(self.children, str):
+            self.children = [Text(self.children)]
+        elif isinstance(self.children, Component):
+            self.children = [self.children]
+        elif self.children is None:
+            self.children = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize component to JSON-compatible dict"""
+        result = {
+            "type": self.type.value,
+            "id": self.id,
+            "props": self.props,
+        }
+
+        if self.children:
+            result["children"] = [
+                c.to_dict() if isinstance(c, Component) else c for c in self.children
+            ]
+
+        if self.style:
+            result["style"] = self.style.to_dict()
+
+        if self.className:
+            result["className"] = self.className
+
+        if self.events:
+            result["events"] = self.events
+
+        if self.bindings:
+            result["bindings"] = self.bindings
+
+        return result
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
+
+
+# ============================================================================
+# COMPONENT FACTORY FUNCTIONS
+# ============================================================================
+
+
+def Card(
+    *children: Children,
+    title: str | None = None,
+    subtitle: str | None = None,
+    className: str = "card",
+    style: ComponentStyle | None = None,
+    **props,
+) -> Component:
+    """
+    A card container with optional header.
+
+    Usage:
+        Card(
+            Text("Content"),
+            title="My Card",
+            className="card animate-fade-in"
+        )
+    """
+    child_list = []
+
+    if title or subtitle:
+        header_children = []
+        if title:
+            header_children.append(
+                Component(
+                    type=ComponentType.HEADING,
+                    props={"level": 3, "text": title},
+                    className="card-title",
+                )
+            )
+        if subtitle:
+            header_children.append(
+                Component(
+                    type=ComponentType.TEXT,
+                    props={"text": subtitle},
+                    className="text-secondary text-sm",
+                )
+            )
+        child_list.append(
+            Component(
+                type=ComponentType.ROW, children=header_children, className="card-header"
+            )
+        )
+
+    for child in children:
+        if isinstance(child, (list, tuple)):
+            child_list.extend(child)
+        elif child is not None:
+            child_list.append(child if isinstance(child, Component) else Text(str(child)))
+
+    return Component(
+        type=ComponentType.CARD,
+        children=child_list,
+        className=className,
+        style=style,
+        props=props,
+    )
+
+
+def Text(
+    content: str,
+    variant: str = "body",  # body, caption, overline
+    className: str | None = None,
+    bind: str | None = None,
+    **props,
+) -> Component:
+    """Simple text component"""
+    class_name = className or f"text-{variant}"
+    bindings = {"text": bind} if bind else {}
+
+    return Component(
+        type=ComponentType.TEXT,
+        props={"text": content, **props},
+        className=class_name,
+        bindings=bindings,
+    )
+
+
+def Heading(
+    text: str, level: int = 1, className: str | None = None, **props
+) -> Component:
+    """Heading component (h1-h6)"""
+    return Component(
+        type=ComponentType.HEADING,
+        props={"text": text, "level": level, **props},
+        className=className
+        or f"text-{['4xl', '3xl', '2xl', 'xl', 'lg', 'base'][level - 1]}",
+    )
+
+
+def Button(
+    label: str,
+    on_click: str | None = None,
+    variant: str = "primary",  # primary, secondary, ghost
+    disabled: bool = False,
+    icon: str | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """
+    Interactive button component.
+
+    Usage:
+        Button("Save", on_click="handle_save", variant="primary")
+    """
+    events = {"click": on_click} if on_click else {}
+    class_name = className or f"btn btn-{variant}"
+
+    children = []
+    if icon:
+        children.append(Icon(icon))
+    children.append(Text(label))
+
+    return Component(
+        type=ComponentType.BUTTON,
+        children=children if len(children) > 1 else [],
+        props={"label": label, "disabled": disabled, **props},
+        className=class_name,
+        events=events,
+    )
+
+
+def Input(
+    placeholder: str = "",
+    value: str = "",
+    input_type: str = "text",
+    bind: str | None = None,
+    on_change: str | None = None,
+    on_submit: str | None = None,
+    label: str | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """
+    Text input component with optional label and bindings.
+
+    Usage:
+        Input(
+            placeholder="Enter name",
+            bind="user.name",
+            on_change="validate_name"
+        )
+    """
+    events = {}
+    if on_change:
+        events["change"] = on_change
+    if on_submit:
+        events["submit"] = on_submit
+
+    bindings = {"value": bind} if bind else {}
+
+    input_comp = Component(
+        type=ComponentType.INPUT,
+        props={
+            "placeholder": placeholder,
+            "value": value,
+            "inputType": input_type,
+            **props,
+        },
+        className=className,
+        events=events,
+        bindings=bindings,
+    )
+
+    if label:
+        return Column(
+            Text(label, className="text-sm font-medium mb-1"),
+            input_comp,
+            className="form-field",
+        )
+
+    return input_comp
+
+
+def Select(
+    options: List[Dict[str, str]],
+    value: str = "",
+    placeholder: str = "Select...",
+    bind: str | None = None,
+    on_change: str | None = None,
+    label: str | None = None,
+    **props,
+) -> Component:
+    """
+    Dropdown select component.
+
+    Usage:
+        Select(
+            options=[
+                {"value": "opt1", "label": "Option 1"},
+                {"value": "opt2", "label": "Option 2"}
+            ],
+            bind="selected_option"
+        )
+    """
+    events = {"change": on_change} if on_change else {}
+    bindings = {"value": bind} if bind else {}
+
+    select_comp = Component(
+        type=ComponentType.SELECT,
+        props={"options": options, "value": value, "placeholder": placeholder, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+    if label:
+        return Column(
+            Text(label, className="text-sm font-medium mb-1"),
+            select_comp,
+            className="form-field",
+        )
+
+    return select_comp
+
+
+def Checkbox(
+    label: str,
+    checked: bool = False,
+    bind: str | None = None,
+    on_change: str | None = None,
+    **props,
+) -> Component:
+    """Checkbox input with label"""
+    events = {"change": on_change} if on_change else {}
+    bindings = {"checked": bind} if bind else {}
+
+    return Component(
+        type=ComponentType.CHECKBOX,
+        props={"label": label, "checked": checked, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+
+def Switch(
+    label: str = "",
+    checked: bool = False,
+    bind: str | None = None,
+    on_change: str | None = None,
+    **props,
+) -> Component:
+    """Toggle switch component"""
+    events = {"change": on_change} if on_change else {}
+    bindings = {"checked": bind} if bind else {}
+
+    return Component(
+        type=ComponentType.SWITCH,
+        props={"label": label, "checked": checked, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+
+# Layout Components
+
+
+def Row(
+    *children: Children,
+    gap: str = "4",
+    align: str = "center",
+    justify: str = "start",
+    wrap: bool = False,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Horizontal flex container"""
+    class_parts = ["flex", f"gap-{gap}", f"items-{align}", f"justify-{justify}"]
+    if wrap:
+        class_parts.append("flex-wrap")
+
+    return Component(
+        type=ComponentType.ROW,
+        children=list(children),
+        className=className or " ".join(class_parts),
+        props=props,
+    )
+
+
+def Column(
+    *children: Children,
+    gap: str = "4",
+    align: str = "stretch",
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Vertical flex container"""
+    return Component(
+        type=ComponentType.COLUMN,
+        children=list(children),
+        className=className or f"flex flex-col gap-{gap} items-{align}",
+        props=props,
+    )
+
+
+def Grid(
+    *children: Children,
+    cols: int = 2,
+    gap: str = "4",
+    className: str | None = None,
+    **props,
+) -> Component:
+    """CSS Grid container"""
+    return Component(
+        type=ComponentType.GRID,
+        children=list(children),
+        className=className or f"grid grid-cols-{cols} gap-{gap}",
+        props=props,
+    )
+
+
+def Spacer(size: str = "4") -> Component:
+    """Empty space component"""
+    return Component(type=ComponentType.SPACER, className=f"h-{size}")
+
+
+def Divider(className: str | None = None) -> Component:
+    """Horizontal divider line"""
+    return Component(
+        type=ComponentType.DIVIDER,
+        className=className or "border-t border-neutral-200 my-4",
+    )
+
+
+# Feedback Components
+
+
+def Alert(
+    message: str,
+    variant: str = "info",  # info, success, warning, error
+    title: str | None = None,
+    dismissible: bool = False,
+    on_dismiss: str | None = None,
+    **props,
+) -> Component:
+    """Alert/notification component"""
+    events = {"dismiss": on_dismiss} if on_dismiss else {}
+
+    return Component(
+        type=ComponentType.ALERT,
+        props={
+            "message": message,
+            "variant": variant,
+            "title": title,
+            "dismissible": dismissible,
+            **props,
+        },
+        className=f"alert alert-{variant}",
+        events=events,
+    )
+
+
+def Progress(
+    value: int = 0,
+    max_value: int = 100,
+    label: str | None = None,
+    bind: str | None = None,
+    **props,
+) -> Component:
+    """Progress bar component"""
+    bindings = {"value": bind} if bind else {}
+
+    return Component(
+        type=ComponentType.PROGRESS,
+        props={"value": value, "max": max_value, "label": label, **props},
+        bindings=bindings,
+    )
+
+
+def Spinner(size: str = "md", className: str | None = None) -> Component:
+    """Loading spinner"""
+    return Component(
+        type=ComponentType.SPINNER,
+        props={"size": size},
+        className=className or "animate-spin",
+    )
+
+
+# Data Display
+
+
+def Table(
+    columns: List[Dict[str, str]],
+    data: List[Dict[str, Any]],
+    bind_data: str | None = None,
+    on_row_click: str | None = None,
+    **props,
+) -> Component:
+    """
+    Data table component.
+
+    Usage:
+        Table(
+            columns=[
+                {"key": "name", "label": "Name"},
+                {"key": "email", "label": "Email"}
+            ],
+            data=[
+                {"name": "John", "email": "john@example.com"}
+            ],
+            bind_data="users"
+        )
+    """
+    events = {"rowClick": on_row_click} if on_row_click else {}
+    bindings = {"data": bind_data} if bind_data else {}
+
+    return Component(
+        type=ComponentType.TABLE,
+        props={"columns": columns, "data": data, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+
+def List(
+    *items: Children, ordered: bool = False, className: str | None = None, **props
+) -> Component:
+    """List component"""
+    return Component(
+        type=ComponentType.LIST,
+        children=list(items),
+        props={"ordered": ordered, **props},
+        className=className,
+    )
+
+
+def ListItem(
+    *children: Children,
+    on_click: str | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """List item component"""
+    events = {"click": on_click} if on_click else {}
+
+    return Component(
+        type=ComponentType.LISTITEM,
+        children=list(children),
+        className=className,
+        events=events,
+        props=props,
+    )
+
+
+# Special Components
+
+
+def Icon(name: str, size: str = "24", className: str | None = None) -> Component:
+    """Material icon component"""
+    return Component(
+        type=ComponentType.ICON,
+        props={"name": name, "size": size},
+        className=className or "material-symbols-outlined",
+    )
+
+
+def Image(
+    src: str,
+    alt: str = "",
+    width: str | None = None,
+    height: str | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Image component"""
+    return Component(
+        type=ComponentType.IMAGE,
+        props={"src": src, "alt": alt, "width": width, "height": height, **props},
+        className=className,
+    )
+
+
+def Badge(
+    text: str,
+    variant: str = "default",  # default, primary, success, warning, error
+    className: str | None = None,
+) -> Component:
+    """Small badge/tag component"""
+    return Component(
+        type=ComponentType.BADGE,
+        props={"text": text, "variant": variant},
+        className=className or f"badge badge-{variant}",
+    )
+
+
+def Modal(
+    *children: Children,
+    title: str | None = None,
+    open: bool = False,
+    bind_open: str | None = None,
+    on_close: str | None = None,
+    **props,
+) -> Component:
+    """Modal dialog component"""
+    events = {"close": on_close} if on_close else {}
+    bindings = {"open": bind_open} if bind_open else {}
+
+    return Component(
+        type=ComponentType.MODAL,
+        children=list(children),
+        props={"title": title, "open": open, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+
+def Widget(
+    *children: Children,
+    title: str = "",
+    collapsible: bool = False,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Floating widget container (uses .widget CSS class)"""
+    return Component(
+        type=ComponentType.WIDGET,
+        children=list(children),
+        props={"title": title, "collapsible": collapsible, **props},
+        className=className or "widget",
+    )
+
+
+def Form(
+    *children: Children,
+    on_submit: str | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Form container with submit handling"""
+    events = {"submit": on_submit} if on_submit else {}
+
+    return Component(
+        type=ComponentType.FORM,
+        children=list(children),
+        className=className,
+        events=events,
+        props=props,
+    )
+
+
+def Tabs(
+    tabs: List[Dict[str, Any]],
+    active: int = 0,
+    bind_active: str | None = None,
+    on_change: str | None = None,
+    **props,
+) -> Component:
+    """
+    Tab navigation component.
+
+    Usage:
+        Tabs(
+            tabs=[
+                {"label": "Tab 1", "content": Card(Text("Content 1"))},
+                {"label": "Tab 2", "content": Card(Text("Content 2"))}
+            ],
+            bind_active="active_tab"
+        )
+    """
+    events = {"change": on_change} if on_change else {}
+    bindings = {"active": bind_active} if bind_active else {}
+
+    # Serialize tab content
+    serialized_tabs = []
+    for tab in tabs:
+        serialized_tab = {"label": tab.get("label", "")}
+        if "content" in tab:
+            content = tab["content"]
+            serialized_tab["content"] = (
+                content.to_dict() if isinstance(content, Component) else content
+            )
+        serialized_tabs.append(serialized_tab)
+
+    return Component(
+        type=ComponentType.TABS,
+        props={"tabs": serialized_tabs, "active": active, **props},
+        events=events,
+        bindings=bindings,
+    )
+
+
+def Custom(html: str = "", component_name: str | None = None, **props) -> Component:
+    """
+    Custom HTML or registered component.
+
+    Usage:
+        Custom(html="<div class='custom'>Custom HTML</div>")
+        Custom(component_name="MyCustomComponent", data={"key": "value"})
+    """
+    return Component(
+        type=ComponentType.CUSTOM,
+        props={"html": html, "componentName": component_name, **props},
+    )
+
+
+# ============================================================================
+# VIEW SYSTEM
+# ============================================================================
+
+
+class MinuView:
+    _view_id: str
+    _session: MinuSession | None
+    _pending_changes: List[StateChange]
+    _state_attrs: Dict[str, ReactiveState]
+
+    def __init__(self, view_id: str | None = None):
+        self._view_id = view_id or f"view-{uuid.uuid4().hex[:8]}"
+        self._session = None
+        self._pending_changes = []
+        self._state_attrs = {}
+
+        for attr_name in dir(self.__class__):
+            if not attr_name.startswith("_"):
+                attr = getattr(self.__class__, attr_name)
+                if isinstance(attr, ReactiveState):
+                    state_copy = State(attr.value, f"{self._view_id}.{attr_name}")
+                    state_copy.bind(self)
+                    self._state_attrs[attr_name] = state_copy
+                    setattr(self, attr_name, state_copy)
+
+    def render(self) -> Component:
+        raise NotImplementedError("Subclass must implement render()")
+
+    def _on_state_change(self, change: StateChange):
+        """Called when any bound state changes"""
+        self._pending_changes.append(change)
+        if self._session:
+            # FIX: Only mark dirty, do not schedule async task
+            self._session._mark_dirty(self)
+
+    def to_dict(self) -> Dict[str, Any]:
+        rendered = self.render()
+        return {
+            "viewId": self._view_id,
+            "component": rendered.to_dict(),
+            "state": {name: state.value for name, state in self._state_attrs.items()},
+            "handlers": self._get_handlers(),
+        }
+
+    def _get_handlers(self) -> List[str]:
+        handlers = []
+        for name in dir(self):
+            if not name.startswith("_") and name not in ("render", "to_dict"):
+                attr = getattr(self, name)
+                if callable(attr) and not isinstance(attr, ReactiveState):
+                    handlers.append(name)
+        return handlers
+
+    def get_patches(self) -> List[Dict[str, Any]]:
+        patches = []
+        for change in self._pending_changes:
+            patches.append({
+                "type": "state_update",
+                "viewId": self._view_id,
+                "path": change.path,
+                "value": change.new_value,
+            })
+        self._pending_changes.clear()
+        return patches
+
+
+# ============================================================================
+# SESSION & TRANSPORT
+# ============================================================================
+
+
+class MinuSession:
+    _views: Dict[str, MinuView]
+    _pending_updates: set[MinuView]  # Changed to Set for unique tracking
+    _send_callback: Callable[[str], Any] | None
+
+    def __init__(self, session_id: str | None = None):
+        self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
+        self._views = {}
+        self._pending_updates = set()
+        self._send_callback = None
+
+    def set_send_callback(self, callback: Callable[[str], Any]):
+        self._send_callback = callback
+
+    def register_view(self, view: MinuView) -> str:
+        view._session = self
+        self._views[view._view_id] = view
+        return view._view_id
+
+    def unregister_view(self, view_id: str):
+        if view_id in self._views:
+            self._views[view_id]._session = None
+            del self._views[view_id]
+
+    def get_view(self, view_id: str) -> MinuView | None:
+        return self._views.get(view_id)
+
+    def _mark_dirty(self, view: MinuView):
+        """Mark a view as needing updates (Synchronous)"""
+        self._pending_updates.add(view)
+
+    async def force_flush(self):
+        """
+        Immediately send all pending updates.
+        Must be awaited at the end of every event handler.
+        """
+        if not self._pending_updates:
+            return
+
+        all_patches = []
+        # Clone and clear to avoid concurrent modification issues
+        dirty_views = list(self._pending_updates)
+        self._pending_updates.clear()
+
+        for view in dirty_views:
+            patches = view.get_patches()
+            all_patches.extend(patches)
+
+        if all_patches and self._send_callback:
+            message = {
+                "type": "patches",
+                "sessionId": self.session_id,
+                "patches": all_patches,
+            }
+            await self._send(json.dumps(message))
+
+    async def _send(self, message: str):
+        if self._send_callback:
+            result = self._send_callback(message)
+            if asyncio.iscoroutine(result):
+                await result
+
+    async def send_full_render(self, view: MinuView):
+        message = {"type": "render", "sessionId": self.session_id, "view": view.to_dict()}
+        await self._send(json.dumps(message))
+
+    async def handle_event(self, event_data: Dict[str, Any]):
+        view_id = event_data.get("viewId")
+        handler_name = event_data.get("handler")
+        payload = event_data.get("payload", {})
+
+        view = self._views.get(view_id)
+        if not view:
+            return {"error": f"View {view_id} not found"}
+
+        handler = getattr(view, handler_name, None)
+        if not handler or not callable(handler):
+            return {"error": f"Handler {handler_name} not found"}
+
+        try:
+            result = handler(payload)
+            if asyncio.iscoroutine(result):
+                result = await result
+
+            # FIX: Explicitly flush updates before returning/closing loop
+            await self.force_flush()
+
+            return {"success": True, "result": result}
+        except Exception as e:
+            return {"error": str(e)}
+
+
+
+def minu_handler(view_class: type):
+    """
+    Decorator to create a Minu UI endpoint from a View class.
+
+    Usage:
+        @minu_handler
+        class MyDashboard(MinuView):
+            ...
+
+        # This creates:
+        # - WebSocket handler for live updates
+        # - API endpoint for initial render
+    """
+
+    def create_handler(app, request):
+        session = MinuSession()
+        view = view_class()
+        session.register_view(view)
+        return view, session
+
+    return create_handler
+# Convenience re-exports
+__all__ = [
+    # State
+    "State",
+    "ReactiveState",
+    "StateChange",
+    # Components
+    "Component",
+    "ComponentType",
+    "ComponentStyle",
+    "Card",
+    "Text",
+    "Heading",
+    "Button",
+    "Input",
+    "Select",
+    "Checkbox",
+    "Switch",
+    "Row",
+    "Column",
+    "Grid",
+    "Spacer",
+    "Divider",
+    "Alert",
+    "Progress",
+    "Spinner",
+    "Table",
+    "List",
+    "ListItem",
+    "Icon",
+    "Image",
+    "Badge",
+    "Modal",
+    "Widget",
+    "Form",
+    "Tabs",
+    "Custom",
+    # View System
+    "MinuView",
+    "MinuSession",
+    # Integration
+    "minu_handler",
+]
+
+
