@@ -46,6 +46,7 @@ class MinuRenderer {
             throw new Error(`[Minu] Container not found: ${containerSelector}`);
         }
 
+        this._injectStyles();
         // Connect WebSocket
         await this._connectWs();
 
@@ -218,7 +219,11 @@ class MinuRenderer {
         }
 
         // Bind events
-        if (comp.events) {
+        // Bind events - Skip für wrapper-komponenten (checkbox, switch, select, input mit label)
+        const skipEventBinding = ['checkbox', 'switch'].includes(comp.type) ||
+            (['select', 'input'].includes(comp.type) && comp.props?.label);
+
+        if (comp.events && !skipEventBinding) {
             for (const [eventName, handlerName] of Object.entries(comp.events)) {
                 if (handlerName) {
                     this._bindEvent(element, eventName, handlerName, viewId);
@@ -245,20 +250,40 @@ class MinuRenderer {
         return {
             // Layout Components
             card: (comp) => {
-                const el = document.createElement('div');
-                el.className = comp.className || 'card';
-                return el;
-            },
+    const el = document.createElement('div');
+    el.className = comp.className || 'card';
+    // Kein inline-style - nutze tbjs-main.css .card Klasse
+    return el;
+},
 
             row: (comp) => {
                 const el = document.createElement('div');
-                el.className = comp.className || 'flex gap-4 items-center';
+                const gap = comp.props?.gap || '4';
+                const justify = comp.props?.justify || 'start';
+                const align = comp.props?.align || 'center';
+
+                el.className = comp.className || '';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'row';
+                el.style.flexWrap = 'wrap';
+                el.style.gap = `var(--space-${gap})`;
+                el.style.alignItems = align === 'center' ? 'center' :
+                                      align === 'start' ? 'flex-start' : 'flex-end';
+                el.style.justifyContent = justify === 'between' ? 'space-between' :
+                                           justify === 'end' ? 'flex-end' :
+                                           justify === 'center' ? 'center' : 'flex-start';
                 return el;
             },
 
             column: (comp) => {
                 const el = document.createElement('div');
-                el.className = comp.className || 'flex flex-col gap-4';
+                const gap = comp.props?.gap || '4';
+
+                el.className = comp.className || '';
+                el.style.display = 'flex';
+                el.style.flexDirection = 'column';
+                el.style.gap = `var(--space-${gap})`;
+                el.style.width = '100%';
                 return el;
             },
 
@@ -270,7 +295,10 @@ class MinuRenderer {
 
             spacer: (comp) => {
                 const el = document.createElement('div');
-                el.className = comp.className || 'h-4';
+                const size = comp.props?.size || '4';
+                el.style.height = `var(--space-${size})`;
+                el.style.width = '100%';
+                el.style.flexShrink = '0';
                 return el;
             },
 
@@ -327,25 +355,58 @@ class MinuRenderer {
             },
 
             // Input Components
-            button: (comp) => {
+            button: (comp, viewId) => {
                 const el = document.createElement('button');
-                el.className = comp.className || 'btn btn-primary';
-                el.textContent = comp.props?.label || '';
+                el.type = comp.props?.type || 'button'; // Default: button, nicht submit
+
+                const variant = comp.props?.variant || 'primary';
+                el.className = comp.className || `btn btn-${variant}`;
+
+                // Icon support
+                if (comp.props?.icon) {
+                    const icon = document.createElement('span');
+                    icon.className = 'material-symbols-outlined btn-icon';
+                    icon.textContent = comp.props.icon;
+                    el.appendChild(icon);
+                }
+
+                if (comp.props?.label) {
+                    const label = document.createTextNode(comp.props.label);
+                    el.appendChild(label);
+                }
+
                 if (comp.props?.disabled) {
                     el.disabled = true;
                 }
+
                 return el;
             },
 
             input: (comp) => {
-                const el = document.createElement('input');
-                el.type = comp.props?.inputType || 'text';
-                el.placeholder = comp.props?.placeholder || '';
-                el.value = comp.props?.value || '';
-                if (comp.props?.disabled) el.disabled = true;
-                if (comp.props?.readonly) el.readOnly = true;
-                return el;
-            },
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = 'var(--space-1)';
+    wrapper.style.width = '100%';
+
+    // Label
+    if (comp.props?.label) {
+        const label = document.createElement('label');
+        label.textContent = comp.props.label;
+        wrapper.appendChild(label);
+    }
+
+    const el = document.createElement('input');
+    el.type = comp.props?.inputType || comp.props?.input_type || 'text';
+    el.placeholder = comp.props?.placeholder || '';
+    el.value = comp.props?.value || '';
+    el.style.marginBottom = '0'; // Override
+    if (comp.props?.disabled) el.disabled = true;
+    if (comp.props?.readonly) el.readOnly = true;
+
+    wrapper.appendChild(el);
+    return wrapper;
+},
 
             textarea: (comp) => {
                 const el = document.createElement('textarea');
@@ -356,50 +417,175 @@ class MinuRenderer {
             },
 
             select: (comp) => {
-                const el = document.createElement('select');
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = 'var(--space-1)';
+    wrapper.style.width = '100%';
 
-                // Add placeholder option
-                if (comp.props?.placeholder) {
-                    const placeholder = document.createElement('option');
-                    placeholder.value = '';
-                    placeholder.textContent = comp.props.placeholder;
-                    placeholder.disabled = true;
-                    placeholder.selected = !comp.props?.value;
-                    el.appendChild(placeholder);
-                }
+    // Label
+    if (comp.props?.label) {
+        const label = document.createElement('label');
+        label.textContent = comp.props.label;
+        label.style.fontSize = 'var(--text-sm)';
+        label.style.fontWeight = 'var(--weight-medium)';
+        label.style.color = 'var(--text-secondary)';
+        wrapper.appendChild(label);
+    }
 
-                // Add options
-                if (comp.props?.options) {
-                    for (const opt of comp.props.options) {
-                        const option = document.createElement('option');
-                        option.value = opt.value;
-                        option.textContent = opt.label;
-                        if (opt.value === comp.props?.value) {
-                            option.selected = true;
-                        }
-                        el.appendChild(option);
-                    }
-                }
+    const el = document.createElement('select');
+    el.style.marginBottom = '0'; // Override default margin
 
-                return el;
-            },
+    // Placeholder
+    if (comp.props?.placeholder) {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = comp.props.placeholder;
+        placeholder.disabled = true;
+        placeholder.selected = !comp.props?.value;
+        el.appendChild(placeholder);
+    }
 
-            checkbox: (comp) => {
-                const wrapper = document.createElement('label');
-                wrapper.className = 'flex items-center gap-2 cursor-pointer';
+    // Options
+    if (comp.props?.options) {
+        for (const opt of comp.props.options) {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (opt.value === comp.props?.value) {
+                option.selected = true;
+            }
+            el.appendChild(option);
+        }
+    }
 
-                const input = document.createElement('input');
-                input.type = 'checkbox';
-                input.checked = comp.props?.checked || false;
+    wrapper.appendChild(el);
+    return wrapper;
+},
 
-                const label = document.createElement('span');
-                label.textContent = comp.props?.label || '';
+            checkbox: (comp, viewId) => {
+    const wrapper = document.createElement('label');
+    wrapper.style.display = 'flex';
+    wrapper.style.alignItems = 'flex-start';
+    wrapper.style.gap = 'var(--space-3)';
+    wrapper.style.cursor = 'pointer';
+    wrapper.style.padding = 'var(--space-2) 0';
+    wrapper.style.userSelect = 'none';
 
-                wrapper.appendChild(input);
-                wrapper.appendChild(label);
+    // Custom Checkbox Container
+    const checkboxContainer = document.createElement('div');
+    checkboxContainer.style.position = 'relative';
+    checkboxContainer.style.width = '20px';
+    checkboxContainer.style.height = '20px';
+    checkboxContainer.style.flexShrink = '0';
 
-                return wrapper;
-            },
+    // Hidden native input
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = comp.props?.checked || false;
+    input.style.position = 'absolute';
+    input.style.opacity = '0';
+    input.style.width = '100%';
+    input.style.height = '100%';
+    input.style.margin = '0';
+    input.style.cursor = 'pointer';
+
+    // Visual checkbox
+    const visual = document.createElement('div');
+    visual.style.width = '20px';
+    visual.style.height = '20px';
+    visual.style.borderRadius = 'var(--radius-sm)';
+    visual.style.border = '2px solid var(--border-strong)';
+    visual.style.backgroundColor = input.checked ? 'var(--interactive)' : 'var(--bg-surface)';
+    visual.style.borderColor = input.checked ? 'var(--interactive)' : 'var(--border-strong)';
+    visual.style.transition = 'all var(--duration-fast) var(--ease-default)';
+    visual.style.display = 'flex';
+    visual.style.alignItems = 'center';
+    visual.style.justifyContent = 'center';
+    visual.style.pointerEvents = 'none';
+
+    // Checkmark SVG
+    const checkmark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    checkmark.setAttribute('viewBox', '0 0 24 24');
+    checkmark.setAttribute('fill', 'none');
+    checkmark.setAttribute('stroke', 'white');
+    checkmark.setAttribute('stroke-width', '3');
+    checkmark.setAttribute('stroke-linecap', 'round');
+    checkmark.setAttribute('stroke-linejoin', 'round');
+    checkmark.style.width = '14px';
+    checkmark.style.height = '14px';
+    checkmark.style.opacity = input.checked ? '1' : '0';
+    checkmark.style.transform = input.checked ? 'scale(1)' : 'scale(0.5)';
+    checkmark.style.transition = 'all var(--duration-fast) var(--ease-default)';
+    checkmark.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+
+    visual.appendChild(checkmark);
+
+    // Update visual on change
+    const updateVisual = () => {
+        const isChecked = input.checked;
+        visual.style.backgroundColor = isChecked ? 'var(--interactive)' : 'var(--bg-surface)';
+        visual.style.borderColor = isChecked ? 'var(--interactive)' : 'var(--border-strong)';
+        checkmark.style.opacity = isChecked ? '1' : '0';
+        checkmark.style.transform = isChecked ? 'scale(1)' : 'scale(0.5)';
+    };
+
+    // Event listener für visuelles Update
+    input.addEventListener('change', updateVisual);
+
+    // Focus styling
+    input.addEventListener('focus', () => {
+        visual.style.boxShadow = '0 0 0 3px oklch(from var(--interactive) l c h / 0.2)';
+    });
+    input.addEventListener('blur', () => {
+        visual.style.boxShadow = 'none';
+    });
+
+    // Hover
+    wrapper.addEventListener('mouseenter', () => {
+        if (!input.checked) {
+            visual.style.borderColor = 'var(--interactive)';
+        }
+    });
+    wrapper.addEventListener('mouseleave', () => {
+        if (!input.checked) {
+            visual.style.borderColor = 'var(--border-strong)';
+        }
+    });
+
+    // Events an Server binden
+    if (comp.events) {
+        for (const [eventName, handlerName] of Object.entries(comp.events)) {
+            if (handlerName) {
+                this._bindEvent(input, eventName, handlerName, viewId);
+            }
+        }
+    }
+
+    // ID und Bindings
+    if (comp.id) {
+        input.dataset.minuId = comp.id;
+        if (comp.bindings) {
+            input.dataset.minuBindings = JSON.stringify(comp.bindings);
+        }
+    }
+
+    checkboxContainer.appendChild(input);
+    checkboxContainer.appendChild(visual);
+
+    // Label Text
+    const labelText = document.createElement('span');
+    labelText.style.color = 'var(--text-primary)';
+    labelText.style.fontSize = 'var(--text-sm)';
+    labelText.style.lineHeight = '1.5';
+    labelText.style.paddingTop = '1px';
+    labelText.textContent = comp.props?.label || '';
+
+    wrapper.appendChild(checkboxContainer);
+    wrapper.appendChild(labelText);
+
+    return wrapper;
+},
 
             switch: (comp) => {
                 const wrapper = document.createElement('label');
@@ -641,45 +827,114 @@ class MinuRenderer {
             },
 
             tabs: (comp, viewId) => {
-                const wrapper = document.createElement('div');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'minu-tabs';
 
-                // Tab buttons
-                const tabList = document.createElement('div');
-                tabList.className = 'flex border-b';
-                tabList.setAttribute('role', 'tablist');
+    // Tab Header
+    const tabList = document.createElement('div');
+    tabList.className = 'minu-tabs-nav';
+    tabList.style.display = 'flex';
+    tabList.style.gap = 'var(--space-1)';
+    tabList.style.borderBottom = 'var(--border-width) solid var(--border-default)';
+    tabList.style.marginBottom = 'var(--space-4)';
+    tabList.style.overflowX = 'auto';
+    tabList.style.scrollbarWidth = 'none';
+    tabList.setAttribute('role', 'tablist');
 
-                const contentArea = document.createElement('div');
-                contentArea.className = 'p-4';
+    // Content Area
+    const contentArea = document.createElement('div');
+    contentArea.className = 'minu-tabs-panel';
 
-                if (comp.props?.tabs) {
-                    comp.props.tabs.forEach((tab, index) => {
-                        const button = document.createElement('button');
-                        button.className = 'px-4 py-2 border-b-2 transition-colors ' +
-                            (index === (comp.props.active || 0)
-                                ? 'border-primary-500 text-primary-500'
-                                : 'border-transparent hover:border-neutral-300');
-                        button.textContent = tab.label;
-                        button.onclick = () => {
-                            if (comp.events?.change) {
-                                this._triggerEvent(viewId, comp.events.change, { index });
-                            }
-                        };
-                        tabList.appendChild(button);
-                    });
+    const activeIndex = comp.props?.active ?? 0;
 
-                    // Render active tab content
-                    const activeIndex = comp.props.active || 0;
-                    if (comp.props.tabs[activeIndex]?.content) {
-                        const content = this._renderComponent(comp.props.tabs[activeIndex].content, viewId);
-                        contentArea.appendChild(content);
-                    }
+    if (comp.props?.tabs) {
+        comp.props.tabs.forEach((tab, index) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.setAttribute('role', 'tab');
+            btn.setAttribute('aria-selected', index === activeIndex);
+            btn.dataset.tabIndex = index;
+
+            // Styling
+            btn.style.display = 'inline-flex';
+            btn.style.alignItems = 'center';
+            btn.style.gap = 'var(--space-2)';
+            btn.style.padding = 'var(--space-3) var(--space-4)';
+            btn.style.border = 'none';
+            btn.style.background = 'transparent';
+            btn.style.cursor = 'pointer';
+            btn.style.fontSize = 'var(--text-sm)';
+            btn.style.fontWeight = 'var(--weight-medium)';
+            btn.style.whiteSpace = 'nowrap';
+            btn.style.borderBottom = '3px solid transparent';
+            btn.style.marginBottom = '-1px';
+            btn.style.transition = 'all var(--duration-fast) var(--ease-default)';
+            btn.style.color = index === activeIndex
+                ? 'var(--interactive)'
+                : 'var(--text-secondary)';
+            btn.style.borderBottomColor = index === activeIndex
+                ? 'var(--interactive)'
+                : 'transparent';
+
+            btn.textContent = tab.label || `Tab ${index + 1}`;
+
+            // Hover
+            btn.addEventListener('mouseenter', () => {
+                if (!btn.classList.contains('active')) {
+                    btn.style.color = 'var(--text-primary)';
+                    btn.style.background = 'var(--interactive-muted)';
+                }
+            });
+            btn.addEventListener('mouseleave', () => {
+                if (!btn.classList.contains('active')) {
+                    btn.style.color = 'var(--text-secondary)';
+                    btn.style.background = 'transparent';
+                }
+            });
+
+            // Click Handler
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+
+                // Update alle Buttons
+                tabList.querySelectorAll('button').forEach((b, i) => {
+                    const isActive = i === index;
+                    b.style.color = isActive ? 'var(--interactive)' : 'var(--text-secondary)';
+                    b.style.borderBottomColor = isActive ? 'var(--interactive)' : 'transparent';
+                    b.style.background = 'transparent';
+                    b.setAttribute('aria-selected', isActive);
+                    if (isActive) b.classList.add('active');
+                    else b.classList.remove('active');
+                });
+
+                // Content wechseln
+                contentArea.innerHTML = '';
+                if (comp.props.tabs[index]?.content) {
+                    const content = this._renderComponent(comp.props.tabs[index].content, viewId);
+                    contentArea.appendChild(content);
                 }
 
-                wrapper.appendChild(tabList);
-                wrapper.appendChild(contentArea);
+                // Server notify
+                if (comp.events?.change) {
+                    this._triggerEvent(viewId, comp.events.change, { index, tab: tab.label });
+                }
+            });
 
-                return wrapper;
-            },
+            if (index === activeIndex) btn.classList.add('active');
+            tabList.appendChild(btn);
+        });
+
+        // Initial Content
+        if (comp.props.tabs[activeIndex]?.content) {
+            const content = this._renderComponent(comp.props.tabs[activeIndex].content, viewId);
+            contentArea.appendChild(content);
+        }
+    }
+
+    wrapper.appendChild(tabList);
+    wrapper.appendChild(contentArea);
+    return wrapper;
+},
 
             custom: (comp) => {
                 const el = document.createElement('div');
@@ -690,6 +945,89 @@ class MinuRenderer {
             }
         };
     }
+
+    _injectStyles() {
+    if (document.getElementById('minu-core-styles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'minu-core-styles';
+    style.textContent = `
+        /* Tabs */
+        .minu-tabs { width: 100%; }
+        .minu-tabs-header {
+            display: flex;
+            gap: 0.25rem;
+            border-bottom: 2px solid #e5e7eb;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .minu-tab-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            border: none;
+            background: none;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            white-space: nowrap;
+            transition: all 0.2s;
+            font-size: 0.875rem;
+        }
+        .minu-tab-btn:hover { background: #f9fafb; }
+        .minu-tab-btn.active {
+            border-bottom-color: #3b82f6;
+            color: #3b82f6;
+            font-weight: 600;
+        }
+        .minu-tabs-content { padding: 1rem 0; }
+
+        /* Checkbox */
+        .minu-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            user-select: none;
+        }
+        .minu-checkbox-input {
+            width: 1.125rem;
+            height: 1.125rem;
+            accent-color: #3b82f6;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: none;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #2563eb; }
+        .btn-secondary { background: #e5e7eb; color: #374151; }
+        .btn-secondary:hover:not(:disabled) { background: #d1d5db; }
+        .btn-ghost { background: transparent; }
+        .btn-ghost:hover:not(:disabled) { background: #f3f4f6; }
+        .btn-icon { font-size: 1.125rem; }
+
+        /* Mobile responsiveness */
+        @media (max-width: 640px) {
+            .minu-tabs-header { gap: 0; }
+            .minu-tab-btn { padding: 0.625rem 0.75rem; font-size: 0.8125rem; }
+            .btn { padding: 0.625rem 0.875rem; }
+        }
+    `;
+    document.head.appendChild(style);
+}
 
     // =========================================================================
     // EVENT HANDLING

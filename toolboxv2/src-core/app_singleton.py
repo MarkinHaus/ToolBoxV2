@@ -817,9 +817,10 @@ async def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
             get_app().session.base = _WS_SERVER_URL
         response = await get_app().session.fetch(url, method="POST", json={"conn_id": conn_id, "payload": payload})
 
-        if response.status_code == 200:
+        status_code = response.status_code if hasattr(response, 'status_code') else response.status
+        if status_code == 200:
             return {"status": "success", "conn_id": conn_id}
-        return {"status": "error", "code": response.status_code, "msg": response.text}
+        return {"status": "error", "code": status_code, "msg": response.text}
 
     except Exception as e:
         print(f"[app_singleton] ERROR sending WS message: {e}")
@@ -850,9 +851,10 @@ async def ws_broadcast_message(
             timeout=2,
         )
 
-        if response.status_code == 200:
-            return {"status": "success", "channel_id": channel_id}
-        return {"status": "error", "code": response.status_code, "msg": response.text}
+        status_code = response.status_code if hasattr(response, 'status_code') else response.status
+        if status_code == 200:
+            return {"status": "success", "conn_id": channel_id}
+        return {"status": "error", "code": status_code, "msg": response.text}
 
     except Exception as e:
         print(f"[app_singleton] ERROR broadcasting: {e}")
@@ -879,9 +881,10 @@ async def ws_broadcast_all(
             timeout=2,
         )
 
-        if response.status_code == 200:
+        status_code = response.status_code if hasattr(response, 'status_code') else response.status
+        if status_code == 200:
             return {"status": "success"}
-        return {"status": "error", "code": response.status_code, "msg": response.text}
+        return {"status": "error", "code": status_code, "msg": response.text}
 
     except Exception as e:
         print(f"[app_singleton] ERROR global broadcast: {e}")
@@ -905,8 +908,7 @@ async def ws_is_connected(conn_id: str) -> bool:
         response = await get_app().session.fetch(
             f"/internal/ws/check/{conn_id}", timeout=5
         )
-
-        if response.status_code == 200:
+        if  response.status_code if hasattr(response, 'status_code') else response.status == 200:
             data = response.json()
             return data.get("connected", False)
         return False
