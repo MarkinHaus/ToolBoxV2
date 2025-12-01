@@ -39,6 +39,7 @@ import traceback
 import json
 from typing import Optional, Dict, Any, List
 import asyncio
+import uuid
 
 # Importiere toolboxv2
 try:
@@ -52,8 +53,26 @@ except ImportError as e:
 
 _GLOBAL_APP: Optional[App] = None
 _INSTANCE_ID: str = "nuitka_global"
+_GLOBAL_LOOPs: Dict[str, Any] = {}
 
-# =================== Initialization ===================
+# =================== LoopHelpers ===================
+# Handel multiple loops
+
+def get_loop():
+    global _GLOBAL_LOOPs
+    for key, (loop, is_running) in _GLOBAL_LOOPs.items():
+        if not is_running:
+            _GLOBAL_LOOPs[key][1] = True
+            return key, loop
+    loop = asyncio.new_event_loop()
+    key = str(uuid.uuid4())
+    _GLOBAL_LOOPs[key] = [loop, False]
+    return key, loop
+
+def free_loop(key: str):
+    global _GLOBAL_LOOPs
+    if key in _GLOBAL_LOOPs:
+        _GLOBAL_LOOPs[key][1] = False
 
 # =================== Initialization ===================
 
@@ -161,6 +180,34 @@ def reset_app() -> Dict[str, Any]:
     }
 
 # =================== Module Operations ===================
+import cProfile
+import pstats
+import io
+import asyncio
+import traceback
+from typing import Optional, List, Dict, Any
+
+def _profile_execution(func, context_info=""):
+    """
+    Führt eine Funktion mit cProfile aus und printet die Top-Stats.
+    """
+    pr = cProfile.Profile()
+    pr.enable()
+    try:
+        result = func()
+        return result
+    finally:
+        pr.disable()
+        s = io.StringIO()
+        # sort_stats('cumulative') ist hier am wichtigsten:
+        # Es zeigt die Zeit inkl. aller Unteraufrufe an -> gut um Bottlenecks zu finden.
+        ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
+
+        print(f"\n{'=' * 20} PROFILER START: {context_info} {'=' * 20}")
+        # Zeige die Top 30 langsamsten Aufrufe
+        ps.print_stats(30)
+        print(f"{'=' * 20} PROFILER END {'=' * 20}\n")
+        print(s.getvalue())
 
 def call_module_function(
     module_name: str,
@@ -232,31 +279,30 @@ def call_module_function(
                 kwargs['tb_run_with_specification'] = kwargs.pop('spec')
         # result = app.run(*args, mod_function_name=(module_name, function_name), request=kwargs.pop('request') if 'request' in kwargs else None, **kwargs)
         print(f"[CALL] {module_name}.{function_name} with args={args} and kwargs={kwargs}")
-        if asyncio.iscoroutinefunction(app.a_run_any):
+        def _perform_execution():
             # Async call - wir müssen einen neuen Event Loop erstellen
             # NICHT den existierenden Loop verwenden (Deadlock!)
             print(f"[app_singleton] call_module_function: app.a_run_any is async, creating new event loop")
-            loop = asyncio.new_event_loop()
+            key, loop = get_loop()
             asyncio.set_event_loop(loop)
             try:
                 # WICHTIG: get_results=True damit wir das vollständige Result-Objekt bekommen
                 # Ohne get_results=True gibt a_run_any nur res.get() zurück (extrahierte Daten)
-                result = loop.run_until_complete(
+                return loop.run_until_complete(
                     app.a_run_any((module_name, function_name), *args, get_results=True, **kwargs)
                 )
             finally:
-                loop.close()
+                free_loop(key)
                 asyncio.set_event_loop(None)
-        else:
-            # Sync call
-            print(f"[app_singleton] call_module_function: app.a_run_any is sync")
-            # WICHTIG: get_results=True damit wir das vollständige Result-Objekt bekommen
-            result = app.a_run_any(
-                (module_name, function_name),
-                *args,
-                get_results=True,
-                **kwargs
+
+        is_debug = getattr(app, "debug", False) or os.getenv("PROFILING", "false") == "true"
+
+        if is_debug:
+            result = _profile_execution(
+                _perform_execution, context_info=f"{module_name}.{function_name}"
             )
+        else:
+            result = _perform_execution()
 
         # Konvertiere Result zu ApiResult-kompatiblem Format
         print(f"Result: {str(result)}")
@@ -653,7 +699,7 @@ def set_rust_ws_bridge() -> Dict[str, Any]:
 
                 async def send_message(self, conn_id: str, payload: str):
                     """Sends a message to a single WebSocket connection."""
-                    return ws_send_message(conn_id, payload)
+                    return await ws_send_message(conn_id, payload)
 
                 async def broadcast_message(
                     self,
@@ -662,21 +708,21 @@ def set_rust_ws_bridge() -> Dict[str, Any]:
                     source_conn_id: str = "python_broadcast",
                 ):
                     """Broadcasts a message to all clients in a channel."""
-                    return ws_broadcast_message(channel_id, payload, source_conn_id)
+                    return await ws_broadcast_message(channel_id, payload, source_conn_id)
 
                 async def broadcast_all(
                     self, payload: str, source_conn_id: Optional[str] = None
                 ):
                     """Broadcasts a message to ALL connected clients."""
-                    return ws_broadcast_all(payload, source_conn_id)
+                    return await ws_broadcast_all(payload, source_conn_id)
 
-                def is_connected(self, conn_id: str) -> bool:
+                async def is_connected(self, conn_id: str) -> bool:
                     """Checks if a connection is active."""
-                    return ws_is_connected(conn_id)
+                    return await ws_is_connected(conn_id)
 
-                def get_status(self) -> Dict[str, Any]:
+                async def get_status(self) -> Dict[str, Any]:
                     """Gets the WebSocket status (connection count, etc.)."""
-                    return ws_get_status()
+                    return await ws_get_status()
 
             bridge_wrapper = RustWsBridgeWrapper()
             app._set_rust_ws_bridge(bridge_wrapper)
@@ -755,10 +801,9 @@ def set_rust_ws_bridge() -> Dict[str, Any]:
         except Exception as e:
             return {"status": "error", "message": str(e)}"""
 # =================== Enhanced WS Bridge Functions ===================
-import requests
 
 
-def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
+async def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
     """
     Sends a WebSocket message via the Rust internal HTTP server.
     """
@@ -767,12 +812,10 @@ def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
         if not isinstance(payload, str):
             payload = json.dumps(payload)
 
-        url = f"{_WS_SERVER_URL}/internal/ws/send"
-        response = requests.post(
-            url,
-            json={"conn_id": conn_id, "payload": payload},
-            timeout=2,  # Short timeout to not block app too long
-        )
+        url = f"/internal/ws/send"
+        if get_app().session.base !=_WS_SERVER_URL:
+            get_app().session.base = _WS_SERVER_URL
+        response = await get_app().session.fetch(url, method="POST", json={"conn_id": conn_id, "payload": payload})
 
         if response.status_code == 200:
             return {"status": "success", "conn_id": conn_id}
@@ -783,7 +826,7 @@ def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
         return {"status": "error", "message": str(e)}
 
 
-def ws_broadcast_message(
+async def ws_broadcast_message(
     channel_id: str, payload: str, source_conn_id: str = "python_broadcast"
 ) -> Dict[str, Any]:
     """
@@ -793,9 +836,12 @@ def ws_broadcast_message(
         if not isinstance(payload, str):
             payload = json.dumps(payload)
 
-        url = f"{_WS_SERVER_URL}/internal/ws/broadcast"
-        response = requests.post(
+        url = f"/internal/ws/broadcast"
+        if get_app().session.base !=_WS_SERVER_URL:
+            get_app().session.base = _WS_SERVER_URL
+        response = await get_app().session.fetch(
             url,
+            method="POST",
             json={
                 "channel_id": channel_id,
                 "payload": payload,
@@ -813,7 +859,7 @@ def ws_broadcast_message(
         return {"status": "error", "message": str(e)}
 
 
-def ws_broadcast_all(
+async def ws_broadcast_all(
     payload: str, source_conn_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -823,9 +869,12 @@ def ws_broadcast_all(
         if not isinstance(payload, str):
             payload = json.dumps(payload)
 
-        url = f"{_WS_SERVER_URL}/internal/ws/broadcast_all"
-        response = requests.post(
+        url = f"/internal/ws/broadcast_all"
+        if get_app().session.base !=_WS_SERVER_URL:
+            get_app().session.base = _WS_SERVER_URL
+        response = await get_app().session.fetch(
             url,
+            method="POST",
             json={"payload": payload, "source_conn_id": source_conn_id or "global"},
             timeout=2,
         )
@@ -839,7 +888,7 @@ def ws_broadcast_all(
         return {"status": "error", "message": str(e)}
 
 
-def ws_is_connected(conn_id: str) -> bool:
+async def ws_is_connected(conn_id: str) -> bool:
     """
     Checks if a WebSocket connection is active.
 
@@ -849,11 +898,12 @@ def ws_is_connected(conn_id: str) -> bool:
     Returns:
         True if the connection is active
     """
-    import requests
 
     try:
-        response = requests.get(
-            f"{_WS_SERVER_URL}/internal/ws/check/{conn_id}", timeout=5
+        if get_app().session.base !=_WS_SERVER_URL:
+            get_app().session.base = _WS_SERVER_URL
+        response = await get_app().session.fetch(
+            f"/internal/ws/check/{conn_id}", timeout=5
         )
 
         if response.status_code == 200:
@@ -868,17 +918,18 @@ def ws_is_connected(conn_id: str) -> bool:
         return False
 
 
-def ws_get_status() -> Dict[str, Any]:
+async def ws_get_status() -> Dict[str, Any]:
     """
     Gets the current WebSocket status from the Rust server.
 
     Returns:
         dict with active_connections count and connection_ids
     """
-    import requests
 
     try:
-        response = requests.get(f"{_WS_SERVER_URL}/internal/ws/status", timeout=5)
+        if get_app().session.base !=_WS_SERVER_URL:
+            get_app().session.base = _WS_SERVER_URL
+        response = await get_app().session.fetch(f"/internal/ws/status", timeout=5)
 
         if response.status_code == 200:
             return response.json()

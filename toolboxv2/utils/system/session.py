@@ -298,6 +298,7 @@ class Session(metaclass=Singleton):
         url: str,
         method: str = 'GET',
         data=None,
+        json=None,
         **kwargs
     ) -> bool | ClientResponse | Response:
         """Fetch URL with authentication"""
@@ -306,6 +307,7 @@ class Session(metaclass=Singleton):
         if isinstance(url, str) and not url.startswith(('http://', 'https://')):
             url = self.base + url
 
+        data = json or data
         # Add auth headers
         headers = kwargs.pop('headers', {})
         headers.update(self._get_auth_headers())
