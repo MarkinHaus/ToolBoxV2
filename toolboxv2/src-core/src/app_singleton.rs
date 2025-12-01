@@ -1,6 +1,6 @@
 // =================== App Singleton Wrapper ===================
 // Lädt und verwaltet den Nuitka-kompilierten App Singleton
-
+// app_singleton.rs
 use crate::python_ffi::PythonFFI;
 use anyhow::{Result, bail};
 use serde_json::Value;

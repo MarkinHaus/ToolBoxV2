@@ -347,9 +347,10 @@ impl NuitkaClient {
     async fn enable_ws_bridge(&self) -> Result<(), NuitkaClientError> {
         info!("Enabling Rust WebSocket bridge in Python App...");
 
-        // Rufe enable_rust_ws_bridge() in app_singleton.py auf
+        // Rufe set_rust_ws_bridge() in app_singleton.py auf
+        // KORREKTUR: Funktionsname angepasst von "enable_rust_ws_bridge" zu "set_rust_ws_bridge"
         let app_singleton = self.app_singleton.lock().unwrap();
-        let result = app_singleton.call_function_json("enable_rust_ws_bridge", &serde_json::json!({}))
+        let result = app_singleton.call_function_json("set_rust_ws_bridge", &serde_json::json!({}))
             .map_err(|e| NuitkaClientError::PythonError(format!("Failed to enable WebSocket bridge: {}", e)))?;
 
         info!("WebSocket bridge enabled: {:?}", result);

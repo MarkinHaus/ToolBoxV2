@@ -1338,27 +1338,6 @@ from dataclasses import dataclass
 from functools import wraps
 
 @dataclass
-class WebSocketContext:
-    """Kontext-Daten für WebSocket-Verbindungen"""
-    conn_id: str
-    channel_id: str
-    event_type: str  # 'connect', 'message', 'disconnect'
-    session: dict
-    request: 'RequestData'
-
-    @classmethod
-    def from_kwargs(cls, kwargs: dict) -> 'WebSocketContext':
-        """Erstellt WebSocketContext aus kwargs"""
-        return cls(
-            conn_id=kwargs.get('conn_id', ''),
-            channel_id=kwargs.get('request', {}).get('websocket', {}).get('channel_id', ''),
-            event_type=kwargs.get('event_type', ''),
-            session=kwargs.get('session', {}),
-            request=RequestData.from_dict(kwargs.get('request', {}))
-        )
-
-
-@dataclass
 class FootprintMetrics:
     """Dataclass für Footprint-Metriken"""
     # Uptime
@@ -1447,6 +1426,89 @@ class FootprintMetrics:
                 'connections': self.connections,
             }
         }
+
+
+class WebSocketContext:
+    """
+    Context object passed to WebSocket handlers.
+    Contains connection information and authenticated session data.
+    """
+
+    def __init__(
+        self,
+        conn_id: str,
+        channel_id: Optional[str] = None,
+        user: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        cookies: Optional[Dict[str, Any]] = None,
+    ):
+        self.conn_id = conn_id
+        self.channel_id = channel_id
+        # 'user' enthält die validierten User-Daten, die von on_connect zurückkamen
+        self.user = user or {}
+        # Die Session-ID (aus Cookie oder Header)
+        self.session_id = session_id
+        # Raw Headers und Cookies (hauptsächlich für on_connect relevant)
+        self.headers = headers or {}
+        self.cookies = cookies or {}
+
+    @classmethod
+    def from_kwargs(cls, kwargs: Dict[str, Any]) -> "WebSocketContext":
+        """
+        Creates a WebSocketContext robustly from arguments passed by Rust.
+        Rust passes 'session_data' (stored context) and request info.
+        """
+        # 1. Versuche, persistierte Session-Daten zu finden (von on_message)
+        session_data = kwargs.get("session_data", {})
+        if not session_data and "session" in kwargs:
+            session_data = kwargs.get("session", {})
+
+        # 2. Extrahiere spezifische Felder
+        conn_id = kwargs.get("conn_id", "")
+        channel_id = kwargs.get("channel_id")
+
+        # User-Daten kommen entweder direkt oder aus dem session_data blob
+        user = (
+            session_data.get("user") if isinstance(session_data, dict) else session_data
+        )
+
+        # 3. Request-Daten (Headers/Cookies) - meist nur bei on_connect verfügbar
+        headers = kwargs.get("headers", {})
+        cookies = kwargs.get("cookies", {})
+
+        # Fallback: Session ID aus Cookies holen, wenn nicht explizit übergeben
+        s_id = session_data.get("session_id")
+        if not s_id and isinstance(cookies, dict):
+            s_id = cookies.get("session_id") or cookies.get("id")
+
+        return cls(
+            conn_id=conn_id,
+            channel_id=channel_id,
+            user=user if isinstance(user, dict) else {},
+            session_id=s_id,
+            headers=headers if isinstance(headers, dict) else {},
+            cookies=cookies if isinstance(cookies, dict) else {},
+        )
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Returns True if the connection has a valid user ID."""
+        return bool(self.user and (self.user.get("id") or self.user.get("user_id")))
+
+    @property
+    def user_id(self) -> Optional[str]:
+        """Helper to get the user ID agnostic of key naming."""
+        return self.user.get("id") or self.user.get("user_id")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "conn_id": self.conn_id,
+            "user": self.user,
+            "session_id": self.session_id,
+            "authenticated": self.is_authenticated,
+        }
+
 
 class AppType:
     prefix: str

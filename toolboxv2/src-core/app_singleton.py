@@ -14,33 +14,24 @@ import os
 # WICHTIG: Muss VOR allen anderen Imports stehen, damit Python die DLLs findet!
 # Dies ist notwendig für native Extensions wie cryptography._rust.pyd
 
-if sys.platform == 'win32' and hasattr(os, 'add_dll_directory'):
-    # Add venv site-packages cryptography bindings
-    venv_crypto = os.path.join(sys.prefix, 'Lib', 'site-packages', 'cryptography', 'hazmat', 'bindings')
-    if os.path.exists(venv_crypto):
-        try:
-            os.add_dll_directory(venv_crypto)
-            print(f"✅ Added DLL directory: {venv_crypto}")
-        except Exception as e:
-            print(f"⚠️ Failed to add DLL directory {venv_crypto}: {e}")
+if sys.platform == 'win32':
+    # Windows-spezifische DLL Logik
+    if hasattr(os, 'add_dll_directory'):
+        # Helper um Pfade sicher hinzuzufügen
+        def safe_add_dll(path):
+            if os.path.exists(path):
+                try:
+                    os.add_dll_directory(path)
+                    print(f"✅ Added DLL directory: {path}")
+                except Exception as e:
+                    print(f"⚠️ Failed to add DLL directory {path}: {e}")
 
-    # Add venv Scripts
-    venv_scripts = os.path.join(sys.prefix, 'Scripts')
-    if os.path.exists(venv_scripts):
-        try:
-            os.add_dll_directory(venv_scripts)
-            print(f"✅ Added DLL directory: {venv_scripts}")
-        except Exception as e:
-            print(f"⚠️ Failed to add DLL directory {venv_scripts}: {e}")
-
-    # Add base Python DLLs
-    base_dlls = os.path.join(sys.base_prefix, 'DLLs')
-    if os.path.exists(base_dlls):
-        try:
-            os.add_dll_directory(base_dlls)
-            print(f"✅ Added DLL directory: {base_dlls}")
-        except Exception as e:
-            print(f"⚠️ Failed to add DLL directory {base_dlls}: {e}")
+        # Add venv site-packages cryptography bindings
+        safe_add_dll(os.path.join(sys.prefix, 'Lib', 'site-packages', 'cryptography', 'hazmat', 'bindings'))
+        # Add venv Scripts
+        safe_add_dll(os.path.join(sys.prefix, 'Scripts'))
+        # Add base Python DLLs
+        safe_add_dll(os.path.join(sys.base_prefix, 'DLLs'))
 
 # =================== Standard Imports ===================
 
@@ -64,98 +55,62 @@ _INSTANCE_ID: str = "nuitka_global"
 
 # =================== Initialization ===================
 
+# =================== Initialization ===================
+
 def init_app(instance_id: str = "nuitka_global", **kwargs) -> Dict[str, Any]:
     """
-    Initialisiert das globale App-Singleton.
-
-    Args:
-        instance_id: Eindeutige ID für diese App-Instanz
-        **kwargs: Zusätzliche Argumente für App-Initialisierung
-
-    Returns:
-        dict mit Status-Informationen
+    Initialisiert das globale App-Singleton (Cross-Platform).
     """
     global _GLOBAL_APP, _INSTANCE_ID
 
     try:
-        print(f"[app_singleton] init_app() called with instance_id={instance_id}, kwargs={kwargs}")
+        print(f"[app_singleton] init_app() called with instance_id={instance_id}")
 
         if _GLOBAL_APP is not None:
-            print(f"[app_singleton] App already initialized with instance_id={_INSTANCE_ID}")
             return {
                 "status": "already_initialized",
-                "instance_id": _INSTANCE_ID,
-                "message": "App singleton already exists"
+                "instance_id": _INSTANCE_ID
             }
 
-        # Setze Instance ID
         _INSTANCE_ID = instance_id
-        print(f"[app_singleton] Instance ID set to: {_INSTANCE_ID}")
 
-        # Add pywin32 DLL path to sys.path for pywintypes
-        import sys
+        # --- Platform Specific Path Setup ---
 
-        # Use PYTHON_EXECUTABLE environment variable to get the correct Python home
-        python_executable = os.environ.get("PYTHON_EXECUTABLE")
-        if python_executable:
+        # Windows: PyWin32 handling
+        if sys.platform == 'win32':
+            python_executable = os.environ.get("PYTHON_EXECUTABLE", sys.executable)
             python_home = os.path.dirname(python_executable)
-        else:
-            # Fallback to sys.executable (which might be the Rust executable)
-            python_home = os.path.dirname(sys.executable)
 
-        pywin32_dll_path = os.path.join(python_home, "Lib", "site-packages", "pywin32_system32")
-        print(f"[app_singleton] DEBUG: python_executable = {python_executable}")
-        print(f"[app_singleton] DEBUG: python_home = {python_home}")
-        print(f"[app_singleton] DEBUG: pywin32_dll_path = {pywin32_dll_path}")
-        print(f"[app_singleton] DEBUG: os.path.exists(pywin32_dll_path) = {os.path.exists(pywin32_dll_path)}")
-        print(f"[app_singleton] DEBUG: pywin32_dll_path in sys.path = {pywin32_dll_path in sys.path}")
+            # Pfad generisch mit os.path.join bauen
+            pywin32_dll_path = os.path.join(python_home, "Lib", "site-packages", "pywin32_system32")
 
-        # ALWAYS add the path, regardless of whether it exists or is already in sys.path
-        if pywin32_dll_path not in sys.path:
-            sys.path.insert(0, pywin32_dll_path)
-            print(f"[app_singleton] Added pywin32 DLL path to sys.path: {pywin32_dll_path}")
-        else:
-            print(f"[app_singleton] pywin32 DLL path already in sys.path: {pywin32_dll_path}")
+            if os.path.exists(pywin32_dll_path):
+                if pywin32_dll_path not in sys.path:
+                    sys.path.insert(0, pywin32_dll_path)
 
-        # Add DLL directory for Windows (Python 3.8+)
-        if hasattr(os, 'add_dll_directory') and os.path.exists(pywin32_dll_path):
-            try:
-                print(f"[app_singleton] Adding DLL directory: {pywin32_dll_path}")
-                os.add_dll_directory(pywin32_dll_path)
-                print(f"[app_singleton] DLL directory added successfully!")
-            except Exception as e:
-                print(f"[app_singleton] WARNING: Failed to add DLL directory: {e}")
+                if hasattr(os, 'add_dll_directory'):
+                    try:
+                        os.add_dll_directory(pywin32_dll_path)
+                    except Exception:
+                        pass
 
-        # Try to import pywintypes directly to ensure it's loaded
-        try:
-            print(f"[app_singleton] Attempting to import pywintypes directly...")
-            import pywintypes
-            print(f"[app_singleton] pywintypes imported successfully!")
-        except ImportError as e:
-            print(f"[app_singleton] WARNING: Failed to import pywintypes: {e}")
-            print(f"[app_singleton] Continuing anyway - mcp_server import might fail...")
+                # Versuch pywintypes zu importieren (nur auf Windows nötig)
+                try:
+                    import pywintypes
+                except ImportError:
+                    pass
 
         # Erstelle App via toolboxv2
-        # NOTE: Do NOT add -l flag here! Modules will be loaded AFTER init_app() returns
-        # to avoid race condition where modules call get_app() before _GLOBAL_APP is set
-
-        print(f"[app_singleton] Importing server_helper from toolboxv2.__main__...")
+        print(f"[app_singleton] Importing server_helper...")
         from toolboxv2.__main__ import server_helper
-        print(f"[app_singleton] server_helper imported successfully")
 
-        print(f"[app_singleton] Calling server_helper(instance_id={instance_id}, kwargs={kwargs})...")
-        print(f"[app_singleton] NOTE: Modules will be loaded AFTER this returns to avoid race condition")
-
+        print(f"[app_singleton] Initializing App...")
         _GLOBAL_APP = server_helper(instance_id=instance_id, **kwargs)
-
-        print(f"[app_singleton] server_helper() returned successfully!")
-        print(f"[app_singleton] App type: {type(_GLOBAL_APP)}")
 
         return {
             "status": "success",
             "instance_id": instance_id,
-            "python_version": sys.version,
-            "app_type": str(type(_GLOBAL_APP)),
+            "platform": sys.platform
         }
 
     except Exception as e:
@@ -480,110 +435,6 @@ def health_check() -> Dict[str, Any]:
             "traceback": traceback.format_exc()
         }
 
-# =================== WebSocket Bridge ===================
-
-# Globale Referenz zur Rust WebSocket Bridge
-_RUST_WS_BRIDGE_ENABLED = False
-
-def enable_rust_ws_bridge() -> Dict[str, Any]:
-    """
-    Aktiviert die Rust WebSocket Bridge.
-    Diese Funktion wird von Rust aufgerufen, um die Bridge zu initialisieren.
-
-    Die Bridge verwendet externe Rust-Funktionen, die über ctypes aufgerufen werden.
-
-    Returns:
-        dict mit Status
-    """
-    global _RUST_WS_BRIDGE_ENABLED
-
-    print("[app_singleton] enable_rust_ws_bridge() called")
-
-    _RUST_WS_BRIDGE_ENABLED = True
-
-    # Injiziere die Bridge in die App
-    try:
-        app = get_app()
-        if hasattr(app, '_set_rust_ws_bridge'):
-            # Erstelle ein Bridge-Objekt, das die Python App verwenden kann
-            # Die tatsächlichen Rust-Funktionen werden über ws_send_message() und
-            # ws_broadcast_message() aufgerufen, die von Rust bereitgestellt werden
-            class RustWsBridgeWrapper:
-                async def send_message(self, conn_id: str, payload: str):
-                    """Sendet eine Nachricht an eine einzelne WebSocket-Verbindung."""
-                    # Rufe die Rust-Funktion auf
-                    ws_send_message(conn_id, payload)
-
-                async def broadcast_message(self, channel_id: str, payload: str, source_conn_id: str = "python_broadcast"):
-                    """Sendet eine Nachricht an alle Clients in einem Kanal."""
-                    # Rufe die Rust-Funktion auf
-                    ws_broadcast_message(channel_id, payload, source_conn_id)
-
-            bridge_wrapper = RustWsBridgeWrapper()
-            app._set_rust_ws_bridge(bridge_wrapper)
-            print(f"[app_singleton] Rust WebSocket bridge injected into App successfully")
-
-            return {
-                "status": "success",
-                "message": "Rust WebSocket bridge enabled successfully"
-            }
-        else:
-            print(f"[app_singleton] WARNING: App does not have _set_rust_ws_bridge method")
-            return {
-                "status": "warning",
-                "message": "App does not have _set_rust_ws_bridge method"
-            }
-    except Exception as e:
-        error_msg = f"Error enabling Rust WebSocket bridge: {e}"
-        print(f"[app_singleton] ERROR: {error_msg}")
-        traceback.print_exc()
-        return {
-            "status": "error",
-            "error": error_msg,
-            "traceback": traceback.format_exc()
-        }
-
-
-def ws_send_message(conn_id: str, payload: str):
-    """
-    Sendet eine WebSocket-Nachricht an eine einzelne Verbindung über den Rust-Server.
-    """
-    import requests
-    print(f"[app_singleton] ws_send_message() called: conn_id={conn_id}, payload_len={len(payload)}")
-    try:
-        response = requests.post(
-            "http://localhost:8080/internal/ws/send",
-            json={"conn_id": conn_id, "payload": payload},
-            timeout=5
-        )
-        if response.status_code == 200:
-            print(f"[app_singleton] ws_send_message: Message sent to {conn_id}")
-        else:
-            print(f"[app_singleton] ws_send_message: Failed to send message to {conn_id}: {response.text}")
-    except Exception as e:
-        print(f"[app_singleton] ws_send_message: Error sending message to {conn_id}: {e}")
-
-
-def ws_broadcast_message(channel_id: str, payload: str, source_conn_id: str = "python_broadcast"):
-    """
-    Sendet eine WebSocket-Broadcast-Nachricht an einen Kanal über den Rust-Server.
-    """
-    import requests
-    print(f"[app_singleton] ws_broadcast_message() called: channel_id={channel_id}, source_conn_id={source_conn_id}, payload_len={len(payload)}")
-    try:
-        response = requests.post(
-            "http://localhost:8080/internal/ws/broadcast",
-            json={"channel_id": channel_id, "payload": payload, "source_conn_id": source_conn_id},
-            timeout=5
-        )
-        if response.status_code == 200:
-            print(f"[app_singleton] ws_broadcast_message: Broadcast sent to channel {channel_id}")
-        else:
-            print(f"[app_singleton] ws_broadcast_message: Failed to broadcast to channel {channel_id}: {response.text}")
-    except Exception as e:
-        print(f"[app_singleton] ws_broadcast_message: Error broadcasting to channel {channel_id}: {e}")
-
-
 # =================== Debugging ===================
 
 def get_app_info() -> Dict[str, Any]:
@@ -656,6 +507,398 @@ def json_call(json_str: str) -> str:
             "error": str(e),
             "traceback": traceback.format_exc()
         })
+
+
+# =================== app_singleton.py ADDITIONS ===================
+# Add these functions and classes to app_singleton.py
+
+# Add to imports at the top:
+# import aiohttp  # for async HTTP calls (optional, for non-blocking WS)
+
+# =================== Global WS Bridge State ===================
+# Add after the existing global state variables around line 60
+
+_RUST_WS_BRIDGE_ENABLED: bool = False
+_WS_SERVER_URL: str = os.getenv("APP_BASE_URL", "http://localhost:8080") # Configurable server URL
+
+# =================== WebSocket Context Class ===================
+# Add this class for WebSocket handler context
+
+# =================== WebSocket Context Class ===================
+
+
+class WebSocketContext:
+    """
+    Context object passed to WebSocket handlers.
+    Contains connection information and authenticated session data.
+    """
+
+    def __init__(
+        self,
+        conn_id: str,
+        channel_id: Optional[str] = None,
+        user: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        cookies: Optional[Dict[str, Any]] = None,
+    ):
+        self.conn_id = conn_id
+        self.channel_id = channel_id
+        # 'user' enthält die validierten User-Daten, die von on_connect zurückkamen
+        self.user = user or {}
+        # Die Session-ID (aus Cookie oder Header)
+        self.session_id = session_id
+        # Raw Headers und Cookies (hauptsächlich für on_connect relevant)
+        self.headers = headers or {}
+        self.cookies = cookies or {}
+
+    @classmethod
+    def from_kwargs(cls, kwargs: Dict[str, Any]) -> "WebSocketContext":
+        """
+        Creates a WebSocketContext robustly from arguments passed by Rust.
+        Rust passes 'session_data' (stored context) and request info.
+        """
+        # 1. Versuche, persistierte Session-Daten zu finden (von on_message)
+        session_data = kwargs.get("session_data", {})
+        if not session_data and "session" in kwargs:
+            session_data = kwargs.get("session", {})
+
+        # 2. Extrahiere spezifische Felder
+        conn_id = kwargs.get("conn_id", "")
+        channel_id = kwargs.get("channel_id")
+
+        # User-Daten kommen entweder direkt oder aus dem session_data blob
+        user = (
+            session_data.get("user") if isinstance(session_data, dict) else session_data
+        )
+
+        # 3. Request-Daten (Headers/Cookies) - meist nur bei on_connect verfügbar
+        headers = kwargs.get("headers", {})
+        cookies = kwargs.get("cookies", {})
+
+        # Fallback: Session ID aus Cookies holen, wenn nicht explizit übergeben
+        s_id = session_data.get("session_id")
+        if not s_id and isinstance(cookies, dict):
+            s_id = cookies.get("session_id") or cookies.get("id")
+
+        return cls(
+            conn_id=conn_id,
+            channel_id=channel_id,
+            user=user if isinstance(user, dict) else {},
+            session_id=s_id,
+            headers=headers if isinstance(headers, dict) else {},
+            cookies=cookies if isinstance(cookies, dict) else {},
+        )
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Returns True if the connection has a valid user ID."""
+        return bool(self.user and (self.user.get("id") or self.user.get("user_id")))
+
+    @property
+    def user_id(self) -> Optional[str]:
+        """Helper to get the user ID agnostic of key naming."""
+        return self.user.get("id") or self.user.get("user_id")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "conn_id": self.conn_id,
+            "user": self.user,
+            "session_id": self.session_id,
+            "authenticated": self.is_authenticated,
+        }
+
+
+# =================== Enhanced WS Bridge Functions ===================
+# Replace the existing ws_send_message and ws_broadcast_message functions
+
+
+def set_ws_server_url(url: str) -> Dict[str, Any]:
+    """
+    Sets the WebSocket server URL.
+
+    Args:
+        url: The base URL of the Rust server (e.g., "http://localhost:8080")
+
+    Returns:
+        dict with status
+    """
+    global _WS_SERVER_URL
+    _WS_SERVER_URL = url.rstrip("/")
+    print(f"[app_singleton] WebSocket server URL set to: {_WS_SERVER_URL}")
+    return {"status": "success", "url": _WS_SERVER_URL}
+
+
+def set_rust_ws_bridge() -> Dict[str, Any]:
+    """
+    Initializes and sets up the Rust WebSocket bridge.
+    Called by Rust after app initialization.
+
+    Returns:
+        dict with status
+    """
+    global _RUST_WS_BRIDGE_ENABLED
+
+    print("[app_singleton] set_rust_ws_bridge() called")
+
+    _RUST_WS_BRIDGE_ENABLED = True
+
+    # Inject the bridge into the App
+    try:
+        app = get_app()
+        if hasattr(app, "_set_rust_ws_bridge"):
+            # Create a bridge object that the Python App can use
+            class RustWsBridgeWrapper:
+                """Wrapper that provides async WebSocket methods for Python code."""
+
+                async def send_message(self, conn_id: str, payload: str):
+                    """Sends a message to a single WebSocket connection."""
+                    return ws_send_message(conn_id, payload)
+
+                async def broadcast_message(
+                    self,
+                    channel_id: str,
+                    payload: str,
+                    source_conn_id: str = "python_broadcast",
+                ):
+                    """Broadcasts a message to all clients in a channel."""
+                    return ws_broadcast_message(channel_id, payload, source_conn_id)
+
+                async def broadcast_all(
+                    self, payload: str, source_conn_id: Optional[str] = None
+                ):
+                    """Broadcasts a message to ALL connected clients."""
+                    return ws_broadcast_all(payload, source_conn_id)
+
+                def is_connected(self, conn_id: str) -> bool:
+                    """Checks if a connection is active."""
+                    return ws_is_connected(conn_id)
+
+                def get_status(self) -> Dict[str, Any]:
+                    """Gets the WebSocket status (connection count, etc.)."""
+                    return ws_get_status()
+
+            bridge_wrapper = RustWsBridgeWrapper()
+            app._set_rust_ws_bridge(bridge_wrapper)
+            print(f"[app_singleton] Rust WebSocket bridge injected into App successfully")
+
+            return {
+                "status": "success",
+                "message": "Rust WebSocket bridge enabled and injected into App",
+            }
+        else:
+            print(
+                f"[app_singleton] WARNING: App does not have _set_rust_ws_bridge method"
+            )
+            # Still mark as enabled - direct functions can be used
+            return {
+                "status": "partial",
+                "message": "Rust WebSocket bridge enabled but App._set_rust_ws_bridge not available",
+            }
+    except Exception as e:
+        error_msg = f"Error setting up Rust WebSocket bridge: {e}"
+        print(f"[app_singleton] ERROR: {error_msg}")
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "error": error_msg,
+            "traceback": traceback.format_exc(),
+        }
+
+
+    """import aiohttp
+
+    async def ws_send_message_async(conn_id: str, payload: str) -> Dict[str, Any]:
+        '''Async version of ws_send_message using aiohttp.'''
+        print(f"[app_singleton] ws_send_message_async() called: conn_id={conn_id}")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{_WS_SERVER_URL}/internal/ws/send",
+                    json={"conn_id": conn_id, "payload": payload},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        return {"status": "success", "conn_id": conn_id}
+                    else:
+                        text = await response.text()
+                        return {"status": "error", "message": text}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+
+    async def ws_broadcast_message_async(
+        channel_id: str,
+        payload: str,
+        source_conn_id: str = "python_broadcast"
+    ) -> Dict[str, Any]:
+        '''Async version of ws_broadcast_message using aiohttp.'''
+        print(f"[app_singleton] ws_broadcast_message() called: channel_id={channel_id}")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{_WS_SERVER_URL}/internal/ws/broadcast",
+                    json={
+                        "channel_id": channel_id,
+                        "payload": payload,
+                        "source_conn_id": source_conn_id
+                    },
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    if response.status == 200:
+                        return {"status": "success", "channel_id": channel_id}
+                    else:
+                        text = await response.text()
+                        return {"status": "error", "message": text}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}"""
+# =================== Enhanced WS Bridge Functions ===================
+import requests
+
+
+def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
+    """
+    Sends a WebSocket message via the Rust internal HTTP server.
+    """
+    try:
+        # Payload muss ein String (JSON) sein
+        if not isinstance(payload, str):
+            payload = json.dumps(payload)
+
+        url = f"{_WS_SERVER_URL}/internal/ws/send"
+        response = requests.post(
+            url,
+            json={"conn_id": conn_id, "payload": payload},
+            timeout=2,  # Short timeout to not block app too long
+        )
+
+        if response.status_code == 200:
+            return {"status": "success", "conn_id": conn_id}
+        return {"status": "error", "code": response.status_code, "msg": response.text}
+
+    except Exception as e:
+        print(f"[app_singleton] ERROR sending WS message: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def ws_broadcast_message(
+    channel_id: str, payload: str, source_conn_id: str = "python_broadcast"
+) -> Dict[str, Any]:
+    """
+    Broadcasts to a specific channel via Rust.
+    """
+    try:
+        if not isinstance(payload, str):
+            payload = json.dumps(payload)
+
+        url = f"{_WS_SERVER_URL}/internal/ws/broadcast"
+        response = requests.post(
+            url,
+            json={
+                "channel_id": channel_id,
+                "payload": payload,
+                "source_conn_id": source_conn_id,
+            },
+            timeout=2,
+        )
+
+        if response.status_code == 200:
+            return {"status": "success", "channel_id": channel_id}
+        return {"status": "error", "code": response.status_code, "msg": response.text}
+
+    except Exception as e:
+        print(f"[app_singleton] ERROR broadcasting: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def ws_broadcast_all(
+    payload: str, source_conn_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Global broadcast via Rust.
+    """
+    try:
+        if not isinstance(payload, str):
+            payload = json.dumps(payload)
+
+        url = f"{_WS_SERVER_URL}/internal/ws/broadcast_all"
+        response = requests.post(
+            url,
+            json={"payload": payload, "source_conn_id": source_conn_id or "global"},
+            timeout=2,
+        )
+
+        if response.status_code == 200:
+            return {"status": "success"}
+        return {"status": "error", "code": response.status_code, "msg": response.text}
+
+    except Exception as e:
+        print(f"[app_singleton] ERROR global broadcast: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def ws_is_connected(conn_id: str) -> bool:
+    """
+    Checks if a WebSocket connection is active.
+
+    Args:
+        conn_id: The connection ID to check
+
+    Returns:
+        True if the connection is active
+    """
+    import requests
+
+    try:
+        response = requests.get(
+            f"{_WS_SERVER_URL}/internal/ws/check/{conn_id}", timeout=5
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("connected", False)
+        return False
+
+    except Exception as e:
+        print(
+            f"[app_singleton] ws_is_connected: Error checking connection {conn_id}: {e}"
+        )
+        return False
+
+
+def ws_get_status() -> Dict[str, Any]:
+    """
+    Gets the current WebSocket status from the Rust server.
+
+    Returns:
+        dict with active_connections count and connection_ids
+    """
+    import requests
+
+    try:
+        response = requests.get(f"{_WS_SERVER_URL}/internal/ws/status", timeout=5)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to get status: {response.text}",
+            }
+
+    except Exception as e:
+        return {"status": "error", "message": f"Error getting WebSocket status: {e}"}
+
+
+def ws_is_bridge_enabled() -> bool:
+    """
+    Returns True if the Rust WebSocket bridge is enabled.
+    """
+    return _RUST_WS_BRIDGE_ENABLED
+
+
 
 # =================== Main (für Testing) ===================
 

@@ -28,6 +28,59 @@ const user = {
     _lastActivityTimestamp: Date.now(),
     _initPromise: null,
 
+
+    /**
+     * Consolidated backend session validation.
+     * Verifies if the current session token is truly valid on the server side.
+     *
+     * @returns {Promise<boolean>} True if backend confirms valid session
+     */
+    async validateBackendSession() {
+        const token = await this.getSessionToken();
+        const userId = this.getUserId() || (clerkInstance?.user?.id);
+
+        if (!token || !userId) {
+            TB.logger.debug('[User] Cannot validate session: missing token or userId');
+            return false;
+        }
+
+        try {
+            TB.logger.debug('[User] Validating session integrity with backend...');
+
+            const response = await fetch('/validateSession', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    session_token: token,
+                    clerk_user_id: userId
+                })
+            });
+
+            if (!response.ok) {
+                TB.logger.warn(`[User] Backend validation HTTP error: ${response.status}`);
+                return false;
+            }
+
+            const result = await response.json();
+
+            // Check explicit backend confirmation
+            if (result.error === "none" && result.result?.data?.authenticated === true) {
+                TB.logger.debug('[User] ✓ Backend confirmed session validity');
+                return true;
+            }
+
+            TB.logger.warn('[User] Backend rejected session token:', result.error);
+            return false;
+
+        } catch (e) {
+            TB.logger.error('[User] Backend validation exception:', e);
+            return false;
+        }
+    },
+
     // =================== Initialization ===================
 
     _initActivityMonitor() {
@@ -285,15 +338,11 @@ const user = {
         const email = clerkUser.emailAddresses?.[0]?.emailAddress || '';
         const username = clerkUser.username || email.split('@')[0];
 
-        // WICHTIG: Noch NICHT als authenticated setzen!
-        TB.logger.debug('[User] Getting session token from Clerk...');
-
-        // 1. Token von Clerk holen
+        // 1. Get Token
         let token = null;
         if (clerkInstance?.session) {
             try {
                 token = await clerkInstance.session.getToken();
-                TB.logger.debug('[User] Token received, length:', token?.length);
             } catch (e) {
                 TB.logger.error('[User] Failed to get token:', e);
                 await this._handleAuthFailure('Failed to get authentication token');
@@ -302,17 +351,13 @@ const user = {
         }
 
         if (!token) {
-            TB.logger.error('[User] No token available');
             await this._handleAuthFailure('No authentication token available');
             return;
         }
 
-        // 2. ERST Backend validieren, DANN lokal setzen
-        TB.logger.info('[User] Validating session with backend...');
-
         try {
-            // A. Backend über Sign-In informieren
-            const signInResponse = await fetch('/api/CloudM.AuthClerk/on_sign_in', {
+            // 2. Notify Backend of Sign In (Audit/Log)
+            await fetch('/api/CloudM.AuthClerk/on_sign_in', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -328,50 +373,20 @@ const user = {
                 })
             });
 
-            if (!signInResponse.ok) {
-                throw new Error(`Backend sign-in failed: ${signInResponse.status}`);
+            // 3. Validate Session (Consolidated Logic)
+            // We temporarily set variables needed for validateBackendSession if they aren't in state yet
+            // But getting the token directly passed is safer here, so we use the token we just got.
+            // Since validateBackendSession fetches from state/clerk, let's call the endpoint logic directly
+            // OR ensure getSessionToken returns this token.
+
+            // To ensure validateBackendSession works before state is set, we rely on ClerkInstance having the session.
+            const isValid = await this.validateBackendSession();
+
+            if (!isValid) {
+                throw new Error('Server rejected session during sign-in flow');
             }
 
-            TB.logger.debug('[User] Backend notified, now validating session...');
-
-            // B. Session validieren - KRITISCH!
-            const validateResponse = await fetch('/validateSession', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    session_token: token,
-                    clerk_user_id: clerkUser.id
-                })
-            });
-
-            if (!validateResponse.ok) {
-                throw new Error(`Session validation failed: ${validateResponse.status}`);
-            }
-
-            const validationResult = await validateResponse.json();
-            TB.logger.debug('[User] Validation result:', validationResult);
-
-            // C. KRITISCH: Prüfe ob Server die Session als gültig bestätigt
-            if (validationResult.error !== "none") {
-                throw new Error(validationResult.error || 'Server rejected session');
-            }
-
-            if (!validationResult.result?.data) {
-                throw new Error('Invalid validation response structure');
-            }
-
-            const serverData = validationResult.result.data;
-
-            if (!serverData.authenticated) {
-                throw new Error('Server did not authenticate session');
-            }
-
-            TB.logger.info('[User] ✓ Server confirmed authentication');
-
-            // D. User-Daten vom Server laden
+            // 4. Fetch User Data
             const userDataResponse = await fetch('/api/CloudM.AuthClerk/get_user_data', {
                 method: 'POST',
                 headers: {
@@ -392,11 +407,10 @@ const user = {
                     settings = data.settings || {};
                     userLevel = data.level || 1;
                     modData = data.mod_data || {};
-                    TB.logger.debug('[User] User data loaded');
                 }
             }
 
-            // E. NUR JETZT State als authenticated setzen!
+            // 5. Update State
             this._updateUserState({
                 isAuthenticated: true,
                 username: username,
@@ -416,7 +430,6 @@ const user = {
             TB.logger.info('[User] ✓ Login successful, user authenticated');
             TB.events.emit('user:signedIn', { username, userId: clerkUser.id });
 
-            // F. Redirect erst NACH erfolgreicher Validierung
             this._handlePostAuthRedirect();
 
         } catch (error) {
@@ -708,8 +721,34 @@ const user = {
 
     // =================== Getters ===================
 
-    isAuthenticated() {
-        return TB.state.get('user.isAuthenticated') || false;
+    /**
+     * Checks if the user is authenticated.
+     *
+     * @param {boolean} [checkBackend=false] - If true, performs an async deep check against the backend.
+     * @returns {boolean|Promise<boolean>} Returns boolean state if synchronous, or Promise<boolean> if checking backend.
+     */
+    isAuthenticated(checkBackend = false) {
+        // 1. Fast local check
+        const localState = TB.state.get('user.isAuthenticated') || false;
+
+        // If simple check or no local auth, return immediate result
+        if (!checkBackend || !localState) {
+            return localState;
+        }
+
+        // 2. Deep backend check (Consolidated)
+        return (async () => {
+            const isValid = await this.validateBackendSession();
+
+            if (!isValid && localState) {
+                // State mismatch: Local says yes, Backend says no. Force logout.
+                TB.logger.warn('[User] Security Alert: Session invalid on backend. Logging out.');
+                await this._handleAuthFailure('Session expired or revoked by server');
+                return false;
+            }
+
+            return isValid;
+        })();
     },
 
     getUsername() {

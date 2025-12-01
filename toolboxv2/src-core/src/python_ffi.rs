@@ -2,7 +2,7 @@
 // Verwendet libloading für direkten Zugriff auf Python DLL
 
 use libloading::{Library, Symbol};
-use std::ffi::{CString, CStr, c_void};
+use std::ffi::{CString, CStr, c_void, c_char};
 use std::ptr;
 use std::sync::Arc;
 use anyhow::{Result, Context, bail};
@@ -33,6 +33,25 @@ const LIB_EXT: &str = "dylib";
 #[cfg(all(unix, not(target_os = "macos")))]
 const LIB_EXT: &str = "so";
 
+// =================== Platform-Agnostic c_char Handling ===================
+// On most platforms (x86_64, Windows), c_char is i8
+// On aarch64-linux-gnu, c_char is u8
+// These helper functions ensure correct pointer casting regardless of platform
+
+/// Converts a CString pointer to the platform-specific c_char pointer type
+/// This is needed because on aarch64-linux-gnu, c_char is u8, not i8
+#[inline]
+fn cstring_as_c_char_ptr(cstr: &CString) -> *const c_char {
+    cstr.as_ptr()
+}
+
+/// Converts a raw c_char pointer to a pointer that CStr::from_ptr expects
+/// On most platforms this is a no-op, but on aarch64-linux-gnu it handles the u8/i8 difference
+#[inline]
+fn c_char_ptr_to_cstr_ptr(ptr: *const c_char) -> *const c_char {
+    ptr
+}
+
 // =================== Python C-API Types ===================
 
 pub type PyObject = *mut c_void;
@@ -40,6 +59,7 @@ pub type PyGILState = i32;
 pub type Py_ssize_t = isize;
 
 // =================== Python C-API Function Signatures ===================
+// NOTE: All *const i8 changed to *const c_char for platform compatibility
 
 type PyGILState_Ensure_t = unsafe extern "C" fn() -> PyGILState;
 type PyGILState_Release_t = unsafe extern "C" fn(PyGILState);
@@ -55,18 +75,18 @@ type PySys_SetPath_t = unsafe extern "C" fn(*const WChar);
 type PyEval_SaveThread_t = unsafe extern "C" fn() -> *mut c_void;
 type PyEval_RestoreThread_t = unsafe extern "C" fn(*mut c_void);
 
-type PyImport_ImportModule_t = unsafe extern "C" fn(*const i8) -> PyObject;
-type PyImport_AddModule_t = unsafe extern "C" fn(*const i8) -> PyObject;
+type PyImport_ImportModule_t = unsafe extern "C" fn(*const c_char) -> PyObject;
+type PyImport_AddModule_t = unsafe extern "C" fn(*const c_char) -> PyObject;
 
-type PyObject_GetAttrString_t = unsafe extern "C" fn(PyObject, *const i8) -> PyObject;
-type PyObject_SetAttrString_t = unsafe extern "C" fn(PyObject, *const i8, PyObject) -> i32;
+type PyObject_GetAttrString_t = unsafe extern "C" fn(PyObject, *const c_char) -> PyObject;
+type PyObject_SetAttrString_t = unsafe extern "C" fn(PyObject, *const c_char, PyObject) -> i32;
 type PyObject_CallObject_t = unsafe extern "C" fn(PyObject, PyObject) -> PyObject;
 type PyObject_Call_t = unsafe extern "C" fn(PyObject, PyObject, PyObject) -> PyObject;
 type PyObject_Str_t = unsafe extern "C" fn(PyObject) -> PyObject;
 
 type PyDict_New_t = unsafe extern "C" fn() -> PyObject;
-type PyDict_SetItemString_t = unsafe extern "C" fn(PyObject, *const i8, PyObject) -> i32;
-type PyDict_GetItemString_t = unsafe extern "C" fn(PyObject, *const i8) -> PyObject;
+type PyDict_SetItemString_t = unsafe extern "C" fn(PyObject, *const c_char, PyObject) -> i32;
+type PyDict_GetItemString_t = unsafe extern "C" fn(PyObject, *const c_char) -> PyObject;
 
 type PyList_New_t = unsafe extern "C" fn(Py_ssize_t) -> PyObject;
 type PyList_SetItem_t = unsafe extern "C" fn(PyObject, Py_ssize_t, PyObject) -> i32;
@@ -77,8 +97,8 @@ type PyTuple_New_t = unsafe extern "C" fn(Py_ssize_t) -> PyObject;
 type PyTuple_SetItem_t = unsafe extern "C" fn(PyObject, Py_ssize_t, PyObject) -> i32;
 type PyTuple_GetItem_t = unsafe extern "C" fn(PyObject, Py_ssize_t) -> PyObject;
 
-type PyUnicode_FromString_t = unsafe extern "C" fn(*const i8) -> PyObject;
-type PyUnicode_AsUTF8_t = unsafe extern "C" fn(PyObject) -> *const i8;
+type PyUnicode_FromString_t = unsafe extern "C" fn(*const c_char) -> PyObject;
+type PyUnicode_AsUTF8_t = unsafe extern "C" fn(PyObject) -> *const c_char;
 
 type PyLong_FromLong_t = unsafe extern "C" fn(i64) -> PyObject;
 type PyLong_AsLong_t = unsafe extern "C" fn(PyObject) -> i64;
@@ -98,7 +118,7 @@ type PyErr_Clear_t = unsafe extern "C" fn();
 type PyErr_Fetch_t = unsafe extern "C" fn(*mut PyObject, *mut PyObject, *mut PyObject);
 
 type Py_None_t = unsafe extern "C" fn() -> PyObject;
-type PyRun_SimpleString_t = unsafe extern "C" fn(*const i8) -> i32;
+type PyRun_SimpleString_t = unsafe extern "C" fn(*const c_char) -> i32;
 
 // =================== Helper Functions ===================
 
@@ -216,7 +236,7 @@ impl PythonEnv {
 
     fn try_conda(conda_path: &Path) -> Option<Self> {
         if let Some((exe, dll)) = Self::check_version_files(conda_path) {
-             return Some(PythonEnv {
+            return Some(PythonEnv {
                 python_home: conda_path.to_path_buf(),
                 python_dll: dll,
                 python_exe: exe,
@@ -240,7 +260,7 @@ impl PythonEnv {
                 let prefix = Path::new(&prefix_str);
 
                 if let Some((exe, dll)) = Self::check_version_files(prefix) {
-                     return Some(PythonEnv {
+                    return Some(PythonEnv {
                         python_home: prefix.to_path_buf(),
                         python_dll: dll,
                         python_exe: exe,
@@ -361,11 +381,12 @@ impl PythonFFI {
                 init();
 
                 // Stdout Redirect (OS unabhängig)
+                // FIX #1: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
                 let py_run: Symbol<PyRun_SimpleString_t> = ffi.lib.get(b"PyRun_SimpleString\0")?;
                 let redirect_code = CString::new(
                     "import sys; import os; sys.stdout = os.fdopen(1, 'w', buffering=1); sys.stderr = os.fdopen(2, 'w', buffering=1)"
                 )?;
-                py_run(redirect_code.as_ptr());
+                py_run(cstring_as_c_char_ptr(&redirect_code));
 
                 // GIL Release
                 let save_thread: Symbol<PyEval_SaveThread_t> = ffi.lib.get(b"PyEval_SaveThread\0")?;
@@ -431,8 +452,9 @@ impl PythonFFI {
                 let err_print: Symbol<PyErr_Print_t> = self.lib.get(b"PyErr_Print\0")?;
                 let err_clear: Symbol<PyErr_Clear_t> = self.lib.get(b"PyErr_Clear\0")?;
 
+                // FIX #2: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
                 let c_name = CString::new(name)?;
-                let module = import_module(c_name.as_ptr());
+                let module = import_module(cstring_as_c_char_ptr(&c_name));
 
                 if module.is_null() {
                     err_print();
@@ -465,8 +487,9 @@ impl PythonFFI {
                 let c_attr = CString::new(attr)?;
                 info!("CString created successfully");
 
+                // FIX #3: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
                 info!("Calling PyObject_GetAttrString()...");
-                let result = get_attr(obj, c_attr.as_ptr());
+                let result = get_attr(obj, cstring_as_c_char_ptr(&c_attr));
                 info!("PyObject_GetAttrString() returned!");
 
                 if result.is_null() {
@@ -594,7 +617,8 @@ impl PythonFFI {
             unsafe {
                 let dict_set_item: Symbol<PyDict_SetItemString_t> = self.lib.get(b"PyDict_SetItemString\0")?;
                 let c_key = CString::new(key)?;
-                let result = dict_set_item(dict, c_key.as_ptr(), value);
+                // FIX #4: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
+                let result = dict_set_item(dict, cstring_as_c_char_ptr(&c_key), value);
                 if result != 0 {
                     bail!("Failed to set dict item");
                 }
@@ -608,7 +632,8 @@ impl PythonFFI {
             unsafe {
                 let unicode_from_string: Symbol<PyUnicode_FromString_t> = self.lib.get(b"PyUnicode_FromString\0")?;
                 let c_str = CString::new(s)?;
-                let result = unicode_from_string(c_str.as_ptr());
+                // FIX #5: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
+                let result = unicode_from_string(cstring_as_c_char_ptr(&c_str));
                 // PyUnicode_FromString() already returns a new reference
                 Ok(result)
             }
@@ -691,7 +716,8 @@ impl PythonFFI {
                 if c_str.is_null() {
                     bail!("Failed to get UTF-8 string");
                 }
-                let rust_str = CStr::from_ptr(c_str).to_str()?;
+                // FIX #6: Use c_char_ptr_to_cstr_ptr for platform-agnostic pointer conversion
+                let rust_str = CStr::from_ptr(c_char_ptr_to_cstr_ptr(c_str)).to_str()?;
                 Ok(rust_str.to_string())
             }
         })

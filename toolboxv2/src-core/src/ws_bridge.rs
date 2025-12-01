@@ -1,6 +1,6 @@
 use crate::{WsMessage, GLOBAL_WS_BROADCASTER, ACTIVE_CONNECTIONS};
 use tracing::{info, warn, error};
-
+// ws_bridge.rs - Rust WebSocket Bridge for Python (OHNE PyO3)
 /// Rust-Bridge für WebSocket-Kommunikation von Python aus.
 /// Diese Struktur stellt statische Methoden bereit, die von Python über
 /// die app_singleton.py Bridge aufgerufen werden können.

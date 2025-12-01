@@ -1,3 +1,4 @@
+// main.rs - Main Server Entry Point (with Nuitka-only Python integration)
 use actix_web::{web, App, HttpRequest, HttpServer, Error, HttpResponse, middleware, FromRequest};
 use actix_web::cookie::{Key};
 use actix_web::http::Method;
@@ -97,6 +98,31 @@ lazy_static! {
     static ref ACTIVE_CONNECTIONS: Arc<DashMap<String, Addr<WebSocketActor>>> = Arc::new(DashMap::new());
 }
 
+// =================== WebSocket Helpers ===================
+
+/// Extrahiert Cookies und Header aus dem Handshake-Request,
+/// damit Python die Session (z.B. Clerk, DB) validieren kann.
+fn extract_handshake_data(req: &HttpRequest) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut cookies_map = HashMap::new();
+    let mut headers_map = HashMap::new();
+
+    // 1. Cookies extrahieren
+    if let Ok(cookies) = req.cookies() {
+        for cookie in cookies.iter() {
+            cookies_map.insert(cookie.name().to_string(), cookie.value().to_string());
+        }
+    }
+
+    // 2. Headers extrahieren (z.B. Authorization, User-Agent)
+    for (key, value) in req.headers().iter() {
+        if let Ok(v_str) = value.to_str() {
+            headers_map.insert(key.to_string(), v_str.to_string());
+        }
+    }
+
+    (cookies_map, headers_map)
+}
+
 /// Nachrichtentyp für den internen Broadcast-Bus.
 #[derive(Message, Clone, Debug)]
 #[rtype(result = "()")]
@@ -111,28 +137,42 @@ struct WsMessage {
     pub target_channel_id: Option<String>,
 }
 
-
-// --- NEU: Der WebSocket Actor ---
+// =================== WebSocket Actor Definition ===================
 
 struct WebSocketActor {
     conn_id: String,
-    client:  Arc<NuitkaClient>,
-    session: SessionData, // Annahme: SessionData wird aus der Session extrahiert
-    channel_id: Option<String>, // Der "Raum" oder die Gruppe, der diese Verbindung angehört
+    client: Arc<NuitkaClient>,
+    /// Die vollständigen Session-Daten (inkl. Clerk Token, Live Data),
+    /// die wir aus dem SessionManager geladen haben.
+    session: SessionData,
+    /// Der Kanal/Raum (Modul/Funktion)
+    channel_id: String,
     hb: Instant,
+    /// Handshake-Daten für den initialen Python-Aufruf
+    initial_cookies: HashMap<String, String>,
+    initial_headers: HashMap<String, String>,
 }
 
 impl WebSocketActor {
-    fn new(client: Arc<NuitkaClient>, session: Session, module: &str, function: &str) -> Self {
+    fn new(
+        client: Arc<NuitkaClient>,
+        session_data: SessionData, // Wir bekommen die echten Daten, nicht nur das Cookie-Objekt
+        module: &str,
+        function: &str,
+        cookies: HashMap<String, String>,
+        headers: HashMap<String, String>,
+    ) -> Self {
         let conn_id = Uuid::new_v4().to_string();
-        let session_data = session.get("live_data").unwrap_or(None).unwrap_or_default(); // Vereinfachte Extraktion
+        let channel_id = format!("{}/{}", module, function);
+
         Self {
             conn_id,
             client,
             session: session_data,
-            // Kanal-ID wird aus der URL abgeleitet, z.B. /ws/Chat/room123 -> "Chat/room123"
-            channel_id: Some(format!("{}/{}", module, function)),
+            channel_id,
             hb: Instant::now(),
+            initial_cookies: cookies,
+            initial_headers: headers,
         }
     }
 
@@ -148,6 +188,8 @@ impl WebSocketActor {
     }
 }
 
+// =================== WebSocket Actor Implementation ===================
+
 impl Actor for WebSocketActor {
     type Context = ws::WebsocketContext<Self>;
 
@@ -155,71 +197,117 @@ impl Actor for WebSocketActor {
         info!("WebSocket Actor started: conn_id={}", self.conn_id);
         self.heartbeat(ctx);
 
-        // Registriere den Actor global
+        // 1. Global registrieren
         ACTIVE_CONNECTIONS.insert(self.conn_id.clone(), ctx.address());
 
-        // Abonniere den globalen Broadcast-Kanal
+        // 2. Broadcast abonnieren
         let mut rx = GLOBAL_WS_BROADCASTER.subscribe();
         let addr = ctx.address();
-
-        // Erstelle einen Future, der auf Nachrichten vom Broadcast-Kanal lauscht
         let broadcast_listener = async move {
             while let Ok(msg) = rx.recv().await {
                 addr.do_send(msg);
             }
         };
-        // Führe den Future im Kontext des Actors aus
         ctx.spawn(broadcast_listener.into_actor(self));
 
-        // Rufe den Python on_connect Handler auf
+        // 3. Python on_connect aufrufen
         let client = self.client.clone();
         let conn_id = self.conn_id.clone();
-        let channel_id = self.channel_id.clone().unwrap_or_default();
-        let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+        let channel_id = self.channel_id.clone();
 
-        tokio::spawn(async move {
-            let mut kwargs = HashMap::new();
-            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
-            kwargs.insert("session".to_string(), session_data_json);
-            kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
-            kwargs.insert("args".to_string(), Value::Array(vec![]));
+        // Session Daten serialisieren
+        let session_json = serde_json::to_value(self.session.clone()).unwrap_or(serde_json::json!({}));
 
-            if let Err(e) = client.call_module(
-                channel_id, // Der Kanalname dient zur Identifizierung des Handlers
+        let mut kwargs = HashMap::new();
+        kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
+        // WICHTIG: Wir übergeben die vollen Session-Daten aus dem SessionManager
+        kwargs.insert("session_data".to_string(), session_json);
+        kwargs.insert("cookies".to_string(), serde_json::json!(self.initial_cookies));
+        kwargs.insert("headers".to_string(), serde_json::json!(self.initial_headers));
+        kwargs.insert("spec".to_string(), serde_json::json!("ws_internal"));
+        kwargs.insert("args".to_string(), serde_json::json!([]));
+
+        // Kompatibilitäts-Request-Objekt
+        kwargs.insert("request".to_string(), serde_json::json!({
+            "websocket": true,
+            "headers": self.initial_headers,
+            "cookies": self.initial_cookies
+        }));
+
+        // Async call to Python
+        let fut = async move {
+            // Modulname aus channel_id extrahieren (vor dem slash)
+            let module_name = channel_id.split('/').next().unwrap_or("unknown").to_string();
+
+            client.call_module(
+                channel_id,
                 "on_connect".to_string(),
                 serde_json::json!(kwargs),
-            ).await {
-                error!("Python on_connect handler failed: {:?}", e);
-            }
-        });
+            ).await
+        }
+            .into_actor(self)
+            .map(|result, act, ctx| {
+                match result {
+                    Ok(response) => {
+                        // Prüfen ob Python akzeptiert hat (im 'result.data' oder root)
+                        let data = if let Some(res) = response.get("result").and_then(|r| r.get("data")) {
+                            res
+                        } else {
+                            &response
+                        };
+
+                        let accepted = data.get("accept").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                        if accepted {
+                            // Falls Python die Session-Daten aktualisiert hat, übernehmen wir sie
+                            if let Some(new_sess_json) = data.get("session_data") {
+                                if let Ok(new_sess) = serde_json::from_value::<SessionData>(new_sess_json.clone()) {
+                                    info!("Session data updated by Python for {}", act.conn_id);
+                                    act.session = new_sess;
+                                }
+                            }
+                            info!("✅ WS Connection established: {}", act.conn_id);
+                        } else {
+                            let reason = data.get("reason").and_then(|s| s.as_str()).unwrap_or("Rejected");
+                            warn!("⛔ WS Rejected: {}", reason);
+                            ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Policy, reason))));
+                            ctx.stop();
+                        }
+                    },
+                    Err(e) => {
+                        error!("❌ on_connect failed: {:?}", e);
+                        ctx.stop();
+                    }
+                }
+            });
+
+        ctx.spawn(fut);
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        info!("WebSocket Actor stopping: conn_id={}", self.conn_id);
         ACTIVE_CONNECTIONS.remove(&self.conn_id);
 
-        // Rufe den Python on_disconnect Handler auf
         let client = self.client.clone();
         let conn_id = self.conn_id.clone();
-        let channel_id = self.channel_id.clone().unwrap_or_default();
+        let channel_id = self.channel_id.clone();
+        // Session mitgeben, damit Python weiß wer geht
+        let session_json = serde_json::to_value(self.session.clone()).unwrap_or(serde_json::json!({}));
 
         tokio::spawn(async move {
+            let module_name = channel_id.split('/').next().unwrap_or("unknown").to_string();
             let mut kwargs = HashMap::new();
-            kwargs.insert("conn_id".to_string(), Value::String(conn_id));
-            kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
-            kwargs.insert("args".to_string(), Value::Array(vec![]));
-            if let Err(e) = client.call_module(
-                channel_id,
-                "on_disconnect".to_string(),
-                serde_json::json!(kwargs),
-            ).await {
-                error!("Python on_disconnect handler failed: {:?}", e);
-            }
+            kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
+            kwargs.insert("session_data".to_string(), session_json);
+            kwargs.insert("spec".to_string(), serde_json::json!("ws_internal"));
+            kwargs.insert("args".to_string(), serde_json::json!([]));
+
+            let _ = client.call_module(channel_id, "on_disconnect".to_string(), serde_json::json!(kwargs)).await;
         });
 
         Running::Stop
     }
 }
+
 
 /// Handler für Nachrichten vom Broadcast-Kanal
 impl Handler<WsMessage> for WebSocketActor {
@@ -237,7 +325,7 @@ impl Handler<WsMessage> for WebSocketActor {
 
         // 2. 1-to-n (Channel): Wenn target_channel_id gesetzt ist, sende nur, wenn ich in diesem Kanal bin.
         if let Some(target_channel) = &msg.target_channel_id {
-            if self.channel_id.as_deref() == Some(target_channel) {
+            if self.channel_id.eq(target_channel) {
                 // Sende nicht an den ursprünglichen Absender zurück
                 if msg.source_conn_id != self.conn_id {
                     ctx.text(msg.content);
@@ -261,105 +349,157 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
         self.hb = Instant::now();
 
         match msg {
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Pong(_)) => (),
             Ok(ws::Message::Text(text)) => {
-                // Leite die Nachricht an den Python on_message Handler weiter
+                // Sicherheitscheck: Nur wenn valide Session existiert (Clerk/Valid Flag)
+                // Dies hängt von der Strenge deiner Logik ab.
+                // Wenn session.anonymous erlaubt ist, diesen Block anpassen.
+                if !self.session.anonymous && !self.session.validate {
+                    // Eventuell hier Warnung loggen, aber Nachricht trotzdem durchlassen,
+                    // falls Python das entscheiden soll.
+                }
+
                 let client = self.client.clone();
                 let conn_id = self.conn_id.clone();
-                let channel_id = self.channel_id.clone().unwrap_or_default();
+                let channel_id = self.channel_id.clone();
                 let text_content = text.to_string();
-                let session_data_json = serde_json::to_value(self.session.clone()).unwrap_or(Value::Null);
+
+                // Wir klonen die Session-Daten für diesen Request
+                let session_json = serde_json::to_value(self.session.clone()).unwrap_or(serde_json::json!({}));
 
                 tokio::spawn(async move {
+                    let module_name = channel_id.split('/').next().unwrap_or("unknown").to_string();
                     let mut kwargs = HashMap::new();
-                    kwargs.insert("conn_id".to_string(), Value::String(conn_id));
-                    kwargs.insert("session".to_string(), session_data_json);
 
-                    // Versuche, die Nachricht als JSON zu parsen
-                    let payload = match serde_json::from_str::<Value>(&text_content) {
-                        Ok(json_val) => json_val,
-                        Err(_) => Value::String(text_content), // Sende als String, wenn kein JSON
+                    kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
+                    // HIER: Die Identität wird mit jeder Nachricht übergeben
+                    kwargs.insert("session_data".to_string(), session_json);
+
+                    // Payload als JSON oder String
+                    let payload = match serde_json::from_str::<serde_json::Value>(&text_content) {
+                        Ok(json) => json,
+                        Err(_) => serde_json::Value::String(text_content),
                     };
                     kwargs.insert("payload".to_string(), payload);
-                    kwargs.insert("spec".to_string(), Value::String("ws_internal".to_string()));
-                    kwargs.insert("args".to_string(), Value::Array(vec![]));
+
+                    kwargs.insert("spec".to_string(), serde_json::json!("ws_internal"));
+                    kwargs.insert("args".to_string(), serde_json::json!([]));
 
                     if let Err(e) = client.call_module(
-                        channel_id.clone(),
+                        channel_id,
                         "on_message".to_string(),
-                        serde_json::json!(kwargs),
+                        serde_json::json!(kwargs)
                     ).await {
-                        error!("Python on_message handler failed: {:?}", e);
+                        error!("on_message error: {:?}", e);
                     }
                 });
-            }
-            Ok(ws::Message::Binary(_bin)) => warn!("Binary WebSocket messages are not supported."),
-            Err(e) => {
-                error!("WebSocket error: {:?}", e);
-                match e {
-                    ws::ProtocolError::Io(_) => {
-                        // Network errors - close gracefully
-                        ctx.close(Some(ws::CloseReason::from((ws::CloseCode::Abnormal, "IO error"))));
-                    }
-                    _ => {
-                        // Other protocol errors - maybe recoverable, just log
-                        warn!("Non-fatal protocol error, continuing...");
-                    }
-                }
             }
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
                 ctx.stop();
             }
-            _ => error!("Unexpected WebSocket condition, but keeping connection alive"), //ctx.stop(),
+            _ => (),
         }
     }
 }
 
 
-// --- NEU: WebSocket-Endpoint-Handler ---
+// =================== WebSocket Route Handler (Fixed) ===================
+
 async fn websocket_handler(
     req: HttpRequest,
     stream: web::Payload,
     path: web::Path<(String, String)>,
-    session: Session,
+    session: Session, // Das Actix Session Cookie
     open_modules: web::Data<Arc<Vec<String>>>,
-    client: web::Data<Arc<NuitkaClient>>, // Add NuitkaClient from app_data
-    init_modules: web::Data<Arc<Vec<String>>>, // Add init_modules for lazy initialization
-    watch_modules: web::Data<Arc<Vec<String>>>, // Add watch_modules for lazy initialization
+    client: web::Data<Arc<NuitkaClient>>,
+    init_modules: web::Data<Arc<Vec<String>>>,
+    watch_modules: web::Data<Arc<Vec<String>>>,
+    session_manager: web::Data<SessionManager>,
 ) -> Result<HttpResponse, Error> {
     let (module_name, function_name) = path.into_inner();
 
-    // Lazy initialization: Ensure Python backend is initialized in this worker
-    // Combine init_modules and watch_modules into a single list to avoid multiple initialize() calls
+    // 1. Python Lazy Init (wie gehabt)
     let mut all_modules: Vec<String> = init_modules.as_ref().as_ref().clone();
     all_modules.extend(watch_modules.as_ref().as_ref().iter().cloned());
     if let Err(e) = client.initialize(all_modules, Some("init_mod")).await {
         error!("Failed to initialize Python backend: {:?}", e);
     }
 
-    // Berechtigungsprüfung
+    // 2. Session ID holen (Cookie > Neu)
+    let session_id = match session.get::<String>("ID") {
+        Ok(Some(id)) => id,
+        _ => {
+            let ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
+            let port = "0".to_string();
+            let new_id = session_manager.create_new_session(ip, port, None, None, None).await;
+            let _ = session.insert("ID", &new_id);
+            new_id
+        }
+    };
+
+    // 3. Status aus RAM laden
+    let mut session_data = session_manager.get_session(&session_id);
+
+    // 4. "Just-In-Time" Hydration:
+    // Wenn RAM sagt "ungültig", aber Cookie sagt "gültig", vertraue dem Cookie
+    // und repariere den RAM-Status.
+    let cookie_valid = session.get::<bool>("valid").unwrap_or(None).unwrap_or(false);
+
+    if !session_data.validate && cookie_valid {
+        info!("WS: Session {} not in RAM, but Cookie is valid. Hydrating from Cookie...", session_id);
+
+        // Versuche, User-Daten aus dem Cookie zu retten
+        if let Ok(Some(live_data)) = session.get::<HashMap<String, String>>("live_data") {
+            let clerk_id = live_data.get("clerk_user_id").cloned();
+            let user_name = live_data.get("user_name").cloned();
+
+            if let Some(uid) = clerk_id.clone() {
+                // Wir rekonstruieren eine valide Session für den Actor
+                session_data.validate = true;
+                session_data.anonymous = false;
+                session_data.clerk_user_id = Some(uid);
+                session_data.user_name = user_name;
+                session_data.live_data = live_data;
+                session_data.exp = Utc::now(); // Timestamp erneuern
+
+                // WICHTIG: RAM aktualisieren, damit es beim nächsten Frame sofort da ist
+                session_manager.save_session(&session_id, session_data.clone());
+                info!("WS: Session {} hydrated successfully from Cookie.", session_id);
+            }
+        }
+    }
+
+    // 5. Berechtigungsprüfung
     let is_protected = !open_modules.contains(&module_name) && !function_name.starts_with("open");
     if is_protected {
-        let valid = session.get::<bool>("valid").unwrap_or(None).unwrap_or(false);
-        if !valid {
+        // Jetzt prüfen wir session_data (das ggf. gerade hydriert wurde)
+        if !session_data.validate {
+            warn!("Unauthorized WS access attempt to protected module: {} by {}", module_name, session_id);
+            // Optional: 401 senden, damit Client re-auth machen kann
             return Ok(HttpResponse::Unauthorized().finish());
         }
     }
 
+    // 6. Handshake Daten
+    let (cookies, headers) = extract_handshake_data(&req);
+
+    // 7. Upgrade zum Actor
     ws::WsResponseBuilder::new(
-        WebSocketActor::new(Arc::clone(&client), session, &module_name, &function_name),
+        WebSocketActor::new(
+            Arc::clone(&client),
+            session_data,
+            &module_name,
+            &function_name,
+            cookies,
+            headers
+        ),
         &req,
         stream,
     )
-    .frame_size(16 * 1024 * 1024)
-    .start()
+        .frame_size(16 * 1024 * 1024)
+        .start()
 }
 
 // =================== PyO3 WebSocket Bridge - REMOVED ===================

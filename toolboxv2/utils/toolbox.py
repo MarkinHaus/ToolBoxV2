@@ -37,6 +37,7 @@ from .system.types import (
     RequestData,
     Result,
     ToolBoxInterfaces,
+    WebSocketContext,
 )
 
 load_dotenv()
@@ -672,8 +673,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.warning(f"Task '{getattr(task, '__name__', 'unknown')}' is not a coroutine. "
                                 f"Use run_bg_task_advanced for synchronous functions.")
             # Fallback to advanced runner for convenience
-            self.run_bg_task_advanced(task, *args, **kwargs)
-            return None
+            return self.run_bg_task_advanced(task, *args,  get_coro=True, **kwargs)
 
         try:
             loop = self.loop_gard()
@@ -703,7 +703,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.error(f"Failed to schedule background task: {e}", exc_info=True)
             return None
 
-    def run_bg_task_advanced(self, task: Callable, *args, **kwargs) -> threading.Thread:
+    def run_bg_task_advanced(self, task: Callable, *args, get_coro=False, **kwargs) -> threading.Thread:
         """
         Runs a task in a separate, dedicated background thread with its own event loop.
 
@@ -724,6 +724,7 @@ class App(AppType, metaclass=Singleton):
             self.logger.warning("Task for run_bg_task_advanced is not callable!")
             return None
 
+        coro_0 = [None]
         def thread_target():
             # Each thread gets its own event loop.
             loop = asyncio.new_event_loop()
@@ -742,6 +743,7 @@ class App(AppType, metaclass=Singleton):
                     coro = loop.run_in_executor(None, lambda: task(*args, **kwargs))
 
                 # Run the coroutine to completion
+                coro_0[0] = coro
                 result = loop.run_until_complete(coro)
                 self.logger.debug(f"Advanced background task '{getattr(task, '__name__', 'unknown')}' completed.")
                 if result is not None:
@@ -767,6 +769,8 @@ class App(AppType, metaclass=Singleton):
         t = threading.Thread(target=thread_target, daemon=True, name=f"BGTask-{getattr(task, '__name__', 'unknown')}")
         self.bg_tasks.append(t)
         t.start()
+        if get_coro:
+            return coro_0[0]
         return t
 
     # Helper method to wait for background tasks to complete (optional)
@@ -1288,11 +1292,14 @@ class App(AppType, metaclass=Singleton):
                 handler_func = self.websocket_handlers[handler_id][event_name]
                 try:
                     # Führe den asynchronen Handler aus
+                    res = None
                     if inspect.iscoroutinefunction(handler_func):
-                        await handler_func(self, **kwargs)
+                        res = await handler_func(self, **kwargs)
                     else:
-                        handler_func(self, **kwargs)  # Für synchrone Handler
-                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                        res = handler_func(self, **kwargs)  # Für synchrone Handler
+                    if isinstance(res, Result) or isinstance(res, ApiResult):
+                        return res
+                    return Result.ok(info=f"WS handler '{event_name}' executed.", data=res)
                 except Exception as e:
                     self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
                     return Result.default_internal_error(info=str(e))
@@ -1382,11 +1389,14 @@ class App(AppType, metaclass=Singleton):
                 handler_func = self.websocket_handlers[handler_id][event_name]
                 try:
                     # Führe den asynchronen Handler aus
+                    res = None
                     if inspect.iscoroutinefunction(handler_func):
-                        return self.loop.run_until_complete(handler_func(self, **kwargs))
+                        res = self.loop.run_until_complete(handler_func(self, **kwargs))
                     else:
-                        handler_func(self, **kwargs)  # Für synchrone Handler
-                    return Result.ok(info=f"WS handler '{event_name}' executed.")
+                        res = handler_func(self, **kwargs)  # Für synchrone Handler
+                    if isinstance(res, Result) or isinstance(res, ApiResult):
+                        return res
+                    return Result.ok(info=f"WS handler '{event_name}' executed.", data=res)
                 except Exception as e:
                     self.logger.error(f"Error in WebSocket handler '{handler_id}/{event_name}': {e}", exc_info=True)
                     return Result.default_internal_error(info=str(e))
@@ -1973,7 +1983,59 @@ class App(AppType, metaclass=Singleton):
 
         version = self.version if version is None else self.version + ':' + version
 
+        def _args_kwargs_helper(args_, kwargs_, parms, api=False):
+            if websocket_context and "request" in kwargs_:
+                # Prüfen ob es ein WebSocket-Request ist
+                request_data = kwargs_.get("request", {})
+                if isinstance(request_data, dict) and "websocket" in request_data:
+                    # WebSocket-Kontext erstellen
+                    ws_ctx = WebSocketContext.from_kwargs(kwargs_)
+                    kwargs_["ws_context"] = ws_ctx
+                    if "session" in parms and "session" not in kwargs_:
+                        kwargs_["session"] = (
+                            ws_ctx.user
+                        )  # oder ws_ctx.session, je nach Implementierung
 
+                    if "conn_id" in parms and "conn_id" not in kwargs_:
+                        kwargs_["conn_id"] = ws_ctx.conn_id
+                    # Wenn der Parameter erwartet wird, Request-Object erstellen
+                    if "request" in parms or request_as_kwarg:
+                        kwargs_["request"] = RequestData.from_dict(request_data)
+
+            if request_as_kwarg and "request" in kwargs_:
+                kwargs_["request"] = (
+                    RequestData.from_dict(kwargs_["request"])
+                    if isinstance(kwargs_["request"], dict)
+                    else kwargs_["request"]
+                )
+                if "data" in kwargs_ and "data" not in parms:
+                    kwargs_["request"].data = kwargs_["request"].body = kwargs_["data"]
+                    del kwargs_["data"]
+                if "form_data" in kwargs_ and "form_data" not in parms:
+                    kwargs_["request"].form_data = kwargs_["request"].body = kwargs_[
+                        "form_data"
+                    ]
+                    del kwargs_["form_data"]
+
+            if not request_as_kwarg and "request" in kwargs_:
+                del kwargs_["request"]
+
+            if (
+                api
+                and "data" in kwargs_
+                and "data" not in parms
+            ):
+                for k in kwargs_["data"]:
+                    if k in parms:
+                        kwargs_[k] = kwargs_["data"][k]
+                del kwargs_["data"]
+
+            if "app" not in parms and args_ and args_[0] is self and len(args_) == 1:
+                args_ = ()
+
+            args_ += (kwargs_.pop("args_"),) if "args_" in kwargs_ else ()
+            args_ += (kwargs_.pop("args"),) if "args" in kwargs_ else ()
+            return args_, kwargs_
 
         def a_additional_process(func):
 
@@ -1981,40 +2043,7 @@ class App(AppType, metaclass=Singleton):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
                 parms = self.functions.get(module_name, {}).get(func_name, {}).get('params', [])
-                if websocket_context and "request" in kwargs_:
-                    # Prüfen ob es ein WebSocket-Request ist
-                    request_data = kwargs_.get("request", {})
-                    if isinstance(request_data, dict) and "websocket" in request_data:
-                        # WebSocket-Kontext erstellen
-                        ws_ctx = WebSocketContext.from_kwargs(kwargs_)
-                        kwargs_["ws_context"] = ws_ctx
-
-                        # Wenn der Parameter erwartet wird, Request-Object erstellen
-                        if "request" in parms or request_as_kwarg:
-                            kwargs_["request"] = RequestData.from_dict(request_data)
-
-                if request_as_kwarg and 'request' in kwargs_:
-                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
-                    if 'data' in kwargs_ and 'data' not in parms:
-                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
-                        del kwargs_['data']
-                    if 'form_data' in kwargs_ and 'form_data' not in parms:
-                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
-                        del kwargs_['form_data']
-
-                if not request_as_kwarg and 'request' in kwargs_:
-                    del kwargs_['request']
-
-                if self.functions.get(module_name, {}).get(func_name, {}).get('api') and 'data' in kwargs_ and 'data' not in parms:
-                    for k in kwargs_['data']:
-                        if k in parms:
-                            kwargs_[k] = kwargs_['data'][k]
-                    del kwargs_['data']
-
-
-                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
-                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
-                return args_, kwargs_
+                return _args_kwargs_helper(args_, kwargs_, parms, api=self.functions.get(module_name, {}).get(func_name, {}).get('api', False))
 
             async def executor(*args, **kwargs):
                 args, kwargs = args_kwargs_helper(args, kwargs)
@@ -2071,35 +2100,8 @@ class App(AppType, metaclass=Singleton):
             def args_kwargs_helper(args_, kwargs_):
                 module_name = mod_name if mod_name else func.__module__.split('.')[-1]
                 func_name = name if name else func.__name__
-                if websocket_context and "request" in kwargs_:
-                    # Prüfen ob es ein WebSocket-Request ist
-                    request_data = kwargs_.get("request", {})
-                    if isinstance(request_data, dict) and "websocket" in request_data:
-                        # WebSocket-Kontext erstellen
-                        ws_ctx = WebSocketContext.from_kwargs(kwargs_)
-                        kwargs_["ws_context"] = ws_ctx
-
-                        # Wenn der Parameter erwartet wird, Request-Object erstellen
-                        if "request" in parms or request_as_kwarg:
-                            kwargs_["request"] = RequestData.from_dict(request_data)
-
-                if request_as_kwarg and 'request' in kwargs_:
-                    kwargs_["request"] = RequestData.from_dict(kwargs_["request"]) if isinstance(kwargs_["request"], dict) else kwargs_["request"]
-                    if 'data' in kwargs_ and 'data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params', []):
-                        kwargs_["request"].data = kwargs_["request"].body = kwargs_['data']
-                        del kwargs_['data']
-                    if 'form_data' in kwargs_ and 'form_data' not in self.functions.get(module_name, {}).get(func_name, {}).get('params',
-                                                                                                               []):
-                        kwargs_["request"].form_data = kwargs_["request"].body = kwargs_['form_data']
-                        del kwargs_['form_data']
-
-                if not request_as_kwarg and 'request' in kwargs_:
-                    del kwargs_['request']
-
-                args_ += (kwargs_.pop('args_'),) if 'args_' in kwargs_ else ()
-                args_ += (kwargs_.pop('args'),) if 'args' in kwargs_ else ()
-
-                return args_, kwargs_
+                parms = self.functions.get(module_name, {}).get(func_name, {}).get('params', [])
+                return _args_kwargs_helper(args_, kwargs_, parms, api=self.functions.get(module_name, {}).get(func_name, {}).get('api', False))
 
             def executor(*args, **kwargs):
 
