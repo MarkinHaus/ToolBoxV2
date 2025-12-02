@@ -162,7 +162,7 @@ __init_cwd__ = init_cwd = Path.cwd()
 
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
 os.chdir(__tb_root_dir__)
-__version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.24"
+__version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.25"
 
 ToolBox_over: str = "root"
 __all__ = [

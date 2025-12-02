@@ -395,7 +395,7 @@ async def list_flows(
         }
 
         # Check for custom metadata in the UI function
-        custom_ui_func = custom_uis.get(flow_name).get("ui")
+        custom_ui_func = custom_uis.get(flow_name, {}).get("ui")
         if custom_ui_func and hasattr(custom_ui_func, "_minu_meta"):
             meta = custom_ui_func._minu_meta
             flow_info.update(

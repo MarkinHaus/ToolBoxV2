@@ -202,7 +202,7 @@ jobs:
   # ============================================================================
 
   build-blob_db-server:
-    name: Rust Server Build (${{ matrix.target }})
+    name: Rust BlobDB Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -263,7 +263,7 @@ jobs:
             chmod +x release-artifacts/bin/${{ matrix.artifact_name }}
           fi
 
-      - name: Upload Rust server artifact
+      - name: Upload Rust blob db artifact
         uses: actions/upload-artifact@v4
         with:
           name: rust-server-${{ matrix.target }}

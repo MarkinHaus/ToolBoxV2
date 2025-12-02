@@ -219,7 +219,7 @@ jobs:
   # ============================================================================
 
   r_blob_db:
-    name: TBLang Build & Test
+    name: Blob DB Build & Test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
