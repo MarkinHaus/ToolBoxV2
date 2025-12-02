@@ -408,7 +408,8 @@ async def list_flows(
                 }
             )
         flow_info.update(custom_uis.get(flow_name, {}))
-        del flow_info["ui"]
+        if "ui" in flow_info:
+            del flow_info["ui"]
 
         # Register the view if not already registered
         if flow_name not in _view_registry:
