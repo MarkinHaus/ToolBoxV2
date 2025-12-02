@@ -33,1162 +33,1696 @@ async def _is_admin(app: App, request: RequestData) -> User | None:
     return None
 
 
-@export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True)
+@export(
+    mod_name=Name,
+    api=True,
+    version=version,
+    name="main",
+    api_methods=["GET"],
+    request_as_kwarg=True,
+)
 async def get_dashboard_main_page(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
     if not admin_user:
-        return Result.html("<h1>Access Denied</h1><p>You do not have permission to view this page.</p>",
-                           status=403)
+        return Result.html(
+            "<h1>Access Denied</h1><p>You do not have permission to view this page.</p>",
+            status=403,
+        )
 
-    # Main HTML structure for the admin dashboard
-    html_content =  """<div>
+    html_content = """
 <style>
-/* Refactored styles for Admin Dashboard Page, based on tbjs-main.css principles */
+/* ============================================================
+   Admin Dashboard Styles (nutzen TBJS v2 Variablen)
+   ============================================================ */
 
-body {
-    margin: 0;
-    font-family: var(--font-family-base);
-    background-color: var(--bg-base);
-    color: var(--theme-text);
-    transition: background-color var(--transition-medium), color var(--transition-medium);
+.dashboard {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-5);
 }
 
-#admin-dashboard {
+/* ========== Header ========== */
+.dashboard-header {
     display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-}
-
-#admin-header {
-    /* Using a distinct dark accent for admin header, different from user-facing primary */
-    background-color: var(--dark-acent); /* e.g., #011b33 from main styles */
-    color: var(--anti-text-clor);       /* e.g., #fff from main styles */
-    padding: var(--spacing) calc(var(--spacing) * 1.5);
-    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 2px 4px color-mix(in srgb, var(--theme-text) 10%, transparent); /* Adapting shadow */
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
+    gap: var(--space-4);
 }
 
-#admin-header h1 {
+.dashboard-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.dashboard-title h1 {
+    font-size: var(--text-3xl);
+    font-weight: var(--weight-bold);
+    color: var(--text-primary);
     margin: 0;
-    font-size: var(--font-size-xl);
-    font-weight: var(--font-weight-semibold);
     display: flex;
     align-items: center;
+    gap: var(--space-2);
 }
 
-#admin-header h1 .material-symbols-outlined {
-    vertical-align: middle;
-    font-size: 1.5em;
-    margin-right: 0.3em;
+.dashboard-title h1 .material-symbols-outlined {
+    color: var(--color-warning);
+    font-size: 1.2em;
 }
 
-#admin-header .header-actions {
-    display: flex;
-    align-items: center;
-}
-
-#admin-nav ul {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 0 calc(var(--spacing) * 1.5);
-    display: flex;
-}
-
-#admin-nav li {
-    margin-left: var(--spacing);
-    cursor: pointer;
-    padding: calc(var(--spacing) * 0.6) var(--spacing);
-    border-radius: var(--radius-sm);
-    transition: background-color var(--transition-fast);
-    font-weight: var(--font-weight-medium);
-    display: flex;
-    align-items: center;
-}
-
-#admin-nav li .material-symbols-outlined {
-    vertical-align: text-bottom;
-    margin-right: 0.3em;
-}
-
-#admin-nav li:hover {
-    /* Subtle hover on the dark header, using the light text color from header */
-    background-color: color-mix(in srgb, var(--anti-text-clor) 15%, transparent);
-}
-
-#admin-container {
-    display: flex;
-    flex-grow: 1;
-}
-
-#admin-sidebar {
-    width: 240px;
-    background-color: var(--input-bg); /* Good for side panels, adapts to theme */
-    padding: calc(var(--spacing) * 1.5) var(--spacing);
-    border-right: 1px solid var(--theme-border);
-    box-shadow: 1px 0 3px color-mix(in srgb, var(--theme-text) 5%, transparent);
-    transition: background-color var(--transition-medium), border-color var(--transition-medium);
-    /* Responsive behavior handled by @media query below */
-}
-/* Removed body[data-theme="dark"] #admin-sidebar as --input-bg and --theme-border handle themes */
-
-#admin-sidebar ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-#admin-sidebar li {
-    padding: calc(var(--spacing) * 0.9) var(--spacing);
-    margin-bottom: calc(var(--spacing) * 0.6);
-    cursor: pointer;
+.admin-badge {
+    background: linear-gradient(135deg, var(--color-warning), oklch(65% 0.2 45));
+    color: var(--color-neutral-900);
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+}
+
+.header-actions {
     display: flex;
     align-items: center;
-    font-weight: var(--font-weight-medium);
-    color: var(--theme-text); /* Sidebar items use main text color */
-    transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-/* Removed body[data-theme="dark"] #admin-sidebar li */
-
-#admin-sidebar li .material-symbols-outlined {
-    margin-right: calc(var(--spacing) * 0.85);
-    font-size: 1.4rem;
+    gap: var(--space-3);
 }
 
-#admin-sidebar li:hover {
-    background-color: color-mix(in srgb, var(--theme-primary) 15%, transparent);
-    color: var(--theme-primary);
-}
-/* Removed body[data-theme="dark"] #admin-sidebar li:hover */
-
-#admin-sidebar li.active {
-    background-color: var(--theme-primary);
-    color: var(--theme-text-on-primary) !important;
-    font-weight: var(--font-weight-semibold);
-    box-shadow: 0 2px 8px color-mix(in srgb, var(--theme-primary) 30%, transparent);
-}
-/* Removed body[data-theme="dark"] #admin-sidebar li.active */
-
-#admin-content {
-    flex-grow: 1;
-    padding: calc(var(--spacing) * 2);
-    overflow-y: auto; /* Ensure content within can scroll if it overflows */
+/* ========== Tab Navigation ========== */
+.tab-navigation {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-2);
+    border-bottom: var(--border-width) solid var(--border-default);
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
 }
 
+.tab-navigation::-webkit-scrollbar {
+    display: none;
+}
+
+.tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all var(--duration-fast) var(--ease-default);
+    width: max-content; !important;
+}
+
+.tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--interactive-muted);
+}
+
+.tab-btn.active {
+    color: var(--color-neutral-900);
+    background: linear-gradient(135deg, var(--color-warning), oklch(65% 0.2 45));
+    box-shadow: 0 4px 14px oklch(75% 0.18 85 / 0.35);
+}
+
+.tab-btn .material-symbols-outlined {
+    font-size: 20px;
+}
+
+/* ========== Content Sections ========== */
 .content-section {
     display: none;
+    animation: fadeSlideIn 0.3s var(--ease-out);
 }
 
 .content-section.active {
     display: block;
-    animation: fadeIn 0.5s ease-out;
 }
 
-@keyframes fadeIn { /* Kept original keyframes */
+@keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-.content-section h2 {
-    font-size: var(--font-size-3xl);
-    font-weight: var(--font-weight-semibold);
-    color: var(--theme-text);
-    margin-bottom: calc(var(--spacing) * 1.8);
-    padding-bottom: var(--spacing);
-    border-bottom: 1px solid var(--theme-border);
+.section-header {
     display: flex;
     align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+    padding-bottom: var(--space-4);
+    border-bottom: var(--border-width) solid var(--border-default);
 }
 
-.content-section h2 .material-symbols-outlined {
-    font-size: 1.3em;
-    margin-right: 0.5em;
+.section-header h2 {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
 }
-/* Removed body[data-theme="dark"] .content-section h2 */
 
-.content-section h3 {
-    font-size: var(--font-size-xl); /* Mapped 1.5rem to xl */
-    font-weight: var(--font-weight-medium);
-    margin-top: calc(var(--spacing) * 2);
-    margin-bottom: var(--spacing);
-    color: var(--theme-text);
+.section-header h2 .material-symbols-outlined {
+    font-size: 28px;
+    color: var(--color-warning);
 }
-/* Removed body[data-theme="dark"] .content-section h3 */
 
-table {
+/* ========== Dashboard Cards ========== */
+.dashboard-card {
+    background: var(--bg-surface);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    margin-bottom: var(--space-5);
+    box-shadow: var(--highlight-subtle), var(--shadow-sm);
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.dashboard-card:hover {
+    box-shadow: var(--highlight-subtle), var(--shadow-md);
+}
+
+.dashboard-card h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin: 0 0 var(--space-4) 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.dashboard-card h3 .material-symbols-outlined {
+    color: var(--interactive);
+    font-size: 22px;
+}
+
+/* ========== Tables ========== */
+.admin-table {
     width: 100%;
-    border-collapse: collapse; /* Main theme sets border-collapse */
-    margin-top: calc(var(--spacing) * 1.5);
-    font-size: var(--font-size-sm); /* Main theme sets table font-size */
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--theme-text) 5%, transparent);
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+    margin-top: var(--space-4);
+}
+
+.admin-table th,
+.admin-table td {
+    padding: var(--space-3) var(--space-4);
+    text-align: left;
+    border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.admin-table th {
+    background: var(--bg-sunken);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.admin-table tr:hover {
+    background: oklch(from var(--interactive) l c h / 0.05);
+}
+
+.admin-table td {
+    color: var(--text-secondary);
+}
+
+/* Table Responsive Wrapper */
+.table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: var(--border-width) solid var(--border-subtle);
     border-radius: var(--radius-md);
-    overflow: hidden; /* For border-radius to apply to table contents properly */
-    border: 1px solid var(--theme-border); /* Main theme sets this */
 }
 
-th, td {
-    /* Padding and text-align from main theme or override here if different */
-    padding: calc(var(--spacing) * 0.75) var(--spacing); /* 12px, 15px. Using 0.75 & 1 for approximation */
-    text-align: left; /* Main theme sets this */
-    border: 1px solid var(--theme-border); /* Main theme sets this */
+.table-wrapper .admin-table {
+    margin-top: 0;
 }
-/* Removed body[data-theme="dark"] th, body[data-theme="dark"] td */
 
-th {
-    /* Background, font-weight from main theme or override */
-    background-color: color-mix(in srgb, var(--theme-text) 3%, transparent); /* Main theme th bg */
-    font-weight: var(--font-weight-semibold); /* Main theme th font-weight */
+.table-wrapper .admin-table th:first-child,
+.table-wrapper .admin-table td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--bg-surface);
+    z-index: 1;
 }
-/* Removed body[data-theme="dark"] th */
 
+.table-wrapper .admin-table th:first-child {
+    background: var(--bg-sunken);
+}
+
+/* ========== Status Indicators ========== */
 .status-indicator {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    margin-right: 8px;
-    vertical-align: middle;
-}
-
-.status-green { background-color: var(--color-success); }
-.status-yellow { background-color: var(--color-warning); }
-.status-red { background-color: var(--color-error); }
-
-.action-btn {
-    padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 0.9); /* 8px, 15px roughly */
-    margin: calc(var(--spacing) * 0.25);
-    border: none; /* Main theme button has border: 1px solid transparent, this is fine */
-    border-radius: var(--radius-sm); /* 6px, sm is 4px. md is 8px. Keep sm for smaller buttons */
-    cursor: pointer;
-    font-size: var(--font-size-sm); /* 0.875rem */
-    font-weight: var(--font-weight-medium);
-    transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast), color var(--transition-fast);
     display: inline-flex;
     align-items: center;
-    line-height: var(--line-height-tight); /* Ensure icon and text align well */
+    gap: var(--space-2);
 }
 
-.action-btn .material-symbols-outlined {
-    margin-right: 6px;
-    font-size: 1.2em;
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+}
+
+.status-dot.green { background: var(--color-success); box-shadow: 0 0 8px var(--color-success); }
+.status-dot.yellow { background: var(--color-warning); box-shadow: 0 0 8px var(--color-warning); }
+.status-dot.red { background: var(--color-error); box-shadow: 0 0 8px var(--color-error); }
+
+/* ========== Action Buttons ========== */
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-weight: var(--weight-medium);
+    font-size: var(--text-xs);
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    transition: all var(--duration-fast) var(--ease-default);
+    white-space: nowrap;
 }
 
 .action-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 5px color-mix(in srgb, var(--theme-text) 10%, transparent);
+    box-shadow: var(--shadow-sm);
 }
 
-.action-btn:active {
-    transform: translateY(0px);
-    box-shadow: inset 0 1px 3px color-mix(in srgb, var(--theme-text) 10%, transparent);
+.action-btn .material-symbols-outlined {
+    font-size: 16px;
 }
 
-.btn-restart { background-color: var(--color-warning); color: var(--theme-text); /* Black on yellow is often readable */ }
-.btn-restart:hover { background-color: color-mix(in srgb, var(--color-warning) 85%, black 15%); }
-
-.btn-edit { background-color: var(--color-info); color: var(--theme-text-on-primary); }
-.btn-edit:hover { background-color: color-mix(in srgb, var(--color-info) 85%, black 15%); }
-
-.btn-delete { background-color: var(--color-error); color: var(--theme-text-on-primary); }
-.btn-delete:hover { background-color: color-mix(in srgb, var(--color-error) 85%, black 15%); }
-
-.btn-send-invite { background-color: var(--color-success); color: var(--theme-text-on-primary); }
-.btn-send-invite:hover { background-color: color-mix(in srgb, var(--color-success) 85%, black 15%); }
-
-.btn-open-link { background-color: var(--theme-secondary); color: var(--theme-text-on-primary); }
-.btn-open-link:hover { background-color: color-mix(in srgb, var(--theme-secondary) 85%, black 15%); }
-
-
-.frosted-glass-pane {
-    background-color: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
-    border-radius: var(--radius-lg);
-    padding: calc(var(--spacing) * 2);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-}
-/* Removed body[data-theme="dark"] .frosted-glass-pane */
-
-.tb-input { /* Re-using from previous answer, ensure it's consistent */
-    display: block;
-    width: 100%;
-    padding: calc(var(--spacing) * 0.75) var(--spacing);
-    font-family: inherit;
-    font-size: var(--font-size-base);
-    line-height: var(--line-height-normal);
-    color: var(--theme-text);
-    background-color: var(--input-bg);
-    background-clip: padding-box;
-    border: 1px solid var(--input-border);
-    border-radius: var(--radius-md); /* Original was 6px, md is 8px */
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-    appearance: none;
-    box-sizing: border-box;
-}
-.tb-input:focus {
-    outline: none;
-    border-color: var(--input-focus-border);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 25%, transparent);
-}
-/* Removed body[data-theme="dark"] .tb-input */
-
-.tb-label {
-    font-weight: var(--font-weight-medium);
-    margin-bottom: calc(var(--spacing) * 0.5);
-    display: block;
-    font-size: var(--font-size-sm);
+.btn-restart {
+    background: var(--color-warning);
+    color: var(--color-neutral-900);
 }
 
-.tb-checkbox { /* Actual input element */
-    /* Inherits from main input[type="checkbox"] styles */
-    margin-right: calc(var(--spacing) * 0.5);
+.btn-restart:hover {
+    background: oklch(from var(--color-warning) calc(l - 0.1) c h);
 }
 
-.tb-btn { /* Re-using from previous answer */
+.btn-edit {
+    background: var(--color-info);
+    color: white;
+}
+
+.btn-edit:hover {
+    background: oklch(from var(--color-info) calc(l - 0.1) c h);
+}
+
+.btn-delete {
+    background: var(--color-error);
+    color: white;
+}
+
+.btn-delete:hover {
+    background: oklch(from var(--color-error) calc(l - 0.1) c h);
+}
+
+.btn-send-invite {
+    background: var(--color-success);
+    color: white;
+}
+
+.btn-send-invite:hover {
+    background: oklch(from var(--color-success) calc(l - 0.1) c h);
+}
+
+.btn-open-link {
+    background: var(--interactive);
+    color: white;
+}
+
+.btn-open-link:hover {
+    background: var(--interactive-hover);
+}
+
+.action-group {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+/* ========== General Buttons ========== */
+.tb-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: calc(var(--spacing) * 0.6) calc(var(--spacing) * 1.2);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-md);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--weight-medium);
+    font-size: var(--text-sm);
+    font-family: inherit;
     cursor: pointer;
-    transition: background-color var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-    border: 1px solid transparent;
-    text-align: center;
-    vertical-align: middle;
-    user-select: none;
+    border: var(--border-width) solid transparent;
+    transition: all var(--duration-fast) var(--ease-default);
 }
-.tb-btn:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 35%, transparent);
-}
-.tb-btn .material-symbols-outlined {
-    margin-right: 0.4em;
-    font-size: 1.2em;
+
+.tb-btn:hover {
+    transform: translateY(-1px);
 }
 
 .tb-btn-primary {
-    background-color: var(--button-bg);
-    color: var(--button-text);
-    border-color: var(--button-bg);
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+    color: var(--text-inverse);
+    box-shadow: var(--shadow-primary);
 }
+
 .tb-btn-primary:hover {
-    background-color: var(--button-hover-bg);
-    border-color: var(--button-hover-bg);
+    box-shadow: 0 6px 20px oklch(55% 0.18 230 / 0.4);
 }
 
-.tb-space-y-6 > *:not([hidden]) ~ *:not([hidden]) { margin-top: calc(var(--spacing) * 1.5); }
-.tb-mt-2 { margin-top: calc(var(--spacing) * 0.5); }
-.tb-mb-1 { margin-bottom: calc(var(--spacing) * 0.25); }
-.tb-mb-2 { margin-bottom: calc(var(--spacing) * 0.5); }
-.tb-mt-6 { margin-top: calc(var(--spacing) * 1.5); }
-.tb-mr-1 { margin-right: calc(var(--spacing) * 0.25); }
-
-.md\\:tb-w-2\\/3 { width: 66.666667%; } /* Kept as is */
-
-.tb-text-red-500 { color: var(--color-error); }
-.tb-text-green-500 { color: var(--color-success); } /* Assuming 500 maps to base success */
-.tb-text-yellow-500 { color: var(--color-warning); } /* Assuming 500 maps to base warning */
-.tb-text-gray-500 { color: var(--theme-text-muted); }
-/* Removed body[data-theme="dark"] .tb-text-gray-500 */
-
-.tb-text-sm { font-size: var(--font-size-sm); }
-.tb-text-md { font-size: var(--font-size-base); }
-.tb-text-lg { font-size: var(--font-size-lg); }
-.tb-font-semibold { font-weight: var(--font-weight-semibold); }
-.tb-flex { display: flex; }
-.tb-items-center { align-items: center; }
-.tb-cursor-pointer { cursor: pointer; }
-
-/* This was globally hidden in your provided styles for admin. If a toggle button is needed for mobile,
-   its styling would be similar to #sidebar-toggle-btn in the user dashboard example,
-   and this global hide would be removed or scoped to desktop. */
-#sidebar-toggle-btn {
-    display: none;
+.tb-btn-secondary {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-xs);
 }
 
-@media (max-width: 767.98px) {
-    #admin-sidebar {
-        position: fixed;
-        left: -250px; /* Start off-screen */
-        top: 0;
-        bottom: 0;
-        width: 240px;
-        z-index: var(--z-modal); /* Above backdrop */
-        transition: left var(--transition-medium);
-        overflow-y: auto;
-        /* background-color and border-right will use the default #admin-sidebar styles which are theme-aware */
-    }
-    /* Removed body[data-theme="dark"] #admin-sidebar as it's covered by main styles */
+.tb-btn-secondary:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+}
 
-    #admin-sidebar.open {
-        left: 0; /* Slide in */
-        box-shadow: 2px 0 10px color-mix(in srgb, var(--theme-text) 20%, transparent);
+.tb-btn-success {
+    background: var(--color-success);
+    color: white;
+}
+
+.tb-btn-danger {
+    background: var(--color-error);
+    color: white;
+}
+
+.tb-btn .material-symbols-outlined {
+    font-size: 18px;
+}
+
+/* ========== Inputs ========== */
+.tb-input {
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-base);
+    font-family: inherit;
+    color: var(--text-primary);
+    background-color: var(--input-bg);
+    border: var(--border-width) solid var(--input-border);
+    border-radius: var(--radius-md);
+    transition: all var(--duration-fast) var(--ease-default);
+    margin-bottom: 0;
+}
+
+.tb-input:focus {
+    outline: none;
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px oklch(from var(--input-focus) l c h / 0.15);
+}
+
+.tb-label {
+    display: block;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1);
+}
+
+.tb-checkbox {
+    margin-right: var(--space-2);
+    accent-color: var(--interactive);
+}
+
+/* ========== Settings Section ========== */
+.settings-section {
+    margin-bottom: var(--space-6);
+}
+
+.settings-section h4 {
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    margin-bottom: var(--space-4);
+    color: var(--text-primary);
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-2);
+    transition: border-color var(--duration-fast) var(--ease-default);
+}
+
+.setting-item:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.setting-label {
+    font-weight: var(--weight-medium);
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
+}
+
+.setting-description {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+/* ========== Empty State ========== */
+.empty-state {
+    text-align: center;
+    padding: var(--space-10) var(--space-6);
+    color: var(--text-muted);
+}
+
+.empty-state .material-symbols-outlined {
+    font-size: 56px;
+    margin-bottom: var(--space-4);
+    opacity: 0.4;
+}
+
+.empty-state p {
+    margin: 0;
+    font-size: var(--text-lg);
+}
+
+/* ========== Loading State ========== */
+.loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-10) var(--space-6);
+    color: var(--text-secondary);
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-default);
+    border-top-color: var(--interactive);
+    border-radius: var(--radius-full);
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ========== User Level Badge ========== */
+.level-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+}
+
+.level-badge.admin {
+    background: oklch(from var(--color-warning) l c h / 0.2);
+    color: oklch(from var(--color-warning) calc(l - 0.2) c h);
+}
+
+[data-theme="dark"] .level-badge.admin {
+    background: oklch(from var(--color-warning) l c h / 0.15);
+    color: var(--color-warning);
+}
+
+/* ========== Quick Actions ========== */
+.quick-actions {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* ========== Form Spacing ========== */
+.form-group {
+    margin-bottom: var(--space-4);
+}
+
+.form-row {
+    display: flex;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+
+.form-row > * {
+    flex: 1;
+    min-width: 200px;
+}
+
+/* ========== Responsive ========== */
+@media screen and (max-width: 767px) {
+    .dashboard {
+        padding: var(--space-4) var(--space-3);
     }
 
-    #sidebar-backdrop-admin {
+    .dashboard-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-3);
+    }
+
+    .dashboard-title h1 {
+        font-size: var(--text-2xl);
+    }
+
+    .header-actions {
+        justify-content: center;
+    }
+
+    .tab-navigation {
+        margin-left: calc(var(--space-3) * -1);
+        margin-right: calc(var(--space-3) * -1);
+        padding-left: var(--space-3);
+        padding-right: var(--space-3);
+    }
+
+    .tab-btn {
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .tab-btn span:not(.material-symbols-outlined) {
         display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
+    }
+
+    .section-header h2 {
+        font-size: var(--text-xl);
+    }
+
+    .admin-table {
+        font-size: var(--text-xs);
+    }
+
+    .admin-table th,
+    .admin-table td {
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .action-group {
+        flex-direction: column;
+    }
+
+    .action-btn {
         width: 100%;
-        height: 100%;
-        background-color: color-mix(in srgb, var(--bg-base) 50%, black 50%);
-        opacity: 0; /* Start transparent */
-        z-index: calc(var(--z-modal) - 1); /* Below sidebar */
-        transition: opacity var(--transition-medium);
+        justify-content: center;
     }
 
-    #sidebar-backdrop-admin.active {
-        display: block;
-        opacity: 0.7; /* Fade in to 70% opacity */
+    .setting-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-3);
     }
-    /* If #sidebar-toggle-btn IS used on mobile for admin, its display:block/inline-flex would go here */
+
+    .quick-actions {
+        flex-direction: column;
+    }
+
+    .quick-actions .tb-btn {
+        width: 100%;
+    }
+
+    .form-row {
+        flex-direction: column;
+    }
+
+    .form-row > * {
+        min-width: 100%;
+    }
 }
-         @media (max-width: 767.98px) {
-            #admin-sidebar { position: fixed; left: -250px; top: 0; bottom: 0; width: 240px; z-index: 1000; transition: left 0.3s ease-in-out; overflow-y: auto; background-color: var(--sidebar-bg, var(--tb-color-neutral-100, #ffffff)); border-right: 1px solid var(--sidebar-border, var(--tb-color-neutral-300, #e0e0e0)); }
-            body[data-theme="dark"] #admin-sidebar { background-color: var(--sidebar-bg-dark, var(--tb-color-neutral-850, #232b33)); border-right-color: var(--sidebar-border-dark, var(--tb-color-neutral-700, #374151));}
-            #admin-sidebar.open { left: 0; box-shadow: 2px 0 10px rgba(0,0,0,0.2); }
-            #sidebar-backdrop-admin { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 999; opacity: 0; transition: opacity 0.3s ease-in-out; }
-            #sidebar-backdrop-admin.active { display: block; opacity: 1; }
-        }
-    </style>
-</head>
-<body data-theme="system">
-    <div id="admin-dashboard">
-        <div id="admin-header">
 
-            <h1><span class="material-symbols-outlined">shield_person</span>CloudM Admin</h1>
-            <button id="sidebar-toggle-btn" class="tb-btn" style="margin-right: 1rem; background: none; border: none; color: white;">
-                <span class="material-symbols-outlined">menu</span>
-            </button>
-            <div class="header-actions">
-                 <div id="darkModeToggleContainer" style="display: inline-flex; align-items: center; margin-right: 1.5rem;"></div>
-                <nav id="admin-nav">
-                    <ul>
-                        <li id="logoutButton"><span class="material-symbols-outlined">logout</span>Logout</li>
-                    </ul>
-                </nav>
+/* ========== Utility Classes ========== */
+.text-muted { color: var(--text-muted); }
+.text-success { color: var(--color-success); }
+.text-error { color: var(--color-error); }
+.text-warning { color: var(--color-warning); }
+.text-sm { font-size: var(--text-sm); }
+.text-xs { font-size: var(--text-xs); }
+.font-semibold { font-weight: var(--weight-semibold); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-4 { margin-bottom: var(--space-4); }
+.flex { display: flex; }
+.gap-2 { gap: var(--space-2); }
+.gap-4 { gap: var(--space-4); }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+</style>
+
+<div class="content-wrapper">
+    <main class="dashboard main-content glass">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="dashboard-title">
+                <h1>
+                    <span class="material-symbols-outlined">shield_person</span>
+                    <span id="admin-title-text">Admin Panel</span>
+                </h1>
+                <span class="admin-badge">Admin</span>
             </div>
-        </div>
-        <div id="admin-container">
-            <aside id="admin-sidebar">
-                 <ul>
-                    <li data-section="system-status" class="active"><span class="material-symbols-outlined">monitoring</span>System Status</li>
-                    <li data-section="user-management"><span class="material-symbols-outlined">group</span>User Management</li>
-                    <li data-section="module-management"><span class="material-symbols-outlined">extension</span>Module Management</li>
-                    <li data-section="spp-management"><span class="material-symbols-outlined">web_stories</span>SPP Management</li>
-                    <li data-section="my-account"><span class="material-symbols-outlined">manage_accounts</span>My Account</li>
-                </ul>
-            </aside>
-            <main id="admin-content">
-                <section id="system-status-section" class="content-section active frosted-glass-pane">
+            <div class="header-actions">
+                <div id="darkModeToggleContainer"></div>
+                <button id="logoutButton" class="tb-btn tb-btn-secondary">
+                    <span class="material-symbols-outlined">logout</span>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-navigation" id="tab-navigation" role="tablist">
+            <button class="tab-btn active" data-section="system-status" role="tab" aria-selected="true">
+                <span class="material-symbols-outlined">monitoring</span>
+                <span>System</span>
+            </button>
+            <button class="tab-btn" data-section="user-management" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">group</span>
+                <span>Users</span>
+            </button>
+            <button class="tab-btn" data-section="module-management" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">extension</span>
+                <span>Modules</span>
+            </button>
+            <button class="tab-btn" data-section="spp-management" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">web_stories</span>
+                <span>SPPs</span>
+            </button>
+            <button class="tab-btn" data-section="my-account" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">manage_accounts</span>
+                <span>Account</span>
+            </button>
+        </nav>
+
+        <!-- Content Sections -->
+        <div id="admin-content">
+            <!-- System Status -->
+            <section id="system-status-section" class="content-section active">
+                <div class="section-header">
                     <h2><span class="material-symbols-outlined">bar_chart_4_bars</span>System Status</h2>
-                    <div id="system-status-content"><p class="tb-text-gray-500">Loading system status...</p></div>
-                </section>
-                <section id="user-management-section" class="content-section frosted-glass-pane">
+                </div>
+                <div id="system-status-content">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading system status...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- User Management -->
+            <section id="user-management-section" class="content-section">
+                <div class="section-header">
                     <h2><span class="material-symbols-outlined">manage_history</span>User Management</h2>
-                    <div id="user-management-content-main"><p class="tb-text-gray-500">Loading user data...</p></div>
-                    <h3 class="tb-mt-6"><span class="material-symbols-outlined">person_add</span>Users on Waiting List</h3>
-                    <div id="user-waiting-list-content"><p class="tb-text-gray-500">Loading waiting list...</p></div>
-                </section>
-                <section id="module-management-section" class="content-section frosted-glass-pane">
+                </div>
+                <div id="user-management-content-main">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading users...</span>
+                    </div>
+                </div>
+
+                <div class="dashboard-card mt-6">
+                    <h3><span class="material-symbols-outlined">person_add</span>Waiting List</h3>
+                    <div id="user-waiting-list-content">
+                        <p class="text-muted">Loading waiting list...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Module Management -->
+            <section id="module-management-section" class="content-section">
+                <div class="section-header">
                     <h2><span class="material-symbols-outlined">view_module</span>Module Management</h2>
-                    <div id="module-management-content"><p class="tb-text-gray-500">Loading module list...</p></div>
-                </section>
-                <section id="spp-management-section" class="content-section frosted-glass-pane">
+                </div>
+                <div id="module-management-content">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading modules...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SPP Management -->
+            <section id="spp-management-section" class="content-section">
+                <div class="section-header">
                     <h2><span class="material-symbols-outlined">apps</span>Registered SPPs / UI Panels</h2>
-                    <div id="spp-management-content"><p class="tb-text-gray-500">Loading registered SPPs...</p></div>
-                </section>
-                <section id="my-account-section" class="content-section frosted-glass-pane">
-                    <h2><span class="material-symbols-outlined">account_circle</span>My Account Settings</h2>
-                    <div id="my-account-content"><p class="tb-text-gray-500">Loading account details...</p></div>
-                </section>
-            </main>
+                </div>
+                <div id="spp-management-content">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading SPPs...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- My Account -->
+            <section id="my-account-section" class="content-section">
+                <div class="section-header">
+                    <h2><span class="material-symbols-outlined">account_circle</span>My Account</h2>
+                </div>
+                <div id="my-account-content">
+                    <div class="loading-state">
+                        <div class="spinner"></div>
+                        <span>Loading account...</span>
+                    </div>
+                </div>
+            </section>
         </div>
-        <div id="sidebar-backdrop-admin"></div>
-    </div>
 
-    <script type="module">
-        if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
-            console.error('CRITICAL: TB (tbjs) or its core modules are not defined.');
-            document.body.innerHTML = '<div style="padding:20px; text-align:center; font-size:1.2em; color:red;">Critical Error: Frontend library (tbjs) failed to load.</div>';
-        } else {
-            console.log('TB object found. Initializing Admin Dashboard.');
-            let currentAdminUser = null;
+        <!-- Footer Link -->
+        <div class="mt-6" style="text-align: center;">
+            <a href="/api/CloudM.UserDashboard/main" class="tb-btn tb-btn-secondary">
+                <span class="material-symbols-outlined">dashboard</span>
+                User Dashboard
+            </a>
+        </div>
+    </main>
+</div>
 
-            function _waitForTbInitAdmin(callback) {
-                if (window.TB?.events && window.TB.config?.get('appRootId')) {
-                    callback();
-                } else {
-                    document.addEventListener('tbjs:initialized', callback, { once: true });
-                }
+<script type="module">
+if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
+    console.error('CRITICAL: TB (tbjs) not loaded.');
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--color-error);">Critical Error: Frontend library failed to load.</div>';
+} else {
+    console.log('TB object found. Initializing Admin Dashboard v3...');
+
+    let currentAdminUser = null;
+
+    // ========== Initialization ==========
+    async function initializeAdminDashboard() {
+        console.log("Admin Dashboard Initializing...");
+        TB.ui.DarkModeToggle.init();
+        setupNavigation();
+        setupLogout();
+        setupEventDelegation();
+
+        try {
+            const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
+            if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
+                currentAdminUser = userRes.get();
+                updateHeader();
+                await loadMyAccountSection();
+                await showSection('system-status');
+            } else {
+                console.error("Failed to load admin user:", userRes.info.help_text);
+                showAccessDenied();
             }
+        } catch (e) {
+            console.error("Error fetching admin user:", e);
+            showConnectionError();
+        }
+    }
 
-            async function initializeAdminDashboard() {
-                console.log("Admin Dashboard Initializing with tbjs...");
-                TB.ui.DarkModeToggle.init();
-                setupNavigation();
-                await setupLogout();
-                setupMobileSidebarAdmin();
+    function updateHeader() {
+        if (currentAdminUser?.name) {
+            const titleEl = document.getElementById('admin-title-text');
+            if (titleEl) {
+                titleEl.textContent = `Admin (${currentAdminUser.name})`;
+            }
+        }
+    }
 
+    function showAccessDenied() {
+        document.getElementById('admin-content').innerHTML = `
+            <div class="empty-state">
+                <span class="material-symbols-outlined">block</span>
+                <h3 style="margin-top:var(--space-4);">Access Denied</h3>
+                <p class="text-muted">Could not verify admin privileges. Please login.</p>
+            </div>
+        `;
+    }
+
+    function showConnectionError() {
+        document.getElementById('admin-content').innerHTML = `
+            <div class="empty-state">
+                <span class="material-symbols-outlined">cloud_off</span>
+                <h3 style="margin-top:var(--space-4);">Connection Error</h3>
+                <p class="text-muted">Could not connect to server.</p>
+            </div>
+        `;
+    }
+
+    // ========== Navigation ==========
+    function setupNavigation() {
+        document.querySelectorAll('#tab-navigation .tab-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                document.querySelectorAll('#tab-navigation .tab-btn').forEach(b => {
+                    b.classList.remove('active');
+                    b.setAttribute('aria-selected', 'false');
+                });
+                btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
+                await showSection(btn.dataset.section);
+            });
+        });
+    }
+
+    function setupLogout() {
+        document.getElementById('logoutButton')?.addEventListener('click', async () => {
+            TB.ui.Loader.show("Logging out...");
+            await TB.user.logout();
+            window.location.href = '/';
+        });
+    }
+
+    // ========== Event Delegation ==========
+    function setupEventDelegation() {
+        document.getElementById('admin-content').addEventListener('click', async function(event) {
+            const target = event.target.closest('button.action-btn');
+            if (!target) return;
+
+            // System Status Restart
+            if (target.classList.contains('btn-restart') && target.dataset.service) {
+                TB.ui.Toast.showInfo(`Restart for ${target.dataset.service} (placeholder).`);
+            }
+            // User Edit
+            else if (target.dataset.uid && target.classList.contains('btn-edit')) {
+                const usersData = JSON.parse(target.closest('.table-wrapper')?.querySelector('table')?.dataset.users || '[]');
+                showUserEditModal(target.dataset.uid, usersData);
+            }
+            // User Delete
+            else if (target.dataset.uid && target.classList.contains('btn-delete')) {
+                handleDeleteUser(target.dataset.uid, target.dataset.name);
+            }
+            // Waiting List Send Invite
+            else if (target.dataset.email && target.classList.contains('btn-send-invite')) {
+                const email = target.dataset.email;
+                const proposedUsername = prompt(`Enter username for ${email}:`, email.split('@')[0]);
+                if (!proposedUsername) { TB.ui.Toast.showWarning("Username required."); return; }
+
+                TB.ui.Loader.show(`Sending invite...`);
                 try {
-                    const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                    if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
-                        currentAdminUser = userRes.get();
-                        if (currentAdminUser.name) {
-                            const adminTitleElement = document.querySelector('#admin-header h1');
-                            if (adminTitleElement) {
-                                adminTitleElement.innerHTML = `<span class="material-symbols-outlined">shield_person</span>CloudM Admin (${TB.utils.escapeHtml(currentAdminUser.name)})`;
-                            }
-                        }
-                        await loadMyAccountSection();
-                        await showSection('system-status');
+                    const res = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin',
+                        { email, username: proposedUsername }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess(res.info.help_text || `Invite sent.`);
+                        await loadWaitingListUsers();
                     } else {
-                        console.error("Failed to load current admin user:", userRes.info.help_text);
-                        document.getElementById('admin-content').innerHTML = '<p class="tb-text-red-500">Error: Could not verify admin user. Please login.</p>';
+                        TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(res.info.help_text)}`);
                     }
                 } catch (e) {
-                    console.error("Error fetching current admin user:", e);
-                    document.getElementById('admin-content').innerHTML = '<p class="tb-text-red-500">Network error verifying admin user.</p>';
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
                 }
             }
-            _waitForTbInitAdmin(initializeAdminDashboard);
+            // Waiting List Remove
+            else if (target.dataset.email && target.classList.contains('btn-delete')) {
+                const email = target.dataset.email;
+                if (!confirm(`Remove ${email} from waiting list?`)) return;
 
-            function setupMobileSidebarAdmin() {
-                // ... (Implementation from previous response, ensure it correctly uses 'admin-sidebar' and 'sidebar-backdrop-admin')
-                const sidebar = document.getElementById('admin-sidebar');
-                const toggleBtn = document.getElementById('sidebar-toggle-btn');
-                const backdrop = document.getElementById('sidebar-backdrop-admin');
-
-                if (!sidebar || !toggleBtn || !backdrop) {
-                    console.warn("Admin mobile sidebar elements not found. Mobile navigation might not work.");
-                    if(toggleBtn) toggleBtn.style.display = 'none'; // Ensure it's hidden if setup fails
-                    return;
+                TB.ui.Loader.show(`Removing...`);
+                try {
+                    const res = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess(`${email} removed.`);
+                        await loadWaitingListUsers();
+                    } else {
+                        TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError("Network error.");
                 }
+            }
+            // Module Reload
+            else if (target.dataset.module && target.classList.contains('btn-restart')) {
+                const modName = target.dataset.module;
+                TB.ui.Loader.show(`Reloading ${modName}...`);
+                try {
+                    const res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
+                    TB.ui.Loader.hide();
+                    if (res.error === TB.ToolBoxError.none) {
+                        TB.ui.Toast.showSuccess(`${modName}: ${TB.utils.escapeHtml(res.get() || 'OK')}`);
+                    } else {
+                        TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                    }
+                } catch (e) {
+                    TB.ui.Loader.hide();
+                    TB.ui.Toast.showError('Network error.');
+                }
+            }
+            // SPP Open Link
+            else if (target.dataset.path && target.classList.contains('btn-open-link')) {
+                const path = target.dataset.path;
+                if (path.startsWith("http") || path.startsWith("/api/")) {
+                    window.open(path, '_blank');
+                } else {
+                    TB.router.navigateTo(path);
+                }
+            }
+        });
+    }
 
-                function updateToggleBtnVisibility() {
-                    toggleBtn.style.display = window.innerWidth < 768 ? 'inline-flex' : 'none';
-                     if (window.innerWidth >= 768 && sidebar.classList.contains('open')) {
-                        sidebar.classList.remove('open');
-                        backdrop.classList.remove('active');
-                        document.body.style.overflow = '';
+    // ========== Section Loading ==========
+    async function showSection(sectionId) {
+        console.log(`Showing section: ${sectionId}`);
+        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+        const section = document.getElementById(`${sectionId}-section`);
+
+        if (section) {
+            section.classList.add('active');
+
+            switch(sectionId) {
+                case 'system-status':
+                    await loadSystemStatus();
+                    break;
+                case 'user-management':
+                    await loadUserManagement();
+                    await loadWaitingListUsers();
+                    break;
+                case 'module-management':
+                    await loadModuleManagement();
+                    break;
+                case 'spp-management':
+                    await loadSppManagement();
+                    break;
+                case 'my-account':
+                    await loadMyAccountSection();
+                    break;
+            }
+        }
+    }
+
+    // ========== System Status ==========
+    async function loadSystemStatus() {
+        const content = document.getElementById('system-status-content');
+        if (!content) return;
+
+        try {
+            const res = await TB.api.request('CloudM.AdminDashboard', 'get_system_status', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderSystemStatus(res.get(), content);
+            } else {
+                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+            }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
+
+    function renderSystemStatus(data, content) {
+        if (!data || Object.keys(data).length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">dns</span>
+                    <p>No services found or status unavailable.</p>
+                </div>
+            `;
+            return;
+        }
+
+        let html = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">dns</span>Running Services</h3>
+                <div class="table-wrapper">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Service</th>
+                                <th>Status</th>
+                                <th>PID</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        for (const [name, info] of Object.entries(data)) {
+            const statusClass = info.status_indicator === '🟢' ? 'green' :
+                               (info.status_indicator === '🔴' ? 'red' : 'yellow');
+            html += `
+                <tr>
+                    <td><strong>${TB.utils.escapeHtml(name)}</strong></td>
+                    <td>
+                        <span class="status-indicator">
+                            <span class="status-dot ${statusClass}"></span>
+                            ${info.status_indicator}
+                        </span>
+                    </td>
+                    <td class="text-muted">${TB.utils.escapeHtml(info.pid)}</td>
+                    <td>
+                        <button class="action-btn btn-restart" data-service="${TB.utils.escapeHtml(name)}">
+                            <span class="material-symbols-outlined">restart_alt</span>
+                            Restart
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }
+
+        html += '</tbody></table></div></div>';
+        content.innerHTML = html;
+    }
+
+    // ========== User Management ==========
+    async function loadUserManagement() {
+        const content = document.getElementById('user-management-content-main');
+        if (!content) return;
+
+        try {
+            const res = await TB.api.request('CloudM.AdminDashboard', 'list_users_admin', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderUserManagement(res.get(), content);
+            } else {
+                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+            }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
+
+    function renderUserManagement(users, content) {
+        if (!users || users.length === 0) {
+            content.innerHTML = '<p class="text-muted">No users found.</p>';
+            return;
+        }
+
+        let html = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">group</span>All Users (${users.length})</h3>
+                <div class="table-wrapper">
+                    <table class="admin-table" data-users='${TB.utils.escapeHtml(JSON.stringify(users))}'>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Level</th>
+                                <th>UID</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        users.forEach(user => {
+            const isAdmin = user.level === 0;
+            const canDelete = currentAdminUser && currentAdminUser.uid !== user.uid;
+
+            html += `
+                <tr>
+                    <td><strong>${TB.utils.escapeHtml(user.name)}</strong></td>
+                    <td class="text-muted">${TB.utils.escapeHtml(user.email || 'N/A')}</td>
+                    <td>
+                        ${user.level}
+                        ${isAdmin ? '<span class="level-badge admin">Admin</span>' : ''}
+                    </td>
+                    <td class="text-xs text-muted">${TB.utils.escapeHtml(user.uid)}</td>
+                    <td>
+                        <div class="action-group">
+                            <button class="action-btn btn-edit" data-uid="${user.uid}">
+                                <span class="material-symbols-outlined">edit</span>
+                                Edit
+                            </button>
+                            ${canDelete ? `
+                                <button class="action-btn btn-delete" data-uid="${user.uid}" data-name="${TB.utils.escapeHtml(user.name)}">
+                                    <span class="material-symbols-outlined">delete</span>
+                                    Delete
+                                </button>
+                            ` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div></div>';
+        content.innerHTML = html;
+    }
+
+    function showUserEditModal(userId, allUsers) {
+        const user = allUsers.find(u => u.uid === userId);
+        if (!user) { TB.ui.Toast.showError("User not found."); return; }
+
+        TB.ui.Modal.show({
+            title: `Edit User: ${TB.utils.escapeHtml(user.name)}`,
+            content: `
+                <form id="editUserFormAdmin">
+                    <input type="hidden" name="uid" value="${user.uid}">
+                    <div class="form-group">
+                        <label class="tb-label">Name</label>
+                        <input type="text" name="name" class="tb-input" value="${TB.utils.escapeHtml(user.name)}" readonly style="opacity:0.6;">
+                    </div>
+                    <div class="form-group">
+                        <label class="tb-label">Email</label>
+                        <input type="email" name="email" class="tb-input" value="${TB.utils.escapeHtml(user.email || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label class="tb-label">Level</label>
+                        <input type="number" name="level" class="tb-input" value="${user.level}">
+                    </div>
+                    <div class="form-group">
+                        <label class="flex items-center" style="cursor:pointer;">
+                            <input type="checkbox" name="experimental_features" class="tb-checkbox" ${user.settings?.experimental_features ? 'checked' : ''}>
+                            <span>Experimental Features</span>
+                        </label>
+                    </div>
+                </form>
+            `,
+            buttons: [
+                { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
+                {
+                    text: 'Save Changes',
+                    variant: 'primary',
+                    action: async m => {
+                        const form = document.getElementById('editUserFormAdmin');
+                        if (!form) return;
+
+                        const updatedData = {
+                            uid: form.uid.value,
+                            name: form.name.value,
+                            email: form.email.value,
+                            level: parseInt(form.level.value),
+                            settings: { experimental_features: form.experimental_features.checked }
+                        };
+
+                        TB.ui.Loader.show('Saving...');
+                        try {
+                            const res = await TB.api.request('CloudM.AdminDashboard', 'update_user_admin', updatedData, 'POST');
+                            TB.ui.Loader.hide();
+                            if (res.error === TB.ToolBoxError.none) {
+                                TB.ui.Toast.showSuccess('User updated!');
+                                await loadUserManagement();
+                                m.close();
+                            } else {
+                                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                            }
+                        } catch (e) {
+                            TB.ui.Loader.hide();
+                            TB.ui.Toast.showError('Network error.');
+                        }
                     }
                 }
-                updateToggleBtnVisibility();
-                window.addEventListener('resize', updateToggleBtnVisibility);
+            ]
+        });
+    }
 
-                toggleBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); // Important to prevent unintended closes if backdrop is also under button somehow
-                    sidebar.classList.toggle('open');
-                    backdrop.classList.toggle('active');
-                    document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
-                });
-                backdrop.addEventListener('click', () => {
-                    sidebar.classList.remove('open');
-                    backdrop.classList.remove('active');
-                    document.body.style.overflow = '';
-                });
-                // Also close sidebar when a nav item is clicked on mobile
-                sidebar.querySelectorAll('li[data-section]').forEach(item => {
-                    item.addEventListener('click', () => {
-                        if (window.innerWidth < 768 && sidebar.classList.contains('open')) {
-                            sidebar.classList.remove('open');
-                            backdrop.classList.remove('active');
-                            document.body.style.overflow = '';
+    async function handleDeleteUser(userId, userName) {
+        if (currentAdminUser?.uid === userId) {
+            TB.ui.Toast.showError("Cannot delete your own account.");
+            return;
+        }
+
+        TB.ui.Modal.show({
+            title: 'Confirm Deletion',
+            content: `<p>Delete user <strong>${TB.utils.escapeHtml(userName)}</strong>?<br><span class="text-sm text-muted">This action cannot be undone.</span></p>`,
+            buttons: [
+                { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
+                {
+                    text: 'Delete User',
+                    variant: 'danger',
+                    action: async m => {
+                        TB.ui.Loader.show('Deleting...');
+                        try {
+                            const res = await TB.api.request('CloudM.AdminDashboard', 'delete_user_admin', { uid: userId }, 'POST');
+                            TB.ui.Loader.hide();
+                            if (res.error === TB.ToolBoxError.none) {
+                                TB.ui.Toast.showSuccess('User deleted!');
+                                await loadUserManagement();
+                            } else {
+                                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                            }
+                        } catch (e) {
+                            TB.ui.Loader.hide();
+                            TB.ui.Toast.showError('Network error.');
                         }
-                    });
-                });
-                console.log("Admin mobile sidebar setup complete.");
+                        m.close();
+                    }
+                }
+            ]
+        });
+    }
+
+    // ========== Waiting List ==========
+    async function loadWaitingListUsers() {
+        const content = document.getElementById('user-waiting-list-content');
+        if (!content) return;
+
+        try {
+            const res = await TB.api.request('CloudM.AdminDashboard', 'get_waiting_list_users_admin', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderWaitingList(res.get(), content);
+            } else {
+                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
             }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
 
-             // Using event delegation for dynamically added buttons inside content sections
-            document.getElementById('admin-content').addEventListener('click', async function(event) {
-                const target = event.target.closest('button.action-btn'); // Find closest action button
-                if (!target) return; // Not an action button click
+    function renderWaitingList(waitingUsers, content) {
+        if (!waitingUsers || waitingUsers.length === 0) {
+            content.innerHTML = '<p class="text-muted">No users on waiting list.</p>';
+            return;
+        }
 
-                console.log("Action button clicked:", target.dataset);
+        let html = `
+            <div class="table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
 
-                // System Status Restart Button
-                if (target.classList.contains('btn-restart') && target.dataset.service) {
-                    const serviceName = target.dataset.service;
-                    TB.ui.Toast.showInfo(`Restart for ${serviceName} (placeholder).`);
-                }
-                // User Management Edit/Delete Buttons
-                else if (target.dataset.uid && target.classList.contains('btn-edit')) {
-                    const usersData = JSON.parse(target.closest('table').dataset.users || '[]'); // Requires storing users data on table
-                    showUserEditModal(target.dataset.uid, usersData);
-                }
-                else if (target.dataset.uid && target.classList.contains('btn-delete')) {
-                    handleDeleteUser(target.dataset.uid, target.dataset.name);
-                }
-                // Waiting List Buttons
-                else if (target.dataset.email && target.classList.contains('btn-send-invite')) {
-                    const email = target.dataset.email;
-                    const proposedUsername = prompt(`Enter a proposed username for ${email} (e.g., derived from email prefix):`, email.split('@')[0]);
-                    if (!proposedUsername) { TB.ui.Toast.showWarning("Username is required."); return; }
-                    TB.ui.Loader.show(`Sending invite...`);
-                    try {
-                        const inviteRes = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin', { email, username: proposedUsername }, 'POST');
-                        if (inviteRes.error === TB.ToolBoxError.none) {
-                            TB.ui.Toast.showSuccess(inviteRes.info.help_text || `Invite sent.`);
-                            await loadWaitingListUsers('user-waiting-list-content');
-                        } else { TB.ui.Toast.showError(`Invite failed: ${TB.utils.escapeHtml(inviteRes.info.help_text)}`); }
-                    } catch (err) { TB.ui.Toast.showError("Network error."); }
-                    finally { TB.ui.Loader.hide(); }
-                }
-                else if (target.dataset.email && target.classList.contains('btn-delete')) { // Waiting list remove
-                    const email = target.dataset.email;
-                    if (!confirm(`Remove ${email} from waiting list?`)) return;
-                    TB.ui.Loader.show(`Removing...`);
-                    try {
-                        const removeRes = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email }, 'POST');
-                         if (removeRes.error === TB.ToolBoxError.none) {
-                            TB.ui.Toast.showSuccess(`${email} removed.`);
-                            await loadWaitingListUsers('user-waiting-list-content');
-                        } else { TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(removeRes.info.help_text)}`); }
-                    } catch (err) { TB.ui.Toast.showError("Network error."); }
-                    finally { TB.ui.Loader.hide(); }
-                }
-                // Module Management Reload Button
-                else if (target.dataset.module && target.classList.contains('btn-restart')) {
-                     const modName = target.dataset.module;
-                    TB.ui.Toast.showInfo(`Reloading ${modName}...`);
-                    TB.ui.Loader.show(`Reloading ${modName}...`);
-                    try {
-                        const res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
-                        if (res.error === TB.ToolBoxError.none) { TB.ui.Toast.showSuccess(`${modName} reload: ${TB.utils.escapeHtml(res.get() || 'OK')}`); }
-                        else { TB.ui.Toast.showError(`Error reloading ${modName}: ${TB.utils.escapeHtml(res.info.help_text)}`); }
-                    } catch (err) { TB.ui.Toast.showError('Network error.'); }
-                    finally { TB.ui.Loader.hide(); }
-                }
-                // SPP Management Open Link Button
-                else if (target.dataset.path && target.classList.contains('btn-open-link')) {
-                    const path = target.dataset.path;
-                    if (path.startsWith("http") || path.startsWith("/api/")) { window.open(path, '_blank'); }
-                    else { TB.router.navigateTo(path); }
-                }
+        waitingUsers.forEach(entry => {
+            const email = typeof entry === 'string' ? entry : (entry.email || 'Invalid');
+            html += `
+                <tr>
+                    <td>${TB.utils.escapeHtml(email)}</td>
+                    <td>
+                        <div class="action-group">
+                            <button class="action-btn btn-send-invite" data-email="${TB.utils.escapeHtml(email)}">
+                                <span class="material-symbols-outlined">outgoing_mail</span>
+                                Invite
+                            </button>
+                            <button class="action-btn btn-delete" data-email="${TB.utils.escapeHtml(email)}">
+                                <span class="material-symbols-outlined">person_remove</span>
+                                Remove
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+        content.innerHTML = html;
+    }
+
+    // ========== Module Management ==========
+    async function loadModuleManagement() {
+        const content = document.getElementById('module-management-content');
+        if (!content) return;
+
+        try {
+            const res = await TB.api.request('CloudM.AdminDashboard', 'list_modules_admin', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderModuleManagement(res.get(), content);
+            } else {
+                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+            }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
+
+    function renderModuleManagement(modules, content) {
+        if (!modules || modules.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">extension_off</span>
+                    <p>No modules loaded.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Group modules by prefix
+        const groups = {};
+        modules.forEach(mod => {
+            const prefix = mod.split('.')[0] || 'Other';
+            if (!groups[prefix]) groups[prefix] = [];
+            groups[prefix].push(mod);
+        });
+
+        let html = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">inventory_2</span>Loaded Modules (${modules.length})</h3>
+                <input type="text" id="module-search-admin" class="tb-input mb-4" placeholder="Search modules..." oninput="filterAdminModules(this.value)">
+        `;
+
+        for (const [group, mods] of Object.entries(groups)) {
+            html += `
+                <details class="mb-4" ${group === 'CloudM' ? 'open' : ''}>
+                    <summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">
+                        <span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>
+                        ${TB.utils.escapeHtml(group)} (${mods.length})
+                    </summary>
+                    <div class="table-wrapper" style="margin-top:var(--space-2);">
+                        <table class="admin-table">
+                            <thead><tr><th>Module Name</th><th>Actions</th></tr></thead>
+                            <tbody>
+            `;
+
+            mods.forEach(modName => {
+                html += `
+                    <tr class="module-row-admin" data-name="${modName.toLowerCase()}">
+                        <td>${TB.utils.escapeHtml(modName)}</td>
+                        <td>
+                            <button class="action-btn btn-restart" data-module="${TB.utils.escapeHtml(modName)}">
+                                <span class="material-symbols-outlined">refresh</span>
+                                Reload
+                            </button>
+                        </td>
+                    </tr>
+                `;
             });
 
-            // Navigation, ShowSection, Logout Setup (Functions from previous responses, ensure they are complete)
-            function setupNavigation() {
-                const navItems = document.querySelectorAll('#admin-sidebar li[data-section]');
-                navItems.forEach(item => {
-                    item.addEventListener('click', async () => {
-                        navItems.forEach(i => i.classList.remove('active'));
-                        item.classList.add('active');
-                        await showSection(item.getAttribute('data-section'));
-                    });
-                });
-            }
-
-                        async function showSection(sectionId) {
-                console.log(`Showing section: ${sectionId}`);
-                document.querySelectorAll('#admin-content .content-section').forEach(s => s.classList.remove('active'));
-                const activeSectionElement = document.getElementById(`${sectionId}-section`); // The <section> element
-
-                if (activeSectionElement) {
-                    activeSectionElement.classList.add('active');
-
-                    // Handle content loading for each specific section
-                    if (sectionId === 'system-status') {
-                        const contentDiv = document.getElementById('system-status-content');
-                        if (contentDiv) {
-                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading system status...</p>`;
-                            await loadSystemStatus('system-status-content');
-                        } else { console.error('Content div for system-status not found.'); }
-                    }
-                    else if (sectionId === 'user-management') {
-                        // This section has two distinct content areas
-                        const mainUsersContentDiv = document.getElementById('user-management-content-main');
-                        const waitingListContentDiv = document.getElementById('user-waiting-list-content');
-
-                        if (mainUsersContentDiv) {
-                            mainUsersContentDiv.innerHTML = `<p class="tb-text-gray-500">Loading user data...</p>`;
-                            await loadUserManagement('user-management-content-main');
-                        } else { console.error('Content div for main user management not found.'); }
-
-                        if (waitingListContentDiv) {
-                            waitingListContentDiv.innerHTML = `<p class="tb-text-gray-500">Loading waiting list...</p>`;
-                            await loadWaitingListUsers('user-waiting-list-content');
-                        } else { console.error('Content div for user waiting list not found.'); }
-                    }
-                    else if (sectionId === 'module-management') {
-                        const contentDiv = document.getElementById('module-management-content');
-                        if (contentDiv) {
-                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading module list...</p>`;
-                            await loadModuleManagement('module-management-content');
-                        } else { console.error('Content div for module-management not found.'); }
-                    }
-                    else if (sectionId === 'spp-management') {
-                        const contentDiv = document.getElementById('spp-management-content');
-                        if (contentDiv) {
-                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading registered SPPs...</p>`;
-                            await loadSppManagement('spp-management-content');
-                        } else { console.error('Content div for spp-management not found.'); }
-                    }
-                    else if (sectionId === 'my-account') {
-                        const contentDiv = document.getElementById('my-account-content');
-                        if (contentDiv) {
-                            contentDiv.innerHTML = `<p class="tb-text-gray-500">Loading account details...</p>`;
-                            await loadMyAccountSection('my-account-content');
-                        } else { console.error('Content div for my-account not found.'); }
-                    }
-                    console.log(`Section ${sectionId} content loading initiated or already handled.`);
-                } else {
-                    console.error(`Section element ${sectionId}-section not found.`);
-                }
-            }
-
-            async function setupLogout() {
-                document.getElementById('logoutButton')?.addEventListener('click', async () => {
-                    TB.ui.Loader.show("Logging out...");
-                    await TB.user.logout();
-                    window.location.href = '/';
-                    TB.ui.Loader.hide();
-                });
-            }
-
-            async function loadSystemStatus(targetDivId) {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) return;
-                try {
-                    const response = await TB.api.request('CloudM.AdminDashboard', 'get_system_status', null, 'GET');
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderSystemStatus(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
-            }
-
-            function renderSystemStatus(statusData, contentDiv) {
-                if (!contentDiv) return;
-                if (!statusData || Object.keys(statusData).length === 0 || (Object.keys(statusData).length === 1 && statusData["unknown_service_format"])) {
-                     if (statusData && statusData["unknown_service_format"]) {
-                        contentDiv.innerHTML = `<p class="tb-text-yellow-500">Service status format error: ${TB.utils.escapeHtml(statusData["unknown_service_format"].details)}</p>`;
-                     } else { contentDiv.innerHTML = '<p class="tb-text-gray-500">No services found or status unavailable.</p>';}
-                    return;
-                }
-                let html = '<table><thead><tr><th>Service</th><th>Status</th><th>PID</th><th>Actions</th></tr></thead><tbody>';
-                for (const [name, data] of Object.entries(statusData)) {
-                    let sClass = data.status_indicator === '🟢' ? 'status-green' : (data.status_indicator === '🔴' ? 'status-red' : 'status-yellow');
-                    html += `<tr><td>${TB.utils.escapeHtml(name)}</td><td><span class="status-indicator ${sClass}"></span> ${data.status_indicator}</td><td>${TB.utils.escapeHtml(data.pid)}</td><td><button class="action-btn btn-restart" data-service="${TB.utils.escapeHtml(name)}"><span class="material-symbols-outlined">restart_alt</span>Restart</button></td></tr>`;
-                }
-                html += '</tbody></table>';
-                contentDiv.innerHTML = html;
-                contentDiv.querySelectorAll('.btn-restart').forEach(btn => btn.addEventListener('click', e => TB.ui.Toast.showInfo(`Restart for ${e.currentTarget.dataset.service} (placeholder).`)));
-            }
-
-             async function loadUserManagement(targetDivId = 'user-management-content-main') {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) return;
-                try {
-                    const response = await TB.api.request('CloudM.AdminDashboard', 'list_users_admin', null, 'GET');
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderUserManagement(response.get(), contentDiv);
-                    } else { contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`; }
-                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
-            }
-            function renderUserManagement(users, contentDiv) {
-                if (!contentDiv) return;
-                if (!users || users.length === 0) { contentDiv.innerHTML = '<p class="tb-text-gray-500">No users.</p>'; return; }
-                // Store users data on the table for easier access by modal
-                let tableHtml = `<table data-users='${TB.utils.escapeHtml(JSON.stringify(users))}'><thead><tr><th>Name</th><th>Email</th><th>Level</th><th>UID</th><th>Actions</th></tr></thead><tbody>`;
-                users.forEach(user => {
-                    tableHtml += `<tr><td>${TB.utils.escapeHtml(user.name)}</td><td>${TB.utils.escapeHtml(user.email || 'N/A')}</td><td>${user.level} ${user.level === 0 ? '(Admin)' : ''}</td><td>${TB.utils.escapeHtml(user.uid)}</td><td><button class="action-btn btn-edit" data-uid="${user.uid}"><span class="material-symbols-outlined">edit</span>Edit</button>${(currentAdminUser && currentAdminUser.uid !== user.uid) ? `<button class="action-btn btn-delete" data-uid="${user.uid}" data-name="${TB.utils.escapeHtml(user.name)}"><span class="material-symbols-outlined">delete</span>Delete</button>` : ''}</td></tr>`;
-                });
-                tableHtml += '</tbody></table>';
-                contentDiv.innerHTML = tableHtml;
-            }
-
-            function showUserEditModal(userId, allUsers) {
-                const user = allUsers.find(u => u.uid === userId);
-                if (!user) { TB.ui.Toast.showError("User not found for editing."); return; }
-                console.log(`Showing edit modal for user:`, user);
-
-                const modalContent = `
-                    <form id="editUserFormAdmin" class="tb-space-y-4">
-                        <input type="hidden" name="uid" value="${user.uid}">
-                        <div><label class="tb-label" for="editUserNameAdminModal">Name:</label><input type="text" id="editUserNameAdminModal" name="name" class="tb-input" value="${TB.utils.escapeHtml(user.name)}" readonly></div>
-                        <div><label class="tb-label" for="editUserEmailAdminModal">Email:</label><input type="email" id="editUserEmailAdminModal" name="email" class="tb-input" value="${TB.utils.escapeHtml(user.email || '')}"></div>
-                        <div><label class="tb-label" for="editUserLevelAdminModal">Level:</label><input type="number" id="editUserLevelAdminModal" name="level" class="tb-input" value="${user.level}"></div>
-                        <div><label class="tb-label tb-flex tb-items-center"><input type="checkbox" name="experimental_features" class="tb-checkbox tb-mr-2" ${user.settings && user.settings.experimental_features ? 'checked' : ''}>Experimental Features</label></div>
-                    </form>`;
-
-                TB.ui.Modal.show({
-                    title: `Edit User: ${TB.utils.escapeHtml(user.name)}`,
-                    content: modalContent,
-                    buttons: [
-                        { text: 'Cancel', action: modal => modal.close(), variant: 'secondary' },
-                        {
-                            text: 'Save Changes',
-                            action: async modal => {
-                                const form = document.getElementById('editUserFormAdmin');
-                                if (!form) { console.error("Edit user form not found in modal."); return; }
-                                const updatedData = {
-                                    uid: form.uid.value,
-                                    name: form.name.value,
-                                    email: form.email.value,
-                                    level: parseInt(form.level.value),
-                                    settings: { experimental_features: form.experimental_features.checked }
-                                };
-                                console.log("Saving user data:", updatedData);
-                                TB.ui.Loader.show('Saving user data...');
-                                try {
-                                    const resp = await TB.api.request('CloudM.AdminDashboard', 'update_user_admin', updatedData, 'POST');
-                                    console.log("Update user response:", resp);
-                                    if (resp.error === TB.ToolBoxError.none) {
-                                        TB.ui.Toast.showSuccess('User updated successfully!');
-                                        await loadUserManagement('user-management-content');
-                                        modal.close();
-                                    } else {
-                                        TB.ui.Toast.showError(`Error updating user: ${TB.utils.escapeHtml(resp.info.help_text)}`);
-                                    }
-                                } catch (e) {
-                                    TB.ui.Toast.showError('Network error while saving user.');
-                                    console.error("Update user error:", e);
-                                } finally {
-                                    TB.ui.Loader.hide();
-                                }
-                            },
-                            variant: 'primary'
-                        }
-                    ]
-                });
-            }
-
-            async function handleDeleteUser(userId, userName) {
-                if (currentAdminUser && currentAdminUser.uid === userId) {
-                    TB.ui.Toast.showError("Administrators cannot delete their own account through this panel.");
-                    return;
-                }
-                console.log(`Confirming delete for user: ${userName} (UID: ${userId})`);
-                TB.ui.Modal.show({
-                    title: 'Confirm Deletion',
-                    content: `<p>Are you sure you want to delete user <strong>${TB.utils.escapeHtml(userName)}</strong> (UID: ${TB.utils.escapeHtml(userId)})? This action cannot be undone.</p>`,
-                    buttons: [
-                        { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
-                        {
-                            text: 'Delete User',
-                            variant: 'danger',
-                            action: async m => {
-                                console.log(`Deleting user: ${userId}`);
-                                TB.ui.Loader.show('Deleting user...');
-                                try {
-                                    const resp = await TB.api.request('CloudM.AdminDashboard', 'delete_user_admin', { uid: userId }, 'POST');
-                                    console.log("Delete user response:", resp);
-                                    if (resp.error === TB.ToolBoxError.none) {
-                                        TB.ui.Toast.showSuccess('User deleted successfully!');
-                                        await loadUserManagement('user-management-content');
-                                    } else {
-                                        TB.ui.Toast.showError(`Error deleting user: ${TB.utils.escapeHtml(resp.info.help_text)}`);
-                                    }
-                                } catch (e) {
-                                    TB.ui.Toast.showError('Network error while deleting user.');
-                                    console.error("Delete user error:", e);
-                                } finally {
-                                    TB.ui.Loader.hide();
-                                    m.close();
-                                }
-                            }
-                        }
-                    ]
-                });
-            }
-
-             async function loadWaitingListUsers(targetDivId) {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) return;
-                contentDiv.innerHTML = '<p class="tb-text-gray-500">Fetching waiting list...</p>';
-                try {
-                    const response = await TB.api.request('CloudM.AdminDashboard', 'get_waiting_list_users_admin', null, 'GET');
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderWaitingListUsers(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
-            }
-
-            function renderWaitingListUsers(waitingUsers, contentDiv) {
-                if (!waitingUsers || waitingUsers.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No users currently on the waiting list.</p>'; return;
-                }
-                let html = '<table><thead><tr><th>Email</th><th>Actions</th></tr></thead><tbody>';
-                waitingUsers.forEach(entry => { // Assuming entry is just an email string for now
-                    const email = (typeof entry === 'string') ? entry : (entry.email || 'Invalid Entry');
-                    html += `<tr>
-                        <td>${TB.utils.escapeHtml(email)}</td>
-                        <td>
-                            <button class="action-btn btn-send-invite" data-email="${TB.utils.escapeHtml(email)}"><span class="material-symbols-outlined">outgoing_mail</span>Send Invite</button>
-                            <button class="action-btn btn-delete" data-email="${TB.utils.escapeHtml(email)}"><span class="material-symbols-outlined">person_remove</span>Remove</button>
-                        </td>
-                    </tr>`;
-                });
-                html += '</tbody></table>';
-                contentDiv.innerHTML = html;
-
-                contentDiv.querySelectorAll('.btn-send-invite').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        const email = e.currentTarget.dataset.email;
-                        const proposedUsername = prompt(`Enter a proposed username for ${email} (e.g., derived from email prefix):`, email.split('@')[0]);
-                        if (!proposedUsername) { TB.ui.Toast.showWarning("Username is required to send an invite."); return; }
-
-                        TB.ui.Loader.show(`Sending invite to ${email}...`);
-                        try {
-                            const inviteRes = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin',
-                                { email: email, username: proposedUsername }, 'POST');
-                            if (inviteRes.error === TB.ToolBoxError.none) {
-                                TB.ui.Toast.showSuccess(inviteRes.info.help_text || `Invite sent to ${email}.`);
-                                await loadWaitingListUsers('user-waiting-list-content'); // Refresh list
-                            } else {
-                                TB.ui.Toast.showError(`Failed to send invite: ${TB.utils.escapeHtml(inviteRes.info.help_text)}`);
-                            }
-                        } catch (err) { TB.ui.Toast.showError("Network error sending invite."); console.error(err); }
-                        finally { TB.ui.Loader.hide(); }
-                    });
-                });
-                contentDiv.querySelectorAll('.btn-delete').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        const email = e.currentTarget.dataset.email;
-                        if (!confirm(`Are you sure you want to remove ${email} from the waiting list?`)) return;
-
-                        TB.ui.Loader.show(`Removing ${email}...`);
-                        try {
-                            const removeRes = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email: email }, 'POST');
-                             if (removeRes.error === TB.ToolBoxError.none) {
-                                TB.ui.Toast.showSuccess(`${email} removed from waiting list.`);
-                                await loadWaitingListUsers('user-waiting-list-content'); // Refresh list
-                            } else {
-                                TB.ui.Toast.showError(`Failed to remove: ${TB.utils.escapeHtml(removeRes.info.help_text)}`);
-                            }
-                        } catch (err) { TB.ui.Toast.showError("Network error removing from list."); console.error(err); }
-                        finally { TB.ui.Loader.hide(); }
-                    });
-                });
-            }
-
-            async function loadModuleManagement(targetDivId) {
-                const contentDiv = document.getElementById(targetDivId);
-                 if (!contentDiv) return;
-                try {
-                    console.log("Requesting module list from API: CloudM.AdminDashboard/list_modules_admin");
-                    const response = await TB.api.request('CloudM.AdminDashboard', 'list_modules_admin', null, 'GET');
-                    console.log("Module list response:", response);
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderModuleManagement(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error loading modules: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch (e) {
-                    contentDiv.innerHTML = '<p class="tb-text-red-500">Network error while fetching modules.</p>';
-                    console.error("loadModuleManagement error:", e);
-                }
-            }
-
-            function renderModuleManagement(modules, contentDiv) {
-                if (!contentDiv) return;
-                console.log("Rendering module management:", modules);
-                if (!modules || modules.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No modules found or loaded in the system.</p>';
-                    return;
-                }
-                let html = '<table><thead><tr><th>Module Name</th><th>Actions</th></tr></thead><tbody>';
-                modules.forEach(modName => {
-                    html += `<tr>
-                        <td>${TB.utils.escapeHtml(modName)}</td>
-                        <td><button class="action-btn btn-restart" data-module="${TB.utils.escapeHtml(modName)}"><span class="material-symbols-outlined">refresh</span>Reload</button></td>
-                        </tr>`;
-                });
-                html += '</tbody></table>';
-                contentDiv.innerHTML = html;
-                contentDiv.querySelectorAll('.btn-restart').forEach(btn => {
-                    btn.addEventListener('click', async e => {
-                        const modName = e.currentTarget.dataset.module;
-                        console.log(`Reload button clicked for module: ${modName}`);
-                        TB.ui.Toast.showInfo(`Attempting to reload ${modName}...`);
-                        TB.ui.Loader.show(`Reloading ${modName}...`);
-                        try {
-                            const res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
-                            console.log(`Reload module ${modName} response:`, res);
-                            if (res.error === TB.ToolBoxError.none) {
-                                TB.ui.Toast.showSuccess(`${modName} reload status: ${TB.utils.escapeHtml(res.get())}`);
-                            } else {
-                                TB.ui.Toast.showError(`Error reloading ${modName}: ${TB.utils.escapeHtml(res.info.help_text)}`);
-                            }
-                        } catch (err) {
-                            TB.ui.Toast.showError('Network error during module reload.');
-                            console.error(`Reload module ${modName} error:`, err);
-                        } finally {
-                            TB.ui.Loader.hide();
-                        }
-                    });
-                });
-            }
-
-             async function loadSppManagement(targetDivId) {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) return;
-                contentDiv.innerHTML = '<p class="tb-text-gray-500">Fetching registered SPPs/UI Panels...</p>';
-                try {
-                    const response = await TB.api.request('CloudM.AdminDashboard', 'list_spps_admin', null, 'GET');
-                    if (response.error === TB.ToolBoxError.none) {
-                        renderSppManagement(response.get(), contentDiv);
-                    } else {
-                        contentDiv.innerHTML = `<p class="tb-text-red-500">Error: ${TB.utils.escapeHtml(response.info.help_text)}</p>`;
-                    }
-                } catch (e) { contentDiv.innerHTML = '<p class="tb-text-red-500">Network error.</p>'; console.error(e); }
-            }
-
-            function renderSppManagement(spps, contentDiv) {
-                if (!spps || spps.length === 0) {
-                    contentDiv.innerHTML = '<p class="tb-text-gray-500">No SPPs or UI Panels are currently registered.</p>'; return;
-                }
-                let html = '<table><thead><tr><th>Title</th><th>Name/ID</th><th>Path</th><th>Description</th><th>Auth Req.</th><th>Actions</th></tr></thead><tbody>';
-                spps.forEach(spp => {
-                    // spp structure is: {"auth":auth,"path": path, "title": title, "description": description, "name": name}
-                    // Note: 'name' key might not be in original dict if 'add_ui' doesn't add it. Assuming 'title' or path can be unique identifier.
-                    // Let's assume `openui` adds the `name` key to the dictionary for easier identification.
-                    const name = spp.name || spp.title; // Fallback if name isn't explicitly set
-                    html += `<tr>
-                        <td>${TB.utils.escapeHtml(spp.title)}</td>
-                        <td>${TB.utils.escapeHtml(name)}</td>
-                        <td>${TB.utils.escapeHtml(spp.path)}</td>
-                        <td>${TB.utils.escapeHtml(spp.description)}</td>
-                        <td>${spp.auth ? 'Yes' : 'No'}</td>
-                        <td>
-                            <button class="action-btn btn-open-link" data-path="${spp.path}"><span class="material-symbols-outlined">open_in_new</span>Open</button>
-                            <!-- Conceptual buttons for Start/Stop/Logs - require backend implementation -->
-                            <!-- <button class="action-btn btn-restart" data-spp-name="${TB.utils.escapeHtml(name)}">Start/Stop</button> -->
-                            <!-- <button class="action-btn btn-view" data-spp-name="${TB.utils.escapeHtml(name)}">Logs</button> -->
-                        </td>
-                    </tr>`;
-                });
-                html += '</tbody></table>';
-                contentDiv.innerHTML = html;
-                contentDiv.querySelectorAll('.btn-open-link').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        const path = e.currentTarget.dataset.path;
-                        if (path) {
-                           // If path is absolute or starts with /api/, open in new tab
-                           // Otherwise, try to use TB.router if it's a relative client-side path
-                           if (path.startsWith("http") || path.startsWith("/api/")) {
-                               window.open(path, '_blank');
-                           } else {
-                               TB.router.navigateTo(path); // Assumes path is router-compatible
-                           }
-                        }
-                    });
-                });
-            }
-
-            async function loadMyAccountSection(targetDivId = 'my-account-content') {
-                const contentDiv = document.getElementById(targetDivId);
-                if (!contentDiv) { console.error("My Account content div not found."); return; }
-
-                if (!currentAdminUser) {
-                    contentDiv.innerHTML = "<p class='tb-text-red-500'>Account details not available. Please ensure you are logged in.</p>";
-                    console.warn("loadMyAccountSection called but currentAdminUser is null.");
-                    return;
-                }
-                console.log("Loading My Account section for:", currentAdminUser);
-                const user = currentAdminUser;
-                const emailSectionId = `email-updater-${TB.utils.uniqueId()}`;
-                const expFeaturesId = `exp-features-${TB.utils.uniqueId()}`;
-                const personaStatusId = `persona-status-${TB.utils.uniqueId()}`;
-
-                let personaBtnHtml = !user.is_persona ?
-                    `<button id="registerPersonaBtnAdmin" class="tb-btn tb-btn-success tb-mt-2"><span class="material-symbols-outlined tb-mr-1">fingerprint</span>Add Persona Device</button><div id="${personaStatusId}" class="tb-text-sm tb-mt-1"></div>` :
-                    `<p class='tb-text-md tb-text-green-600 dark:tb-text-green-400'><span class="material-symbols-outlined tb-mr-1" style="vertical-align: text-bottom;">verified_user</span>Persona (WebAuthn) is configured for this account.</p>`;
-
-                contentDiv.innerHTML = `
-                    <div class="tb-space-y-6">
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Email Address</h4>
-                            <div id="${emailSectionId}" class="tb-space-y-2">
-                                 <p class="tb-text-md"><strong>Current Email:</strong> ${user.email ? TB.utils.escapeHtml(user.email) : "Not set"}</p>
-                                 <input type="email" name="new_email_admin" value="${user.email ? TB.utils.escapeHtml(user.email) : ''}" class="tb-input md:tb-w-2/3" placeholder="Enter new email">
-                                 <button class="tb-btn tb-btn-primary tb-mt-2"
-                                    data-hx-post="/api/CloudM.UserAccountManager/update_email"
-                                    data-hx-include="[name='new_email_admin']"
-                                    data-hx-target="#${emailSectionId}" data-hx-swap="innerHTML"><span class="material-symbols-outlined tb-mr-1">save</span>Update Email</button>
-                            </div>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Persona Device (WebAuthn)</h4>
-                            ${personaBtnHtml}
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-1">User Level</h4>
-                            <p class="tb-text-md">${user.level} ${user.level === 0 ? '(Administrator)' : ''}</p>
-                        </div>
-                        <div>
-                            <h4 class="tb-text-lg tb-font-semibold tb-mb-2">Application Settings</h4>
-                            <div id="${expFeaturesId}">
-                                <label class="tb-label tb-flex tb-items-center tb-cursor-pointer">
-                                    <input type="checkbox" name="exp_features_admin_val" ${user.settings && user.settings.experimental_features ? "checked" : ""}
-                                           class="tb-checkbox tb-mr-2"
-                                           data-hx-post="/api/CloudM.UserAccountManager/update_setting"
-                                           data-hx-vals='{"setting_key": "experimental_features", "setting_value": event.target.checked ? "true" : "false"}'
-                                           data-hx-target="#${expFeaturesId}" data-hx-swap="innerHTML">
-                                    <span class="tb-text-md">Enable Experimental Features</span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>`;
-
-                if (window.htmx) {
-                    console.log("Processing HTMX for My Account section.");
-                    window.htmx.process(contentDiv);
-                } else {
-                    console.warn("HTMX not found. Dynamic updates in 'My Account' section via htmx attributes will not work. Ensure HTMX is loaded if desired.");
-                }
-
-                const personaBtnAdmin = document.getElementById('registerPersonaBtnAdmin');
-                if (personaBtnAdmin) {
-                    console.log("Persona registration button found, attaching listener.");
-                    personaBtnAdmin.addEventListener('click', async () => {
-                        const statusDiv = document.getElementById(personaStatusId);
-                        if (!statusDiv) { console.error("Persona status div not found."); return; }
-                        statusDiv.innerHTML = '<p class="tb-text-sm tb-text-blue-500">Initiating WebAuthn registration...</p>';
-                        console.log("Attempting WebAuthn registration for user:", user.name);
-                         if (window.TB && window.TB.user && user.name) {
-                            const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name);
-                            console.log("WebAuthn registration result:", result);
-                            if (result.success) {
-                                statusDiv.innerHTML = `<p class="tb-text-sm tb-text-green-500">${TB.utils.escapeHtml(result.message)} Refreshing account details to reflect changes.</p>`;
-                                TB.ui.Toast.showSuccess("Persona registered! Refreshing account details...");
-                                setTimeout(async () => {
-                                    console.log("Re-fetching admin user data after persona registration.");
-                                    const updatedUserRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                                    if (updatedUserRes.error === TB.ToolBoxError.none && updatedUserRes.get()) {
-                                        currentAdminUser = updatedUserRes.get();
-                                        await loadMyAccountSection(); // Re-render "My Account" section
-                                        console.log("My Account section re-rendered after persona update.");
-                                    } else {
-                                        console.error("Failed to re-fetch admin user data after persona registration:", updatedUserRes.info.help_text);
-                                    }
-                                }, 1500);
-                            } else {
-                                statusDiv.innerHTML = `<p class="tb-text-sm tb-text-red-500">Error: ${TB.utils.escapeHtml(result.message)}</p>`;
-                            }
-                        } else {
-                            statusDiv.innerHTML = '<p class="tb-text-sm tb-text-red-500">TB.user or current username not available for WebAuthn registration.</p>';
-                            console.error("TB.user or currentAdminUser.name is not available for WebAuthn.");
-                        }
-                    });
-                } else if (!user.is_persona) {
-                    console.warn("Persona registration button (registerPersonaBtnAdmin) not found, though user is not persona.");
-                }
-            }
+            html += '</tbody></table></div></details>';
         }
-    </script>
-    <a href="/api/CloudM.UserDashboard/main">User Dashboard</a>
-</div>"""
+
+        html += '</div>';
+        content.innerHTML = html;
+    }
+
+    window.filterAdminModules = function(query) {
+        const q = query.toLowerCase();
+        document.querySelectorAll('.module-row-admin').forEach(row => {
+            row.style.display = row.dataset.name.includes(q) ? '' : 'none';
+        });
+    };
+
+    // ========== SPP Management ==========
+    async function loadSppManagement() {
+        const content = document.getElementById('spp-management-content');
+        if (!content) return;
+
+        try {
+            const res = await TB.api.request('CloudM.AdminDashboard', 'list_spps_admin', null, 'GET');
+            if (res.error === TB.ToolBoxError.none) {
+                renderSppManagement(res.get(), content);
+            } else {
+                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+            }
+        } catch (e) {
+            content.innerHTML = '<p class="text-error">Network error.</p>';
+            console.error(e);
+        }
+    }
+
+    function renderSppManagement(spps, content) {
+        if (!spps || spps.length === 0) {
+            content.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">web_asset_off</span>
+                    <p>No SPPs registered.</p>
+                </div>
+            `;
+            return;
+        }
+
+        let html = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">web</span>UI Panels (${spps.length})</h3>
+                <div class="table-wrapper">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Name</th>
+                                <th>Path</th>
+                                <th>Auth</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        spps.forEach(spp => {
+            html += `
+                <tr>
+                    <td><strong>${TB.utils.escapeHtml(spp.title)}</strong></td>
+                    <td class="text-muted text-sm">${TB.utils.escapeHtml(spp.name || spp.title)}</td>
+                    <td class="text-xs text-muted">${TB.utils.escapeHtml(spp.path)}</td>
+                    <td>
+                        ${spp.auth ?
+                            '<span class="text-success">Yes</span>' :
+                            '<span class="text-muted">No</span>'}
+                    </td>
+                    <td>
+                        <button class="action-btn btn-open-link" data-path="${TB.utils.escapeHtml(spp.path)}">
+                            <span class="material-symbols-outlined">open_in_new</span>
+                            Open
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div></div>';
+        content.innerHTML = html;
+    }
+
+    // ========== My Account ==========
+    async function loadMyAccountSection() {
+        const content = document.getElementById('my-account-content');
+        if (!content || !currentAdminUser) {
+            if (content) content.innerHTML = '<p class="text-error">Account details not available.</p>';
+            return;
+        }
+
+        const user = currentAdminUser;
+        const emailId = `email-section-${Date.now()}`;
+        const personaId = `persona-status-${Date.now()}`;
+
+        content.innerHTML = `
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">mail</span>Email Address</h3>
+                <div id="${emailId}" class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Current Email</div>
+                            <div class="setting-description">${user.email ? TB.utils.escapeHtml(user.email) : 'Not set'}</div>
+                        </div>
+                    </div>
+                    <div class="form-group mt-4">
+                        <label class="tb-label">New Email</label>
+                        <input type="email" name="new_email_admin" class="tb-input" value="${user.email ? TB.utils.escapeHtml(user.email) : ''}" placeholder="Enter new email">
+                    </div>
+                    <button class="tb-btn tb-btn-primary" onclick="updateAdminEmail()">
+                        <span class="material-symbols-outlined">save</span>
+                        Update Email
+                    </button>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">fingerprint</span>Persona Device (WebAuthn)</h3>
+                <div id="${personaId}">
+                    ${!user.is_persona ? `
+                        <p class="text-muted mb-4">Add a security key or biometric authentication for passwordless login.</p>
+                        <button id="registerPersonaBtnAdmin" class="tb-btn tb-btn-success">
+                            <span class="material-symbols-outlined">fingerprint</span>
+                            Add Persona Device
+                        </button>
+                        <div id="persona-result" class="mt-4"></div>
+                    ` : `
+                        <div class="setting-item" style="border-color: var(--color-success);">
+                            <div class="setting-info">
+                                <div class="setting-label text-success flex items-center gap-2">
+                                    <span class="material-symbols-outlined">verified_user</span>
+                                    Persona Configured
+                                </div>
+                                <div class="setting-description">WebAuthn is enabled for this account.</div>
+                            </div>
+                        </div>
+                    `}
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">badge</span>Account Info</h3>
+                <div class="settings-section">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Username</div>
+                            <div class="setting-description">${TB.utils.escapeHtml(user.name)}</div>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">User Level</div>
+                            <div class="setting-description">
+                                ${user.level} ${user.level === 0 ? '<span class="level-badge admin">Administrator</span>' : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">UID</div>
+                            <div class="setting-description text-xs">${TB.utils.escapeHtml(user.uid)}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">labs</span>Settings</h3>
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <div class="setting-label">Experimental Features</div>
+                        <div class="setting-description">Enable beta features</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="exp-features-toggle"
+                               ${user.settings?.experimental_features ? 'checked' : ''}
+                               onchange="updateAdminSetting('experimental_features', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        `;
+
+        // Setup Persona Registration
+        const personaBtn = document.getElementById('registerPersonaBtnAdmin');
+        if (personaBtn) {
+            personaBtn.addEventListener('click', async () => {
+                const resultDiv = document.getElementById('persona-result');
+                if (resultDiv) resultDiv.innerHTML = '<p class="text-muted">Initiating WebAuthn...</p>';
+
+                if (window.TB?.user && user.name) {
+                    const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name);
+                    if (result.success) {
+                        if (resultDiv) resultDiv.innerHTML = `<p class="text-success">${TB.utils.escapeHtml(result.message)}</p>`;
+                        TB.ui.Toast.showSuccess("Persona registered!");
+                        setTimeout(async () => {
+                            const updatedRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
+                            if (updatedRes.error === TB.ToolBoxError.none && updatedRes.get()) {
+                                currentAdminUser = updatedRes.get();
+                                await loadMyAccountSection();
+                            }
+                        }, 1500);
+                    } else {
+                        if (resultDiv) resultDiv.innerHTML = `<p class="text-error">${TB.utils.escapeHtml(result.message)}</p>`;
+                    }
+                } else {
+                    if (resultDiv) resultDiv.innerHTML = '<p class="text-error">WebAuthn not available.</p>';
+                }
+            });
+        }
+    }
+
+    window.updateAdminEmail = async function() {
+        const input = document.querySelector('[name="new_email_admin"]');
+        if (!input || !input.value) {
+            TB.ui.Toast.showWarning("Please enter an email.");
+            return;
+        }
+
+        TB.ui.Loader.show('Updating email...');
+        try {
+            const res = await TB.api.request('CloudM.UserAccountManager', 'update_email',
+                { new_email: input.value }, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Email updated!');
+                currentAdminUser.email = input.value;
+            } else {
+                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+            }
+        } catch (e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Network error.');
+        }
+    };
+
+    window.updateAdminSetting = async function(key, value) {
+        try {
+            const res = await TB.api.request('CloudM.UserAccountManager', 'update_setting', {
+                setting_key: key,
+                setting_value: String(value)
+            }, 'POST');
+            if (res.error === TB.ToolBoxError.none) {
+                if (!currentAdminUser.settings) currentAdminUser.settings = {};
+                currentAdminUser.settings[key] = value;
+                TB.ui.Toast.showSuccess('Setting saved!');
+            } else {
+                TB.ui.Toast.showError('Error saving setting.');
+            }
+        } catch (e) {
+            TB.ui.Toast.showError('Network error.');
+        }
+    };
+
+    // Make showSection global
+    window.showSection = showSection;
+
+    // ========== Toggle Switch Style (reuse from UserDashboard) ==========
+    const style = document.createElement('style');
+    style.textContent = `
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: var(--border-default);
+            transition: var(--duration-fast) var(--ease-default);
+            border-radius: var(--radius-full);
+        }
+        .toggle-slider::before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: var(--duration-fast) var(--ease-default);
+            border-radius: var(--radius-full);
+            box-shadow: var(--shadow-xs);
+        }
+        input:checked + .toggle-slider {
+            background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+        }
+        input:checked + .toggle-slider::before {
+            transform: translateX(22px);
+        }
+    `;
+    document.head.appendChild(style);
+
+    // ========== Start ==========
+    if (window.TB?.events && window.TB.config?.get('appRootId')) {
+        initializeAdminDashboard();
+    } else {
+        document.addEventListener('tbjs:initialized', initializeAdminDashboard, { once: true });
+    }
+}
+</script>
+"""
     return Result.html(html_content)
 
 

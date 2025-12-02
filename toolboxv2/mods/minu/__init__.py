@@ -140,7 +140,10 @@ async def render_view(
         )
 
     # Determine if SSR should be used
-    use_ssr = ssr is not None or format in ("html", "full-html")
+    use_ssr = ssr is not None or format in ("html")
+
+    if use_ssr:
+        format = "html"
 
     # Auto-detect format from request headers if "auto"
     if format == "auto":
@@ -307,21 +310,6 @@ async def render_view(
 # REMAINING ENDPOINTS (unchanged but updated for consistency)
 # ============================================================================
 
-@export(mod_name=Name, name="initialize_flows", initial=True)
-def initialize_flows(app: App) -> Result:
-    """Initialize module and register all views"""
-    # Register UI route
-    app.run_any(
-        ("CloudM", "add_ui"),
-        name="MinuFlows",
-        title="Minu UI Flows",
-        path=f"/api/{Name}/sync_flows",
-        description="Minu UI Framework Flows hub",
-        auth=True
-    )
-
-    return Result.ok(info="Minu UI Framework initialized")
-
 
 @export(mod_name=Name, name="sync_flows", api=True, version=version)
 async def sync_flow_uis(app: App) -> Result:
@@ -335,6 +323,154 @@ async def sync_flow_uis(app: App) -> Result:
         return Result.html(html_content)
     except Exception as e:
         return Result.default_internal_error(info=str(e))
+
+@export(
+    mod_name=Name,
+    name="list_flows",
+    api=True,
+    api_methods=["GET", "POST"],
+    version=version,
+    request_as_kwarg=True,
+)
+async def list_flows(
+    app: App, request: RequestData, only_custom_ui: bool = True, **kwargs
+) -> Result:
+    """
+    List all available flows for the dashboard.
+
+    Args:
+        only_custom_ui: If True, only return flows with custom UI (default: True)
+
+    Returns:
+        List of flow info objects with name, title, description, icon, path, auth
+
+    GET /api/Minu/list_flows
+    GET /api/Minu/list_flows?only_custom_ui=false
+    """
+
+    # 1. Load all flows
+    try:
+        from toolboxv2.flows import flows_dict
+
+        all_flows = flows_dict()
+    except Exception as e:
+        app.logger.error(f"[Minu] Could not load flows: {e}")
+        return Result.default_user_error(info=f"Could not load flows: {e}")
+
+    # 2. Load custom UIs
+    try:
+        from toolboxv2.flows import flows_dict as get_flows
+
+        custom_uis = get_flows(ui=True)
+    except:
+        custom_uis = {}
+
+    # 3. Build flow list
+    flows_list = []
+
+    for flow_name, run_func in all_flows.items():
+        has_custom_ui = flow_name in custom_uis
+
+        # Skip if only_custom_ui and no custom UI
+        if only_custom_ui and not has_custom_ui:
+            continue
+
+        # Extract docstring for description
+        doc = ""
+        if run_func.__doc__:
+            doc = run_func.__doc__.strip().split("\n")[0]
+            if len(doc) > 120:
+                doc = doc[:117] + "..."
+
+        # Build flow info
+        flow_info = {
+            "name": flow_name,
+            "title": flow_name.replace("_", " ").title(),
+            "description": doc or "Interactive Flow Application",
+            "icon": "account_tree",  # Default icon
+            "path": f"/api/Minu/render?view={flow_name}&ssr=True",
+            "auth": False,  # Can be extended to check flow-specific auth
+            "has_custom_ui": has_custom_ui,
+            "type": "flow",
+        }
+
+        # Check for custom metadata in the UI function
+        custom_ui_func = custom_uis.get(flow_name).get("ui")
+        if custom_ui_func and hasattr(custom_ui_func, "_minu_meta"):
+            meta = custom_ui_func._minu_meta
+            flow_info.update(
+                {
+                    "title": meta.get("title", flow_info["title"]),
+                    "description": meta.get("description", flow_info["description"]),
+                    "icon": meta.get("icon", flow_info["icon"]),
+                    "auth": meta.get("auth", flow_info["auth"]),
+                    "bg_img_url": meta.get("bg_img_url", flow_info["bg_img_url"])
+                }
+            )
+        flow_info.update(custom_uis.get(flow_name, {}))
+        del flow_info["ui"]
+
+        # Register the view if not already registered
+        if flow_name not in _view_registry:
+            try:
+                custom_ui = custom_uis.get(flow_name)
+
+                # Import here to avoid circular imports
+                from .flow_integration import FlowWrapperView
+
+                def make_init(fn, rf, cu):
+                    def __init__(self):
+                        FlowWrapperView.__init__(self, fn, rf, cu)
+
+                    return __init__
+
+                DynamicView = type(
+                    f"FlowView_{flow_name}",
+                    (FlowWrapperView,),
+                    {"__init__": make_init(flow_name, run_func, custom_ui)},
+                )
+
+                register_view(flow_name, DynamicView)
+
+            except Exception as e:
+                app.logger.warning(f"[Minu] Could not register view for {flow_name}: {e}")
+
+        flows_list.append(flow_info)
+
+    # 4. Sort by title
+    flows_list.sort(key=lambda x: x["title"].lower())
+
+    return Result.ok(data=flows_list)
+
+
+# ============================================================================
+# DECORATOR FÜR FLOW METADATA
+# ============================================================================
+
+
+def flow_ui_meta(
+    title: str = None, description: str = None, icon: str = None, auth: bool = False, bg_img_url: str = None
+):
+    """
+    Decorator to add metadata to a flow UI function.
+
+    Usage in your flow file:
+        @flow_ui_meta(title="My Cool App", icon="rocket", auth=True)
+        def ui(view):
+            return Column(...)
+    """
+
+    def decorator(func):
+        func._minu_meta = {
+            "title": title,
+            "description": description,
+            "icon": icon,
+            "auth": auth,
+            "bg_img_url": bg_img_url
+        }
+        return func
+
+    return decorator
 
 
 @export(
@@ -480,10 +616,12 @@ def register_ui_websocket(app: App):
     async def on_message(
         payload: dict, session_data: Dict[str, Any], conn_id=None, **kwargs
     ):
+        """Handle incoming WebSocket messages."""
         conn_id = conn_id or session_data.get("connection_id", "unknown")
         session = _sessions.get(conn_id)
 
         if not session:
+            app.logger.warning(f"[Minu] No session for connection: {conn_id}")
             return
 
         try:
@@ -495,7 +633,8 @@ def register_ui_websocket(app: App):
 
                 if view_class:
                     view = view_class()
-                    # Apply props if provided
+
+                    # Props anwenden
                     props = payload.get("props", {})
                     if props:
                         for key, value in props.items():
@@ -506,26 +645,50 @@ def register_ui_websocket(app: App):
 
                     session.register_view(view)
                     await session.send_full_render(view)
-                    await session.force_flush()
                 else:
                     await app.ws_send(
                         conn_id,
-                        {
-                            "type": "error",
-                            "message": f"View '{view_name}' not found"
-                        }
+                        {"type": "error", "message": f"View '{view_name}' not found"},
                     )
 
             elif msg_type == "event":
-                await session.handle_event(payload)
+                view_id = payload.get("viewId")
+                handler_name = payload.get("handler")
+                event_payload = payload.get("payload", {})
 
+                # Event verarbeiten
+                result = await session.handle_event(payload)
+
+                # Prüfe ob es ein Error gab
+                if isinstance(result, dict) and result.get("error"):
+                    await app.ws_send(
+                        conn_id,
+                        {
+                            "type": "event_result",
+                            "viewId": view_id,
+                            "handler": handler_name,
+                            "result": result,
+                        },
+                    )
+                    return
+
+                # Für Flow-Views: Komplettes Re-Render senden
+                # weil sich der gesamte UI-State ändern kann
+                view = session.get_view(view_id)
+                if view:
+                    # Re-Render senden
+                    await session.send_full_render(view)
+
+                # Event-Result senden
                 await app.ws_send(
                     conn_id,
                     {
                         "type": "event_result",
-                        "viewId": payload.get("viewId"),
-                        "handler": payload.get("handler"),
-                        "result": {"success": True},
+                        "viewId": view_id,
+                        "handler": handler_name,
+                        "result": result
+                        if isinstance(result, dict)
+                        else {"success": True},
                     },
                 )
 
@@ -536,14 +699,23 @@ def register_ui_websocket(app: App):
 
                 view = session.get_view(view_id)
                 if view:
+                    # State-Pfad parsen und updaten
                     parts = path.split(".")
                     state_name = parts[-1] if len(parts) == 1 else parts[0]
+
                     if hasattr(view, state_name):
-                        getattr(view, state_name).value = value
-                        await session.force_flush()
+                        state_attr = getattr(view, state_name)
+                        if hasattr(state_attr, "value"):
+                            state_attr.value = value
+
+                    # Patches flushen
+                    await session.force_flush()
 
         except Exception as e:
-            app.logger.error(f"[Minu] WebSocket error: {e}", exc_info=True)
+            import traceback
+
+            traceback.print_exc()
+            app.logger.error(f"[Minu] WebSocket error: {e}")
             await app.ws_send(conn_id, {"type": "error", "message": str(e)})
 
     async def on_disconnect(session_data: Dict[str, Any], conn_id=None, **kwargs):

@@ -25,7 +25,7 @@ to_api = export(mod_name=Name, api=True, version=version)
 # =================== UI Management ===================
 
 @no_test
-def add_ui(app: App, name: str, title: str, path: str, description: str, auth: bool = False):
+def add_ui(app: App, name: str, title: str, path: str, description: str, auth: bool = False, icon: str = "apps", bg_img_url: Optional[str] = None):
     """
     Register a UI component in the CloudM UI registry.
 
@@ -46,7 +46,9 @@ def add_ui(app: App, name: str, title: str, path: str, description: str, auth: b
         "auth": auth,
         "path": path,
         "title": title,
-        "description": description
+        "description": description,
+        "icon": icon,
+        "bg_img_url": bg_img_url
     }
     app.config_fh.add_to_save_file_handler("CloudM::UI", json.dumps(uis))
 
@@ -451,3 +453,6 @@ def initialize_admin_panel(app: App):
         }
     ).set_origin("CloudM.initialize_admin_panel")
 
+def cleanup_dashboard_api(app: App):
+    """Entfernt UIs beim Entladen des Moduls."""
+    app.run_any(("CloudM", "remove_ui"), name="UserDashboard")

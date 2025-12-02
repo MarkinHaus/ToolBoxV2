@@ -198,6 +198,78 @@ jobs:
           path: release-artifacts/bin/*
 
   # ============================================================================
+  # RUST SERVER BUILD
+  # ============================================================================
+
+  build-blob_db-server:
+    name: Rust Server Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: simple-core-server-linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: simple-core-server-linux-arm64
+            cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: simple-core-server-windows-x64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: simple-core-server-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: simple-core-server-macos-arm64
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (for cross-compilation)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build with cross
+        if: matrix.cross
+        working-directory: ./toolboxv2/r_blob_db
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build native
+        if: ${{ !matrix.cross }}
+        working-directory: ./toolboxv2/r_blob_db
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        if: ${{ !matrix.cross }}
+        working-directory: ./toolboxv2/r_blob_db
+        run: cargo test --release
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p release-artifacts/bin
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp ./toolboxv2/r_blob_db/target/${{ matrix.target }}/release/r_blob_db.exe release-artifacts/bin/${{ matrix.artifact_name }}
+          else
+            cp ./toolboxv2/r_blob_dbe/target/${{ matrix.target }}/release/r_blob_db release-artifacts/bin/${{ matrix.artifact_name }}
+            chmod +x release-artifacts/bin/${{ matrix.artifact_name }}
+          fi
+
+      - name: Upload Rust server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-server-${{ matrix.target }}
+          path: release-artifacts/bin/*
+
+  # ============================================================================
   # TBLANG COMPILER BUILD (from toolboxv2/tb-exc/src)
   # ============================================================================
 
@@ -808,6 +880,7 @@ jobs:
       - build-python
       - build-python-nuitka
       - build-rust-server
+      - build-blob_db-server
       - build-tblang
       - build-zile
       - build-browser-extension

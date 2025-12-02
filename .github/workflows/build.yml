@@ -214,6 +214,48 @@ jobs:
         working-directory: ./toolboxv2/tb-exc/src
         run: cargo test
         continue-on-error: true
+  # ============================================================================
+  # r_DB BUILD & TEST
+  # ============================================================================
+
+  r_blob_db:
+    name: TBLang Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for TBLang project
+        id: check
+        shell: bash
+        run: |
+          if [ -f "./toolboxv2/r_blob_db/Cargo.toml" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          elif [ -f "./toolboxv2/r_blob_dbCargo.toml" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install Rust toolchain
+        if: steps.check.outputs.exists == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Blob DB
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/r_blob_db
+        run: cargo build --release
+        continue-on-error: true
+
+      - name: Test Blob DB
+        if: steps.check.outputs.exists == 'true'
+        working-directory: ./toolboxv2/r_blob_db
+        run: cargo test
+        continue-on-error: true
 
   # ============================================================================
   # BROWSER EXTENSION BUILD
@@ -498,6 +540,7 @@ jobs:
       - test-root
       - rust-server
       - tblang
+      - r_blob_db
       - browser-extension
       - nuitka-build
     if: always()

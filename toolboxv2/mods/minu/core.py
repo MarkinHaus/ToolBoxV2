@@ -415,6 +415,64 @@ def Input(
     return input_comp
 
 
+def Textarea(
+    placeholder: str = "",
+    value: str = "",
+    bind: str | None = None,
+    on_change: str | None = None,
+    on_submit: str | None = None,
+    label: str | None = None,
+    rows: int | None = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """
+    Multiline textarea component with optional label, bindings and events.
+
+    Usage:
+        Textarea(
+            placeholder="Enter description",
+            bind="user.bio",
+            rows=4,
+            on_change="handle_bio_change"
+        )
+    """
+    events = {}
+    if on_change:
+        events["change"] = on_change
+    if on_submit:
+        events["submit"] = on_submit
+
+    bindings = {"value": bind} if bind else {}
+
+    textarea_props = {
+        "placeholder": placeholder,
+        "value": value,
+        "inputType": "textarea",  # falls dein Renderer das unterscheidet
+        **props,
+    }
+
+    if rows:
+        textarea_props["rows"] = rows
+
+    textarea_comp = Component(
+        type=ComponentType.TEXTAREA if hasattr(ComponentType, "TEXTAREA") else ComponentType.INPUT,
+        props=textarea_props,
+        className=className,
+        events=events,
+        bindings=bindings,
+    )
+
+    if label:
+        return Column(
+            Text(label, className="text-sm font-medium mb-1"),
+            textarea_comp,
+            className="form-field",
+        )
+
+    return textarea_comp
+
+
 def Select(
     options: List[Dict[str, str]],
     value: str = "",
@@ -871,14 +929,31 @@ class MinuView:
             # FIX: Only mark dirty, do not schedule async task
             self._session._mark_dirty(self)
 
+
     def to_dict(self) -> Dict[str, Any]:
-        rendered = self.render()
-        return {
-            "viewId": self._view_id,
-            "component": rendered.to_dict(),
-            "state": {name: state.value for name, state in self._state_attrs.items()},
-            "handlers": self._get_handlers(),
-        }
+        """Serialize view to dict, setting context for callback registration."""
+        # Setze den aktuellen View-Context für Callback-Registrierung
+        try:
+            from .flows import set_current_view, clear_current_view
+            set_current_view(self)
+        except ImportError:
+            pass
+
+        try:
+            rendered = self.render()
+            return {
+                "viewId": self._view_id,
+                "component": rendered.to_dict(),
+                "state": {name: state.value for name, state in self._state_attrs.items()},
+                "handlers": self._get_handlers(),
+            }
+        finally:
+            # Context aufräumen
+            try:
+                from .flows import clear_current_view
+                clear_current_view()
+            except ImportError:
+                pass
 
     def _get_handlers(self) -> List[str]:
         handlers = []
@@ -900,6 +975,31 @@ class MinuView:
             })
         self._pending_changes.clear()
         return patches
+
+    def __getattr__(self, name: str):
+        """
+        Fallback für dynamisch registrierte Callback-Handler.
+        Sucht in der lokalen _callback_registry wenn vorhanden.
+        """
+        # Verhindere Rekursion bei internen Attributen
+        if name.startswith('_'):
+            raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
+        # Prüfe ob wir eine callback_registry haben
+        if '_callback_registry' in self.__dict__:
+            registry = self.__dict__['_callback_registry']
+            if hasattr(registry, 'get'):
+                callback = registry.get(name)
+                if callback:
+                    import asyncio
+                    async def async_wrapper(event, cb=callback):
+                        result = cb(event)
+                        if asyncio.iscoroutine(result):
+                            result = await result
+                        return result
+                    return async_wrapper
+
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
 
 # ============================================================================
@@ -973,7 +1073,9 @@ class MinuSession:
         message = {"type": "render", "sessionId": self.session_id, "view": view.to_dict()}
         await self._send(json.dumps(message))
 
+
     async def handle_event(self, event_data: Dict[str, Any]):
+        """Handle an event from the client with improved callback lookup."""
         view_id = event_data.get("viewId")
         handler_name = event_data.get("handler")
         payload = event_data.get("payload", {})
@@ -982,22 +1084,42 @@ class MinuSession:
         if not view:
             return {"error": f"View {view_id} not found"}
 
+        # 1. Versuche Handler direkt auf der View zu finden
         handler = getattr(view, handler_name, None)
+
+        # 2. Wenn nicht gefunden, prüfe _callback_registry der View
+        if handler is None and hasattr(view, '_callback_registry'):
+            callback = view._callback_registry.get(handler_name)
+            if callback:
+                async def handler(event, cb=callback):
+                    result = cb(event)
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                    return result
+
+        # 3. Prüfe ob es ein dynamischer Handler ist (via __getattr__)
+        if handler is None:
+            try:
+                handler = getattr(view, handler_name)
+            except AttributeError:
+                pass
+
         if not handler or not callable(handler):
-            return {"error": f"Handler {handler_name} not found"}
+            return {"error": f"Handler '{handler_name}' not found on view '{view_id}'"}
 
         try:
             result = handler(payload)
             if asyncio.iscoroutine(result):
                 result = await result
 
-            # FIX: Explicitly flush updates before returning/closing loop
+            # Wichtig: Updates flushen
             await self.force_flush()
 
             return {"success": True, "result": result}
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}
-
 
 
 def minu_handler(view_class: type):
@@ -1064,5 +1186,3 @@ __all__ = [
     # Integration
     "minu_handler",
 ]
-
-

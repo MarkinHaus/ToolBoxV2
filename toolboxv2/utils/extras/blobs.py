@@ -302,6 +302,9 @@ class ApiKeyHandler(metaclass=Singleton):
         except Exception as e:
             get_logger().error(f"Failed to load API keys: {e}")
             self._keys = {}
+            import traceback
+            get_logger().error(traceback.format_exc())
+            exit(1)
 
     def _save_keys(self):
         try:

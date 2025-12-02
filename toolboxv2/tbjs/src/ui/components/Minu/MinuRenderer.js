@@ -265,7 +265,7 @@ class MinuRenderer {
                 el.className = comp.className || '';
                 el.style.display = 'flex';
                 el.style.flexDirection = 'row';
-                el.style.flexWrap = 'wrap';
+                el.style.flexWrap = 'initial';
                 el.style.gap = `var(--space-${gap})`;
                 el.style.alignItems = align === 'center' ? 'center' :
                                       align === 'start' ? 'flex-start' : 'flex-end';
@@ -838,7 +838,6 @@ class MinuRenderer {
     tabList.style.borderBottom = 'var(--border-width) solid var(--border-default)';
     tabList.style.marginBottom = 'var(--space-4)';
     tabList.style.overflowX = 'auto';
-    tabList.style.scrollbarWidth = 'none';
     tabList.setAttribute('role', 'tablist');
 
     // Content Area

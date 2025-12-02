@@ -78,6 +78,6 @@ def flows_dict(s='.py', remote=False, dir_path=None, flows_dict_=None, ui=False)
                             and callable(module.ui)
                             and hasattr(module, "NAME")
                         ):
-                            flows_dict_[module.NAME] = module.ui
+                            flows_dict_[module.NAME] = { 'ui':module.ui, 'icon': getattr(module, "ICON", "apps"), 'auth': getattr(module, "AUTH", False), 'bg_img_url': getattr(module, "BG_IMG_URL", None) }
 
         return flows_dict_

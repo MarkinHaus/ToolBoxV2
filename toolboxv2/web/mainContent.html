@@ -1,250 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Applications</title>
+
+    <!-- TBJS Styles -->
+    <link rel="stylesheet" href="/tbjs/src/styles/tbjs-main.css">
+
     <style>
-        .endpoint-card {
-            background: rgba(255, 255, 255, 0.2);
-            margin: 10px 0;
-            padding: 15px;
-            border-radius: 8px;
-            transition: transform 0.2s, background 0.2s, opacity 0.3s; /* Added opacity transition */
-            cursor: pointer;
+        /* ============================================================
+           Dashboard-spezifische Styles (nutzen TBJS Variablen)
+           ============================================================ */
+
+        .dashboard {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: var(--space-6) var(--space-5);
         }
 
-        .endpoint-card:hover {
-            transform: translateY(-2px);
-            background: rgba(255, 255, 255, 0.3);
+        /* Header */
+        .dashboard-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: var(--space-6);
+            flex-wrap: wrap;
+            gap: var(--space-4);
         }
 
-        /* Style for hidden cards during search */
-        .endpoint-card.hidden {
-            opacity: 0;
-            height: 0;
-            padding: 0;
+        .dashboard-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+
+        .dashboard-title h1 {
+            font-size: var(--text-3xl);
+            font-weight: var(--weight-bold);
+            color: var(--text-primary);
             margin: 0;
+        }
+
+        .dashboard-badge {
+            background: var(--interactive-muted);
+            color: var(--interactive);
+            padding: var(--space-1) var(--space-3);
+            border-radius: var(--radius-md);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-semibold);
+        }
+
+        /* Search */
+        .search-container {
+            position: relative;
+            width: 100%;
+            max-width: 360px;
+            order: 3;
+        }
+
+        .search-container .material-symbols-outlined {
+            position: absolute;
+            left: var(--space-4);
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 20px;
+            pointer-events: none;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: var(--space-3) var(--space-4) var(--space-3) var(--space-10);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            font-size: var(--text-base);
+            font-family: var(--font-sans);
+            transition:
+                border-color var(--duration-fast) var(--ease-default),
+                box-shadow var(--duration-fast) var(--ease-default);
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--interactive);
+            box-shadow: 0 0 0 3px oklch(from var(--interactive) l c h / 0.15);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Filter Tabs */
+        .filter-tabs {
+            display: flex;
+            gap: var(--space-2);
+            margin-bottom: var(--space-5);
+            flex-wrap: wrap;
+        }
+
+        .filter-tab {
+            padding: var(--space-2) var(--space-4);
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-md);
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            font-size: var(--text-sm);
+            font-weight: var(--weight-medium);
+            font-family: var(--font-sans);
+            cursor: pointer;
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .filter-tab:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+            background: var(--bg-elevated);
+        }
+
+        .filter-tab.active {
+            background: var(--interactive);
+            border-color: var(--interactive);
+            color: var(--text-inverse);
+            box-shadow: var(--shadow-primary);
+        }
+
+        /* App Grid - Dynamisch */
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(var(--grid-min-width, 320px), 1fr));
+            gap: var(--space-4);
+        }
+
+        /* Grid Size Controls */
+        .grid-controls {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            margin-left: auto;
+        }
+
+        .grid-controls span {
+            color: var(--text-muted);
+            font-size: var(--text-sm);
+        }
+
+        .grid-size-btn {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: var(--border-width) solid var(--border-default);
+            border-radius: var(--radius-sm);
+            background: var(--bg-surface);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--duration-fast) var(--ease-default);
+        }
+
+        .grid-size-btn:hover {
+            border-color: var(--border-strong);
+            color: var(--text-primary);
+        }
+
+        .grid-size-btn.active {
+            background: var(--interactive);
+            border-color: var(--interactive);
+            color: var(--text-inverse);
+        }
+
+        .grid-size-btn .material-symbols-outlined {
+            font-size: 18px;
+        }
+
+        /* Grid Variants */
+        .app-grid[data-size="compact"] {
+            --grid-min-width: 240px;
+        }
+
+        .app-grid[data-size="normal"] {
+            --grid-min-width: 320px;
+        }
+
+        .app-grid[data-size="large"] {
+            --grid-min-width: 400px;
+        }
+
+        /* Compact Card Adjustments */
+        .app-grid[data-size="compact"] .app-card {
+            padding: var(--space-3);
+            gap: var(--space-3);
+        }
+
+        .app-grid[data-size="compact"] .app-icon {
+            width: 40px;
+            height: 40px;
+        }
+
+        .app-grid[data-size="compact"] .app-icon .material-symbols-outlined {
+            font-size: 20px;
+        }
+
+        .app-grid[data-size="compact"] .app-title {
+            font-size: var(--text-sm);
+        }
+
+        .app-grid[data-size="compact"] .app-desc {
+            font-size: var(--text-xs);
+            -webkit-line-clamp: 1;
+        }
+
+        /* Large Card Adjustments */
+        .app-grid[data-size="large"] .app-card {
+            padding: var(--space-6);
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .app-grid[data-size="large"] .app-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto var(--space-3);
+        }
+
+        .app-grid[data-size="large"] .app-icon .material-symbols-outlined {
+            font-size: 32px;
+        }
+
+        .app-grid[data-size="large"] .app-header {
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .app-grid[data-size="large"] .app-desc {
+            -webkit-line-clamp: 3;
+        }
+
+        /* App Card */
+        .app-card {
+            display: flex;
+            gap: var(--space-4);
+            padding: var(--space-5);
+            background: var(--bg-surface);
+            border: var(--border-width) solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+
+            box-shadow: var(--highlight-subtle), var(--shadow-sm);
+            transition:
+                transform var(--duration-normal) var(--ease-default),
+                box-shadow var(--duration-normal) var(--ease-default),
+                border-color var(--duration-fast) var(--ease-default);
+        }
+
+        .app-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--interactive);
+            box-shadow: var(--highlight-subtle), var(--shadow-md);
+        }
+
+        .app-card:active {
+            transform: translateY(0);
+        }
+
+        .app-card.hidden {
+            display: none;
+        }
+
+        /* App Icon */
+        .app-icon {
+            width: 52px;
+            height: 52px;
+            background: var(--interactive-muted);
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .app-icon .material-symbols-outlined {
+            font-size: 26px;
+            color: var(--interactive);
+        }
+
+        /* App Content */
+        .app-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .app-header {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            margin-bottom: var(--space-1);
+        }
+
+        .app-title {
+            font-size: var(--text-base);
+            font-weight: var(--weight-semibold);
+            color: var(--text-primary);
+            white-space: nowrap;
             overflow: hidden;
-            pointer-events: none; /* Prevent interaction with hidden cards */
+            text-overflow: ellipsis;
+            margin: 0;
         }
 
-        .endpoint-title {
-            color: var(--text-primary);
-            font-size: 1.2rem;
-            margin-bottom: 10px;
+        .app-type-badge {
+            font-size: var(--text-xs);
+            padding: 2px var(--space-2);
+            border-radius: var(--radius-sm);
+            font-weight: var(--weight-medium);
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+            flex-shrink: 0;
         }
 
-        .endpoint-description {
-            color: #34495e; /* Consider var(--text-secondary-color) or similar */
-            font-size: 0.9rem;
+        .app-type-badge.flow {
+            background: oklch(90% 0.1 230);
+            color: oklch(45% 0.15 230);
         }
 
-        .section-title {
-            color: var(--text-primary);
-            margin: 20px 0;
+        .app-type-badge.auth {
+            background: oklch(90% 0.1 85);
+            color: oklch(45% 0.15 85);
         }
 
-        .loading {
+        [data-theme="dark"] .app-type-badge.flow {
+            background: oklch(25% 0.08 230);
+            color: oklch(75% 0.12 230);
+        }
+
+        [data-theme="dark"] .app-type-badge.auth {
+            background: oklch(25% 0.08 85);
+            color: oklch(75% 0.12 85);
+        }
+
+        .app-desc {
+            font-size: var(--text-sm);
+            color: var(--text-secondary);
+            line-height: var(--leading-normal);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            margin: 0;
+        }
+
+        /* Empty State */
+        .empty-state {
             text-align: center;
-            padding: 20px;
-            color: var(--theme-accent, #666); /* Use theme variable if available */
-        }
-        .error {
-            text-align: center;
-            padding: 20px;
-            color: var(--error-color, red);
+            padding: var(--space-12) var(--space-6);
+            color: var(--text-muted);
         }
 
-        /* Search input styling */
-        #app-search-input {
-            width: calc(100% - 22px); /* Full width minus padding */
-            padding: 10px;
-            margin-bottom: 20px;
-            border: 1px solid var(--theme-accent, #ccc);
-            border-radius: 4px;
-            font-size: 1rem;
-            background-color: rgba(255, 255, 255, 0.3);
-            color: var(--text-primary);
+        .empty-state .material-symbols-outlined {
+            font-size: 56px;
+            margin-bottom: var(--space-4);
+            opacity: 0.4;
         }
-        #app-search-input::placeholder {
-            color: var(--text-secondary-color, #777);
+
+        .empty-state p {
+            font-size: var(--text-lg);
+            margin: 0;
+        }
+
+        /* Loading State */
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-4);
+            padding: var(--space-12) var(--space-6);
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid var(--border-default);
+            border-top-color: var(--interactive);
+            border-radius: var(--radius-full);
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media screen and (max-width: 767px) {
+            .dashboard {
+                padding: var(--space-4) var(--space-3);
+            }
+
+            .dashboard-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .dashboard-title h1 {
+                font-size: var(--text-2xl);
+            }
+
+            .grid-controls {
+                order: 2;
+                justify-content: flex-start;
+                margin-left: 0;
+            }
+
+            .search-container {
+                max-width: none;
+                order: 1;
+            }
+
+            .app-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .app-grid[data-size="large"] {
+                grid-template-columns: 1fr;
+            }
+
+            .app-card {
+                padding: var(--space-4);
+            }
+
+            .app-icon {
+                width: 44px;
+                height: 44px;
+            }
+
+            .app-icon .material-symbols-outlined {
+                font-size: 22px;
+            }
+        }
+
+        @media screen and (min-width: 768px) and (max-width: 1023px) {
+            .app-grid[data-size="large"] {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
     </style>
+</head>
+<body>
+    <div class="content-wrapper">
+        <main class="dashboard main-content glass">
+            <!-- Header -->
+            <header class="dashboard-header">
+                <div class="dashboard-title">
+                    <h1>Applications</h1>
+                    <span class="dashboard-badge" id="app-count">Loading...</span>
+                </div>
 
-    <div class="main-content frosted-glass">
-        <h2 class="section-title">Available Apps</h2>
+                <div class="grid-controls">
+                    <span>View:</span>
+                    <button class="grid-size-btn" data-size="compact" title="Compact view">
+                        <span class="material-symbols-outlined">grid_view</span>
+                    </button>
+                    <button class="grid-size-btn active" data-size="normal" title="Normal view">
+                        <span class="material-symbols-outlined">view_module</span>
+                    </button>
+                    <button class="grid-size-btn" data-size="large" title="Large view">
+                        <span class="material-symbols-outlined">view_agenda</span>
+                    </button>
+                </div>
 
-        <!-- Search Input Field -->
-        <input type="text" id="app-search-input" placeholder="Search apps by title or description..." aria-label="Search apps">
+                <div class="search-container">
+                    <span class="material-symbols-outlined">search</span>
+                    <input
+                        type="text"
+                        class="search-input"
+                        id="search"
+                        placeholder="Search apps... (Ctrl+K)"
+                        autocomplete="off"
+                        aria-label="Search applications"
+                    >
+                </div>
+            </header>
 
-        <div id="endpoints-container">
-            <div class="loading">Loading Apps...</div>
-        </div>
+            <!-- Filter Tabs -->
+            <nav class="filter-tabs" id="filter-tabs" role="tablist">
+                <button class="filter-tab active" data-filter="all" role="tab" aria-selected="true">All</button>
+                <button class="filter-tab" data-filter="app" role="tab" aria-selected="false">Apps</button>
+                <button class="filter-tab" data-filter="flow" role="tab" aria-selected="false">Flows</button>
+            </nav>
 
-        <hr style="margin: 20px 0; border-color: var(--border-color, #ccc);"/>
-        <a href="/web/core0/Installer.html" style="color: var(--link-color, blue);">Installer</a><br/>
+            <!-- App Grid -->
+            <div class="app-grid" id="app-grid">
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <span>Loading applications...</span>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div class="empty-state" id="empty-state" style="display: none;">
+                <span class="material-symbols-outlined">search_off</span>
+                <p>No applications found</p>
+            </div>
+        </main>
     </div>
 
-    <script unsave="true">
-      // This script will be processed by the router's script handling logic.
-      // It will execute in the global scope.
-      (function() { // IIFE to keep scope clean
-        const TB_INSTANCE = window.TB;
+    <script unSave="true">
+        window.TB.onLoaded(() => {
+            (function () {
+                'use strict';
 
-        if (!TB_INSTANCE) {
-            console.error("[mainContent.html] TB instance not found. App functionality may be limited.");
-            return;
-        }
+                // ============================================================
+                // Configuration
+                // ============================================================
+                const CONFIG = {
+                    cloudmEndpoint: '/api/CloudM/openui',
+                    minuFlowsEndpoint: '/api/Minu/list_flows'
+                };
 
-        let allFetchedEndpoints = []; // Store all fetched endpoints for filtering
+                // ============================================================
+                // State
+                // ============================================================
+                let allApps = [];
+                let currentFilter = 'all';
+                let searchTerm = '';
 
-        async function fetchUIEndpoints() {
-            try {
-                const responseData = await TB_INSTANCE.api.httpPostUrl('CloudM', 'openui');
-                const data = (typeof responseData.json === 'function') ? await responseData.json() : responseData;
+                // ============================================================
+                // DOM References
+                // ============================================================
+                const elements = {
+                    grid: document.getElementById('app-grid'),
+                    count: document.getElementById('app-count'),
+                    search: document.getElementById('search'),
+                    empty: document.getElementById('empty-state'),
+                    tabs: document.getElementById('filter-tabs'),
+                    gridSizeBtns: document.querySelectorAll('.grid-size-btn')
+                };
 
-                if (data && data.result && data.result.data) {
-                    return data.result.data;
+                // ============================================================
+                // Helpers
+                // ============================================================
+
+                function isAuthenticated() {
+                    // Check TB session
+                    if (window.TB?.user?.isAuthenticated) {
+                        return window.TB.user.isAuthenticated();
+                    }
+                    console.warn('[Dashboard] TB.user not available for auth check', window.TB?.user, window.TB?.user?.isAuthenticated, window.TB?.user?.isAuthenticated());
+                    return false;
                 }
-                TB_INSTANCE.logger.warn('[mainContent.html] Unexpected API response structure:', data);
-                return null;
-            } catch (error) {
-                TB_INSTANCE.logger.error('[mainContent.html] Error fetching UI endpoints:', error);
-                return null;
-            }
-        }
 
-        function createEndpointCard(endpoint) {
-            const card = document.createElement('div');
-            card.className = 'endpoint-card';
-            card.setAttribute('role', 'button');
-            card.setAttribute('tabindex', '0');
-            card.onclick = () => TB_INSTANCE.router.navigateTo(endpoint.path);
-            card.onkeypress = (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    TB_INSTANCE.router.navigateTo(endpoint.path);
+                function escapeHtml(text) {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
                 }
-            };
 
-            const titleText = endpoint.title || 'Untitled Page';
-            const descriptionText = endpoint.description || 'No description available.';
+                // ============================================================
+                // API Calls
+                // ============================================================
 
-            const title = document.createElement('h3');
-            title.className = 'endpoint-title';
-            title.textContent = titleText;
+                async function fetchCloudMApps() {
+                    try {
+                        let response;
 
-            const description = document.createElement('p');
-            description.className = 'endpoint-description';
-            description.textContent = descriptionText;
+                        // Try TB API first if available
+                        if (window.TB?.api?.httpPostUrl) {
+                            const result = await window.TB.api.httpPostUrl('CloudM', 'openui');
+                            const data = typeof result.json === 'function' ? await result.json() : result;
+                            return data?.result?.data || data?.data || data || [];
+                        }
 
-            card.appendChild(title);
-            card.appendChild(description);
+                        // Fallback to fetch
+                        response = await fetch(CONFIG.cloudmEndpoint, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            credentials: 'include'
+                        });
 
-            // Store searchable text directly on the element for easier filtering
-            card.dataset.searchableText = `${titleText} ${descriptionText}`.toLowerCase();
+                        if (!response.ok) throw new Error('Failed to fetch');
 
-            return card;
-        }
+                        const data = await response.json();
+                        const apps = data?.result?.data || data?.data || data || [];
 
-        function renderEndpoints(endpointsToRender) {
-            const container = document.getElementById('endpoints-container');
-            if (!container) {
-                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' not found for rendering.");
-                return;
-            }
-            container.innerHTML = ''; // Clear previous content (or loading/error)
+                        return Array.isArray(apps) ? apps : Object.values(apps);
+                    } catch (error) {
+                        console.error('[Dashboard] CloudM fetch error:', error);
+                        return [];
+                    }
+                }
 
-            if (!endpointsToRender || endpointsToRender.length === 0) {
-                const currentSearchTerm = document.getElementById('app-search-input')?.value || "";
-                if (currentSearchTerm) {
-                    container.innerHTML = '<div>No apps match your search criteria.</div>';
+                async function fetchMinuFlows() {
+                    try {
+                        const response = await fetch(CONFIG.minuFlowsEndpoint, {
+                            method: 'GET',
+                            credentials: 'include'
+                        });
+
+                        if (!response.ok) return [];
+
+                        const data = await response.json();
+                        return data?.result?.data || data?.flows || [];
+                    } catch (error) {
+                        // Endpoint might not exist
+                        console.debug('[Dashboard] Minu flows not available');
+                        return [];
+                    }
+                }
+
+                // ============================================================
+                // Rendering
+                // ============================================================
+
+                function createAppCard(app) {
+                    const isFlow = app.type === 'flow';
+                    const requiresAuth = app.auth === true;
+                    const hasBg = !!app.bg_img_url;
+
+                    let badges = '';
+                    if (isFlow) {
+                        badges += '<span class="app-type-badge flow">Flow</span>';
+                    }
+                    if (requiresAuth) {
+                        badges += '<span class="app-type-badge auth">🔒</span>';
+                    }
+
+                    const title = escapeHtml(app.title || app.name || 'Untitled');
+                    const desc = escapeHtml(app.description || 'No description');
+                    const icon = app.icon || (isFlow ? 'account_tree' : 'apps');
+                    const searchText = `${title} ${desc}`.toLowerCase();
+
+                    // Style Logic für optionales Hintergrundbild
+                    let cardStyle = '';
+                    let contentStyle = '';
+                    let iconContainerStyle = '';
+                    let iconColorStyle = '';
+
+                    if (hasBg) {
+                        // Overlay + Bild
+                        cardStyle = `background-image: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.85)), url('${escapeHtml(app.bg_img_url)}'); background-size: cover; background-position: center; border-color: transparent;`;
+                        // Text lesbar machen (Weiß mit Schatten)
+                        contentStyle = `color: #ffffff; text-shadow: 0 1px 2px rgba(0,0,0,0.6);`;
+                        // Icon Box anpassen (Glassmorphism effekt)
+                        iconContainerStyle = `background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.3);`;
+                        iconColorStyle = `color: #ffffff;`;
+                    }
+
+                    return `
+                    <a href="${escapeHtml(app.path)}"
+                       class="app-card"
+                       style="${cardStyle}"
+                       data-type="${app.type || 'app'}"
+                       data-search="${searchText}"
+                       data-auth="${requiresAuth}">
+                        <div class="app-icon" style="${iconContainerStyle}">
+                            <span class="material-symbols-outlined" style="${iconColorStyle}">${escapeHtml(icon)}</span>
+                        </div>
+                        <div class="app-content" style="${contentStyle}">
+                            <div class="app-header">
+                                <h3 class="app-title" style="${hasBg ? 'color: #fff;' : ''}">${title}</h3>
+                                ${badges}
+                            </div>
+                            <p class="app-desc" style="${hasBg ? 'color: rgba(255,255,255,0.9);' : ''}">${desc}</p>
+                        </div>
+                    </a>
+                    `;
+                }
+
+                function renderApps() {
+                    const authenticated = isAuthenticated();
+                    const term = searchTerm.toLowerCase().trim();
+
+                    // Filter
+                    const filtered = allApps.filter(app => {
+                        // Auth filter: hide auth-required apps if not logged in
+                        if (app.auth && !authenticated) return false;
+
+                        // Type filter
+                        if (currentFilter !== 'all' && app.type !== currentFilter) return false;
+
+                        // Search filter
+                        if (term) {
+                            const text = `${app.title || ''} ${app.description || ''}`.toLowerCase();
+                            if (!text.includes(term)) return false;
+                        }
+
+                        return true;
+                    });
+
+                    // Sort alphabetically
+                    filtered.sort((a, b) =>
+                        (a.title || a.name || '').localeCompare(b.title || b.name || '')
+                    );
+
+                    // Update count
+                    elements.count.textContent = `${filtered.length} available`;
+
+                    // Render
+                    if (filtered.length === 0) {
+                        elements.grid.innerHTML = '';
+                        elements.empty.style.display = 'block';
+                    } else {
+                        elements.empty.style.display = 'none';
+                        elements.grid.innerHTML = filtered.map(createAppCard).join('');
+                    }
+                }
+
+                // ============================================================
+                // Event Handlers
+                // ============================================================
+
+                function handleSearch(e) {
+                    searchTerm = e.target.value;
+                    renderApps();
+                }
+
+                function handleFilterClick(e) {
+                    const tab = e.target.closest('.filter-tab');
+                    if (!tab) return;
+
+                    // Update active state
+                    elements.tabs.querySelectorAll('.filter-tab').forEach(t => {
+                        t.classList.remove('active');
+                        t.setAttribute('aria-selected', 'false');
+                    });
+                    tab.classList.add('active');
+                    tab.setAttribute('aria-selected', 'true');
+
+                    // Update filter
+                    currentFilter = tab.dataset.filter;
+                    renderApps();
+                }
+
+                function handleGridSizeClick(e) {
+                    const btn = e.target.closest('.grid-size-btn');
+                    if (!btn) return;
+
+                    const size = btn.dataset.size;
+
+                    // Update button states
+                    elements.gridSizeBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+
+                    // Update grid size
+                    elements.grid.dataset.size = size;
+
+                    // Save preference
+                    try {
+                        localStorage.setItem('dashboard_grid_size', size);
+                    } catch (e) {
+                    }
+                }
+
+                function loadGridPreference() {
+                    try {
+                        const saved = localStorage.getItem('dashboard_grid_size');
+                        if (saved && ['compact', 'normal', 'large'].includes(saved)) {
+                            elements.grid.dataset.size = saved;
+                            elements.gridSizeBtns.forEach(b => {
+                                b.classList.toggle('active', b.dataset.size === saved);
+                            });
+                        }
+                    } catch (e) {
+                    }
+                }
+
+                // ============================================================
+                // Initialization
+                // ============================================================
+
+                async function init() {
+                    // Fetch data in parallel
+                    const [cloudmApps, minuFlows] = await Promise.all([
+                        fetchCloudMApps(),
+                        fetchMinuFlows()
+                    ]);
+
+                    // Normalize CloudM apps
+                    const normalizedApps = cloudmApps.map(app => ({
+                        type: 'app',
+                        name: app.name,
+                        title: app.title || app.name,
+                        description: app.description || '',
+                        path: app.path || `/app/${app.name}`,
+                        icon: app.icon || 'apps',
+                        auth: app.auth || false,
+                        bg_img_url: app.bg_img_url || null
+                    }));
+
+                    // Normalize Minu flows
+                    const normalizedFlows = minuFlows.map(flow => ({
+                        type: 'flow',
+                        name: flow.name,
+                        title: flow.title || flow.name?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()),
+                        description: flow.description || 'Interactive Flow Application',
+                        path: flow.path || `/api/Minu/render?view=${flow.name}&ssr=True`,
+                        icon: flow.icon || 'account_tree',
+                        auth: flow.auth || false,
+                        bg_img_url: flow.bg_img_url || null
+                    }));
+
+                    // Combine
+                    allApps = [...normalizedApps, ...normalizedFlows];
+
+                    // Initial render
+                    renderApps();
+                }
+
+                // ============================================================
+                // Setup
+                // ============================================================
+
+                // Event listeners
+                elements.search.addEventListener('input', handleSearch);
+                elements.tabs.addEventListener('click', handleFilterClick);
+
+                // Grid size buttons
+                elements.gridSizeBtns.forEach(btn => {
+                    btn.addEventListener('click', handleGridSizeClick);
+                });
+
+                // Load saved grid preference
+                loadGridPreference();
+
+                // Keyboard shortcut: Ctrl/Cmd + K to focus search
+                document.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                        e.preventDefault();
+                        elements.search.focus();
+                    }
+                });
+
+                // Start - wait for TB if available
+                if (window.TB?.onLoaded) {
+                    window.TB.onLoaded(init);
                 } else {
-                    container.innerHTML = '<div>No UI pages currently available.</div>';
+                    setTimeout(init, 100);
                 }
-                return;
-            }
 
-            endpointsToRender.forEach(endpoint => {
-                container.appendChild(createEndpointCard(endpoint));
-            });
-        }
-
-        function filterAndRenderEndpoints() {
-            const searchInput = document.getElementById('app-search-input');
-            if (!searchInput) return; // Should not happen if initialized correctly
-
-            const searchTerm = searchInput.value.toLowerCase().trim();
-            const container = document.getElementById('endpoints-container');
-
-            // More efficient filtering directly on DOM elements
-            const cards = container.getElementsByClassName('endpoint-card');
-            let hasVisibleCard = false;
-
-            for (let card of cards) {
-                const searchableText = card.dataset.searchableText || "";
-                if (searchableText.includes(searchTerm)) {
-                    card.classList.remove('hidden');
-                    card.style.display = ''; // Reset to default display
-                    hasVisibleCard = true;
-                } else {
-                    card.classList.add('hidden');
-                    card.style.display = 'none'; // Ensure it's hidden
-                }
-            }
-             // If no cards are visible after filtering, show a message
-            const noResultsMessageDiv = container.querySelector('.no-results-message');
-            if (!hasVisibleCard && searchTerm) {
-                if (!noResultsMessageDiv) {
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'no-results-message';
-                    messageDiv.textContent = 'No apps match your search criteria.';
-                    container.appendChild(messageDiv); // Append if not exists
-                }
-            } else if (noResultsMessageDiv) {
-                noResultsMessageDiv.remove(); // Remove if search term is empty or results found
-            }
-        }
-
-
-        async function initializeEndpoints() {
-            const container = document.getElementById('endpoints-container');
-            const searchInput = document.getElementById('app-search-input');
-
-            if (!container || !searchInput) {
-                TB_INSTANCE.logger.error("[mainContent.html] 'endpoints-container' or 'app-search-input' not found.");
-                return;
-            }
-
-            // Set initial loading message
-            container.innerHTML = '<div class="loading">Loading Apps...</div>';
-
-            const fetchedData = await fetchUIEndpoints();
-
-            if (fetchedData === null) {
-                container.innerHTML = '<div class="error">Failed to load app pages. Please try again later.</div>';
-                return;
-            }
-
-            allFetchedEndpoints = fetchedData;
-
-            // 1. Sort the endpoints by title (case-insensitive)
-            allFetchedEndpoints.sort((a, b) => {
-                const titleA = (a.title || 'Untitled Page').toLowerCase();
-                const titleB = (b.title || 'Untitled Page').toLowerCase();
-                if (titleA < titleB) return -1;
-                if (titleA > titleB) return 1;
-                return 0;
-            });
-
-            // 2. Initial render of all (sorted) endpoints
-            renderEndpoints(allFetchedEndpoints);
-
-            // 3. Add event listener for the search input
-            searchInput.addEventListener('input', filterAndRenderEndpoints);
-        }
-
-        Promise.resolve().then(initializeEndpoints).catch(err => {
-             TB_INSTANCE.logger.error("[mainContent.html] Error in initializeEndpoints promise:", err);
-             const container = document.getElementById('endpoints-container');
-             if (container) {
-                container.innerHTML = '<div class="error">An unexpected error occurred while initializing apps.</div>';
-             }
+            })();
         });
-
-      })(); // End IIFE
     </script>
+</body>
+</html>

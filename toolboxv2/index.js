@@ -78,13 +78,13 @@ async function initializeApp() {
           // Initialisiere das Navigationsmenü, nachdem TB bereit ist  // <--- HINZUGEFÜGT
         // Die Standardoptionen in NavMenu.js verwenden '#links' als Trigger, was zu deinem HTML passt.
         if (initializedTB.ui.NavMenu) {
-            initializedTB.ui.NavMenu.init();
+            initializedTB.ui.navMenu = initializedTB.ui.NavMenu.init();
         }
 
         // Annahme: TB.core.threeSetup ist ein Modul/Funktion, die Three.js initialisiert
         // und ein Objekt mit { renderer, scene, ambientLight, pointLights } zurückgibt oder speichert
          if (initializedTB.ui.DarkModeToggle) {
-            initializedTB.ui.DarkModeToggle.init();
+            initializedTB.ui.darkModeToggle = initializedTB.ui.DarkModeToggle.init();
         }
          initializedTB.ui.theme.setPreference(initializedTB.ui.theme.getCurrentMode())
         // initializedTB.ui.theme.togglePreference()

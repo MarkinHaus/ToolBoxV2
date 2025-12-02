@@ -1,23 +1,15 @@
 """
-Minu UI Framework - Flow Helpers (Enhanced mit Python Callbacks)
-=================================================================
-Utility functions für generating UIs in Toolbox Flows mit direkter
-Python-Callback-Unterstützung.
+Minu UI Framework - Flow Helpers V3
+====================================
+Utility functions für UIs mit stabilem Callback-System.
 
-NEU: Python-Funktionen können als on_click/on_change Handler übergeben werden.
-Diese werden automatisch in der View registriert.
-
-Usage:
-    def my_handler(event):
-        print("Button clicked!", event)
-
-    return Button("Click me", on_click=my_handler)
+WICHTIG: Callbacks werden jetzt an die View gebunden, nicht global gespeichert.
+Die View muss `register_callback` Methode haben.
 """
 
 from typing import Any, Dict, List, Union, Optional, Callable
 import json
-import asyncio
-import inspect
+import html as html_module
 
 from .core import (
     Component,
@@ -38,101 +30,49 @@ from .core import (
     Spacer,
     Alert,
     Progress,
+    Checkbox,
+    Textarea,
     List as MinuList,
     ListItem,
 )
 
 
-import html
-import json
-from typing import Any, Dict, Optional
-from .core import Component, ComponentType
-
 # ============================================================================
-# CALLBACK REGISTRY - Verwaltung von Python-Callbacks
+# CONTEXT-AWARE CALLBACK REGISTRATION
 # ============================================================================
 
-class CallbackRegistry:
+# Thread-local storage für den aktuellen View-Context
+import threading
+_view_context = threading.local()
+
+
+def set_current_view(view):
+    """Setzt den aktuellen View-Context für Callback-Registrierung."""
+    _view_context.current_view = view
+
+
+def get_current_view():
+    """Holt den aktuellen View-Context."""
+    return getattr(_view_context, 'current_view', None)
+
+
+def clear_current_view():
+    """Löscht den View-Context."""
+    _view_context.current_view = None
+
+
+def _normalize_handler(handler: Union[str, Callable, None], hint: str = "") -> Optional[str]:
     """
-    Verwaltet Python-Callbacks für Flow-generierte Components.
-    Ermöglicht direkte Funktionsübergabe statt nur String-Handler-Namen.
-    """
+    Konvertiert Handler zu Handler-Name.
 
-    def __init__(self):
-        self._callbacks: Dict[str, Callable] = {}
-        self._counter = 0
-
-    def register(self, callback: Callable) -> str:
-        """
-        Registriert einen Callback und gibt Handler-Namen zurück.
-
-        Args:
-            callback: Python-Funktion (sync oder async)
-
-        Returns:
-            Handler-Name als String
-        """
-        if not callable(callback):
-            raise ValueError("callback must be callable")
-
-        # Generiere eindeutigen Handler-Namen
-        handler_name = f"_flow_callback_{self._counter}"
-        self._counter += 1
-
-        self._callbacks[handler_name] = callback
-        return handler_name
-
-    def get(self, handler_name: str) -> Optional[Callable]:
-        """Holt einen registrierten Callback"""
-        return self._callbacks.get(handler_name)
-
-    def get_all(self) -> Dict[str, Callable]:
-        """Gibt alle registrierten Callbacks zurück"""
-        return self._callbacks.copy()
-
-    def clear(self):
-        """Löscht alle Callbacks"""
-        self._callbacks.clear()
-        self._counter = 0
-
-
-# Globale Registry pro Thread/Context
-_callback_registry = CallbackRegistry()
-
-
-def register_callback(callback: Callable) -> str:
-    """Convenience-Funktion zum Registrieren von Callbacks"""
-    return _callback_registry.register(callback)
-
-
-def get_callback(handler_name: str) -> Optional[Callable]:
-    """Convenience-Funktion zum Abrufen von Callbacks"""
-    return _callback_registry.get(handler_name)
-
-
-def get_all_callbacks() -> Dict[str, Callable]:
-    """Gibt alle registrierten Callbacks zurück"""
-    return _callback_registry.get_all()
-
-
-def clear_callbacks():
-    """Löscht alle registrierten Callbacks"""
-    _callback_registry.clear()
-
-
-# ============================================================================
-# ENHANCED COMPONENT FACTORIES MIT CALLBACK-UNTERSTÜTZUNG
-# ============================================================================
-
-def _normalize_handler(handler: Union[str, Callable, None]) -> Optional[str]:
-    """
-    Konvertiert Handler (String oder Callable) zu Handler-Name.
+    Wenn es eine Callable ist, wird sie beim aktuellen View registriert.
 
     Args:
         handler: String-Handler-Name oder Python-Funktion
+        hint: Optionaler Hint für stabile ID-Generierung
 
     Returns:
-        Handler-Name als String oder None
+        Handler-Name als String
     """
     if handler is None:
         return None
@@ -141,13 +81,18 @@ def _normalize_handler(handler: Union[str, Callable, None]) -> Optional[str]:
         return handler
 
     if callable(handler):
-        return register_callback(handler)
+        view = get_current_view()
+        if view and hasattr(view, 'register_callback'):
+            return view.register_callback(handler, hint)
+        else:
+            # Fallback: Funktionsname verwenden
+            return getattr(handler, '__name__', f'callback_{id(handler)}')
 
     raise ValueError(f"Invalid handler type: {type(handler)}")
 
 
 # ============================================================================
-# ENHANCED BUTTON MIT CALLBACK
+# ENHANCED COMPONENTS MIT CALLBACK-UNTERSTÜTZUNG
 # ============================================================================
 
 def CallbackButton(
@@ -165,19 +110,18 @@ def CallbackButton(
     Args:
         label: Button-Text
         on_click: String-Handler ODER Python-Funktion
-        variant: Button-Stil
+        variant: Button-Stil (primary, secondary, ghost)
         disabled: Deaktiviert?
-        icon: Optional Icon
+        icon: Optional Icon-Name
         className: CSS-Klassen
-        **props: Weitere Props
 
     Example:
-        def handle_save(event):
-            print("Saving...", event)
+        def handle_click(event):
+            print("Clicked!", event)
 
-        CallbackButton("Save", on_click=handle_save)
+        CallbackButton("Click Me", on_click=handle_click)
     """
-    handler_name = _normalize_handler(on_click)
+    handler_name = _normalize_handler(on_click, hint=f"btn_{label[:20]}")
     return Button(
         label,
         on_click=handler_name,
@@ -200,9 +144,9 @@ def CallbackInput(
     className: str | None = None,
     **props,
 ) -> Component:
-    """Input mit Callback-Unterstützung"""
-    change_handler = _normalize_handler(on_change)
-    submit_handler = _normalize_handler(on_submit)
+    """Input mit Callback-Unterstützung."""
+    change_handler = _normalize_handler(on_change, hint=f"input_change_{bind or 'anon'}")
+    submit_handler = _normalize_handler(on_submit, hint=f"input_submit_{bind or 'anon'}")
 
     return Input(
         placeholder=placeholder,
@@ -217,8 +161,54 @@ def CallbackInput(
     )
 
 
+def CallbackCheckbox(
+    label: str = "",
+    checked: bool = False,
+    bind: str | None = None,
+    on_change: Union[str, Callable, None] = None,
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Checkbox mit Callback-Unterstützung."""
+    change_handler = _normalize_handler(on_change, hint=f"checkbox_{bind or 'anon'}")
+
+    return Checkbox(
+        label=label,
+        checked=checked,
+        bind=bind,
+        on_change=change_handler,
+        className=className,
+        **props
+    )
+
+
+def CallbackSelect(
+    options: List[Dict[str, str]],
+    value: str = "",
+    bind: str | None = None,
+    on_change: Union[str, Callable, None] = None,
+    label: str | None = None,
+    placeholder: str = "Select...",
+    className: str | None = None,
+    **props,
+) -> Component:
+    """Select mit Callback-Unterstützung."""
+    change_handler = _normalize_handler(on_change, hint=f"select_{bind or 'anon'}")
+
+    return Select(
+        options=options,
+        value=value,
+        bind=bind,
+        on_change=change_handler,
+        label=label,
+        placeholder=placeholder,
+        className=className,
+        **props
+    )
+
+
 # ============================================================================
-# AUTO UI GENERATION (ENHANCED)
+# AUTO UI GENERATION
 # ============================================================================
 
 def ui_for_data(
@@ -228,15 +218,15 @@ def ui_for_data(
     on_save: Union[str, Callable, None] = None,
 ) -> Component:
     """
-    Auto-generate UI mit Callback-Support.
+    Generiert automatisch eine UI für beliebige Daten.
 
     Args:
-        data: Python-Daten
+        data: Python-Daten (dict, list, primitiv)
         title: Optional Titel
         editable: Editierbar?
-        on_save: String-Handler ODER Python-Funktion
+        on_save: Save-Handler
     """
-    save_handler = _normalize_handler(on_save)
+    save_handler = _normalize_handler(on_save, hint="save_data")
 
     if data is None:
         return Alert("No data", variant="info")
@@ -244,25 +234,23 @@ def ui_for_data(
     if isinstance(data, dict):
         return _dict_to_ui(data, title, editable, save_handler)
 
-    elif isinstance(data, (list, tuple)):
+    if isinstance(data, (list, tuple)):
         if data and all(isinstance(item, dict) for item in data):
             return _list_of_dicts_to_table(data, title)
-        else:
-            return _list_to_ui(data, title)
+        return _list_to_ui(data, title)
 
-    elif isinstance(data, bool):
-        return _value_badge(data, "success" if data else "error")
+    if isinstance(data, bool):
+        return Badge("Yes" if data else "No", variant="success" if data else "error")
 
-    elif isinstance(data, (int, float)):
+    if isinstance(data, (int, float)):
         return _value_display(data, title)
 
-    elif isinstance(data, str):
-        if len(data) > 100:
-            return Card(Text(data), title=title or "Text")
+    if isinstance(data, str):
+        if len(data) > 200:
+            return Card(Text(data, className="whitespace-pre-wrap"), title=title or "Text")
         return _value_display(data, title)
 
-    else:
-        return _value_display(str(data), title)
+    return _value_display(str(data), title)
 
 
 def _dict_to_ui(
@@ -271,258 +259,87 @@ def _dict_to_ui(
     editable: bool = False,
     on_save: Optional[str] = None,
 ) -> Component:
-    """Convert dict mit Callback-Support"""
+    """Dict zu UI."""
     rows = []
 
     for key, value in data.items():
         label = key.replace("_", " ").title()
 
-        if editable:
-            rows.append(_generate_input_for_value(key, label, value))
-        else:
-            if isinstance(value, dict):
-                rows.append(
-                    Column(
-                        Heading(label, level=4),
-                        _dict_to_ui(value),
-                        className="ml-4"
-                    )
-                )
-            elif isinstance(value, (list, tuple)):
-                if value and all(isinstance(item, dict) for item in value):
-                    rows.append(
-                        Column(
-                            Heading(label, level=4),
-                            _list_of_dicts_to_table(value),
-                            className="ml-4",
-                        )
-                    )
-                else:
-                    rows.append(_key_value_row(label, ", ".join(str(v) for v in value)))
-            elif isinstance(value, bool):
-                rows.append(
-                    Row(
-                        Text(f"{label}:", className="font-medium w-32"),
-                        Badge(
-                            "Yes" if value else "No",
-                            variant="success" if value else "error",
-                        ),
-                        gap="4",
-                    )
-                )
+        if isinstance(value, dict):
+            rows.append(Column(
+                Heading(label, level=4),
+                _dict_to_ui(value),
+                className="ml-4 mt-2"
+            ))
+        elif isinstance(value, (list, tuple)):
+            if value and all(isinstance(item, dict) for item in value):
+                rows.append(Column(
+                    Heading(label, level=4),
+                    _list_of_dicts_to_table(value),
+                    className="mt-2"
+                ))
             else:
-                rows.append(
-                    _key_value_row(label, str(value) if value is not None else "—")
-                )
-
-    content = [*rows]
+                rows.append(_key_value_row(label, ", ".join(str(v) for v in value[:5])))
+        else:
+            rows.append(_key_value_row(label, str(value)[:100]))
 
     if editable and on_save:
-        content.append(Divider())
-        content.append(
-            Row(
-                Button("Save", on_click=on_save, variant="primary"),
-                Button("Cancel", on_click="cancel_edit", variant="secondary"),
-                justify="end",
-            )
-        )
+        rows.append(Divider())
+        rows.append(Row(
+            Button("Save", on_click=on_save, variant="primary"),
+            justify="end"
+        ))
 
-    if editable:
-        return Form(*content, on_submit=on_save)
-
-    return Card(*content, title=title)
+    return Card(*rows, title=title) if title else Column(*rows, gap="2")
 
 
-def _key_value_row(key: str, value: str) -> Component:
-    """Key-Value Row"""
-    return Row(
-        Text(f"{key}:", className="font-medium text-secondary w-32"),
-        Text(value, className="flex-1"),
-        gap="4",
-        className="py-1",
-    )
+def _list_to_ui(data: List[Any], title: Optional[str] = None) -> Component:
+    """List zu UI."""
+    items = [Text(f"• {str(item)[:100]}") for item in data[:20]]
+    if len(data) > 20:
+        items.append(Text(f"... and {len(data) - 20} more items", className="text-secondary"))
+
+    return Card(*items, title=title or f"List ({len(data)} items)")
 
 
 def _list_of_dicts_to_table(data: List[Dict], title: Optional[str] = None) -> Component:
-    """List to Table"""
+    """List of Dicts zu Table."""
     if not data:
         return Alert("No data", variant="info")
 
-    columns = [
-        {"key": key, "label": key.replace("_", " ").title()} for key in data[0].keys()
-    ]
+    columns = [{"key": k, "label": k.replace("_", " ").title()} for k in data[0].keys()]
 
-    table = Table(columns=columns, data=data)
+    table = Table(columns=columns, data=data[:50])
 
     if title:
         return Card(table, title=title)
     return table
 
 
-def _list_to_ui(data: List, title: Optional[str] = None) -> Component:
-    """List to UI"""
-    items = [
-        ListItem(ui_for_data(item) if isinstance(item, (dict, list)) else Text(str(item)))
-        for item in data
-    ]
-
-    list_comp = MinuList(*items)
-
-    if title:
-        return Card(list_comp, title=title)
-    return list_comp
+def _key_value_row(key: str, value: str) -> Component:
+    """Key-Value Zeile."""
+    return Row(
+        Text(f"{key}:", className="font-medium text-secondary"),
+        Text(value),
+        justify="between",
+        className="py-1"
+    )
 
 
-def _value_display(value: Any, title: Optional[str] = None) -> Component:
-    """Single Value Display"""
-    if title:
+def _value_display(value: Any, label: Optional[str] = None) -> Component:
+    """Einfache Wert-Anzeige."""
+    if label:
         return Row(
-            Text(f"{title}:", className="font-medium text-secondary"),
+            Text(f"{label}:", className="font-medium"),
             Text(str(value)),
-            gap="2",
+            gap="2"
         )
     return Text(str(value))
 
 
-def _value_badge(value: Any, variant: str = "default") -> Component:
-    """Value as Badge"""
-    return Badge(str(value), variant=variant)
-
-
-def _generate_input_for_value(key: str, label: str, value: Any) -> Component:
-    """Generate Input for Value"""
-    if isinstance(value, bool):
-        from .core import Switch
-        return Switch(label=label, checked=value, bind=key)
-
-    elif isinstance(value, (int, float)):
-        return Input(label=label, value=str(value), input_type="number", bind=key)
-
-    elif isinstance(value, str):
-        if len(value) > 100:
-            from .core import Textarea
-            return Column(
-                Text(label, className="font-medium"),
-                Textarea(value=value, bind=key, rows=4),
-            )
-        if "@" in value:
-            return Input(label=label, value=value, input_type="email", bind=key)
-        return Input(label=label, value=value, bind=key)
-
-    elif isinstance(value, list) and all(isinstance(v, str) for v in value):
-        return Input(
-            label=label,
-            value=", ".join(value),
-            placeholder="Comma-separated values",
-            bind=key,
-        )
-
-    else:
-        from .core import Textarea
-        return Column(
-            Text(label, className="font-medium"),
-            Textarea(
-                value=json.dumps(value, indent=2) if value else "", bind=key, rows=4
-            ),
-        )
-
-
 # ============================================================================
-# ENHANCED CONVENIENCE FUNCTIONS
+# FORM GENERATION
 # ============================================================================
-
-def data_card(
-    data: Dict[str, Any],
-    title: Optional[str] = None,
-    actions: Optional[List[Dict[str, Any]]] = None,
-) -> Component:
-    """
-    Data Card mit Callback-Actions.
-
-    Args:
-        data: Daten-Dict
-        title: Titel
-        actions: Liste von Action-Dicts mit optionalen Callbacks
-
-    Example:
-        def edit_handler(e):
-            print("Edit clicked")
-
-        data_card(
-            {"name": "John"},
-            actions=[
-                {"label": "Edit", "handler": edit_handler},
-                {"label": "Delete", "handler": "delete_user"}
-            ]
-        )
-    """
-    rows = [
-        _key_value_row(key.replace("_", " ").title(), str(value))
-        for key, value in data.items()
-    ]
-
-    if actions:
-        rows.append(Divider())
-
-        action_buttons = []
-        for action in actions:
-            handler = action.get("handler")
-            normalized_handler = _normalize_handler(handler)
-
-            action_buttons.append(
-                Button(
-                    action["label"],
-                    on_click=normalized_handler,
-                    variant=action.get("variant", "secondary"),
-                )
-            )
-
-        rows.append(Row(*action_buttons, justify="end", gap="2"))
-
-    return Card(*rows, title=title)
-
-
-def data_table(
-    data: List[Dict[str, Any]],
-    columns: Optional[List[str]] = None,
-    title: Optional[str] = None,
-    on_row_click: Union[str, Callable, None] = None,
-    searchable: bool = False,
-) -> Component:
-    """
-    Data Table mit Callback-Support.
-
-    Args:
-        data: Liste von Dicts
-        columns: Optional Spalten
-        title: Titel
-        on_row_click: String-Handler ODER Python-Funktion
-        searchable: Suchfeld?
-    """
-    if not data:
-        return Alert("No data available", variant="info")
-
-    if columns:
-        col_defs = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
-    else:
-        col_defs = [
-            {"key": k, "label": k.replace("_", " ").title()} for k in data[0].keys()
-        ]
-
-    row_handler = _normalize_handler(on_row_click)
-
-    elements = []
-
-    if searchable:
-        elements.append(Input(placeholder="Search...", bind="table_search"))
-        elements.append(Spacer())
-
-    elements.append(Table(columns=col_defs, data=data, on_row_click=row_handler))
-
-    if title:
-        return Card(*elements, title=title)
-    return Column(*elements)
-
 
 def form_for(
     schema: Dict[str, Dict[str, Any]],
@@ -532,86 +349,148 @@ def form_for(
     submit_label: str = "Submit",
 ) -> Component:
     """
-    Form mit Callback-Support.
+    Generiert ein Formular aus einem Schema.
 
     Args:
-        schema: Feld-Schema
-        values: Initial Values
-        on_submit: String-Handler ODER Python-Funktion
-        title: Titel
-        submit_label: Submit-Button-Text
+        schema: Feld-Schema {name: {type, label, default, options, ...}}
+        values: Initiale Werte
+        on_submit: Submit-Handler
+        title: Formular-Titel
+        submit_label: Text für Submit-Button
 
     Example:
-        def handle_submit(event):
-            print("Form submitted:", event)
-
-        form_for(
-            {"name": {"type": "text", "label": "Name"}},
-            on_submit=handle_submit
-        )
+        schema = {
+            "name": {"type": "text", "label": "Name"},
+            "email": {"type": "email", "label": "Email"},
+            "role": {"type": "select", "options": [{"value": "user", "label": "User"}]}
+        }
+        form_for(schema, on_submit=my_handler)
     """
     values = values or {}
     fields = []
-
-    submit_handler = _normalize_handler(on_submit)
+    submit_handler = _normalize_handler(on_submit, hint="form_submit")
 
     for name, config in schema.items():
         field_type = config.get("type", "text")
         label = config.get("label", name.replace("_", " ").title())
         placeholder = config.get("placeholder", "")
-        value = values.get(name, config.get("default", ""))
+        default = config.get("default", "")
+        value = values.get(name, default)
 
         if field_type == "select":
-            fields.append(
-                Select(
-                    options=config.get("options", []),
-                    value=str(value),
-                    label=label,
-                    bind=name,
-                )
-            )
+            fields.append(Select(
+                options=config.get("options", []),
+                value=str(value) if value else "",
+                label=label,
+                bind=name,
+                placeholder=placeholder or "Select..."
+            ))
 
         elif field_type == "checkbox":
-            from .core import Checkbox
-            fields.append(Checkbox(label=label, checked=bool(value), bind=name))
+            fields.append(Checkbox(
+                label=label,
+                checked=bool(value),
+                bind=name
+            ))
 
         elif field_type == "textarea":
-            from .core import Textarea
-            fields.append(
-                Column(
-                    Text(label, className="font-medium"),
-                    Textarea(
-                        value=str(value),
-                        placeholder=placeholder,
-                        bind=name,
-                        rows=config.get("rows", 4),
-                    ),
-                )
-            )
-
-        else:
-            fields.append(
-                Input(
+            fields.append(Column(
+                Text(label, className="text-sm font-medium mb-1"),
+                Textarea(
                     value=str(value) if value else "",
                     placeholder=placeholder,
-                    input_type=field_type,
-                    label=label,
                     bind=name,
-                )
-            )
+                    rows=config.get("rows", 4)
+                ),
+                gap="1"
+            ))
+
+        else:
+            fields.append(Input(
+                value=str(value) if value else "",
+                placeholder=placeholder,
+                input_type=field_type,
+                label=label,
+                bind=name
+            ))
 
     fields.append(Spacer())
-    fields.append(Row(Button(submit_label, variant="primary"), justify="end"))
+    fields.append(Button(submit_label, on_click=submit_handler, variant="primary", className="w-full"))
 
-    form = Form(*fields, on_submit=submit_handler)
+    form_content = Column(*fields, gap="3")
 
     if title:
-        return Card(form, title=title)
-    return form
+        return Card(form_content, title=title)
+    return form_content
+
+
+# ============================================================================
+# CONVENIENCE COMPONENTS
+# ============================================================================
+
+def data_card(
+    data: Dict[str, Any],
+    title: Optional[str] = None,
+    actions: Optional[List[Dict[str, Any]]] = None,
+) -> Component:
+    """
+    Data Card mit Actions.
+
+    Args:
+        data: Daten-Dict
+        title: Titel
+        actions: Liste von {label, handler, variant, icon}
+    """
+    rows = [
+        _key_value_row(key.replace("_", " ").title(), str(value)[:100])
+        for key, value in data.items()
+    ]
+
+    if actions:
+        rows.append(Divider())
+        buttons = []
+        for action in actions:
+            handler = _normalize_handler(
+                action.get("handler"),
+                hint=f"action_{action.get('label', 'btn')}"
+            )
+            buttons.append(Button(
+                action.get("label", "Action"),
+                on_click=handler,
+                variant=action.get("variant", "secondary"),
+                icon=action.get("icon")
+            ))
+        rows.append(Row(*buttons, justify="end", gap="2"))
+
+    return Card(*rows, title=title)
+
+
+def data_table(
+    data: List[Dict[str, Any]],
+    columns: Optional[List[str]] = None,
+    title: Optional[str] = None,
+    on_row_click: Union[str, Callable, None] = None,
+) -> Component:
+    """Data Table mit optionalem Row-Click-Handler."""
+    if not data:
+        return Alert("No data available", variant="info")
+
+    if columns:
+        col_defs = [{"key": c, "label": c.replace("_", " ").title()} for c in columns]
+    else:
+        col_defs = [{"key": k, "label": k.replace("_", " ").title()} for k in data[0].keys()]
+
+    row_handler = _normalize_handler(on_row_click, hint="table_row_click")
+
+    table = Table(columns=col_defs, data=data, on_row_click=row_handler)
+
+    if title:
+        return Card(table, title=title)
+    return table
 
 
 def stats_grid(stats: List[Dict[str, Any]], cols: int = 4) -> Component:
-    """Stats Grid"""
+    """Stats Grid für KPIs."""
     cards = []
 
     for stat in stats:
@@ -625,14 +504,10 @@ def stats_grid(stats: List[Dict[str, Any]], cols: int = 4) -> Component:
 
         if stat.get("change"):
             change = stat["change"]
-            is_positive = change.startswith("+") or (
-                isinstance(change, (int, float)) and change > 0
-            )
-            elements.append(
-                Badge(str(change), variant="success" if is_positive else "error")
-            )
+            is_positive = str(change).startswith("+") or (isinstance(change, (int, float)) and change > 0)
+            elements.append(Badge(str(change), variant="success" if is_positive else "error"))
 
-        cards.append(Card(*elements, className="card text-center"))
+        cards.append(Card(*elements, className="text-center"))
 
     return Grid(*cards, cols=cols)
 
@@ -641,76 +516,63 @@ def action_bar(
     actions: List[Dict[str, Any]],
     title: Optional[str] = None
 ) -> Component:
-    """
-    Action Bar mit Callback-Support.
-
-    Args:
-        actions: Liste von Actions mit Callbacks
-        title: Optional Titel
-
-    Example:
-        def new_item(e):
-            print("New item")
-
-        action_bar(
-            [
-                {"label": "New", "handler": new_item, "icon": "add"},
-                {"label": "Export", "handler": "export_data"}
-            ]
-        )
-    """
+    """Action Bar mit Buttons."""
     left = []
     if title:
         left.append(Heading(title, level=3))
 
     buttons = []
-    for action in actions:
-        handler = _normalize_handler(action.get("handler"))
-
-        btn = Button(
+    for i, action in enumerate(actions):
+        handler = _normalize_handler(
+            action.get("handler"),
+            hint=f"actionbar_{i}"
+        )
+        buttons.append(Button(
             action.get("label", ""),
             on_click=handler,
             variant=action.get("variant", "secondary"),
-            icon=action.get("icon"),
-        )
-        buttons.append(btn)
+            icon=action.get("icon")
+        ))
 
     return Row(
         Row(*left) if left else Spacer(),
         Row(*buttons, gap="2"),
         justify="between",
-        className="mb-4",
+        className="mb-4"
     )
 
 
 # ============================================================================
-# RESULT WRAPPERS
+# RESULT WRAPPER
 # ============================================================================
 
 def ui_result(component: Component, title: Optional[str] = None) -> dict:
-    """Wrap Component für Flow-Return"""
+    """Wrap Component für Flow-Return."""
     result = {"minu": True, "component": component.to_dict()}
     if title:
         result["title"] = title
     return result
 
 
-# Export all
+# ============================================================================
+# EXPORTS
+# ============================================================================
+
 __all__ = [
-    # Callback System
-    "CallbackRegistry",
-    "register_callback",
-    "get_callback",
-    "get_all_callbacks",
-    "clear_callbacks",
-    # Enhanced Components
+    # Context
+    "set_current_view",
+    "get_current_view",
+    "clear_current_view",
+    # Callback Components
     "CallbackButton",
     "CallbackInput",
+    "CallbackCheckbox",
+    "CallbackSelect",
     # UI Generators
     "ui_for_data",
+    "form_for",
     "data_card",
     "data_table",
-    "form_for",
     "stats_grid",
     "action_bar",
     # Utils

@@ -37,7 +37,7 @@ async function initializeClerkLogin() {
         // WICHTIG: Prüfe Server-Status BEVOR Clerk UI
         console.log('[Login] Checking authentication status with server...');
 
-        const serverCheckResponse = await fetch('/IsValidSession', {
+        const serverCheckResponse = await fetch('/validateSession', {
             method: 'GET',
             credentials: 'include' // Session-Cookie mitsenden
         });

@@ -28,213 +28,281 @@ version = '0.2.0'
 
 # =================== Haupt-Dashboard ===================
 
-@export(mod_name=Name, api=True, version=version, name="main", api_methods=['GET'], request_as_kwarg=True, row=True)
+
+@export(
+    mod_name=Name,
+    api=True,
+    version=version,
+    name="main",
+    api_methods=["GET"],
+    request_as_kwarg=True,
+    row=True,
+)
 async def get_user_dashboard_main_page(app: App, request: RequestData):
-    """Haupt-Dashboard Seite - vollständig responsive und benutzerfreundlich"""
+    """Haupt-Dashboard Seite - Modern, Tab-basiert, vollständig responsive"""
 
     html_content = """
 <style>
-/* ========== User Dashboard Styles ========== */
-body {
-    margin: 0;
-    font-family: var(--font-family-base);
-    background-color: var(--theme-bg);
-    color: var(--theme-text);
-    transition: background-color var(--transition-medium), color var(--transition-medium);
+/* ============================================================
+   User Dashboard Styles (nutzen TBJS v2 Variablen)
+   ============================================================ */
+
+.dashboard {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-5);
 }
 
-#user-dashboard {
+/* ========== Header ========== */
+.dashboard-header {
     display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-}
-
-/* Header */
-#user-header {
-    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
-    color: var(--theme-text-on-primary);
-    padding: var(--spacing) calc(var(--spacing) * 1.5);
-    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: center;
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-text) 15%, transparent);
+    margin-bottom: var(--space-6);
+    flex-wrap: wrap;
+    gap: var(--space-4);
 }
 
-#user-header h1 {
-    margin: 0;
-    font-size: var(--font-size-xl);
-    font-weight: var(--font-weight-semibold);
+.dashboard-title {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-3);
+}
+
+.dashboard-title h1 {
+    font-size: var(--text-3xl);
+    font-weight: var(--weight-bold);
+    color: var(--text-primary);
+    margin: 0;
 }
 
 .user-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--theme-text-on-primary);
-    color: var(--theme-primary);
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+    color: var(--text-inverse);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: bold;
-    font-size: 1.2rem;
+    font-weight: var(--weight-bold);
+    font-size: var(--text-lg);
+    flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
 }
 
-/* Sidebar */
-#user-sidebar {
-    width: 260px;
-    background-color: var(--input-bg);
-    padding: calc(var(--spacing) * 1.5) var(--spacing);
-    border-right: 1px solid var(--theme-border);
-    transition: all var(--transition-medium);
-}
-
-#user-sidebar ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-#user-sidebar li {
-    padding: calc(var(--spacing) * 0.9) var(--spacing);
-    margin-bottom: calc(var(--spacing) * 0.5);
-    cursor: pointer;
-    border-radius: var(--radius-md);
+.header-actions {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    font-weight: var(--font-weight-medium);
-    color: var(--theme-text);
-    transition: all var(--transition-fast);
+    gap: var(--space-3);
 }
 
-#user-sidebar li:hover {
-    background-color: color-mix(in srgb, var(--theme-primary) 12%, transparent);
-    color: var(--theme-primary);
-    transform: translateX(4px);
-}
-
-#user-sidebar li.active {
-    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
-    color: var(--theme-text-on-primary) !important;
-    font-weight: var(--font-weight-semibold);
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-primary) 30%, transparent);
-}
-
-#user-sidebar li .material-symbols-outlined {
-    font-size: 1.3rem;
-}
-
-/* Main Container */
-#user-container {
+/* ========== Tab Navigation ========== */
+.tab-navigation {
     display: flex;
-    flex-grow: 1;
+    gap: var(--space-2);
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-2);
+    border-bottom: var(--border-width) solid var(--border-default);
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
 }
 
-#user-content {
-    flex-grow: 1;
-    padding: calc(var(--spacing) * 2);
-    overflow-y: auto;
+.tab-navigation::-webkit-scrollbar {
+    display: none;
 }
 
-/* Content Sections */
+.tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all var(--duration-fast) var(--ease-default);
+    width: max-content; !important;
+}
+
+.tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--interactive-muted);
+}
+
+.tab-btn.active {
+    color: var(--text-inverse);
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+    box-shadow: var(--shadow-primary);
+}
+
+.tab-btn .material-symbols-outlined {
+    font-size: 20px;
+}
+
+/* Mobile Tab Scroll Indicator */
+.tab-scroll-hint {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    background: linear-gradient(to left, var(--bg-surface), transparent);
+    pointer-events: none;
+}
+
+/* ========== Content Sections ========== */
 .content-section {
     display: none;
+    animation: fadeSlideIn 0.3s var(--ease-out);
 }
 
 .content-section.active {
     display: block;
-    animation: fadeSlideIn 0.4s ease-out;
 }
 
 @keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateY(15px); }
+    from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-.content-section h2 {
-    font-size: var(--font-size-2xl);
-    font-weight: var(--font-weight-semibold);
-    color: var(--theme-text);
-    margin-bottom: calc(var(--spacing) * 1.5);
-    padding-bottom: var(--spacing);
-    border-bottom: 2px solid var(--theme-primary);
+.section-header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
 }
 
-/* Cards */
-.dashboard-card {
-    background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
+.section-header h2 {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.section-header .material-symbols-outlined {
+    font-size: 28px;
+    color: var(--interactive);
+}
+
+/* ========== Stats Grid ========== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+}
+
+.stat-card {
+    background: var(--bg-surface);
+    border: var(--border-width) solid var(--border-subtle);
     border-radius: var(--radius-lg);
-    padding: calc(var(--spacing) * 1.5);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    margin-bottom: calc(var(--spacing) * 1.5);
-    transition: all var(--transition-fast);
+    padding: var(--space-5);
+    text-align: center;
+    box-shadow: var(--highlight-subtle), var(--shadow-sm);
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--highlight-subtle), var(--shadow-md);
+}
+
+.stat-value {
+    font-size: var(--text-3xl);
+    font-weight: var(--weight-bold);
+    color: var(--interactive);
+    line-height: var(--leading-tight);
+}
+
+.stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
+}
+
+/* ========== Dashboard Cards ========== */
+.dashboard-card {
+    background: var(--bg-surface);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
+    margin-bottom: var(--space-5);
+    box-shadow: var(--highlight-subtle), var(--shadow-sm);
+    transition: all var(--duration-fast) var(--ease-default);
 }
 
 .dashboard-card:hover {
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--theme-text) 12%, transparent);
-    transform: translateY(-2px);
+    box-shadow: var(--highlight-subtle), var(--shadow-md);
 }
 
 .dashboard-card h3 {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-    margin: 0 0 var(--spacing) 0;
-    color: var(--theme-primary);
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin: 0 0 var(--space-4) 0;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-2);
 }
 
-/* Module Cards */
+.dashboard-card h3 .material-symbols-outlined {
+    color: var(--interactive);
+    font-size: 22px;
+}
+
+/* ========== Module Grid ========== */
 .module-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: var(--spacing);
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-4);
 }
 
 .module-card {
-    background: var(--input-bg);
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-default);
     border-radius: var(--radius-md);
-    padding: var(--spacing);
-    border: 1px solid var(--theme-border);
-    transition: all var(--transition-fast);
+    padding: var(--space-4);
+    transition: all var(--duration-fast) var(--ease-default);
 }
 
 .module-card:hover {
-    border-color: var(--theme-primary);
-    box-shadow: 0 4px 12px color-mix(in srgb, var(--theme-primary) 15%, transparent);
+    border-color: var(--interactive);
+    box-shadow: var(--shadow-sm);
 }
 
 .module-card.active {
     border-color: var(--color-success);
-    background: color-mix(in srgb, var(--color-success) 8%, var(--input-bg));
+    background: oklch(from var(--color-success) l c h / 0.08);
 }
 
 .module-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: calc(var(--spacing) * 0.5);
+    margin-bottom: var(--space-2);
 }
 
 .module-name {
-    font-weight: var(--font-weight-semibold);
-    color: var(--theme-text);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
 }
 
 .module-status {
-    font-size: var(--font-size-xs);
-    padding: 2px 8px;
+    font-size: var(--text-xs);
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-full);
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--weight-medium);
 }
 
 .module-status.loaded {
@@ -243,72 +311,69 @@ body {
 }
 
 .module-status.available {
-    background: var(--theme-border);
-    color: var(--theme-text-muted);
-}
-
-.module-description {
-    font-size: var(--font-size-sm);
-    color: var(--theme-text-muted);
-    margin-bottom: calc(var(--spacing) * 0.75);
+    background: var(--border-default);
+    color: var(--text-muted);
 }
 
 .module-actions {
     display: flex;
-    gap: calc(var(--spacing) * 0.5);
+    gap: var(--space-2);
     flex-wrap: wrap;
+    margin-top: var(--space-3);
 }
 
-/* Settings Grid */
+/* ========== Settings ========== */
 .settings-section {
-    margin-bottom: calc(var(--spacing) * 2);
+    margin-bottom: var(--space-6);
 }
 
 .settings-section h4 {
-    font-size: var(--font-size-base);
-    font-weight: var(--font-weight-semibold);
-    margin-bottom: var(--spacing);
-    color: var(--theme-text);
+    font-size: var(--text-base);
+    font-weight: var(--weight-semibold);
+    margin-bottom: var(--space-4);
+    color: var(--text-primary);
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--space-2);
 }
 
 .setting-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: var(--spacing);
-    background: var(--input-bg);
+    padding: var(--space-4);
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-subtle);
     border-radius: var(--radius-md);
-    margin-bottom: calc(var(--spacing) * 0.5);
-    border: 1px solid var(--theme-border);
+    margin-bottom: var(--space-2);
+    transition: border-color var(--duration-fast) var(--ease-default);
 }
 
 .setting-item:hover {
-    border-color: var(--theme-primary);
+    border-color: var(--border-strong);
 }
 
 .setting-info {
     flex: 1;
+    min-width: 0;
 }
 
 .setting-label {
-    font-weight: var(--font-weight-medium);
-    color: var(--theme-text);
-    margin-bottom: 2px;
+    font-weight: var(--weight-medium);
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
 }
 
 .setting-description {
-    font-size: var(--font-size-sm);
-    color: var(--theme-text-muted);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
 }
 
-/* Toggle Switch */
+/* ========== Toggle Switch ========== */
 .toggle-switch {
     position: relative;
-    width: 52px;
-    height: 28px;
+    width: 48px;
+    height: 26px;
     flex-shrink: 0;
 }
 
@@ -321,65 +386,73 @@ body {
 .toggle-slider {
     position: absolute;
     cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--theme-border);
-    transition: var(--transition-fast);
-    border-radius: 28px;
+    inset: 0;
+    background-color: var(--border-default);
+    transition: var(--duration-fast) var(--ease-default);
+    border-radius: var(--radius-full);
 }
 
-.toggle-slider:before {
+.toggle-slider::before {
     position: absolute;
     content: "";
-    height: 22px;
-    width: 22px;
+    height: 20px;
+    width: 20px;
     left: 3px;
     bottom: 3px;
     background-color: white;
-    transition: var(--transition-fast);
-    border-radius: 50%;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: var(--duration-fast) var(--ease-default);
+    border-radius: var(--radius-full);
+    box-shadow: var(--shadow-xs);
 }
 
 input:checked + .toggle-slider {
-    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
 }
 
-input:checked + .toggle-slider:before {
-    transform: translateX(24px);
+input:checked + .toggle-slider::before {
+    transform: translateX(22px);
 }
 
-/* Buttons */
+/* ========== Buttons ========== */
 .tb-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: calc(var(--spacing) * 0.5) calc(var(--spacing) * 1);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
     border-radius: var(--radius-md);
-    font-weight: var(--font-weight-medium);
-    font-size: var(--font-size-sm);
+    font-weight: var(--weight-medium);
+    font-size: var(--text-sm);
+    font-family: inherit;
     cursor: pointer;
-    transition: all var(--transition-fast);
-    border: 1px solid transparent;
-    gap: 0.35rem;
+    border: var(--border-width) solid transparent;
+    transition: all var(--duration-fast) var(--ease-default);
 }
 
 .tb-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px color-mix(in srgb, var(--theme-text) 12%, transparent);
 }
 
 .tb-btn-primary {
-    background: linear-gradient(135deg, var(--theme-primary) 0%, var(--theme-secondary) 100%);
-    color: var(--theme-text-on-primary);
+    background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
+    color: var(--text-inverse);
+    box-shadow: var(--shadow-primary);
+}
+
+.tb-btn-primary:hover {
+    box-shadow: 0 6px 20px oklch(55% 0.18 230 / 0.4);
 }
 
 .tb-btn-secondary {
-    background: var(--input-bg);
-    color: var(--theme-text);
-    border-color: var(--theme-border);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-xs);
+}
+
+.tb-btn-secondary:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
 }
 
 .tb-btn-success {
@@ -393,75 +466,60 @@ input:checked + .toggle-slider:before {
 }
 
 .tb-btn-sm {
-    padding: calc(var(--spacing) * 0.35) calc(var(--spacing) * 0.75);
-    font-size: var(--font-size-xs);
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-xs);
 }
 
-/* Input Styles */
+.tb-btn .material-symbols-outlined {
+    font-size: 18px;
+}
+
+/* ========== Inputs ========== */
 .tb-input {
     width: 100%;
-    padding: calc(var(--spacing) * 0.75) var(--spacing);
-    font-size: var(--font-size-base);
-    color: var(--theme-text);
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-base);
+    font-family: inherit;
+    color: var(--text-primary);
     background-color: var(--input-bg);
-    border: 1px solid var(--input-border);
+    border: var(--border-width) solid var(--input-border);
     border-radius: var(--radius-md);
-    transition: all var(--transition-fast);
+    transition: all var(--duration-fast) var(--ease-default);
+    margin-bottom: 0;
 }
 
 .tb-input:focus {
     outline: none;
-    border-color: var(--theme-primary);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-primary) 20%, transparent);
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px oklch(from var(--input-focus) l c h / 0.15);
 }
 
-/* Stats Cards */
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--spacing);
-    margin-bottom: calc(var(--spacing) * 1.5);
-}
-
-.stat-card {
-    background: var(--input-bg);
-    border-radius: var(--radius-md);
-    padding: var(--spacing);
-    text-align: center;
-    border: 1px solid var(--theme-border);
-}
-
-.stat-value {
-    font-size: var(--font-size-2xl);
-    font-weight: var(--font-weight-bold);
-    color: var(--theme-primary);
-}
-
-.stat-label {
-    font-size: var(--font-size-sm);
-    color: var(--theme-text-muted);
-}
-
-/* Mod Data Panel */
+/* ========== Mod Data Panel ========== */
 .mod-data-panel {
-    background: var(--input-bg);
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-default);
     border-radius: var(--radius-md);
-    border: 1px solid var(--theme-border);
     overflow: hidden;
+    margin-bottom: var(--space-4);
 }
 
 .mod-data-header {
-    background: color-mix(in srgb, var(--theme-primary) 10%, var(--input-bg));
-    padding: calc(var(--spacing) * 0.75) var(--spacing);
-    font-weight: var(--font-weight-semibold);
+    background: var(--interactive-muted);
+    padding: var(--space-3) var(--space-4);
+    font-weight: var(--weight-semibold);
     display: flex;
     justify-content: space-between;
     align-items: center;
     cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-default);
+}
+
+.mod-data-header:hover {
+    background: oklch(from var(--interactive) l c h / 0.15);
 }
 
 .mod-data-content {
-    padding: var(--spacing);
+    padding: var(--space-4);
     display: none;
 }
 
@@ -473,8 +531,8 @@ input:checked + .toggle-slider:before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: calc(var(--spacing) * 0.5) 0;
-    border-bottom: 1px solid var(--theme-border);
+    padding: var(--space-3) 0;
+    border-bottom: var(--border-width) solid var(--border-subtle);
 }
 
 .mod-data-item:last-child {
@@ -482,85 +540,103 @@ input:checked + .toggle-slider:before {
 }
 
 .mod-data-key {
-    font-weight: var(--font-weight-medium);
-    color: var(--theme-text-muted);
+    font-weight: var(--weight-medium);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
 }
 
 .mod-data-value {
-    color: var(--theme-text);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
 }
 
-/* Mobile Responsive */
-@media (max-width: 768px) {
-    #user-sidebar {
-        position: fixed;
-        left: -280px;
-        top: 0;
-        bottom: 0;
-        z-index: var(--z-modal);
-        transition: left var(--transition-medium);
-    }
-
-    #user-sidebar.open {
-        left: 0;
-        box-shadow: 4px 0 20px color-mix(in srgb, var(--theme-text) 25%, transparent);
-    }
-
-    #sidebar-toggle-btn {
-        display: inline-flex !important;
-    }
-
-    #sidebar-backdrop.active {
-        display: block;
-    }
-
-    .module-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
+/* ========== Theme Selector ========== */
+.theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--space-4);
 }
 
-@media (min-width: 769px) {
-    #sidebar-toggle-btn {
-        display: none !important;
-    }
-
-    #sidebar-backdrop {
-        display: none !important;
-    }
+.theme-option {
+    padding: var(--space-5);
+    border-radius: var(--radius-lg);
+    border: 2px solid var(--border-default);
+    background: var(--bg-surface);
+    cursor: pointer;
+    text-align: center;
+    transition: all var(--duration-fast) var(--ease-default);
 }
 
-#sidebar-backdrop {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: calc(var(--z-modal) - 1);
+.theme-option:hover {
+    border-color: var(--border-strong);
 }
 
-/* Toast/Notification */
-.toast-success {
-    background: var(--color-success) !important;
+.theme-option.active {
+    border-color: var(--interactive);
+    box-shadow: 0 0 0 3px oklch(from var(--interactive) l c h / 0.15);
 }
 
-.toast-error {
-    background: var(--color-error) !important;
+.theme-option .material-symbols-outlined {
+    font-size: 32px;
+    display: block;
+    margin-bottom: var(--space-2);
+    color: var(--interactive);
 }
 
-/* Loading Spinner */
+/* ========== Info Table ========== */
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.info-table td {
+    padding: var(--space-3) var(--space-2);
+    border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.info-table tr:last-child td {
+    border-bottom: none;
+}
+
+.info-table td:first-child {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    width: 40%;
+}
+
+/* ========== Quick Actions ========== */
+.quick-actions {
+    display: flex;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+/* ========== Empty State ========== */
+.empty-state {
+    text-align: center;
+    padding: var(--space-10) var(--space-6);
+    color: var(--text-muted);
+}
+
+.empty-state .material-symbols-outlined {
+    font-size: 56px;
+    margin-bottom: var(--space-4);
+    opacity: 0.4;
+}
+
+.empty-state p {
+    margin: 0;
+    font-size: var(--text-lg);
+}
+
+/* ========== Loading Spinner ========== */
 .loading-spinner {
     display: inline-block;
     width: 20px;
     height: 20px;
-    border: 2px solid var(--theme-border);
-    border-top-color: var(--theme-primary);
-    border-radius: 50%;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--interactive);
+    border-radius: var(--radius-full);
     animation: spin 0.8s linear infinite;
 }
 
@@ -568,74 +644,141 @@ input:checked + .toggle-slider:before {
     to { transform: rotate(360deg); }
 }
 
-/* Helper Classes */
-.text-muted { color: var(--theme-text-muted); }
+/* ========== Responsive ========== */
+@media screen and (max-width: 767px) {
+    .dashboard {
+        padding: var(--space-4) var(--space-3);
+    }
+
+    .dashboard-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-3);
+    }
+
+    .dashboard-title h1 {
+        font-size: var(--text-2xl);
+    }
+
+    .header-actions {
+        justify-content: center;
+    }
+
+    .tab-navigation {
+        margin-left: calc(var(--space-3) * -1);
+        margin-right: calc(var(--space-3) * -1);
+        padding-left: var(--space-3);
+        padding-right: var(--space-3);
+        position: relative;
+    }
+
+    .tab-btn {
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .tab-btn span:not(.material-symbols-outlined) {
+        display: none;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .module-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .setting-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-3);
+    }
+
+    .toggle-switch {
+        align-self: flex-end;
+    }
+
+    .quick-actions {
+        flex-direction: column;
+    }
+
+    .quick-actions .tb-btn {
+        width: 100%;
+    }
+
+    .theme-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* ========== Utility Classes ========== */
+.text-muted { color: var(--text-muted); }
 .text-success { color: var(--color-success); }
 .text-error { color: var(--color-error); }
-.text-sm { font-size: var(--font-size-sm); }
-.mt-2 { margin-top: calc(var(--spacing) * 0.5); }
-.mt-4 { margin-top: var(--spacing); }
-.mb-2 { margin-bottom: calc(var(--spacing) * 0.5); }
-.mb-4 { margin-bottom: var(--spacing); }
+.text-sm { font-size: var(--text-sm); }
+.mt-2 { margin-top: var(--space-2); }
+.mt-4 { margin-top: var(--space-4); }
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-4 { margin-bottom: var(--space-4); }
 .flex { display: flex; }
-.gap-2 { gap: calc(var(--spacing) * 0.5); }
+.gap-2 { gap: var(--space-2); }
+.gap-4 { gap: var(--space-4); }
 .items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
 </style>
 
-<div id="user-dashboard">
-    <header id="user-header">
-        <div class="flex items-center gap-2">
-            <button id="sidebar-toggle-btn" class="tb-btn tb-btn-secondary" style="display:none;">
-                <span class="material-symbols-outlined">menu</span>
-            </button>
-            <h1>
-                <span class="material-symbols-outlined">dashboard</span>
-                <span id="welcome-text">Willkommen!</span>
-            </h1>
-        </div>
-        <div class="flex items-center gap-2">
-            <div id="darkModeToggleContainer"></div>
-            <button id="logoutButtonUser" class="tb-btn tb-btn-secondary">
-                <span class="material-symbols-outlined">logout</span>
-                <span class="logout-text">Abmelden</span>
-            </button>
-        </div>
-    </header>
+<div class="content-wrapper">
+    <main class="dashboard main-content glass">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="dashboard-title">
+                <div class="user-avatar" id="user-avatar">?</div>
+                <div>
+                    <h1 id="welcome-text">Dashboard</h1>
+                    <span class="text-sm text-muted" id="user-email"></span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div id="darkModeToggleContainer"></div>
+                <button id="logoutButtonUser" class="tb-btn tb-btn-secondary">
+                    <span class="material-symbols-outlined">logout</span>
+                    <span class="logout-text">Abmelden</span>
+                </button>
+            </div>
+        </header>
 
-    <div id="user-container">
-        <aside id="user-sidebar">
-            <ul>
-                <li data-section="overview" class="active">
-                    <span class="material-symbols-outlined">home</span>
-                    Übersicht
-                </li>
-                <li data-section="my-modules">
-                    <span class="material-symbols-outlined">extension</span>
-                    Meine Module
-                </li>
-                <li data-section="mod-data">
-                    <span class="material-symbols-outlined">database</span>
-                    Mod-Daten
-                </li>
-                <li data-section="settings">
-                    <span class="material-symbols-outlined">settings</span>
-                    Einstellungen
-                </li>
-                <li data-section="appearance">
-                    <span class="material-symbols-outlined">palette</span>
-                    Erscheinungsbild
-                </li>
-                <li data-section="profile">
-                    <span class="material-symbols-outlined">person</span>
-                    Mein Profil
-                </li>
-            </ul>
-        </aside>
+        <!-- Tab Navigation -->
+        <nav class="tab-navigation" id="tab-navigation" role="tablist">
+            <button class="tab-btn active" data-section="overview" role="tab" aria-selected="true">
+                <span class="material-symbols-outlined">home</span>
+                <span>Übersicht</span>
+            </button>
+            <button class="tab-btn" data-section="my-modules" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">extension</span>
+                <span>Module</span>
+            </button>
+            <button class="tab-btn" data-section="mod-data" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">database</span>
+                <span>Daten</span>
+            </button>
+            <button class="tab-btn" data-section="settings" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">settings</span>
+                <span>Einstellungen</span>
+            </button>
+            <button class="tab-btn" data-section="appearance" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">palette</span>
+                <span>Theme</span>
+            </button>
+            <button class="tab-btn" data-section="profile" role="tab" aria-selected="false">
+                <span class="material-symbols-outlined">person</span>
+                <span>Profil</span>
+            </button>
+        </nav>
 
-        <main id="user-content">
+        <!-- Content Sections -->
+        <div id="dashboard-content">
             <!-- Übersicht -->
             <section id="overview-section" class="content-section active">
-                <h2><span class="material-symbols-outlined">home</span>Übersicht</h2>
                 <div id="overview-content">
                     <p class="text-muted">Lädt...</p>
                 </div>
@@ -643,7 +786,6 @@ input:checked + .toggle-slider:before {
 
             <!-- Meine Module -->
             <section id="my-modules-section" class="content-section">
-                <h2><span class="material-symbols-outlined">extension</span>Meine Module</h2>
                 <div id="my-modules-content">
                     <p class="text-muted">Lädt Module...</p>
                 </div>
@@ -651,7 +793,6 @@ input:checked + .toggle-slider:before {
 
             <!-- Mod-Daten -->
             <section id="mod-data-section" class="content-section">
-                <h2><span class="material-symbols-outlined">database</span>Mod-Daten</h2>
                 <div id="mod-data-content">
                     <p class="text-muted">Lädt Mod-Daten...</p>
                 </div>
@@ -659,7 +800,6 @@ input:checked + .toggle-slider:before {
 
             <!-- Einstellungen -->
             <section id="settings-section" class="content-section">
-                <h2><span class="material-symbols-outlined">settings</span>Einstellungen</h2>
                 <div id="settings-content">
                     <p class="text-muted">Lädt Einstellungen...</p>
                 </div>
@@ -667,7 +807,6 @@ input:checked + .toggle-slider:before {
 
             <!-- Erscheinungsbild -->
             <section id="appearance-section" class="content-section">
-                <h2><span class="material-symbols-outlined">palette</span>Erscheinungsbild</h2>
                 <div id="appearance-content">
                     <p class="text-muted">Lädt Theme-Einstellungen...</p>
                 </div>
@@ -675,23 +814,20 @@ input:checked + .toggle-slider:before {
 
             <!-- Profil -->
             <section id="profile-section" class="content-section">
-                <h2><span class="material-symbols-outlined">person</span>Mein Profil</h2>
                 <div id="profile-content">
                     <p class="text-muted">Lädt Profil...</p>
                 </div>
             </section>
-        </main>
-    </div>
-
-    <div id="sidebar-backdrop"></div>
+        </div>
+    </main>
 </div>
 
 <script type="module">
 if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     console.error('CRITICAL: TB (tbjs) not loaded.');
-    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:red;">Fehler: Frontend-Bibliothek konnte nicht geladen werden.</div>';
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:var(--color-error);">Fehler: Frontend-Bibliothek konnte nicht geladen werden.</div>';
 } else {
-    console.log('TB object found. Initializing User Dashboard v2...');
+    console.log('TB object found. Initializing User Dashboard v3...');
 
     let currentUser = null;
     let allModules = [];
@@ -703,93 +839,85 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         console.log("Dashboard wird initialisiert...");
         TB.ui.DarkModeToggle.init();
         setupNavigation();
-        setupMobileSidebar();
         setupLogout();
 
         try {
-            // Benutzer laden
             const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user', null, 'GET');
             if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
                 currentUser = userRes.get();
-                updateWelcomeText();
+                updateHeader();
 
-                // Module laden
                 const modulesRes = await TB.api.request('CloudM.UserDashboard', 'get_all_available_modules', null, 'GET');
                 if (modulesRes.error === TB.ToolBoxError.none) {
                     allModules = modulesRes.get() || [];
                 }
 
-                // Instanz laden
                 const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
                 if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
                     userInstance = instanceRes.get()[0];
                 }
 
-                // Erste Sektion laden
                 await showSection('overview');
             } else {
-                document.getElementById('user-content').innerHTML = `
-                    <div class="dashboard-card" style="text-align:center; padding:40px;">
-                        <span class="material-symbols-outlined" style="font-size:64px; color:var(--color-warning);">login</span>
-                        <h3 style="margin-top:16px;">Nicht angemeldet</h3>
-                        <p class="text-muted">Bitte melden Sie sich an, um fortzufahren.</p>
-                        <button onclick="TB.user.signIn()" class="tb-btn tb-btn-primary mt-4">
-                            <span class="material-symbols-outlined">login</span>
-                            Anmelden
-                        </button>
-                    </div>
-                `;
+                showNotAuthenticated();
             }
         } catch (e) {
             console.error("Fehler beim Initialisieren:", e);
-            document.getElementById('user-content').innerHTML = `
-                <div class="dashboard-card" style="text-align:center; padding:40px;">
-                    <span class="material-symbols-outlined" style="font-size:64px; color:var(--color-error);">error</span>
-                    <h3 style="margin-top:16px;">Verbindungsfehler</h3>
-                    <p class="text-muted">Die Verbindung zum Server konnte nicht hergestellt werden.</p>
-                </div>
-            `;
+            showConnectionError();
         }
     }
 
-    function updateWelcomeText() {
+    function updateHeader() {
+        const avatarEl = document.getElementById('user-avatar');
         const welcomeEl = document.getElementById('welcome-text');
-        if (welcomeEl && currentUser) {
+        const emailEl = document.getElementById('user-email');
+
+        if (currentUser) {
             const name = currentUser.username || currentUser.name || 'Benutzer';
-            welcomeEl.textContent = `Willkommen, ${name}!`;
+            const initial = name.charAt(0).toUpperCase();
+
+            if (avatarEl) avatarEl.textContent = initial;
+            if (welcomeEl) welcomeEl.textContent = `Hallo, ${name}!`;
+            if (emailEl) emailEl.textContent = currentUser.email || '';
         }
+    }
+
+    function showNotAuthenticated() {
+        document.getElementById('dashboard-content').innerHTML = `
+            <div class="empty-state">
+                <span class="material-symbols-outlined">login</span>
+                <h3 style="margin-top:var(--space-4);">Nicht angemeldet</h3>
+                <p class="text-muted">Bitte melden Sie sich an, um fortzufahren.</p>
+                <button onclick="TB.router.navigateTo('/web/assets/login.html')" class="tb-btn tb-btn-primary mt-4">
+                    <span class="material-symbols-outlined">login</span>
+                    Anmelden
+                </button>
+            </div>
+        `;
+    }
+
+    function showConnectionError() {
+        document.getElementById('dashboard-content').innerHTML = `
+            <div class="empty-state">
+                <span class="material-symbols-outlined">cloud_off</span>
+                <h3 style="margin-top:var(--space-4);">Verbindungsfehler</h3>
+                <p class="text-muted">Die Verbindung zum Server konnte nicht hergestellt werden.</p>
+            </div>
+        `;
     }
 
     // ========== Navigation ==========
     function setupNavigation() {
-        document.querySelectorAll('#user-sidebar li[data-section]').forEach(item => {
-            item.addEventListener('click', async () => {
-                document.querySelectorAll('#user-sidebar li').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                await showSection(item.dataset.section);
-
-                // Mobile: Sidebar schließen
-                if (window.innerWidth < 769) {
-                    document.getElementById('user-sidebar').classList.remove('open');
-                    document.getElementById('sidebar-backdrop').classList.remove('active');
-                }
+        document.querySelectorAll('#tab-navigation .tab-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                document.querySelectorAll('#tab-navigation .tab-btn').forEach(b => {
+                    b.classList.remove('active');
+                    b.setAttribute('aria-selected', 'false');
+                });
+                btn.classList.add('active');
+                btn.setAttribute('aria-selected', 'true');
+                await showSection(btn.dataset.section);
             });
-        });
-    }
-
-    function setupMobileSidebar() {
-        const toggleBtn = document.getElementById('sidebar-toggle-btn');
-        const sidebar = document.getElementById('user-sidebar');
-        const backdrop = document.getElementById('sidebar-backdrop');
-
-        toggleBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('open');
-            backdrop.classList.toggle('active');
-        });
-
-        backdrop.addEventListener('click', () => {
-            sidebar.classList.remove('open');
-            backdrop.classList.remove('active');
         });
     }
 
@@ -834,7 +962,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 </div>
                 <div class="stat-card">
                     <div class="stat-value">${savedModsCount}</div>
-                    <div class="stat-label">Gespeicherte Module</div>
+                    <div class="stat-label">Gespeichert</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value">${cliSessions}</div>
@@ -842,13 +970,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 </div>
                 <div class="stat-card">
                     <div class="stat-value">${currentUser?.level || 1}</div>
-                    <div class="stat-label">Benutzer-Level</div>
+                    <div class="stat-label">Level</div>
                 </div>
             </div>
 
             <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">speed</span>Schnellzugriff</h3>
-                <div class="flex gap-2" style="flex-wrap:wrap;">
+                <h3><span class="material-symbols-outlined">bolt</span>Schnellzugriff</h3>
+                <div class="quick-actions">
                     <button class="tb-btn tb-btn-primary" onclick="showSection('my-modules')">
                         <span class="material-symbols-outlined">extension</span>
                         Module verwalten
@@ -881,11 +1009,11 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             ` : ''}
 
             <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">info</span>Konto-Info</h3>
-                <table style="width:100%;">
-                    <tr><td class="text-muted">Benutzername</td><td><strong>${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</strong></td></tr>
-                    <tr><td class="text-muted">E-Mail</td><td>${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</td></tr>
-                    <tr><td class="text-muted">Level</td><td>${currentUser?.level || 1}</td></tr>
+                <h3><span class="material-symbols-outlined">account_circle</span>Konto-Info</h3>
+                <table class="info-table">
+                    <tr><td>Benutzername</td><td><strong>${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</strong></td></tr>
+                    <tr><td>E-Mail</td><td>${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</td></tr>
+                    <tr><td>Level</td><td>${currentUser?.level || 1}</td></tr>
                 </table>
             </div>
         `;
@@ -895,7 +1023,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     async function loadModules() {
         const content = document.getElementById('my-modules-content');
 
-        // Aktuelle Instanz-Daten neu laden
         try {
             const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
             if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
@@ -906,7 +1033,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         const liveModNames = (userInstance?.live_modules || []).map(m => m.name);
         const savedModNames = userInstance?.saved_modules || [];
 
-        // Kategorien erstellen
         const categories = {};
         allModules.forEach(mod => {
             const category = mod.split('.')[0] || 'Andere';
@@ -917,14 +1043,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         content.innerHTML = `
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">info</span>Hinweis</h3>
-                <p class="text-sm text-muted">
-                    Hier können Sie Module aktivieren oder deaktivieren. Aktive Module stehen Ihnen sofort zur Verfügung.
-                    Gespeicherte Module werden bei der nächsten Anmeldung automatisch geladen.
+                <p class="text-sm text-muted" style="margin:0;">
+                    Aktivieren oder deaktivieren Sie Module nach Bedarf. Gespeicherte Module werden beim nächsten Login automatisch geladen.
                 </p>
             </div>
 
             <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">bookmark</span>Meine gespeicherten Module (${savedModNames.length})</h3>
+                <h3><span class="material-symbols-outlined">bookmark</span>Gespeicherte Module (${savedModNames.length})</h3>
                 ${savedModNames.length > 0 ? `
                     <div class="module-grid">
                         ${savedModNames.map(modName => {
@@ -935,7 +1060,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                                         <span class="module-name">${TB.utils.escapeHtml(modName)}</span>
                                         <span class="module-status ${isLive ? 'loaded' : 'available'}">${isLive ? 'Aktiv' : 'Gespeichert'}</span>
                                     </div>
-                                    <div class="module-actions mt-2">
+                                    <div class="module-actions">
                                         ${!isLive ? `
                                             <button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule('${TB.utils.escapeHtml(modName)}')">
                                                 <span class="material-symbols-outlined">play_arrow</span>
@@ -966,11 +1091,11 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 <div id="module-categories">
                     ${Object.entries(categories).map(([cat, mods]) => `
                         <details class="mb-4" ${cat === 'CloudM' ? 'open' : ''}>
-                            <summary style="cursor:pointer; font-weight:var(--font-weight-semibold); padding:var(--spacing) 0;">
-                                <span class="material-symbols-outlined" style="vertical-align:middle;">folder</span>
+                            <summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">
+                                <span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>
                                 ${TB.utils.escapeHtml(cat)} (${mods.length})
                             </summary>
-                            <div class="module-grid" style="margin-top:var(--spacing);">
+                            <div class="module-grid" style="margin-top:var(--space-3);">
                                 ${mods.map(modName => {
                                     const isLive = liveModNames.includes(modName);
                                     const isSaved = savedModNames.includes(modName);
@@ -981,7 +1106,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                                                 ${isLive ? '<span class="module-status loaded">Aktiv</span>' :
                                                   isSaved ? '<span class="module-status available">Gespeichert</span>' : ''}
                                             </div>
-                                            <div class="module-actions mt-2">
+                                            <div class="module-actions">
                                                 ${!isSaved ? `
                                                     <button class="tb-btn tb-btn-primary tb-btn-sm" onclick="addToSaved('${TB.utils.escapeHtml(modName)}')">
                                                         <span class="material-symbols-outlined">bookmark_add</span>
@@ -1011,7 +1136,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         `;
     }
 
-    // Modul-Funktionen global machen
     window.filterModules = function(query) {
         const q = query.toLowerCase();
         document.querySelectorAll('.module-item').forEach(item => {
@@ -1093,7 +1217,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     async function loadModData() {
         const content = document.getElementById('mod-data-content');
 
-        // Mod-Daten laden
         try {
             const res = await TB.api.request('CloudM.UserDashboard', 'get_all_mod_data', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
@@ -1106,9 +1229,8 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         content.innerHTML = `
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>
-                <p class="text-sm text-muted">
-                    Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese Daten einsehen und bei Bedarf bearbeiten.
-                    Diese Daten sind nur für Sie sichtbar und werden sicher gespeichert.
+                <p class="text-sm text-muted" style="margin:0;">
+                    Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese einsehen und bearbeiten.
                 </p>
             </div>
 
@@ -1116,13 +1238,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 const data = modDataCache[modName] || {};
                 const entries = Object.entries(data);
                 return `
-                    <div class="mod-data-panel mb-4">
-                        <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.material-symbols-outlined').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
-                            <span>
-                                <span class="material-symbols-outlined" style="vertical-align:middle;">extension</span>
+                    <div class="mod-data-panel">
+                        <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.expand-icon').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
+                            <span class="flex items-center gap-2">
+                                <span class="material-symbols-outlined">extension</span>
                                 ${TB.utils.escapeHtml(modName)}
                             </span>
-                            <span class="material-symbols-outlined">expand_more</span>
+                            <span class="material-symbols-outlined expand-icon">expand_more</span>
                         </div>
                         <div class="mod-data-content">
                             ${entries.length > 0 ? entries.map(([key, value]) => `
@@ -1149,10 +1271,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     </div>
                 `;
             }).join('') : `
-                <div class="dashboard-card" style="text-align:center; padding:40px;">
-                    <span class="material-symbols-outlined" style="font-size:48px; color:var(--theme-text-muted);">folder_off</span>
-                    <p class="text-muted mt-4">Noch keine Mod-Daten vorhanden.</p>
-                    <p class="text-sm text-muted">Module speichern hier automatisch Ihre Einstellungen und Fortschritte.</p>
+                <div class="empty-state">
+                    <span class="material-symbols-outlined">folder_off</span>
+                    <p>Noch keine Mod-Daten vorhanden.</p>
+                    <p class="text-sm text-muted mt-2">Module speichern hier automatisch Ihre Einstellungen.</p>
                 </div>
             `}
         `;
@@ -1166,7 +1288,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             title: `${modName} - Daten bearbeiten`,
             content: `
                 <p class="text-sm text-muted mb-4">Vorsicht: Änderungen können die Funktionalität des Moduls beeinflussen.</p>
-                <textarea id="mod-data-editor" style="width:100%; height:200px; font-family:monospace; padding:8px; border:1px solid var(--theme-border); border-radius:var(--radius-md);">${TB.utils.escapeHtml(json)}</textarea>
+                <textarea id="mod-data-editor" style="width:100%; height:200px; font-family:var(--font-mono); padding:var(--space-3); border:var(--border-width) solid var(--border-default); border-radius:var(--radius-md); background:var(--input-bg); color:var(--text-primary);">${TB.utils.escapeHtml(json)}</textarea>
             `,
             buttons: [
                 { text: 'Abbrechen', action: m => m.close(), variant: 'secondary' },
@@ -1228,7 +1350,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     <div class="setting-item">
                         <div class="setting-info">
                             <div class="setting-label">Experimentelle Funktionen</div>
-                            <div class="setting-description">Aktiviert neue Funktionen, die sich noch in der Testphase befinden</div>
+                            <div class="setting-description">Aktiviert neue Funktionen in der Testphase</div>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${settings.experimental_features ? 'checked' : ''}
@@ -1240,7 +1362,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     <div class="setting-item">
                         <div class="setting-info">
                             <div class="setting-label">Benachrichtigungen</div>
-                            <div class="setting-description">Erhalten Sie Benachrichtigungen über wichtige Ereignisse</div>
+                            <div class="setting-description">Benachrichtigungen über wichtige Ereignisse</div>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${settings.notifications !== false ? 'checked' : ''}
@@ -1252,7 +1374,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     <div class="setting-item">
                         <div class="setting-info">
                             <div class="setting-label">Auto-Laden von Modulen</div>
-                            <div class="setting-description">Gespeicherte Module beim Anmelden automatisch laden</div>
+                            <div class="setting-description">Gespeicherte Module beim Login automatisch laden</div>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${settings.auto_load_modules !== false ? 'checked' : ''}
@@ -1264,7 +1386,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     <div class="setting-item">
                         <div class="setting-info">
                             <div class="setting-label">Detaillierte Protokolle</div>
-                            <div class="setting-description">Ausführliche Protokollierung für Fehlerbehebung aktivieren</div>
+                            <div class="setting-description">Ausführliche Protokollierung für Fehlerbehebung</div>
                         </div>
                         <label class="toggle-switch">
                             <input type="checkbox" ${settings.verbose_logging ? 'checked' : ''}
@@ -1277,34 +1399,30 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">language</span>Sprache & Region</h3>
-                <div class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Sprache</div>
-                            <div class="setting-description">Wählen Sie Ihre bevorzugte Sprache</div>
-                        </div>
-                        <select class="tb-input" style="width:auto;" onchange="updateSetting('language', this.value)">
-                            <option value="de" ${settings.language === 'de' || !settings.language ? 'selected' : ''}>Deutsch</option>
-                            <option value="en" ${settings.language === 'en' ? 'selected' : ''}>English</option>
-                        </select>
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <div class="setting-label">Sprache</div>
+                        <div class="setting-description">Bevorzugte Sprache</div>
                     </div>
+                    <select class="tb-input" style="width:auto; margin-bottom:0;" onchange="updateSetting('language', this.value)">
+                        <option value="de" ${settings.language === 'de' || !settings.language ? 'selected' : ''}>Deutsch</option>
+                        <option value="en" ${settings.language === 'en' ? 'selected' : ''}>English</option>
+                    </select>
                 </div>
             </div>
 
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">security</span>Datenschutz</h3>
-                <div class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Nutzungsstatistiken</div>
-                            <div class="setting-description">Anonyme Statistiken zur Verbesserung der Anwendung senden</div>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${settings.analytics !== false ? 'checked' : ''}
-                                   onchange="updateSetting('analytics', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <div class="setting-label">Nutzungsstatistiken</div>
+                        <div class="setting-description">Anonyme Statistiken zur Verbesserung senden</div>
                     </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${settings.analytics !== false ? 'checked' : ''}
+                               onchange="updateSetting('analytics', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
         `;
@@ -1336,19 +1454,19 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         content.innerHTML = `
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">contrast</span>Farbschema</h3>
-                <p class="text-sm text-muted mb-4">Wählen Sie Ihr bevorzugtes Farbschema für die Anwendung.</p>
+                <p class="text-sm text-muted mb-4">Wählen Sie Ihr bevorzugtes Farbschema.</p>
 
-                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:var(--spacing);">
-                    <button class="theme-option ${themePreference === 'light' ? 'active' : ''}" onclick="setTheme('light')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'light' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
-                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">light_mode</span>
+                <div class="theme-grid">
+                    <button class="theme-option ${themePreference === 'light' ? 'active' : ''}" onclick="setTheme('light')">
+                        <span class="material-symbols-outlined">light_mode</span>
                         <span>Hell</span>
                     </button>
-                    <button class="theme-option ${themePreference === 'dark' ? 'active' : ''}" onclick="setTheme('dark')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'dark' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
-                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">dark_mode</span>
+                    <button class="theme-option ${themePreference === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">
+                        <span class="material-symbols-outlined">dark_mode</span>
                         <span>Dunkel</span>
                     </button>
-                    <button class="theme-option ${themePreference === 'system' ? 'active' : ''}" onclick="setTheme('system')" style="padding:20px; border-radius:var(--radius-lg); border:2px solid ${themePreference === 'system' ? 'var(--theme-primary)' : 'var(--theme-border)'}; background:var(--input-bg); cursor:pointer;">
-                        <span class="material-symbols-outlined" style="font-size:32px; display:block; margin-bottom:8px;">computer</span>
+                    <button class="theme-option ${themePreference === 'system' ? 'active' : ''}" onclick="setTheme('system')">
+                        <span class="material-symbols-outlined">computer</span>
                         <span>System</span>
                     </button>
                 </div>
@@ -1356,13 +1474,14 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>
-                <p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße nach Ihren Bedürfnissen an.</p>
+                <p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße an.</p>
 
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-4">
                     <span class="text-sm">A</span>
                     <input type="range" min="80" max="120" value="${currentUser?.settings?.font_scale || 100}"
-                           style="flex:1;" onchange="updateSetting('font_scale', this.value); document.documentElement.style.fontSize = this.value + '%';">
-                    <span style="font-size:1.2em;">A</span>
+                           style="flex:1; accent-color:var(--interactive);"
+                           onchange="updateSetting('font_scale', this.value); document.documentElement.style.fontSize = this.value + '%';">
+                    <span style="font-size:1.25em;">A</span>
                 </div>
             </div>
         `;
@@ -1371,7 +1490,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     window.setTheme = function(theme) {
         if (TB.ui.theme?.setPreference) {
             TB.ui.theme.setPreference(theme);
-            TB.ui.Toast.showSuccess(`Theme auf "${theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell'}" gesetzt`);
+            TB.ui.Toast.showSuccess(`Theme: ${theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell'}`);
             loadAppearance();
         }
     };
@@ -1397,7 +1516,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                             <div class="setting-label">E-Mail-Adresse</div>
                             <div class="setting-description">${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</div>
                         </div>
-                        <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.() || TB.ui.Toast.showInfo('Profil-Einstellungen werden geladen...')">
+                        <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.() || TB.ui.Toast.showInfo('Profil wird geladen...')">
                             <span class="material-symbols-outlined">edit</span>
                             Ändern
                         </button>
@@ -1415,7 +1534,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">key</span>Sicherheit</h3>
 
-                <div class="flex gap-2" style="flex-wrap:wrap;">
+                <div class="quick-actions">
                     <button class="tb-btn tb-btn-secondary" onclick="requestMagicLink()">
                         <span class="material-symbols-outlined">link</span>
                         Magic Link anfordern
@@ -1429,7 +1548,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">devices</span>Aktive Sitzungen</h3>
-                <p class="text-sm text-muted mb-4">Ihre aktuell angemeldeten Geräte und Sitzungen.</p>
+                <p class="text-sm text-muted mb-4">Ihre aktuell angemeldeten Geräte.</p>
 
                 <div id="sessions-list">
                     <div class="setting-item">

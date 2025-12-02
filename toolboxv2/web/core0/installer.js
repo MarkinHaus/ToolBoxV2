@@ -32,6 +32,11 @@ setTimeout(() => {
         { value: 'CLI-Nuitka-Mac', label: '⚡ Native CLI - macOS', group: 'cli' },
         { value: 'CLI-Nuitka-Linux', label: '⚡ Native CLI - Linux', group: 'cli' },
         { value: 'Server-Rust', label: '🦀 Rust Server (simple-core)', group: 'server' },
+        { value: 'divider-4', label: '─── ToolBoxV2 BlobDB ───', disabled: true },
+        { value: 'BlobDB', label: '🧬 BlobDB (Windows)', group: 'blobdb' },
+        { value: 'BlobDB-Mac', label: '🧬 BlobDB (macOS)', group: 'blobdb' },
+        { value: 'BlobDB-Linux', label: '🧬 BlobDB (Linux)', group: 'blobdb' },
+
         { value: 'divider-4', label: '─── Entwickler ───', disabled: true },
         { value: 'TBLang', label: '📜 TBLang Compiler', group: 'dev' },
         { value: 'Browser-Extension', label: '🌐 Browser Extension', group: 'dev' },
@@ -90,6 +95,21 @@ setTimeout(() => {
             /tb-toolbox-linux.*$/,
             /toolbox-linux.*$/,
             /nuitka.*linux/i
+        ],
+
+        'BlobDB': [
+            /r_blob_db-windows.*\.exe$/,
+            /r_blob_db.*\.exe$/
+        ],
+        'BlobDB-Mac': [
+            /r_blob_db-macos.*$/,
+            /r_blob_db.*\.tar\.gz$/,
+            /r_blob_db.*macos/i
+        ],
+        'BlobDB-Linux': [
+            /r_blob_db-linux.*$/,
+            /r_blob_db.*\.tar\.gz$/,
+            /r_blob_db.*linux/i
         ],
 
         // Rust Server

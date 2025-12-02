@@ -2609,7 +2609,7 @@ class AppType:
                 "version": "0.1.24",
                 "description": "API Documentation für CloudM Email Services",
             },
-            "servers": [{"url": "/api/v1", "description": "API Server"}],
+            "servers": [{"url": "/api", "description": "API Server"}],
             "paths": {},
         }
 
@@ -2641,7 +2641,7 @@ class AppType:
                         required.append(param)
 
                 # API Path erstellen
-                path = f"/api/{service_name}/{func_name}"
+                path = f"/{service_name}/{func_name}"
 
                 # Path Operation definieren
                 openapi_spec["paths"][path] = {
