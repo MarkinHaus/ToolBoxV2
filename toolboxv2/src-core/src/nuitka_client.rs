@@ -34,6 +34,7 @@ pub struct NuitkaClient {
     maintenance_last_run: Arc<Mutex<Instant>>,
     pub client_prefix: String,
     app_initialized: Arc<Mutex<bool>>,  // Track if init_app() was called
+     is_ready: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Errors für NuitkaClient
@@ -95,6 +96,7 @@ impl NuitkaClient {
             maintenance_last_run: Arc::new(Mutex::new(Instant::now())),
             client_prefix,
             app_initialized: Arc::new(Mutex::new(false)),
+            is_ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
@@ -109,6 +111,7 @@ impl NuitkaClient {
 
             // Create first instance (this calls init_app())
             let instance_id = self.create_python_instance().await?;
+            info!("Created initial Python instance: {}", instance_id);
 
             // Mark as initialized
             *self.app_initialized.lock().unwrap() = true;
@@ -120,12 +123,15 @@ impl NuitkaClient {
                 info!("WebSocket bridge enabled successfully");
             }
 
+            // ✅ WICHTIG: Markiere als bereit NACH erfolgreicher Initialisierung
+            self.set_ready();
+
         } else {
             drop(app_init);
 
             // Get existing instance
             let instance_id = self.instances.lock().unwrap()[0].id.clone();
-
+            info!("Using existing Python instance: {}", instance_id);
         }
 
         Ok(())
@@ -320,6 +326,29 @@ impl NuitkaClient {
                 })
             }).collect::<Vec<_>>(),
         })
+    }
+
+    /// Prüft ob Python vollständig initialisiert ist
+    pub fn is_ready(&self) -> bool {
+        self.is_ready.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wartet bis Python bereit ist (mit Timeout)
+    pub async fn wait_until_ready(&self, timeout: Duration) -> Result<(), NuitkaClientError> {
+        let start = Instant::now();
+        while !self.is_ready() {
+            if start.elapsed() > timeout {
+                return Err(NuitkaClientError::Timeout);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        Ok(())
+    }
+
+    /// Markiert Python als bereit (nur intern aufrufen!)
+    fn set_ready(&self) {
+        self.is_ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        info!("✅ Python backend is now READY for requests");
     }
 
     /// Aktiviert die Rust WebSocket Bridge in der Python App.

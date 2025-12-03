@@ -420,6 +420,11 @@ async fn websocket_handler(
 ) -> Result<HttpResponse, Error> {
     let (module_name, function_name) = path.into_inner();
 
+    if !client.is_ready() {
+        warn!("WebSocket connection rejected: Python backend not ready");
+        return Ok(HttpResponse::ServiceUnavailable()
+            .body("Server is still initializing, please retry in a moment"));
+    }
     // 1. Python Lazy Init (wie gehabt)
     let mut all_modules: Vec<String> = init_modules.as_ref().as_ref().clone();
     all_modules.extend(watch_modules.as_ref().as_ref().iter().cloned());
@@ -2391,7 +2396,11 @@ async fn api_handler(
     if let Err(e) = client.initialize(all_modules, Some("init_mod")).await {
         error!("Failed to initialize Python backend: {:?}", e);
     }
-
+    if !client.is_ready() {
+            warn!("api_handler connection rejected: Python backend not ready");
+        return HttpResponse::ServiceUnavailable()
+            .body("Server is still initializing, please retry in a moment");
+    }
     // Session validation (unchanged)
     let session_id = match session.get::<String>("ID") {
         Ok(Some(id)) => id,
@@ -2731,8 +2740,30 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    // NOTE: Module initialization moved to on_worker_start hook
-    // This ensures each worker process has its own Python interpreter instance
+    // ✅ WICHTIG: Python VOLLSTÄNDIG initialisieren BEVOR der Server startet!
+    // Dies verhindert Race Conditions wenn Clients sich verbinden bevor Python bereit ist.
+    info!("🔄 Initializing Python backend BEFORE starting server...");
+
+    let init_modules_for_startup = config.server.init_modules.clone();
+    if let Err(e) = client.initialize(init_modules_for_startup, None).await {
+        error!("FATAL: Python backend initialization failed: {:?}", e);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to initialize Python backend: {:?}", e),
+        ));
+    }
+
+    // Warte explizit bis Python bereit ist (mit 30s Timeout)
+    match client.wait_until_ready(Duration::from_secs(30)).await {
+        Ok(_) => info!("✅ Python backend fully initialized and ready!"),
+        Err(e) => {
+            error!("FATAL: Python backend did not become ready in time: {:?}", e);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Python backend initialization timeout",
+            ));
+        }
+    }
 
     // Create session manager
     let session_manager = web::Data::new(SessionManager::new(
@@ -2743,9 +2774,9 @@ async fn main() -> std::io::Result<()> {
     // Generate session key
     let key = Key::from(config.session.secret_key.as_bytes());
 
-    // Start server
-    info!("Starting server on {}:{}", config.server.ip, config.server.port);
-    let dist_path = config.server.dist_path.clone(); // Clone the dist_path here
+    // Start server - Python ist jetzt garantiert bereit!
+    info!("🚀 Starting server on {}:{} (Python backend ready)", config.server.ip, config.server.port);
+    let dist_path = config.server.dist_path.clone();
     let open_modules = Arc::new(config.server.open_modules.clone());
 
     // Clone module lists for lazy initialization in workers

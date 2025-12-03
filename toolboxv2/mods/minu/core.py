@@ -207,6 +207,63 @@ class ComponentStyle:
     def to_dict(self) -> Dict[str, str]:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
+    @classmethod
+    def from_str(cls, css_string: str) -> "ComponentStyle":
+        """
+        Parse CSS string into ComponentStyle.
+
+        Examples:
+            "margin: 10px; padding: 5px; background: red;"
+            "width: 100%; height: auto; display: flex; gap: 1rem;"
+        """
+        if not css_string or not css_string.strip():
+            return cls()
+
+        # CSS property name -> dataclass field name mapping
+        css_to_field = {
+            "margin": "margin",
+            "padding": "padding",
+            "width": "width",
+            "height": "height",
+            "color": "color",
+            "background": "background",
+            "background-color": "background",
+            "border": "border",
+            "border-radius": "borderRadius",
+            "font-size": "fontSize",
+            "font-weight": "fontWeight",
+            "display": "display",
+            "flex-direction": "flexDirection",
+            "align-items": "alignItems",
+            "justify-content": "justifyContent",
+            "gap": "gap",
+        }
+
+        parsed = {}
+
+        # Split by semicolon and process each declaration
+        declarations = css_string.split(";")
+
+        for decl in declarations:
+            decl = decl.strip()
+            if not decl or ":" not in decl:
+                continue
+
+            # Split property: value
+            parts = decl.split(":", 1)
+            if len(parts) != 2:
+                continue
+
+            prop = parts[0].strip().lower()
+            value = parts[1].strip()
+
+            # Map CSS property to field name
+            field_name = css_to_field.get(prop)
+            if field_name:
+                parsed[field_name] = value
+
+        return cls(**parsed)
+
 
 @dataclass(eq=False)
 class Component:
@@ -248,6 +305,8 @@ class Component:
             ]
 
         if self.style:
+            if isinstance(self.style, str):
+                self.style = ComponentStyle.from_str(self.style)
             result["style"] = self.style.to_dict()
 
         if self.className:
@@ -675,16 +734,17 @@ def Grid(
     )
 
 
-def Spacer(size: str = "4") -> Component:
+def Spacer(size: str = "4", **props) -> Component:
     """Empty space component"""
-    return Component(type=ComponentType.SPACER, className=f"h-{size}")
+    return Component(type=ComponentType.SPACER, className=f"h-{size}", props=props)
 
 
-def Divider(className: str | None = None) -> Component:
+def Divider(className: str | None = None, **props) -> Component:
     """Horizontal divider line"""
     return Component(
         type=ComponentType.DIVIDER,
         className=className or "border-t border-neutral-200 my-4",
+        props=props,
     )
 
 
@@ -996,8 +1056,6 @@ class MinuView:
         self._pending_changes.append(change)
 
         # Debug logging
-        print(f"[Minu DEBUG] State change: {change.path} -> {change.new_value}")
-        print(f"[Minu DEBUG] Dynamic components registered: {len(self._dynamic_components)}")
 
         if self._session:
             # Check for structural updates needed
@@ -1008,7 +1066,6 @@ class MinuView:
                 # s._path is always "view-xxx.state_name"
                 is_bound = False
                 bound_paths = [s._path for s in dyn.bound_states]
-                print(f"[Minu DEBUG] Checking Dynamic {dyn.id}, bound to: {bound_paths}")
 
                 for s in dyn.bound_states:
                     # Extract just the state name from both paths
@@ -1017,12 +1074,9 @@ class MinuView:
 
                     if s._path == change.path or state_name == change_name:
                         is_bound = True
-                        print(f"[Minu DEBUG] MATCH! {state_name} == {change_name}")
                         break
 
                 if is_bound:
-                    # Re-run the python logic
-                    print(f"[Minu DEBUG] Re-rendering Dynamic {dyn.id}")
                     dyn._update_content()
                     # Schedule a structural replacement
                     self._session._mark_structure_dirty(dyn)
@@ -1192,9 +1246,6 @@ class MinuSession:
                 "patches": all_patches,
             }
             await self._send(json.dumps(message, cls=MinuJSONEncoder))
-            print(f"[Minu DEBUG] Sent {len(all_patches)} patches")
-        else:
-            print(f"[Minu DEBUG] No patches to send. updates: {len(all_patches)}")
 
     async def _send(self, message: str):
         if self._send_callback:

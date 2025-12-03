@@ -7,7 +7,7 @@ Kernprinzipien:
 1. Sofortiges visuelles Feedback bei jeder Aktion
 2. Nur Buttons die 100% funktionieren
 3. Eleganter, übersichtlicher Chat-Bereich
-4. Dark Theme mit sanften Akzenten
+4. Dark/Light Theme mit CSS-Variablen
 """
 
 import asyncio
@@ -90,6 +90,9 @@ class ChatMessage:
     outline_progress: dict = field(
         default_factory=dict
     )  # {step: 1, total: 5, text: "..."}
+    reasoning_loop: dict = field(
+        default_factory=dict
+    )  # Live reasoning loop data
     error: str = ""
 
     def to_dict(self) -> dict:
@@ -105,6 +108,7 @@ class ChatMessage:
             "regular_tool_calls": self.regular_tool_calls,
             "current_phase": self.current_phase,
             "outline_progress": self.outline_progress,
+            "reasoning_loop": self.reasoning_loop,
             "error": self.error,
         }
 
@@ -151,7 +155,8 @@ class AgentChatView(MinuView):
         return Column(
             # Chat Container
             self._render_chat_container(),
-            className="h-screen bg-neutral-900 flex flex-col",
+            className="h-screen flex flex-col",
+            style="background: var(--bg-base); color: var(--text-primary);",
         )
 
     def _render_chat_container(self) -> Component:
@@ -185,7 +190,7 @@ class AgentChatView(MinuView):
     def _dynamic_wrapper(self) -> Component:
         dyn = Dynamic(
             render_fn=self._render_buttons,
-            bind=[self.status, self.input_text],
+            bind=[self.status],
         )
         # Registrieren damit die View Bescheid weiß (wichtig für Dependency Tracking)
         self.register_dynamic(dyn)
@@ -197,8 +202,17 @@ class AgentChatView(MinuView):
             # Logo/Icon
             Custom(
                 html="""
-                <div class="w-16 h-16 rounded-full bg-blue-500/20 flex items-center justify-center mb-6">
-                    <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div style="
+                    width: 4rem;
+                    height: 4rem;
+                    border-radius: var(--radius-full);
+                    background: color-mix(in oklch, var(--color-primary-500) 20%, transparent);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin-bottom: var(--space-6);
+                ">
+                    <svg style="width: 2rem; height: 2rem; color: var(--color-primary-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                               d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
                     </svg>
@@ -207,11 +221,11 @@ class AgentChatView(MinuView):
             ),
             Text(
                 "Wie kann ich Ihnen helfen?",
-                className="text-2xl font-medium text-white mb-2",
+                style="font-size: var(--text-2xl); font-weight: var(--weight-medium); color: var(--text-primary); margin-bottom: var(--space-2);",
             ),
             Text(
                 "Stellen Sie eine Frage oder geben Sie eine Aufgabe ein.",
-                className="text-neutral-400 text-center",
+                style="color: var(--text-muted); text-align: center;",
             ),
             gap="0",
             align="center",
@@ -244,8 +258,14 @@ class AgentChatView(MinuView):
         return Row(
             Custom(
                 html=f"""
-                <div style="border-radius: 1rem;word-break: break-all; background-color: var(--bg-elevated);">
-                    <p class="text-neutral-800 dark:text-neutral-100 whitespace-pre-wrap">{self._escape_html(content)}</p>
+                <div style="
+                    border-radius: var(--radius-lg);
+                    word-break: break-all;
+                    background: var(--bg-elevated);
+                    padding: var(--space-3) var(--space-4);
+                    border: var(--border-width) solid var(--border-subtle);
+                ">
+                    <p style="color: var(--text-primary); white-space: pre-wrap; margin: 0;">{self._escape_html(content)}</p>
                 </div>
                 """
             ),
@@ -255,7 +275,7 @@ class AgentChatView(MinuView):
     def _render_assistant_message(self, msg: dict) -> Component:
         """
         Renders the assistant message in a professional, block-aligned structure.
-        Stacks: Outline -> Phase -> Reasoning -> MetaTools -> Real Tools -> Content
+        Stacks: ReasoningLoop -> Outline -> Phase -> Reasoning -> MetaTools -> Real Tools -> Content
         """
         content = msg.get("content", "")
         is_streaming = msg.get("is_streaming", False)
@@ -263,9 +283,14 @@ class AgentChatView(MinuView):
         meta_tool_calls = msg.get("meta_tool_calls", [])
         regular_tools = msg.get("regular_tool_calls", [])
         outline = msg.get("outline_progress", {})
+        reasoning_loop = msg.get("reasoning_loop", {})
         phase = msg.get("current_phase", "")
 
         blocks = []
+
+        # 0. Live Reasoning Loop Indicator (NEW - Top priority when streaming)
+        if is_streaming and reasoning_loop:
+            blocks.append(self._render_reasoning_loop_indicator(reasoning_loop))
 
         # 1. Outline Progress (Top Bar)
         if outline and outline.get("total_steps", 0) > 0:
@@ -296,8 +321,19 @@ class AgentChatView(MinuView):
             # Avatar Icon
             Custom(
                 html="""
-                   <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 flex-shrink-0 mt-1">
-                       <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                   <div style="
+                       width: 2rem;
+                       height: 2rem;
+                       border-radius: var(--radius-lg);
+                       background: linear-gradient(135deg, var(--color-primary-500), var(--color-accent));
+                       display: flex;
+                       align-items: center;
+                       justify-content: center;
+                       box-shadow: var(--shadow-md), 0 0 20px color-mix(in oklch, var(--color-primary-500) 30%, transparent);
+                       flex-shrink: 0;
+                       margin-top: var(--space-1);
+                   ">
+                       <svg style="width: 1.25rem; height: 1.25rem; color: var(--color-neutral-0);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                    </div>
                """
             ),
@@ -305,7 +341,181 @@ class AgentChatView(MinuView):
             Column(*blocks, gap="4", className="flex-1 min-w-0"),
             gap="4",
             align="start",
-            className="w-full py-2 animate-fade-in",
+            style="width: 100%; padding: var(--space-2) 0; animation: fadeIn 0.3s ease-out;",
+        )
+
+    def _render_reasoning_loop_indicator(self, loop_data: dict) -> Component:
+        """Render live reasoning loop progress indicator"""
+        if not loop_data:
+            return Spacer(size="0")
+
+        loop_num = loop_data.get("loop_number", 0)
+        outline_step = loop_data.get("outline_step", 0)
+        outline_total = loop_data.get("outline_total", 0)
+        context_size = loop_data.get("context_size", 0)
+        task_stack_size = loop_data.get("task_stack_size", 0)
+        auto_recovery = loop_data.get("auto_recovery_attempts", 0)
+        metrics = loop_data.get("performance_metrics", {})
+
+        # Performance metrics
+        loop_times = metrics.get("loop_times", [])
+        avg_time = sum(loop_times[-5:]) / len(loop_times[-5:]) if loop_times else 0
+        progress_loops = metrics.get("progress_loops", 0)
+        total_loops = metrics.get("total_loops", 0)
+        efficiency = int((progress_loops / max(total_loops, 1)) * 100)
+
+        # Progress percentage
+        progress_pct = int((outline_step / max(outline_total, 1)) * 100) if outline_total else 0
+
+        # Status color based on efficiency
+        status_color = (
+            "var(--color-success)" if efficiency >= 70
+            else "var(--color-warning)" if efficiency >= 40
+            else "var(--color-error)"
+        )
+
+        return Custom(
+            html=f"""
+            <div style="
+                background: color-mix(in oklch, var(--color-accent) 8%, var(--bg-elevated));
+                border: var(--border-width) solid color-mix(in oklch, var(--color-accent) 25%, transparent);
+                border-radius: var(--radius-lg);
+                padding: var(--space-3);
+                margin-bottom: var(--space-3);
+                animation: pulse-subtle 3s ease-in-out infinite;
+            ">
+                <style>
+                    @keyframes pulse-subtle {{
+                        0%, 100% {{ opacity: 1; }}
+                        50% {{ opacity: 0.85; }}
+                    }}
+                    @keyframes spin {{
+                        from {{ transform: rotate(0deg); }}
+                        to {{ transform: rotate(360deg); }}
+                    }}
+                    @keyframes fadeIn {{
+                        from {{ opacity: 0; transform: translateY(8px); }}
+                        to {{ opacity: 1; transform: translateY(0); }}
+                    }}
+                </style>
+
+                <!-- Header mit Loop Counter -->
+                <div style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: var(--space-2);
+                ">
+                    <div style="display: flex; align-items: center; gap: var(--space-2);">
+                        <div style="
+                            width: 1.25rem;
+                            height: 1.25rem;
+                            border: 2px solid var(--color-accent);
+                            border-top-color: transparent;
+                            border-radius: 50%;
+                            animation: spin 1s linear infinite;
+                        "></div>
+                        <span style="
+                            color: var(--text-primary);
+                            font-size: var(--text-sm);
+                            font-weight: var(--weight-semibold);
+                        ">
+                            Reasoning Loop #{loop_num}
+                        </span>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: var(--space-3);">
+                        <!-- Efficiency Badge -->
+                        <span style="
+                            font-size: var(--text-xs);
+                            padding: var(--space-1) var(--space-2);
+                            background: color-mix(in oklch, {status_color} 15%, transparent);
+                            color: {status_color};
+                            border-radius: var(--radius-sm);
+                        ">
+                            {efficiency}% Effizienz
+                        </span>
+
+                        <!-- Avg Time -->
+                        {f'''
+                        <span style="
+                            font-size: var(--text-xs);
+                            color: var(--text-muted);
+                        ">
+                            ~{avg_time:.1f}s/Loop
+                        </span>
+                        ''' if avg_time > 0 else ''}
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                {f'''
+                <div style="margin-bottom: var(--space-2);">
+                    <div style="
+                        display: flex;
+                        justify-content: space-between;
+                        font-size: var(--text-xs);
+                        color: var(--text-secondary);
+                        margin-bottom: var(--space-1);
+                    ">
+                        <span>Outline Schritt {outline_step}/{outline_total}</span>
+                        <span>{progress_pct}%</span>
+                    </div>
+                    <div style="
+                        height: 4px;
+                        background: var(--bg-sunken);
+                        border-radius: var(--radius-full);
+                        overflow: hidden;
+                    ">
+                        <div style="
+                            height: 100%;
+                            width: {progress_pct}%;
+                            background: linear-gradient(90deg, var(--color-primary-500), var(--color-accent));
+                            border-radius: var(--radius-full);
+                            transition: width var(--duration-normal) var(--ease-out);
+                        "></div>
+                    </div>
+                </div>
+                ''' if outline_total > 0 else ''}
+
+                <!-- Stats Row -->
+                <div style="
+                    display: flex;
+                    gap: var(--space-4);
+                    flex-wrap: wrap;
+                ">
+                    <div style="display: flex; align-items: center; gap: var(--space-1);">
+                        <span style="font-size: var(--text-xs); color: var(--text-muted);">📚</span>
+                        <span style="font-size: var(--text-xs); color: var(--text-secondary);">
+                            Context: {context_size}
+                        </span>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: var(--space-1);">
+                        <span style="font-size: var(--text-xs); color: var(--text-muted);">📋</span>
+                        <span style="font-size: var(--text-xs); color: var(--text-secondary);">
+                            Tasks: {task_stack_size}
+                        </span>
+                    </div>
+
+                    {f'''
+                    <div style="display: flex; align-items: center; gap: var(--space-1);">
+                        <span style="font-size: var(--text-xs); color: var(--color-warning);">⚠️</span>
+                        <span style="font-size: var(--text-xs); color: var(--color-warning);">
+                            Recovery: {auto_recovery}
+                        </span>
+                    </div>
+                    ''' if auto_recovery > 0 else ''}
+
+                    <div style="display: flex; align-items: center; gap: var(--space-1);">
+                        <span style="font-size: var(--text-xs); color: var(--text-muted);">🔄</span>
+                        <span style="font-size: var(--text-xs); color: var(--text-secondary);">
+                            {progress_loops}/{total_loops} produktiv
+                        </span>
+                    </div>
+                </div>
+            </div>
+            """
         )
 
     def _render_reasoning_block(self, steps: list) -> Component:
@@ -338,7 +548,7 @@ class AgentChatView(MinuView):
             if insights:
                 insights_items = "".join(
                     [
-                        f'<li style="color: var(--color-neutral-300);">{self._escape_html(str(ins))}</li>'
+                        f'<li style="color: var(--text-secondary);">{self._escape_html(str(ins))}</li>'
                         for ins in insights[:3]
                     ]
                 )
@@ -402,7 +612,7 @@ class AgentChatView(MinuView):
                 f'''
                 <p style="
                     font-size: var(--text-sm);
-                    color: var(--color-neutral-200);
+                    color: var(--text-secondary);
                 ">
                     {self._escape_html(focus)}
                 </p>
@@ -454,7 +664,7 @@ class AgentChatView(MinuView):
                 human_name = human_name[:18] + "..."
             count = len(calls)
             count_badge = (
-                f'<span style="font-size: var(--text-xs);background: var(--color-neutral-600);padding: 0 var(--space-1);border-radius: var(--radius-sm);color: var(--color-neutral-0);">{count}</span>'
+                f'<span style="font-size: var(--text-xs);background: var(--bg-sunken);padding: 0 var(--space-1);border-radius: var(--radius-sm);color: var(--text-primary);">{count}</span>'
                 if count > 1
                 else ""
             )
@@ -465,10 +675,10 @@ class AgentChatView(MinuView):
                         align-items: center;
                         gap: var(--space-1);
                         padding: var(--space-1) var(--space-2);
-                        background: color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+                        background: color-mix(in oklch, var(--border-default) 50%, transparent);
                         border-radius: var(--radius-md);
                         font-size: var(--text-xs);
-                        color: var(--color-neutral-300);
+                        color: var(--text-secondary);
                     ">
                         {icon} {human_name} {count_badge}
                     </span>
@@ -484,7 +694,7 @@ class AgentChatView(MinuView):
             duration_str = f"{duration:.1f}s" if duration else ""
 
             status_icon = "✓" if success else "✗"
-            status_color = "text-emerald-400" if success else "text-red-400"
+            status_color = "var(--color-success)" if success else "var(--color-error)"
 
             # Get key info from metadata
             metadata = call.get("metadata", {})
@@ -504,13 +714,13 @@ class AgentChatView(MinuView):
             align-items:center;
             justify-content:space-between;
             padding:var(--space-2) 0;
-            border-bottom:var(--border-width) solid var(--color-neutral-700);
+            border-bottom:var(--border-width) solid var(--border-subtle);
         ">
             <div style="display:flex; align-items:center; gap:var(--space-2);">
                 <span>{icon}</span>
 
                 <span style="
-                    color:var(--color-neutral-300);
+                    color:var(--text-secondary);
                     font-size:var(--text-sm);
                     font-weight:var(--weight-medium);
                 ">
@@ -520,7 +730,7 @@ class AgentChatView(MinuView):
                 {
                 f'''
                 <span style="
-                    color:var(--color-neutral-500);
+                    color:var(--text-muted);
                     font-size:var(--text-xs);
                     white-space:nowrap;
                     overflow:hidden;
@@ -540,7 +750,7 @@ class AgentChatView(MinuView):
                 {
                 f'''
                 <span style="
-                    color:var(--color-neutral-500);
+                    color:var(--text-muted);
                     font-size:var(--text-xs);
                 ">
                     {duration_str}
@@ -550,7 +760,7 @@ class AgentChatView(MinuView):
                 else ""
             }
 
-                <span style="{status_color}">{status_icon}</span>
+                <span style="color:{status_color};">{status_icon}</span>
             </div>
         </div>
                     """
@@ -558,8 +768,8 @@ class AgentChatView(MinuView):
         return Custom(
             html=f"""
                     <details style="
-            background: color-mix(in oklch, var(--color-neutral-800) 30%, transparent);
-            border: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+            background: color-mix(in oklch, var(--bg-elevated) 80%, transparent);
+            border: var(--border-width) solid var(--border-subtle);
             border-radius: var(--radius-lg);
             overflow: hidden;
             margin-bottom: var(--space-2);
@@ -569,7 +779,7 @@ class AgentChatView(MinuView):
                 padding: var(--space-2) var(--space-3);
                 transition: background-color var(--duration-normal) var(--ease-default);
             "
-                onmouseover="this.style.background='color-mix(in oklch, var(--color-neutral-700) 30%, transparent)'"
+                onmouseover="this.style.background='color-mix(in oklch, var(--border-default) 30%, transparent)'"
                 onmouseout="this.style.background='transparent'"
             >
                 <div style="
@@ -582,7 +792,7 @@ class AgentChatView(MinuView):
                         <svg style="
                             width: 1rem;
                             height: 1rem;
-                            color: var(--color-neutral-400);
+                            color: var(--text-muted);
                             transition: transform var(--duration-normal) var(--ease-default);
                         " fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -591,14 +801,14 @@ class AgentChatView(MinuView):
 
                         <span style="
                             font-size: var(--text-sm);
-                            color: var(--color-neutral-300);
+                            color: var(--text-secondary);
                         ">
                             Agent-Aktionen
                         </span>
 
                         <span style="
                             font-size: var(--text-xs);
-                            color: var(--color-neutral-500);
+                            color: var(--text-muted);
                         ">
                             {len(tool_calls)} ausgeführt
                         </span>
@@ -617,9 +827,9 @@ class AgentChatView(MinuView):
 
             <div style="
                 padding: var(--space-2) var(--space-3);
-                border-top: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+                border-top: var(--border-width) solid var(--border-subtle);
                 font-size: var(--text-sm);
-                color: var(--color-neutral-300);
+                color: var(--text-secondary);
             ">
                 {details_html}
             </div>
@@ -638,9 +848,21 @@ class AgentChatView(MinuView):
         icon = icons.get(phase, "⏳")
         return Custom(
             html=f"""
-               <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium animate-pulse">
+               <div style="
+                   display: inline-flex;
+                   align-items: center;
+                   gap: var(--space-2);
+                   padding: var(--space-1) var(--space-3);
+                   border-radius: var(--radius-full);
+                   background: color-mix(in oklch, var(--color-primary-500) 10%, transparent);
+                   border: var(--border-width) solid color-mix(in oklch, var(--color-primary-500) 20%, transparent);
+                   color: var(--color-primary-400);
+                   font-size: var(--text-xs);
+                   font-weight: var(--weight-medium);
+                   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+               ">
                    <span>{icon}</span>
-                   <span class="uppercase tracking-wide">{phase}</span>
+                   <span style="text-transform: uppercase; letter-spacing: var(--tracking-wide);">{phase}</span>
                </div>
            """
         )
@@ -654,21 +876,37 @@ class AgentChatView(MinuView):
 
         return Custom(
             html=f"""
-                    <div class="mb-3">
-                        <div class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                            <span class="flex items-center gap-1">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div style="margin-bottom: var(--space-3);">
+                        <div style="
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            font-size: var(--text-xs);
+                            color: var(--text-muted);
+                            margin-bottom: var(--space-1);
+                        ">
+                            <span style="display: flex; align-items: center; gap: var(--space-1);">
+                                <svg style="width: 0.75rem; height: 0.75rem;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
                                 </svg>
                                 Schritt {current} von {total}
                             </span>
                             <span>{percentage}%</span>
                         </div>
-                        <div class="h-1 bg-neutral-700 rounded-full overflow-hidden">
-                            <div class="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500"
-                                 style="width: {percentage}%"></div>
+                        <div style="
+                            height: 4px;
+                            background: var(--bg-sunken);
+                            border-radius: var(--radius-full);
+                            overflow: hidden;
+                        ">
+                            <div style="
+                                height: 100%;
+                                width: {percentage}%;
+                                background: linear-gradient(90deg, var(--color-primary-500), var(--color-success));
+                                transition: width var(--duration-slow) var(--ease-out);
+                            "></div>
                         </div>
-                        {f'<p class="text-xs text-neutral-500 mt-1 truncate">{self._escape_html(step_name)}</p>' if step_name else ""}
+                        {f'<p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{self._escape_html(step_name)}</p>' if step_name else ""}
                     </div>
                     """
         )
@@ -703,8 +941,7 @@ class AgentChatView(MinuView):
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                 </svg>
-                {self._escape_html(data.get("name", "Unknown"))} <hr/>
-                {self._escape_html(data.get("args", "Unknown"))}
+                {self._escape_html(data.get("tool", data.get("tool_name",  data.get("name", "Unknown"))))} <hr/>
             </span>
             """
                 for data in tool_names[:5]
@@ -712,7 +949,7 @@ class AgentChatView(MinuView):
         )
 
         more = (
-            f'<span style="color: var(--color-neutral-500); font-size: var(--text-xs);">'
+            f'<span style="color: var(--text-muted); font-size: var(--text-xs);">'
             f"+{len(tool_names) - 5} weitere</span>"
             if len(tool_names) > 5
             else ""
@@ -728,9 +965,7 @@ class AgentChatView(MinuView):
 
     def _render_content_block(self, content: str, is_streaming: bool) -> Component:
         """Main content with markdown support"""
-        cursor =  '<span style="display:inline-block;width:8px;height:16px;background: var(--color-primary-400);animation: pulse-cursor 1s infinite;margin-left: 2px;"></span>' if is_streaming else ""
-
-
+        cursor = '<span style="display:inline-block;width:8px;height:16px;background: var(--color-primary-400);animation: pulse-cursor 1s infinite;margin-left: 2px;"></span>' if is_streaming else ""
 
         # Simple markdown processing
         html_content = self._process_markdown(content)
@@ -743,8 +978,8 @@ class AgentChatView(MinuView):
     50% {{opacity:0.2 }}
 }}
 </style>
-            <div style="max-width:none; color:var(--color-neutral-300); font-size:0.875rem; line-height:1.6;">
-    <div style="color:var(--text-primary); white-space:pre-wrap; line-height:1.6;">
+            <div style="max-width:none; color:var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed);">
+    <div style="color:var(--text-primary); white-space:pre-wrap; line-height: var(--leading-relaxed);">
         {html_content}{cursor}
     </div>
 </div>
@@ -763,11 +998,12 @@ class AgentChatView(MinuView):
                     # Textarea for input
                     Textarea(
                         placeholder="Nachricht an FlowAgent...",
-                        value=self.input_text.value,
+                        # value=self.input_text.value,
                         bind="input_text",
                         on_submit="send_message",
                         rows=2,
-                        className="bg-transparent text-white placeholder-neutral-500 border-none resize-none w-full",
+                        style="background: transparent; color: var(--text-primary); border: none; resize: none; width: 100%;",
+                        className="placeholder-neutral-500",
                     ),
                     # Action Row
                     Row(
@@ -775,11 +1011,11 @@ class AgentChatView(MinuView):
                         self._dynamic_wrapper(),
                         justify="between",
                         align="center",
-                        className="pt-2 border-t border-neutral-700/50",
+                        style="padding-top: var(--space-2); border-top: var(--border-width) solid var(--border-subtle);",
                     ),
                     gap="2",
                 ),
-                className="bg-neutral-800 border border-neutral-700 rounded-2xl mb-6",
+                style="background: var(--bg-surface); border: var(--border-width) solid var(--border-default); border-radius: var(--radius-xl); margin-bottom: var(--space-6);",
             ),
             gap="2",
             className="px-4",
@@ -796,7 +1032,7 @@ class AgentChatView(MinuView):
                 on_click="clear_chat",
                 variant="ghost",
                 icon="delete",
-                className="text-neutral-400 hover:text-white",
+                style="color: var(--text-muted);",
             )
             if self.messages.value
             else None,
@@ -815,7 +1051,7 @@ class AgentChatView(MinuView):
                 on_click="send_message",
                 variant="primary",
                 icon="send",
-                disabled=is_busy or not self.input_text.value.strip(),
+                disabled=is_busy #or not self.input_text.value.strip(),
             )
             if not is_busy
             else None,
@@ -860,11 +1096,12 @@ class AgentChatView(MinuView):
             code = match.group(2)
             return f"""
                 <pre style="
-                    background: var(--color-neutral-800);
+                    background: var(--bg-sunken);
                     border-radius: var(--radius-lg);
                     padding: var(--space-4);
                     margin: var(--space-3) 0;
                     overflow-x: auto;
+                    border: var(--border-width) solid var(--border-subtle);
                 ">
                     <code style="
                         font-size: var(--text-sm);
@@ -877,16 +1114,24 @@ class AgentChatView(MinuView):
         text = re.sub(r'```(\w*)\n(.*?)```', code_block_replacer, text, flags=re.DOTALL)
 
         # Inline code
-        text = re.sub(r'`([^`]+)`', r'<code class="bg-neutral-700 px-1.5 py-0.5 rounded text-sm text-blue-300">\1</code>', text)
+        text = re.sub(
+            r'`([^`]+)`',
+            r'<code style="background: var(--bg-sunken); padding: 0.125rem 0.375rem; border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--color-primary-400); font-family: var(--font-mono);">\1</code>',
+            text
+        )
 
         # Bold
-        text = re.sub(r'\*\*([^*]+)\*\*', r'<strong class="font-semibold">\1</strong>', text)
+        text = re.sub(r'\*\*([^*]+)\*\*', r'<strong style="font-weight: var(--weight-semibold);">\1</strong>', text)
 
         # Italic
         text = re.sub(r'\*([^*]+)\*', r'<em>\1</em>', text)
 
         # Links
-        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" class="text-blue-400 hover:underline" target="_blank">\1</a>', text)
+        text = re.sub(
+            r'\[([^\]]+)\]\(([^)]+)\)',
+            r'<a href="\2" style="color: var(--color-primary-400); text-decoration: none;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'" target="_blank">\1</a>',
+            text
+        )
 
         return text
 
@@ -946,16 +1191,17 @@ class AgentChatView(MinuView):
         local_meta = []
         local_regular = []
         local_outline = {}
+        local_reasoning_loop = {}
 
         async def on_progress(event):
-            nonlocal collected_content, local_reasoning, local_meta, local_outline, local_regular
+            nonlocal collected_content, local_reasoning, local_meta, local_outline, local_regular, local_reasoning_loop
 
             # Detect Event Type (Attribute or Dict access)
             e_type = getattr(event, "event_type", None) or event.get("event_type")
 
             # --- HANDLE STREAMING ---
             if e_type == "llm_stream_chunk" and hasattr(event, "llm_output") and event.llm_output:
-                collected_content.append(event.llm_output.replace("META_TOOL_CALL:", ''))
+                collected_content.append(event.llm_output.replace("META_TOOL_CALL:", '').replace("TOOL_CALL:", ''))
                 # Update UI Content
                 ac_content = "".join(collected_content)
                 self._update_msg(ass_id, content=ac_content)
@@ -1003,7 +1249,7 @@ class AgentChatView(MinuView):
                 # Add to meta log
                 entry = {
                     "tool_name": tool_name,
-                    "success": get_attr("success"),
+                    "success": get_attr("success", True),
                     "duration": get_attr("duration"),
                     "args": get_attr("tool_args"),  # Optional: show args in tooltip?
                 }
@@ -1034,7 +1280,7 @@ class AgentChatView(MinuView):
                 # Add to regular tools list (Implement logic if needed)
                 entry = {
                     "tool_name": tool_name,
-                    "success": get_attr("success"),
+                    "success": get_attr("success", True),
                     "duration": get_attr("duration"),
                     "args": get_attr("tool_args"),
                 }
@@ -1052,26 +1298,21 @@ class AgentChatView(MinuView):
                     if self._session:
                         await self._session.force_flush()
 
-            # Case C: reasoning_loop
+            # Case E: reasoning_loop - LIVE PROGRESS UPDATE
             elif e_type == "reasoning_loop":
-                # Extract Outline Status
-                """metadata={
-                        "loop_number": self.current_loop_count,
-                        "outline_step": self.current_outline_step,
-                        "outline_total": len(self.outline.get("steps", [])) if self.outline else 0,
-                        "context_size": len(self.reasoning_context),
-                        "task_stack_size": len(self.internal_task_stack),
-                        "auto_recovery_attempts": self.auto_recovery_attempts,
-                        "performance_metrics": self.performance_metrics = {
-                "loop_times": [],
-                "progress_loops": 0,
-                "total_loops": 0
-            }
-                    }"""
-                if "outline_step" in metadata:
-                    self._update_msg(ass_id, reasoning_loop=metadata)
-                    if self._session:
-                        await self._session.force_flush()
+                # Update local reasoning loop data
+                local_reasoning_loop = {
+                    "loop_number": metadata.get("loop_number", 0),
+                    "outline_step": metadata.get("outline_step", 0),
+                    "outline_total": metadata.get("outline_total", 0),
+                    "context_size": metadata.get("context_size", 0),
+                    "task_stack_size": metadata.get("task_stack_size", 0),
+                    "auto_recovery_attempts": metadata.get("auto_recovery_attempts", 0),
+                    "performance_metrics": metadata.get("performance_metrics", {}),
+                }
+                self._update_msg(ass_id, reasoning_loop=local_reasoning_loop, current_phase="reasoning")
+                if self._session:
+                    await self._session.force_flush()
 
             else:
                 print(f"Unhandled event type: {e_type}")
@@ -1096,6 +1337,7 @@ class AgentChatView(MinuView):
                     content=final_text,
                     is_streaming=False,
                     current_phase="completed",
+                    reasoning_loop={},  # Clear reasoning loop on completion
                 )
         except Exception as e:
             import traceback
@@ -1133,6 +1375,7 @@ class AgentChatView(MinuView):
             if msg.get("is_streaming"):
                 messages[i]["is_streaming"] = False
                 messages[i]["is_thinking"] = False
+                messages[i]["reasoning_loop"] = {}  # Clear reasoning loop
                 if not messages[i].get("content"):
                     messages[i]["content"] = "*[Generation gestoppt]*"
                 else:
@@ -1191,10 +1434,11 @@ class AgentChatView(MinuView):
                     Column(
                         Text(
                             sess.get("name", sess["id"][:8]),
-                            className="text-neutral-200 text-sm",
+                            style="color: var(--text-secondary); font-size: var(--text-sm);",
                         ),
                         Text(
-                            sess.get("created", ""), className="text-neutral-500 text-xs"
+                            sess.get("created", ""),
+                            style="color: var(--text-muted); font-size: var(--text-xs);",
                         ),
                         gap="0",
                     ),
@@ -1211,13 +1455,13 @@ class AgentChatView(MinuView):
                             "×",
                             on_click=f"delete_session:{sess['id']}",
                             variant="ghost",
-                            className="text-neutral-500 text-xs px-1",
+                            style="color: var(--text-muted); font-size: var(--text-xs); padding: 0 var(--space-1);",
                         ),
                         gap="1",
                     ),
                     justify="between",
                     align="center",
-                    className=f"px-3 py-2 rounded-lg {'bg-primary-500/10 border border-primary-500/20' if is_active else 'hover:bg-neutral-800/50'}",
+                    style=f"padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); {'background: color-mix(in oklch, var(--color-primary-500) 10%, transparent); border: var(--border-width) solid color-mix(in oklch, var(--color-primary-500) 20%, transparent);' if is_active else ''}",
                 )
             )
 
@@ -1233,10 +1477,10 @@ class AgentChatView(MinuView):
                 if sessions
                 else Text(
                     "Keine Sessions",
-                    className="text-neutral-500 text-sm text-center py-3",
+                    style="color: var(--text-muted); font-size: var(--text-sm); text-align: center; padding: var(--space-3) 0;",
                 ),
                 # Neue Session Button
-                Divider(className="border-neutral-700/50 my-2"),
+                Divider(style="border-color: var(--border-subtle); margin: var(--space-2) 0;"),
                 Button(
                     "Neue Session",
                     on_click="create_new_session",
@@ -1246,7 +1490,7 @@ class AgentChatView(MinuView):
                 ),
                 gap="2",
             ),
-            className="bg-neutral-800/80 backdrop-blur-xl border border-neutral-700/50 rounded-xl p-3",
+            style="background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); border: var(--border-width) solid var(--glass-border); border-radius: var(--radius-xl); padding: var(--space-3);",
         )
 
         return Column(

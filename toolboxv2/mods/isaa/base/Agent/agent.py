@@ -102,6 +102,20 @@ rprint = print if AGENT_VERBOSE else lambda *a, **k: None
 wprint = print if AGENT_VERBOSE else lambda *a, **k: None
 
 
+def safe_for_yaml(obj):
+    if isinstance(obj, dict):
+        return {k: safe_for_yaml(v) for k, v in obj.items()}
+    # remove locks completely
+    if hasattr(obj, 'acquire'):
+        return "<RLock omitted>"
+    # convert unknown objects to string
+    try:
+        yaml.dump(obj)
+        return obj
+    except Exception:
+        return str(obj)
+
+
 # ===== MEDIA PARSING UTILITIES =====
 def parse_media_from_query(query: str) -> tuple[str, list[dict]]:
     """
@@ -935,7 +949,7 @@ Generate the adaptive execution plan:
         for tool_name, cap in capabilities.items():
             context_parts.append(f"\n{tool_name}:")
             context_parts.append(f"- Function: {cap.get('primary_function', 'Unknown')}")
-            context_parts.append(f"- Arguments: {yaml.dump(cap.get('args_schema', 'takes no arguments!'), default_flow_style=False)}")
+            context_parts.append(f"- Arguments: {yaml.dump(safe_for_yaml(cap.get('args_schema', 'takes no arguments!')), default_flow_style=False)}")
 
             # Check relevance to current query
             relevance_score = self._calculate_tool_relevance(query, cap)
@@ -2514,7 +2528,7 @@ class LLMToolNode(AsyncNode):
             "session_id": shared.get("session_id"),
             "variable_manager": variable_manager,
             "agent_instance": agent_instance,
-            "available_tools": shared.get("available_tools", []),
+            "available_tools": shared.get("available_tools", [""]),
             "tool_capabilities": shared.get("tool_capabilities", {}),
             "persona_config": shared.get("persona_config"),
             "base_system_message": variable_manager.format_text(agent_instance.amd.get_system_message_with_persona()),
@@ -2668,7 +2682,8 @@ class LLMToolNode(AsyncNode):
         base_message += ("\n\nAlways follow this action pattern"
                          "**THINK** -> **PLAN** -> **ACT** using tools!\n"
                          "all progress must be stored to ( variable system, memory, external services )!\n"
-                         "if working on code or file based tasks, update and crate the files! sve result in file!\n")
+                         "if working on code or file based tasks, update and crate the files! sve result in file!\n"
+                         "use tools with TOOL_CALL: tool_name(arg1='value1', arg2='value2')! or in yaml format nothing else!\n")
 
         # --- Part 1: List available tools & capabilities ---
         if available_tools:
@@ -2685,7 +2700,7 @@ class LLMToolNode(AsyncNode):
 
             # base_message += "\n\n## Tool Usage\nTo use tools, respond with:\nTOOL_CALL: tool_name(arg1='value1', arg2='value2')\nYou can make multiple tool calls in one response."
             base_message += """
-## Tool Usage
+## Tool Usage in yaml format nothing else !!
 To use tools, respond with a YAML block:
 ```yaml
 TOOL_CALLS:
@@ -7858,14 +7873,14 @@ class VariableManager:
         for scope_name, scope_data in self.scopes.items():
             if isinstance(scope_data, dict):
                 info[scope_name] = {
-                    'type': 'dict',
-                    'keys': len(scope_data),
-                    'sample_keys': list(scope_data.keys())[:5]
+                    "type": "dict",
+                    "keys": len(scope_data),
+                    "sample_keys": list(scope_data.keys())[:5],
                 }
             else:
                 info[scope_name] = {
-                    'type': type(scope_data).__name__,
-                    'value': str(scope_data)[:100]
+                    "type": type(scope_data).__name__,
+                    "value": str(scope_data)[:100],
                 }
         return info
 
@@ -8039,7 +8054,8 @@ class VariableManager:
 
         # yaml dump preview
         context_parts.append("```yaml")
-        context_parts.append(yaml.dump(variables, default_flow_style=False, sort_keys=False))
+        safe_variables = safe_for_yaml(variables)
+        context_parts.append(yaml.dump(safe_variables, default_flow_style=False, sort_keys=False))
         context_parts.append("```")
 
         # Add any final complex examples or notes
@@ -8622,7 +8638,7 @@ class UnifiedContextManager:
                 total_vars = variables.get('total_variables', 0)
                 if total_vars > 0:
                     parts.append(f"Total Variables: {total_vars}")
-                    parts.append(f"Total Variables Values: \n{yaml.dump(self.variable_manager.get_available_variables())}")
+                    parts.append(f"Total Variables Values: \n{yaml.dump(safe_for_yaml(self.variable_manager.get_available_variables()))}")
 
                 # Recent results
                 recent_results = variables.get('recent_results', [])
@@ -10967,7 +10983,7 @@ Example for a "get_user_name" tool:
 
 Rule! no additional comments or text in the format !
 schema:
- {yaml.dump(ToolAnalysis.model_json_schema())}
+ {yaml.dump(safe_for_yaml(ToolAnalysis.model_json_schema()))}
 
 Respond in YAML format:
 Example:
@@ -11304,7 +11320,7 @@ tool_complexity: low/medium/high
     5. No additional comments, explanations, or text outside the YAML
 
     SCHEMA FOR {model_name}:
-    {yaml.dump(schema, default_flow_style=False, indent=2)}
+    {yaml.dump(safe_for_yaml(schema), default_flow_style=False, indent=2)}
 
     EXAMPLE OUTPUT FORMAT:
     ```yaml

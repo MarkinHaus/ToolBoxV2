@@ -120,10 +120,7 @@ def init_app(instance_id: str = "nuitka_global", **kwargs) -> Dict[str, Any]:
                     pass
 
         # Erstelle App via toolboxv2
-        print(f"[app_singleton] Importing server_helper...")
         from toolboxv2.__main__ import server_helper
-
-        print(f"[app_singleton] Initializing App...")
         _GLOBAL_APP = server_helper(instance_id=instance_id, **kwargs)
 
         return {
@@ -232,7 +229,6 @@ def call_module_function(
         # Auto-initialize app if not already initialized (redundant safety check)
         global _GLOBAL_APP
         if _GLOBAL_APP is None:
-            print(f"[app_singleton] call_module_function: App not initialized, calling init_app()...")
             init_result = init_app()
             print(f"[app_singleton] call_module_function: init_app() returned: {init_result}")
 
@@ -253,10 +249,7 @@ def call_module_function(
                         "help_text": error_msg
                     }
                 }
-
-        print(f"[app_singleton] call_module_function: Getting app...")
         app = get_app()
-        print(f"[app_singleton] call_module_function: Got app successfully")
 
         # Konvertiere args/kwargs
         args = args or ()
@@ -282,7 +275,6 @@ def call_module_function(
         def _perform_execution():
             # Async call - wir müssen einen neuen Event Loop erstellen
             # NICHT den existierenden Loop verwenden (Deadlock!)
-            print(f"[app_singleton] call_module_function: app.a_run_any is async, creating new event loop")
             key, loop = get_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -811,7 +803,7 @@ async def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
         # Payload muss ein String (JSON) sein
         if not isinstance(payload, str):
             payload = json.dumps(payload)
-        print(f"[app_singleton] ws_send_message() called: conn_id={conn_id} payload={payload}")
+        print(f"[app_singleton] ws_send_message() called: conn_id={conn_id} payload={len(str(payload))} bytes")
         url = f"/internal/ws/send"
         if get_app().session.base !=_WS_SERVER_URL:
             get_app().session.base = _WS_SERVER_URL
