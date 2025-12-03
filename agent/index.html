@@ -2730,6 +2730,518 @@
 <li><strong>Combine Features</strong>: You can combine <code>fast_run=True</code> with <code>as_callback</code> for ultra-fast event processing in reactive systems.</li>
 <li><strong>Callback Context</strong>: When using <code>as_callback</code>, ensure the callback function has a meaningful <code>__name__</code> attribute for better debugging and context tracking.</li>
 </ul>
+<h1 id="mda-framework-dokumentation-v2">MDA Framework Dokumentation v2<a class="headerlink" href="#mda-framework-dokumentation-v2" title="Permanent link">&para;</a></h1>
+<h2 id="mit-tool-integration-und-externem-kontext">Mit Tool-Integration und externem Kontext<a class="headerlink" href="#mit-tool-integration-und-externem-kontext" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>NEU in v2</strong>: Atomare Tasks können externe Tools aufrufen und Kontext abrufen</p>
+</blockquote>
+<hr />
+<h2 id="tool-integration-ubersicht">Tool-Integration Übersicht<a class="headerlink" href="#tool-integration-ubersicht" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ATOMARE TASK AUSFÜHRUNG MIT TOOLS                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      AtomicConquerNode                               │    │
+│  │                                                                      │    │
+│  │  1. ACTION PLANNING                                                  │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  LLM analysiert Task:                                    │    │    │
+│  │     │  - Braucht der Task externe Daten?                       │    │    │
+│  │     │  - Welche Tools werden benötigt?                         │    │    │
+│  │     │  - In welcher Reihenfolge?                               │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → TaskActionPlan erstellen                              │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                           │                                          │    │
+│  │                           ▼                                          │    │
+│  │  2. PRE-ACTION EXECUTION                                             │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  FOR each action in plan:                                │    │    │
+│  │     │                                                          │    │    │
+│  │     │  IF action.type == TOOL_CALL:                           │    │    │
+│  │     │     result = agent.arun_function(tool_name, **args)     │    │    │
+│  │     │     tool_results[tool_name] = result                    │    │    │
+│  │     │                                                          │    │    │
+│  │     │  IF action.type == CONTEXT_FETCH:                       │    │    │
+│  │     │     data = fetch_from_source(source_type, path)         │    │    │
+│  │     │     fetched_context[path] = data                        │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → Enriched Context aufbauen                            │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                           │                                          │    │
+│  │                           ▼                                          │    │
+│  │  3. REASONING + VOTING (wie vorher)                                  │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  Mit angereichertem Kontext:                             │    │    │
+│  │     │  - Tool-Ergebnisse                                       │    │    │
+│  │     │  - Abgerufener Kontext                                   │    │    │
+│  │     │  - Abhängigkeits-Ergebnisse                              │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → k-Voting für Konsensus                               │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<hr />
+<h2 id="action-types">Action Types<a class="headerlink" href="#action-types" title="Permanent link">&para;</a></h2>
+<h3 id="1-reasoning-standard">1. REASONING (Standard)<a class="headerlink" href="#1-reasoning-standard" title="Permanent link">&para;</a></h3>
+<p>Reine LLM-basierte Verarbeitung ohne externe Interaktion.</p>
+<div class="highlight"><pre><span></span><code><span class="n">AtomicAction</span><span class="p">(</span>
+    <span class="n">action_type</span><span class="o">=</span><span class="n">ActionType</span><span class="o">.</span><span class="n">REASONING</span><span class="p">,</span>
+    <span class="n">reasoning_prompt</span><span class="o">=</span><span class="s2">&quot;Analysiere die Datenstruktur...&quot;</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="2-tool_call">2. TOOL_CALL<a class="headerlink" href="#2-tool_call" title="Permanent link">&para;</a></h3>
+<p>Führt ein externes Tool über <code>agent.arun_function</code> aus.</p>
+<div class="highlight"><pre><span></span><code><span class="n">AtomicAction</span><span class="p">(</span>
+    <span class="n">action_type</span><span class="o">=</span><span class="n">ActionType</span><span class="o">.</span><span class="n">TOOL_CALL</span><span class="p">,</span>
+    <span class="n">tool_call</span><span class="o">=</span><span class="n">ToolCallSpec</span><span class="p">(</span>
+        <span class="n">tool_name</span><span class="o">=</span><span class="s2">&quot;file_read&quot;</span><span class="p">,</span>
+        <span class="n">arguments</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;/config/settings.json&quot;</span><span class="p">},</span>
+        <span class="n">purpose</span><span class="o">=</span><span class="s2">&quot;Konfigurationsdaten laden&quot;</span><span class="p">,</span>
+        <span class="n">fallback_on_error</span><span class="o">=</span><span class="s2">&quot;Verwende Standard-Konfiguration&quot;</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="3-context_fetch">3. CONTEXT_FETCH<a class="headerlink" href="#3-context_fetch" title="Permanent link">&para;</a></h3>
+<p>Ruft externen Kontext aus verschiedenen Quellen ab.</p>
+<div class="highlight"><pre><span></span><code><span class="n">AtomicAction</span><span class="p">(</span>
+    <span class="n">action_type</span><span class="o">=</span><span class="n">ActionType</span><span class="o">.</span><span class="n">CONTEXT_FETCH</span><span class="p">,</span>
+    <span class="n">context_fetch</span><span class="o">=</span><span class="n">ContextFetchSpec</span><span class="p">(</span>
+        <span class="n">source_type</span><span class="o">=</span><span class="s2">&quot;variable&quot;</span><span class="p">,</span>       <span class="c1"># oder &quot;session&quot;, &quot;tool&quot;, &quot;world_model&quot;</span>
+        <span class="n">source_path</span><span class="o">=</span><span class="s2">&quot;user.preferences&quot;</span><span class="p">,</span>
+        <span class="n">query</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>                   <span class="c1"># Optional für gefilterten Abruf</span>
+        <span class="n">transform</span><span class="o">=</span><span class="kc">None</span>                <span class="c1"># Optional für Transformation</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="4-multi_action">4. MULTI_ACTION<a class="headerlink" href="#4-multi_action" title="Permanent link">&para;</a></h3>
+<p>Sequenz von mehreren Aktionen.</p>
+<hr />
+<h2 id="datenfluss-mit-tools">Datenfluss mit Tools<a class="headerlink" href="#datenfluss-mit-tools" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TASK EXECUTION FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     Atomarer Task                    Action Planning
+         │                                 │
+         │  task.requires_tools == true    │
+         │  task.suggested_tools = [...]   │
+         │                                 │
+         ▼                                 ▼
+┌─────────────────┐              ┌─────────────────────────┐
+│  Task Context   │              │   TaskActionPlan        │
+│  - description  │──────────────│   - requires_tools: T/F │
+│  - base_context │              │   - actions: [...]      │
+│  - dependencies │              │   - tools_used: [...]   │
+└────────┬────────┘              └───────────┬─────────────┘
+         │                                   │
+         │                                   │
+         ▼                                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    PRE-ACTION EXECUTION                      │
+│                                                              │
+│   FOR action in plan.actions:                               │
+│                                                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  TOOL_CALL: file_read(&quot;/config.json&quot;)               │   │
+│   │  → result: {&quot;db_host&quot;: &quot;localhost&quot;, ...}            │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                           │                                  │
+│                           ▼                                  │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  CONTEXT_FETCH: variable(&quot;user.settings&quot;)           │   │
+│   │  → data: {&quot;theme&quot;: &quot;dark&quot;, &quot;lang&quot;: &quot;de&quot;}            │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    ENRICHED CONTEXT                          │
+│                                                              │
+│  base_context +                                             │
+│  [Tool file_read]: {&quot;db_host&quot;: &quot;localhost&quot;, ...}            │
+│  [Context user.settings]: {&quot;theme&quot;: &quot;dark&quot;, &quot;lang&quot;: &quot;de&quot;}   │
+│  [Ergebnis von dep_task_1]: &quot;Datenbank-Schema analysiert&quot;   │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    REASONING + VOTING                        │
+│                                                              │
+│  Attempt 1 → Result A (confidence: 0.9)                     │
+│  Attempt 2 → Result A (confidence: 0.85)  ← k-margin!       │
+│                                                              │
+│  Winner: Result A                                           │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    AtomicResult                              │
+│                                                              │
+│  {                                                          │
+│    success: true,                                           │
+│    result: &quot;Konfiguration erfolgreich geladen...&quot;,          │
+│    context_for_next: &quot;DB auf localhost:5432&quot;,               │
+│    confidence: 0.9,                                         │
+│    tool_results: {                                          │
+│      &quot;file_read&quot;: {&quot;db_host&quot;: &quot;localhost&quot;, ...}             │
+│    },                                                       │
+│    context_fetched: {                                       │
+│      &quot;user.settings&quot;: {&quot;theme&quot;: &quot;dark&quot;, ...}                │
+│    },                                                       │
+│    actions_executed: [                                      │
+│      {&quot;type&quot;: &quot;tool_call&quot;, &quot;tool&quot;: &quot;file_read&quot;},            │
+│      {&quot;type&quot;: &quot;context_fetch&quot;, &quot;source&quot;: &quot;variable&quot;},       │
+│      {&quot;type&quot;: &quot;reasoning&quot;, &quot;attempt&quot;: 1}                    │
+│    ]                                                        │
+│  }                                                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<hr />
+<h2 id="pydantic-modelle-neu">Pydantic-Modelle (Neu)<a class="headerlink" href="#pydantic-modelle-neu" title="Permanent link">&para;</a></h2>
+<h3 id="actiontype-enum">ActionType Enum<a class="headerlink" href="#actiontype-enum" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ActionType</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+    <span class="n">REASONING</span> <span class="o">=</span> <span class="s2">&quot;reasoning&quot;</span>           <span class="c1"># Reine LLM-Verarbeitung</span>
+    <span class="n">TOOL_CALL</span> <span class="o">=</span> <span class="s2">&quot;tool_call&quot;</span>           <span class="c1"># Externes Tool aufrufen</span>
+    <span class="n">CONTEXT_FETCH</span> <span class="o">=</span> <span class="s2">&quot;context_fetch&quot;</span>   <span class="c1"># Kontext abrufen</span>
+    <span class="n">MULTI_ACTION</span> <span class="o">=</span> <span class="s2">&quot;multi_action&quot;</span>     <span class="c1"># Mehrere Aktionen</span>
+</code></pre></div>
+<h3 id="toolcallspec">ToolCallSpec<a class="headerlink" href="#toolcallspec" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ToolCallSpec</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span>              <span class="c1"># Name des Tools (muss registriert sein)</span>
+    <span class="n">arguments</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>   <span class="c1"># Argumente für das Tool</span>
+    <span class="n">purpose</span><span class="p">:</span> <span class="nb">str</span>                <span class="c1"># Warum wird das Tool benötigt</span>
+    <span class="n">fallback_on_error</span><span class="p">:</span> <span class="nb">str</span>      <span class="c1"># Fallback bei Fehler (optional)</span>
+</code></pre></div>
+<h3 id="contextfetchspec">ContextFetchSpec<a class="headerlink" href="#contextfetchspec" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ContextFetchSpec</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">source_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;variable&quot;</span><span class="p">,</span> <span class="s2">&quot;session&quot;</span><span class="p">,</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span> <span class="s2">&quot;world_model&quot;</span><span class="p">]</span>
+    <span class="n">source_path</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># Pfad oder Identifier</span>
+    <span class="n">query</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>        <span class="c1"># Optionale Query für Filter</span>
+    <span class="n">transform</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>    <span class="c1"># Optionale Transformation</span>
+</code></pre></div>
+<h3 id="taskactionplan">TaskActionPlan<a class="headerlink" href="#taskactionplan" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskActionPlan</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">requires_tools</span><span class="p">:</span> <span class="nb">bool</span>                    <span class="c1"># Werden Tools benötigt?</span>
+    <span class="n">requires_context</span><span class="p">:</span> <span class="nb">bool</span>                  <span class="c1"># Wird externer Kontext benötigt?</span>
+    <span class="n">actions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AtomicAction</span><span class="p">]</span>             <span class="c1"># Sequenz von Aktionen</span>
+    <span class="n">final_synthesis</span><span class="p">:</span> <span class="nb">bool</span>                   <span class="c1"># Ergebnisse zusammenführen?</span>
+    <span class="n">available_tools_used</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>         <span class="c1"># Verwendete Tools</span>
+</code></pre></div>
+<hr />
+<h2 id="api-erweiterungen">API Erweiterungen<a class="headerlink" href="#api-erweiterungen" title="Permanent link">&para;</a></h2>
+<h3 id="a_accomplish-erweitert">a_accomplish (erweitert)<a class="headerlink" href="#a_accomplish-erweitert" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Lies die Konfiguration und aktualisiere die Datenbank&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="s2">&quot;Projekt-Root: /home/user/project&quot;</span><span class="p">,</span>
+
+    <span class="c1"># Tool-Konfiguration (NEU)</span>
+    <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>              <span class="c1"># Tools erlauben</span>
+    <span class="n">enable_context_fetch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># Kontext-Abruf erlauben</span>
+    <span class="n">allowed_tools</span><span class="o">=</span><span class="p">[</span>                 <span class="c1"># Nur diese Tools erlauben</span>
+        <span class="s2">&quot;file_read&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;file_write&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;db_query&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;db_execute&quot;</span>
+    <span class="p">],</span>
+
+    <span class="c1"># Standard-Parameter</span>
+    <span class="n">min_complexity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">k_margin</span><span class="o">=</span><span class="mi">2</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="ruckgabe-erweitert">Rückgabe (erweitert)<a class="headerlink" href="#ruckgabe-erweitert" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+    <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="s2">&quot;Konfiguration geladen und Datenbank aktualisiert&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;partial_results&quot;</span><span class="p">:</span> <span class="p">{</span><span class="o">...</span><span class="p">},</span>
+    <span class="s2">&quot;checkpoint&quot;</span><span class="p">:</span> <span class="p">{</span><span class="o">...</span><span class="p">},</span>
+    <span class="s2">&quot;stats&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;total_divisions&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="s2">&quot;voting_rounds&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="s2">&quot;red_flags_caught&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="s2">&quot;tool_calls&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>           <span class="c1"># NEU</span>
+        <span class="s2">&quot;context_fetches&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>       <span class="c1"># NEU</span>
+        <span class="s2">&quot;total_tasks&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+        <span class="s2">&quot;successful_tasks&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+        <span class="s2">&quot;failed_tasks&quot;</span><span class="p">:</span> <span class="mi">0</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;cost_info&quot;</span><span class="p">:</span> <span class="p">{</span><span class="o">...</span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr />
+<h2 id="verwendungsbeispiele">Verwendungsbeispiele<a class="headerlink" href="#verwendungsbeispiele" title="Permanent link">&para;</a></h2>
+<h3 id="beispiel-1-datei-basierte-aufgabe">Beispiel 1: Datei-basierte Aufgabe<a class="headerlink" href="#beispiel-1-datei-basierte-aufgabe" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Task: Lies eine Datei und analysiere ihren Inhalt</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Lies config.yaml und extrahiere alle Datenbankverbindungen&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="s2">&quot;Projekt verwendet PostgreSQL und Redis&quot;</span><span class="p">,</span>
+    <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allowed_tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;file_read&quot;</span><span class="p">,</span> <span class="s2">&quot;yaml_parse&quot;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="c1"># Der Task wird automatisch erkannt als tool-abhängig:</span>
+<span class="c1"># 1. Action: TOOL_CALL → file_read(&quot;config.yaml&quot;)</span>
+<span class="c1"># 2. Action: REASONING → Analysiere YAML-Struktur</span>
+<span class="c1"># 3. Action: REASONING → Extrahiere DB-Verbindungen</span>
+</code></pre></div>
+<h3 id="beispiel-2-web-recherche">Beispiel 2: Web-Recherche<a class="headerlink" href="#beispiel-2-web-recherche" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Recherchiere aktuelle Python 3.12 Features und erstelle Zusammenfassung&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="s2">&quot;Fokus auf Performance-Verbesserungen&quot;</span><span class="p">,</span>
+    <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allowed_tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;web_search&quot;</span><span class="p">,</span> <span class="s2">&quot;web_fetch&quot;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="c1"># Automatische Tool-Nutzung:</span>
+<span class="c1"># 1. TOOL_CALL → web_search(&quot;Python 3.12 new features&quot;)</span>
+<span class="c1"># 2. TOOL_CALL → web_fetch(result_urls)</span>
+<span class="c1"># 3. REASONING → Zusammenfassung erstellen</span>
+</code></pre></div>
+<h3 id="beispiel-3-kontext-aus-session">Beispiel 3: Kontext aus Session<a class="headerlink" href="#beispiel-3-kontext-aus-session" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;Basierend auf unserer bisherigen Diskussion, erstelle eine Projekt-Roadmap&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span>
+    <span class="n">enable_context_fetch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;project_planning_session&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Automatischer Kontext-Abruf:</span>
+<span class="c1"># 1. CONTEXT_FETCH → session(&quot;project_planning_session&quot;)</span>
+<span class="c1"># 2. REASONING → Roadmap erstellen mit Kontext</span>
+</code></pre></div>
+<h3 id="beispiel-4-komplexe-multi-tool-aufgabe">Beispiel 4: Komplexe Multi-Tool Aufgabe<a class="headerlink" href="#beispiel-4-komplexe-multi-tool-aufgabe" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    1. Lies alle Python-Dateien im src/ Verzeichnis</span>
+<span class="s2">    2. Analysiere den Code auf Sicherheitslücken</span>
+<span class="s2">    3. Erstelle einen Bericht und speichere ihn</span>
+<span class="s2">    &quot;&quot;&quot;</span><span class="p">,</span>
+    <span class="n">context</span><span class="o">=</span><span class="s2">&quot;Security-Audit für Production-Release&quot;</span><span class="p">,</span>
+    <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allowed_tools</span><span class="o">=</span><span class="p">[</span>
+        <span class="s2">&quot;file_list&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;file_read&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;code_analyze&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;file_write&quot;</span>
+    <span class="p">],</span>
+    <span class="n">min_complexity</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># Gründliche Zerlegung</span>
+    <span class="n">k_margin</span><span class="o">=</span><span class="mi">2</span>
+<span class="p">)</span>
+
+<span class="c1"># Zerlegung in atomare Tasks:</span>
+<span class="c1"># Task 1: file_list(&quot;src/&quot;) → Python-Dateien auflisten</span>
+<span class="c1"># Task 2: file_read(file) für jede Datei (parallel)</span>
+<span class="c1"># Task 3: code_analyze(code) für jeden Inhalt</span>
+<span class="c1"># Task 4: REASONING → Findings aggregieren</span>
+<span class="c1"># Task 5: file_write(&quot;report.md&quot;) → Bericht speichern</span>
+</code></pre></div>
+<hr />
+<h2 id="tool-integration-architektur">Tool-Integration Architektur<a class="headerlink" href="#tool-integration-architektur" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FlowAgent                                       │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        _tool_registry                                │    │
+│  │  {                                                                   │    │
+│  │    &quot;file_read&quot;: {&quot;func&quot;: ..., &quot;description&quot;: &quot;...&quot;, &quot;args&quot;: &quot;...&quot;},│    │
+│  │    &quot;web_search&quot;: {...},                                             │    │
+│  │    &quot;db_query&quot;: {...},                                               │    │
+│  │    ...                                                              │    │
+│  │  }                                                                   │    │
+│  └───────────────────────────────────┬─────────────────────────────────┘    │
+│                                      │                                       │
+│                                      │ arun_function(name, **kwargs)        │
+│                                      │                                       │
+│  ┌───────────────────────────────────▼─────────────────────────────────┐    │
+│  │                        MDA System                                    │    │
+│  │                                                                      │    │
+│  │  AtomicConquerNode._execute_tool_call()                             │    │
+│  │       │                                                              │    │
+│  │       └──► agent.arun_function(&quot;file_read&quot;, path=&quot;/config.json&quot;)    │    │
+│  │              │                                                       │    │
+│  │              ▼                                                       │    │
+│  │            Result: {&quot;key&quot;: &quot;value&quot;, ...}                            │    │
+│  │                                                                      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<hr />
+<h2 id="context-fetch-quellen">Context Fetch Quellen<a class="headerlink" href="#context-fetch-quellen" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Source Type</th>
+<th>Beschreibung</th>
+<th>Beispiel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>variable</code></td>
+<td>Aus VariableManager</td>
+<td><code>user.preferences</code>, <code>results.task_1</code></td>
+</tr>
+<tr>
+<td><code>session</code></td>
+<td>Aus Session-Historie</td>
+<td>Gesamter Chat-Kontext</td>
+</tr>
+<tr>
+<td><code>world_model</code></td>
+<td>Aus Agent World Model</td>
+<td><code>entities.customers</code></td>
+</tr>
+<tr>
+<td><code>tool</code></td>
+<td>Über Tool-Aufruf</td>
+<td><code>web_search("query")</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="c1"># Variable</span>
+<span class="n">ContextFetchSpec</span><span class="p">(</span>
+    <span class="n">source_type</span><span class="o">=</span><span class="s2">&quot;variable&quot;</span><span class="p">,</span>
+    <span class="n">source_path</span><span class="o">=</span><span class="s2">&quot;user.api_keys&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Session</span>
+<span class="n">ContextFetchSpec</span><span class="p">(</span>
+    <span class="n">source_type</span><span class="o">=</span><span class="s2">&quot;session&quot;</span><span class="p">,</span>
+    <span class="n">source_path</span><span class="o">=</span><span class="s2">&quot;chat_history&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;letzte 10 Nachrichten&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># World Model</span>
+<span class="n">ContextFetchSpec</span><span class="p">(</span>
+    <span class="n">source_type</span><span class="o">=</span><span class="s2">&quot;world_model&quot;</span><span class="p">,</span>
+    <span class="n">source_path</span><span class="o">=</span><span class="s2">&quot;project.dependencies&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Via Tool</span>
+<span class="n">ContextFetchSpec</span><span class="p">(</span>
+    <span class="n">source_type</span><span class="o">=</span><span class="s2">&quot;tool&quot;</span><span class="p">,</span>
+    <span class="n">source_path</span><span class="o">=</span><span class="s2">&quot;web_search&quot;</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="s2">&quot;Python best practices 2025&quot;</span>
+<span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="checkpoint-erweiterungen">Checkpoint-Erweiterungen<a class="headerlink" href="#checkpoint-erweiterungen" title="Permanent link">&para;</a></h2>
+<h3 id="neue-felder-in-mdatasknode">Neue Felder in MDATaskNode<a class="headerlink" href="#neue-felder-in-mdatasknode" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MDATaskNode</span><span class="p">:</span>
+    <span class="c1"># ... bestehende Felder ...</span>
+
+    <span class="c1"># NEU: Tool-bezogene Felder</span>
+    <span class="n">requires_tools</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">suggested_tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">requires_external_context</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="n">action_plan</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>      <span class="c1"># Serialisierter TaskActionPlan</span>
+    <span class="n">tool_results</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">fetched_context</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="resume-mit-tool-state">Resume mit Tool-State<a class="headerlink" href="#resume-mit-tool-state" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Bei Resume werden Tool-Ergebnisse wiederhergestellt</span>
+<span class="n">checkpoint</span> <span class="o">=</span> <span class="n">MDACheckpoint</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">saved_data</span><span class="p">)</span>
+
+<span class="c1"># task_nodes enthalten:</span>
+<span class="c1"># - Bereits ausgeführte tool_results</span>
+<span class="c1"># - Bereits abgerufenen fetched_context</span>
+<span class="c1"># - action_plan für unfertige Tasks</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+    <span class="n">resume_checkpoint</span><span class="o">=</span><span class="n">checkpoint</span>
+<span class="p">)</span>
+<span class="c1"># → Nutzt gecachte Tool-Ergebnisse, führt nur fehlende aus</span>
+</code></pre></div>
+<hr />
+<h2 id="best-practices-fur-tool-nutzung">Best Practices für Tool-Nutzung<a class="headerlink" href="#best-practices-fur-tool-nutzung" title="Permanent link">&para;</a></h2>
+<h3 id="1-tool-beschrankung">1. Tool-Beschränkung<a class="headerlink" href="#1-tool-beschrankung" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># SCHLECHT: Alle Tools erlaubt</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span><span class="n">task</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># BESSER: Nur benötigte Tools</span>
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">agent</span><span class="o">.</span><span class="n">a_accomplish</span><span class="p">(</span>
+    <span class="n">task</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+    <span class="n">enable_tools</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allowed_tools</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;file_read&quot;</span><span class="p">,</span> <span class="s2">&quot;file_write&quot;</span><span class="p">]</span>  <span class="c1"># Explizite Liste</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="2-atomare-tool-aufrufe">2. Atomare Tool-Aufrufe<a class="headerlink" href="#2-atomare-tool-aufrufe" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># SCHLECHT: Task macht alles auf einmal</span>
+<span class="n">task</span> <span class="o">=</span> <span class="s2">&quot;Lies alle Dateien, analysiere sie, und schreibe Ergebnisse&quot;</span>
+
+<span class="c1"># BESSER: Task wird automatisch zerlegt in atomare Schritte</span>
+<span class="c1"># - Task 1: file_list() → Liste</span>
+<span class="c1"># - Task 2: file_read(file) für jede</span>
+<span class="c1"># - Task 3: Analysiere Inhalt</span>
+<span class="c1"># - Task 4: file_write(report)</span>
+</code></pre></div>
+<h3 id="3-fehlerbehandlung-bei-tools">3. Fehlerbehandlung bei Tools<a class="headerlink" href="#3-fehlerbehandlung-bei-tools" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Tools können fehlschlagen - MDA behandelt das:</span>
+<span class="c1"># 1. Tool-Fehler wird gefangen</span>
+<span class="c1"># 2. fallback_on_error wird verwendet (wenn definiert)</span>
+<span class="c1"># 3. Task kann trotzdem fortfahren mit Fallback-Kontext</span>
+<span class="c1"># 4. Bei wiederholtem Fehler: Red-Flagging</span>
+
+<span class="n">ToolCallSpec</span><span class="p">(</span>
+    <span class="n">tool_name</span><span class="o">=</span><span class="s2">&quot;api_call&quot;</span><span class="p">,</span>
+    <span class="n">arguments</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;endpoint&quot;</span><span class="p">:</span> <span class="s2">&quot;/data&quot;</span><span class="p">},</span>
+    <span class="n">purpose</span><span class="o">=</span><span class="s2">&quot;Daten abrufen&quot;</span><span class="p">,</span>
+    <span class="n">fallback_on_error</span><span class="o">=</span><span class="s2">&quot;Verwende gecachte Daten von gestern&quot;</span>
+<span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="statistiken">Statistiken<a class="headerlink" href="#statistiken" title="Permanent link">&para;</a></h2>
+<p>Neue Metriken in <code>stats</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Metrik</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tool_calls</code></td>
+<td>Anzahl erfolgreicher Tool-Aufrufe</td>
+</tr>
+<tr>
+<td><code>context_fetches</code></td>
+<td>Anzahl erfolgreicher Kontext-Abrufe</td>
+</tr>
+<tr>
+<td><code>tool_errors</code></td>
+<td>Anzahl fehlgeschlagener Tool-Aufrufe</td>
+</tr>
+<tr>
+<td><code>tool_fallbacks</code></td>
+<td>Anzahl verwendeter Fallbacks</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">result</span><span class="p">[</span><span class="s2">&quot;stats&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;total_divisions&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="s2">&quot;voting_rounds&quot;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span>
+    <span class="s2">&quot;red_flags_caught&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="s2">&quot;tool_calls&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>           <span class="c1"># NEU</span>
+    <span class="s2">&quot;context_fetches&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>       <span class="c1"># NEU</span>
+    <span class="s2">&quot;total_tasks&quot;</span><span class="p">:</span> <span class="mi">12</span><span class="p">,</span>
+    <span class="s2">&quot;successful_tasks&quot;</span><span class="p">:</span> <span class="mi">11</span><span class="p">,</span>
+    <span class="s2">&quot;failed_tasks&quot;</span><span class="p">:</span> <span class="mi">1</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr />
 
 
 
