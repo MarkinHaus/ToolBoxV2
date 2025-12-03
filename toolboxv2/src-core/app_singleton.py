@@ -811,7 +811,7 @@ async def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
         # Payload muss ein String (JSON) sein
         if not isinstance(payload, str):
             payload = json.dumps(payload)
-
+        print(f"[app_singleton] ws_send_message() called: conn_id={conn_id} payload={payload}")
         url = f"/internal/ws/send"
         if get_app().session.base !=_WS_SERVER_URL:
             get_app().session.base = _WS_SERVER_URL
@@ -824,6 +824,7 @@ async def ws_send_message(conn_id: str, payload: str) -> Dict[str, Any]:
 
     except Exception as e:
         print(f"[app_singleton] ERROR sending WS message: {e}")
+        traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
 

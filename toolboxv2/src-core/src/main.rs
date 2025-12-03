@@ -221,7 +221,7 @@ impl Actor for WebSocketActor {
         let mut kwargs = HashMap::new();
         kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
         // WICHTIG: Wir übergeben die vollen Session-Daten aus dem SessionManager
-        kwargs.insert("session_data".to_string(), session_json);
+        kwargs.insert("session".to_string(), session_json);
         kwargs.insert("cookies".to_string(), serde_json::json!(self.initial_cookies));
         kwargs.insert("headers".to_string(), serde_json::json!(self.initial_headers));
         kwargs.insert("spec".to_string(), serde_json::json!("ws_internal"));
@@ -260,7 +260,7 @@ impl Actor for WebSocketActor {
 
                         if accepted {
                             // Falls Python die Session-Daten aktualisiert hat, übernehmen wir sie
-                            if let Some(new_sess_json) = data.get("session_data") {
+                            if let Some(new_sess_json) = data.get("session") {
                                 if let Ok(new_sess) = serde_json::from_value::<SessionData>(new_sess_json.clone()) {
                                     info!("Session data updated by Python for {}", act.conn_id);
                                     act.session = new_sess;
@@ -297,7 +297,7 @@ impl Actor for WebSocketActor {
             let module_name = channel_id.split('/').next().unwrap_or("unknown").to_string();
             let mut kwargs = HashMap::new();
             kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
-            kwargs.insert("session_data".to_string(), session_json);
+            kwargs.insert("session".to_string(), session_json);
             kwargs.insert("spec".to_string(), serde_json::json!("ws_internal"));
             kwargs.insert("args".to_string(), serde_json::json!([]));
 
@@ -374,7 +374,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketActor {
 
                     kwargs.insert("conn_id".to_string(), serde_json::json!(conn_id));
                     // HIER: Die Identität wird mit jeder Nachricht übergeben
-                    kwargs.insert("session_data".to_string(), session_json);
+                    kwargs.insert("session".to_string(), session_json);
 
                     // Payload als JSON oder String
                     let payload = match serde_json::from_str::<serde_json::Value>(&text_content) {

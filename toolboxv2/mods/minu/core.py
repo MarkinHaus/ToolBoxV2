@@ -28,7 +28,23 @@ T = TypeVar("T")
 EventHandler = Callable[..., Any]
 Children = Union["Component", List["Component"], str, None]
 
-
+class MinuJSONEncoder(json.JSONEncoder):
+    """
+    Automatische Umwandlung von ReactiveState in den eigentlichen Wert.
+    Verhindert Fehler, wenn man aus Versehen 'self.state' statt 'self.state.value' übergibt.
+    """
+    def default(self, obj):
+        # Wenn es ein ReactiveState ist, nimm den Wert
+        if isinstance(obj, ReactiveState):
+            return obj.value
+        # Wenn das Objekt eine to_dict Methode hat (z.B. Component), nutze diese
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        # Fallback auf Standard-Verhalten (z.B. für datetime)
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj) # Letzter Ausweg: String-Repräsentation
 # ============================================================================
 # REACTIVE STATE SYSTEM
 # ============================================================================
@@ -79,6 +95,8 @@ class ReactiveState(Generic[T]):
             self._value = new_value
             change = StateChange(self._path, old, new_value)
             self._notify(change)
+        else:
+            print("Same value, no change", new_value == self._value)
 
     def _notify(self, change: StateChange):
         for observer in self._observers:
@@ -154,6 +172,8 @@ class ComponentType(str, Enum):
     FORM = "form"
     CUSTOM = "custom"
 
+    DYNAMIC = "dynamic"
+
 
 @dataclass
 class ComponentStyle:
@@ -179,7 +199,7 @@ class ComponentStyle:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
-@dataclass
+@dataclass(eq=False)
 class Component:
     """
     Base component class representing a UI element.
@@ -240,6 +260,43 @@ class Component:
 # COMPONENT FACTORY FUNCTIONS
 # ============================================================================
 
+
+class Dynamic(Component):
+    """
+    A container that re-renders its content on the server when bound state changes.
+    Allows for true branching logic (if/else) in the UI.
+    """
+
+    def __init__(
+        self,
+        render_fn: Callable[[], Component | List[Component]],
+        bind: List[ReactiveState] | ReactiveState,
+        className: str = None,
+    ):
+        super().__init__(type=ComponentType.DYNAMIC, className=className)
+        self.render_fn = render_fn
+        # Normalize bind to list
+        self.bound_states = [bind] if isinstance(bind, ReactiveState) else (bind or [])
+
+        # Initial render
+        self._update_content()
+
+    def _update_content(self):
+        """Executes the render function and updates children"""
+        content = self.render_fn()
+        if isinstance(content, list):
+            self.children = content
+        elif isinstance(content, Component):
+            self.children = [content]
+        else:
+            self.children = [] if content is None else [Text(str(content))]
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Dynamic components render as a simple generic container (like a div/Column)
+        # but with a stable ID so we can target it for replacements.
+        d = super().to_dict()
+        d["type"] = "column"  # Render as a column container on client
+        return d
 
 def Card(
     *children: Children,
@@ -903,12 +960,14 @@ class MinuView:
     _session: MinuSession | None
     _pending_changes: List[StateChange]
     _state_attrs: Dict[str, ReactiveState]
+    _dynamic_components: set  # Changed from WeakSet - we need strong references!
 
     def __init__(self, view_id: str | None = None):
         self._view_id = view_id or f"view-{uuid.uuid4().hex[:8]}"
         self._session = None
         self._pending_changes = []
         self._state_attrs = {}
+        self._dynamic_components = set()  # Strong references to keep Dynamic alive
 
         for attr_name in dir(self.__class__):
             if not attr_name.startswith("_"):
@@ -925,10 +984,44 @@ class MinuView:
     def _on_state_change(self, change: StateChange):
         """Called when any bound state changes"""
         self._pending_changes.append(change)
+
+        # Debug logging
+        print(f"[Minu DEBUG] State change: {change.path} -> {change.new_value}")
+        print(f"[Minu DEBUG] Dynamic components registered: {len(self._dynamic_components)}")
+
         if self._session:
-            # FIX: Only mark dirty, do not schedule async task
+            # Check for structural updates needed
+            for dyn in self._dynamic_components:
+                # Check if the changed state is in the dyn component's bindings
+                # Match by full path OR by state name only
+                # change.path could be "view-xxx.input_text" or just "input_text"
+                # s._path is always "view-xxx.state_name"
+                is_bound = False
+                bound_paths = [s._path for s in dyn.bound_states]
+                print(f"[Minu DEBUG] Checking Dynamic {dyn.id}, bound to: {bound_paths}")
+
+                for s in dyn.bound_states:
+                    # Extract just the state name from both paths
+                    state_name = s._path.split('.')[-1]
+                    change_name = change.path.split('.')[-1]
+
+                    if s._path == change.path or state_name == change_name:
+                        is_bound = True
+                        print(f"[Minu DEBUG] MATCH! {state_name} == {change_name}")
+                        break
+
+                if is_bound:
+                    # Re-run the python logic
+                    print(f"[Minu DEBUG] Re-rendering Dynamic {dyn.id}")
+                    dyn._update_content()
+                    # Schedule a structural replacement
+                    self._session._mark_structure_dirty(dyn)
+
             self._session._mark_dirty(self)
 
+    def register_dynamic(self, dyn: Dynamic):
+        """Helper to register dynamic components during render"""
+        self._dynamic_components.add(dyn)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize view to dict, setting context for callback registration."""
@@ -1011,12 +1104,18 @@ class MinuSession:
     _views: Dict[str, MinuView]
     _pending_updates: set[MinuView]  # Changed to Set for unique tracking
     _send_callback: Callable[[str], Any] | None
+    _pending_replacements: set[Component]
 
     def __init__(self, session_id: str | None = None):
         self.session_id = session_id or f"session-{uuid.uuid4().hex[:8]}"
         self._views = {}
         self._pending_updates = set()
+        self._pending_replacements = set()
         self._send_callback = None
+
+    def _mark_structure_dirty(self, component: Component):
+        """Mark a component for full structural replacement"""
+        self._pending_replacements.add(component)
 
     def set_send_callback(self, callback: Callable[[str], Any]):
         self._send_callback = callback
@@ -1043,25 +1142,49 @@ class MinuSession:
         Immediately send all pending updates.
         Must be awaited at the end of every event handler.
         """
-        if not self._pending_updates:
-            return
-
         all_patches = []
-        # Clone and clear to avoid concurrent modification issues
-        dirty_views = list(self._pending_updates)
-        self._pending_updates.clear()
 
-        for view in dirty_views:
-            patches = view.get_patches()
-            all_patches.extend(patches)
+        # 1. Handle Structural Replacements - convert to component_update patches
+        if self._pending_replacements:
+            replacements = list(self._pending_replacements)
+            self._pending_replacements.clear()
 
+            for comp in replacements:
+                # Find the viewId that owns this component
+                owner_view_id = None
+                for view_id, view in self._views.items():
+                    if comp in view._dynamic_components:
+                        owner_view_id = view_id
+                        break
+
+                # Add as component_update patch instead of separate message
+                all_patches.append({
+                    "type": "component_update",
+                    "viewId": owner_view_id,
+                    "componentId": comp.id,
+                    "component": comp.to_dict(),
+                })
+
+        # 2. Collect state patches from dirty views
+        if self._pending_updates:
+            dirty_views = list(self._pending_updates)
+            self._pending_updates.clear()
+
+            for view in dirty_views:
+                patches = view.get_patches()
+                all_patches.extend(patches)
+
+        # 3. Send all patches in one message
         if all_patches and self._send_callback:
             message = {
                 "type": "patches",
                 "sessionId": self.session_id,
                 "patches": all_patches,
             }
-            await self._send(json.dumps(message))
+            await self._send(json.dumps(message, cls=MinuJSONEncoder))
+            print(f"[Minu DEBUG] Sent {len(all_patches)} patches")
+        else:
+            print(f"[Minu DEBUG] No patches to send. updates: {len(all_patches)}")
 
     async def _send(self, message: str):
         if self._send_callback:
@@ -1071,7 +1194,7 @@ class MinuSession:
 
     async def send_full_render(self, view: MinuView):
         message = {"type": "render", "sessionId": self.session_id, "view": view.to_dict()}
-        await self._send(json.dumps(message))
+        await self._send(json.dumps(message, cls=MinuJSONEncoder))
 
 
     async def handle_event(self, event_data: Dict[str, Any]):

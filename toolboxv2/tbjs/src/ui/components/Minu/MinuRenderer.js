@@ -148,6 +148,10 @@ class MinuRenderer {
                 this._applyPatches(data.patches);
                 break;
 
+            case 'replace':
+                this._handleReplace(data);
+                break;
+
             case 'event_result':
                 this._handleEventResult(data);
                 break;
@@ -192,6 +196,9 @@ class MinuRenderer {
     }
 
     _renderComponent(comp, viewId) {
+        if (comp == null) {
+            return document.createTextNode('');
+        }
         if (typeof comp === 'string') {
             return document.createTextNode(comp);
         }
@@ -239,7 +246,9 @@ class MinuRenderer {
         // Render children
         if (comp.children && Array.isArray(comp.children)) {
             for (const child of comp.children) {
-                element.appendChild(this._renderComponent(child, viewId));
+                if (child != null) {
+                    element.appendChild(this._renderComponent(child, viewId));
+                }
             }
         }
 
@@ -1082,6 +1091,64 @@ class MinuRenderer {
         TB.events.emit('minu:eventResult', data);
     }
 
+    /**
+     * Handle structural replacement of Dynamic components
+     */
+    _handleReplace(data) {
+        const { targetId, component } = data;
+
+        if (!targetId || !component) {
+            TB.logger.warn('[Minu] Replace message missing targetId or component');
+            return;
+        }
+
+        // Find element by data-minu-id or id
+        let existing = this.container.querySelector(`[data-minu-id="${targetId}"]`);
+        if (!existing) {
+            existing = this.container.querySelector(`#${targetId}`);
+        }
+
+        if (existing) {
+            // Save focus state before replacing
+            const focusState = this._saveFocusState(existing);
+
+            // Determine viewId from data or find from parent
+            const viewId = data.viewId || this._findViewIdForElement(existing);
+
+            // Render new component
+            const newElement = this._renderComponent(component, viewId);
+
+            // Replace in DOM
+            existing.replaceWith(newElement);
+
+            // Re-apply bindings for the new element
+            if (viewId) {
+                this._applyBindings(viewId);
+            }
+
+            // Restore focus state after replacing
+            this._restoreFocusState(newElement, focusState);
+
+            TB.logger.debug(`[Minu] Replaced component: ${targetId}`);
+        } else {
+            TB.logger.warn(`[Minu] Replace target not found: ${targetId}`);
+        }
+    }
+
+    /**
+     * Find viewId for an element by checking parent views
+     */
+    _findViewIdForElement(element) {
+        for (const [viewId, viewData] of this.views.entries()) {
+            if (viewData.element && viewData.element.contains(element)) {
+                return viewId;
+            }
+        }
+        // Fallback: first view
+        const firstKey = this.views.keys().next().value;
+        return firstKey || 'unknown';
+    }
+
     // =========================================================================
     // STATE & BINDINGS
     // =========================================================================
@@ -1166,11 +1233,14 @@ class MinuRenderer {
                 this._setStateValue(view.state, path, value);
             }
 
-            // Notify server
+            // Construct full path with viewId for proper backend matching
+            const fullPath = path.includes('.') ? path : `${viewId}.${path}`;
+
+            // Notify server with correct path
             this._send({
                 type: 'state_update',
                 viewId: viewId,
-                path: path,
+                path: fullPath,
                 value: value
             });
         });
@@ -1244,12 +1314,133 @@ class MinuRenderer {
     }
 
     _patchComponent(patch) {
-        const { componentId, component } = patch;
+        const { componentId, component, viewId } = patch;
 
         const existing = this.container.querySelector(`[data-minu-id="${componentId}"]`);
         if (existing) {
-            const newElement = this._renderComponent(component, patch.viewId);
+            // Save focus state before replacing
+            const focusState = this._saveFocusState(existing);
+
+            const newElement = this._renderComponent(component, viewId);
             existing.replaceWith(newElement);
+
+            // Re-apply bindings for the new element
+            if (viewId) {
+                this._applyBindings(viewId);
+            }
+
+            // Restore focus state after replacing
+            this._restoreFocusState(newElement, focusState);
+
+            TB.logger.debug(`[Minu] Component patched: ${componentId}`);
+        } else {
+            TB.logger.warn(`[Minu] Patch target not found: ${componentId}`);
+        }
+    }
+
+    /**
+     * Save the current focus state within an element tree
+     */
+    _saveFocusState(container) {
+        const activeElement = document.activeElement;
+
+        // Check if focused element is inside the container being replaced
+        if (!activeElement || !container.contains(activeElement)) {
+            return null;
+        }
+
+        // Build a path to the focused element using data-minu-id or indices
+        const path = [];
+        let el = activeElement;
+
+        while (el && el !== container) {
+            if (el.dataset?.minuId) {
+                path.unshift({ type: 'id', value: el.dataset.minuId });
+            } else {
+                // Fallback: use tag + index among siblings of same type
+                const parent = el.parentElement;
+                if (parent) {
+                    const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+                    const index = siblings.indexOf(el);
+                    path.unshift({ type: 'index', tag: el.tagName, index });
+                }
+            }
+            el = el.parentElement;
+        }
+
+        return {
+            path,
+            tagName: activeElement.tagName,
+            selectionStart: activeElement.selectionStart,
+            selectionEnd: activeElement.selectionEnd,
+            value: activeElement.value
+        };
+    }
+
+    /**
+     * Restore focus state after DOM replacement
+     */
+    _restoreFocusState(container, focusState) {
+        if (!focusState) return;
+
+        // Try to find the equivalent element in the new tree
+        let targetElement = null;
+
+        // First, try to find by path
+        let current = container;
+        for (const step of focusState.path) {
+            if (!current) break;
+
+            if (step.type === 'id') {
+                // Find by data-minu-id
+                const found = current.querySelector(`[data-minu-id="${step.value}"]`);
+                if (found) {
+                    current = found;
+                } else {
+                    // Might be the current element itself
+                    if (current.dataset?.minuId === step.value) {
+                        // Stay on current
+                    } else {
+                        current = null;
+                    }
+                }
+            } else if (step.type === 'index') {
+                // Find by tag + index
+                const children = Array.from(current.children).filter(c => c.tagName === step.tag);
+                current = children[step.index] || null;
+            }
+        }
+
+        // If path navigation found something, use it
+        if (current && current !== container) {
+            targetElement = current;
+        }
+
+        // Fallback: find first matching input/textarea of same type
+        if (!targetElement) {
+            const selector = focusState.tagName.toLowerCase();
+            targetElement = container.querySelector(selector);
+        }
+
+        // Restore focus
+        if (targetElement && typeof targetElement.focus === 'function') {
+            // Use setTimeout to ensure DOM is fully settled
+            //setTimeout(() => {
+                targetElement.focus();
+
+                // Restore cursor position for text inputs
+                if (typeof targetElement.setSelectionRange === 'function' &&
+                    focusState.selectionStart !== undefined) {
+                    try {
+                        targetElement.setSelectionRange(
+                            focusState.selectionStart,
+                            focusState.selectionEnd
+                        );
+                    } catch (e) {
+                        // Some input types don't support setSelectionRange
+                    }
+                }
+            //}, 0);
         }
     }
 

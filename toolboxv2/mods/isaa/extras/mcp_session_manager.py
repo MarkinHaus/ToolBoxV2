@@ -3,7 +3,15 @@ import contextlib
 import os
 from typing import Any
 
-from mcp import ClientSession
+try:
+    from mcp import ClientSession
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    ClientSession = object
+    print("MCP not available, skipping MCP session manager")
+    import traceback
+    traceback.print_exc()
 
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
@@ -341,3 +349,11 @@ class MCPSessionManager:
                 for task in cleanup_tasks:
                     if not task.done():
                         task.cancel()
+
+
+if not MCP_AVAILABLE:
+    class MCPSessionManager:
+        def __getitem__(self, key):
+            raise ImportError("MCP is not available")
+
+    MCPSessionManager = MCPSessionManager

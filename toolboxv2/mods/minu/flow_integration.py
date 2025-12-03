@@ -253,11 +253,13 @@ class FlowWrapperView(MinuView):
         # Custom UI verwenden wenn vorhanden
         if self.custom_ui_func:
             try:
-                # Custom UI bekommt self als Parameter für State-Zugriff
-                return self.custom_ui_func(self)
+                if isinstance(self.custom_ui_func, Callable):
+                    # Custom UI bekommt self als Parameter für State-Zugriff
+                    return self.custom_ui_func(self)
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+                print(f"[Minu] Error rendering custom UI for {self.flow_name}: {self.custom_ui_func}")
                 return Column(
                     header,
                     Alert(f"Custom UI Error: {e}", variant="error"),
@@ -433,7 +435,7 @@ def scan_and_register_flows(app, only_custom_ui: bool = True) -> str:
                 f"FlowView_{flow_name}",
                 (FlowWrapperView,),
                 {
-                    "__init__": make_init(flow_name, run_func, custom_ui),
+                    "__init__": make_init(flow_name, run_func, custom_ui.get("ui") if custom_ui else None),
                     "__doc__": run_func.__doc__ or f"Flow: {flow_name}",
                 }
             )

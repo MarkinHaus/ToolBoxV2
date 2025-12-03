@@ -241,7 +241,7 @@ async def render_view(
                 <script type="module" unsave="true">
                     // Bootloader Logic
                     async function boot() {{
-                        const root = document.getElementById('minu-root');
+                        const root = document.getElementById('minu-root') || document.getElementById('MainContent');
                         const viewName = "{view_name}";
                         const initialProps = {props_json};
 
@@ -365,6 +365,7 @@ async def list_flows(
     except:
         custom_uis = {}
 
+    scan_and_register_flows(app)
     # 3. Build flow list
     flows_list = []
 
@@ -592,8 +593,8 @@ async def list_registered_views(app: App) -> Result:
 
 @export(mod_name=Name, websocket_handler="ui")
 def register_ui_websocket(app: App):
-    async def on_connect(session_data: Dict[str, Any], conn_id=None, **kwargs):
-        conn_id = conn_id or session_data.get("connection_id", "unknown")
+    async def on_connect(session: Dict[str, Any], conn_id=None, **kwargs):
+        conn_id = conn_id or session.get("connection_id", "unknown")
         app.logger.info(f"[Minu] WebSocket connected: {conn_id}")
 
         session = get_or_create_session(conn_id)
@@ -615,10 +616,10 @@ def register_ui_websocket(app: App):
         return {"accept": True}
 
     async def on_message(
-        payload: dict, session_data: Dict[str, Any], conn_id=None, **kwargs
+        payload: dict, session: Dict[str, Any], conn_id=None, **kwargs
     ):
         """Handle incoming WebSocket messages."""
-        conn_id = conn_id or session_data.get("connection_id", "unknown")
+        conn_id = conn_id or session.get("connection_id", "unknown")
         session = _sessions.get(conn_id)
 
         if not session:
@@ -695,21 +696,58 @@ def register_ui_websocket(app: App):
 
             elif msg_type == "state_update":
                 view_id = payload.get("viewId")
+
                 path = payload.get("path")
+
                 value = payload.get("value")
 
                 view = session.get_view(view_id)
-                if view:
-                    # State-Pfad parsen und updaten
-                    parts = path.split(".")
-                    state_name = parts[-1] if len(parts) == 1 else parts[0]
 
-                    if hasattr(view, state_name):
-                        state_attr = getattr(view, state_name)
-                        if hasattr(state_attr, "value"):
-                            state_attr.value = value
+                if view:
+                    parts = path.split(".")
+
+                    # Prüfe ob es ein direktes State-Attribut ist
+
+                    if len(parts) == 1:
+                        state_name = parts[0]
+
+                        # 1. Direkte State-Attribute (z.B. status, error_msg)
+
+                        if hasattr(view, state_name) and hasattr(
+                            getattr(view, state_name), "value"
+                        ):
+                            getattr(view, state_name).value = value
+
+                        # 2. Binding-Felder -> in inputs.value Dict speichern
+
+                        elif hasattr(view, "inputs") and hasattr(view.inputs, "value"):
+                            if view.inputs.value is None:
+                                view.inputs.value = {}
+
+                            # Merge statt überschreiben
+
+                            current = (
+                                view.inputs.value.copy()
+                                if isinstance(view.inputs.value, dict)
+                                else {}
+                            )
+
+                            current[state_name] = value
+
+                            view.inputs.value = current
+
+                    else:
+                        # Nested path: viewId.stateName
+
+                        state_name = parts[1] if parts[0] == view_id else parts[0]
+
+                        if hasattr(view, state_name) and hasattr(
+                            getattr(view, state_name), "value"
+                        ):
+                            getattr(view, state_name).value = value
 
                     # Patches flushen
+
                     await session.force_flush()
 
         except Exception as e:
@@ -719,8 +757,8 @@ def register_ui_websocket(app: App):
             app.logger.error(f"[Minu] WebSocket error: {e}")
             await app.ws_send(conn_id, {"type": "error", "message": str(e)})
 
-    async def on_disconnect(session_data: Dict[str, Any], conn_id=None, **kwargs):
-        conn_id = conn_id or session_data.get("connection_id", "unknown")
+    async def on_disconnect(session: Dict[str, Any], conn_id=None, **kwargs):
+        conn_id = conn_id or session.get("connection_id", "unknown")
         app.logger.info(f"[Minu] WebSocket disconnected: {conn_id}")
         cleanup_session(conn_id)
 
@@ -847,7 +885,9 @@ from .core import (
     Widget,
     Form,
     Tabs,
+    Textarea,
     Custom,
+    Dynamic,
 )
 
 __all__ = [
@@ -875,6 +915,7 @@ __all__ = [
     "Row",
     "Column",
     "Grid",
+    "Textarea",
     "Spacer",
     "Divider",
     "Alert",
@@ -891,4 +932,5 @@ __all__ = [
     "Form",
     "Tabs",
     "Custom",
+    "Dynamic"
 ]

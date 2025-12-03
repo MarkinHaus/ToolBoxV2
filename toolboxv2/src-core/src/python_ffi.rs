@@ -404,40 +404,27 @@ impl PythonFFI {
     {
         use tracing::info;
         unsafe {
-            info!("with_gil: Loading GIL symbols...");
             let gil_ensure: Symbol<PyGILState_Ensure_t> = self.lib.get(b"PyGILState_Ensure\0")?;
             let gil_release: Symbol<PyGILState_Release_t> = self.lib.get(b"PyGILState_Release\0")?;
             let err_occurred: Symbol<PyErr_Occurred_t> = self.lib.get(b"PyErr_Occurred\0")?;
             let err_print: Symbol<PyErr_Print_t> = self.lib.get(b"PyErr_Print\0")?;
             let err_clear: Symbol<PyErr_Clear_t> = self.lib.get(b"PyErr_Clear\0")?;
-            info!("with_gil: Symbols loaded successfully");
-
-            info!("with_gil: Calling PyGILState_Ensure() - THIS MAY BLOCK IF GIL IS HELD BY ANOTHER THREAD!");
             let gil = gil_ensure();
-            info!("with_gil: GIL acquired successfully! Executing closure...");
 
             let result = f();
-            info!("with_gil: Closure executed, checking for Python errors...");
 
             // CRITICAL: Check for Python errors BEFORE releasing the GIL!
             // err_occurred() requires the GIL to be held!
             if !err_occurred().is_null() {
-                info!("with_gil: Python error occurred, printing and clearing...");
                 err_print();
                 err_clear();
                 gil_release(gil);
-                info!("with_gil: GIL released after error");
                 if result.is_err() {
                     return result;
                 }
-                bail!("Python error occurred during with_gil");
+                bail!("Python error occurred during execution");
             }
-
-            info!("with_gil: No Python errors, releasing GIL...");
             gil_release(gil);
-            info!("with_gil: GIL released successfully");
-
-            info!("with_gil: Returning result");
             result
         }
     }
@@ -473,36 +460,23 @@ impl PythonFFI {
 
     pub fn get_attr(&self, obj: PyObject, attr: &str) -> Result<PyObject> {
         use tracing::info;
-        info!("get_attr() called for attribute: {}", attr);
-        info!("Calling with_gil()...");
 
         let result = self.with_gil(|| {
-            info!("GIL acquired successfully!");
             unsafe {
-                info!("Loading PyObject_GetAttrString symbol...");
                 let get_attr: Symbol<PyObject_GetAttrString_t> = self.lib.get(b"PyObject_GetAttrString\0")?;
-                info!("Symbol loaded successfully");
 
-                info!("Creating CString for attribute name...");
                 let c_attr = CString::new(attr)?;
-                info!("CString created successfully");
 
-                // FIX #3: Use cstring_as_c_char_ptr for platform-agnostic pointer conversion
-                info!("Calling PyObject_GetAttrString()...");
                 let result = get_attr(obj, cstring_as_c_char_ptr(&c_attr));
-                info!("PyObject_GetAttrString() returned!");
 
                 if result.is_null() {
                     bail!("Failed to get attribute: {}", attr);
                 }
 
-                // PyObject_GetAttrString() already returns a new reference
-                info!("Attribute retrieved successfully");
                 Ok(result)
             }
         });
 
-        info!("with_gil() returned, result: {:?}", result.is_ok());
         result
     }
 

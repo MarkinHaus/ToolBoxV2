@@ -9077,6 +9077,7 @@ class FlowAgent:
         # Session-restricted tools: {tool_name: {session_id: allowed (bool), '*': default_allowed (bool)}}
         # All tools start as allowed (True) by default via '*' key
         self.session_tool_restrictions = {}
+        self.resent_tools_called = []
 
         # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
         self.llm_rate_limiter = IntelligentRateLimiter()
@@ -9387,6 +9388,7 @@ class FlowAgent:
 
         execution_start = self.progress_tracker.start_timer("total_execution")
         self.active_session = session_id
+        self.resent_tools_called = []
         result = None
 
         await self.progress_tracker.emit_event(ProgressEvent(
@@ -10909,7 +10911,9 @@ tools:
             eprint(f"Batch tool analysis failed: {e}")
             # Fallback to individual analysis
             for tool_data in tools_data:
-                await self._analyze_tool_capabilities(tool_data['name'], tool_data['description'], tool_data['args_schema'])
+                await self._analyze_tool_capabilities(
+                    tool_data["name"], tool_data["description"], tool_data["args_schema"]
+                )
 
     async def _analyze_tool_capabilities(self, tool_name: str, description: str, tool_args:str):
         """Analyze tool capabilities with LLM for smart usage"""
@@ -11210,7 +11214,7 @@ tool_complexity: low/medium/high
         start_time = time.perf_counter()
         if not target_function:
             raise ValueError(f"Function '{function_name}' not found in the {self.amd.name}'s registered tools.")
-
+        result = None
         try:
             if asyncio.iscoroutinefunction(target_function):
                 result = await target_function(*args, **kwargs)
@@ -11244,6 +11248,9 @@ tool_complexity: low/medium/high
         except Exception as e:
             eprint(f"Function {function_name} execution failed: {e}")
             raise
+
+        finally:
+            self.resent_tools_called.append([function_name, args, kwargs, result])
 
     # ===== FORMATTING =====
 
@@ -13898,3 +13905,5 @@ if __name__ == "__main__2":
         await agent.close()
 
     asyncio.run(_agent())
+
+

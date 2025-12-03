@@ -710,6 +710,12 @@ def handle_debug():
     from toolboxv2 import tb_root_dir
     src_core_path = tb_root_dir / "src-core"
 
+
+    print()
+    nuitka_success = build_nuitka_module(tb_root_dir)
+    if nuitka_success:
+        print()
+
     # Check if cargo-watch is installed
     try:
         subprocess.run(

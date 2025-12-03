@@ -57,7 +57,6 @@ from .base.AgentUtils import (
     safe_decode,
 )
 
-from .ui import get_agent_ui_html, initialize_isaa_webui_module
 
 PIPLINE = None  # This seems unused or related to old pipeline
 Name = 'isaa'
@@ -126,6 +125,7 @@ class EnhancedAgentRequestHandler(BaseHTTPRequestHandler):
     def _serve_enhanced_ui(self):
         """Serve the enhanced UI HTML."""
         try:
+            from .extras.agent_ui import get_agent_ui_html
             html_content = get_agent_ui_html()
 
             self.send_response(200)
@@ -481,13 +481,23 @@ class Tools(MainTool, FileHandler):
 
             if self.spec == 'app':  # MainTool attribute
                 self.load_keys_from_env()
+                from .extras.agent_ui import initialize
+
+                initialize(self.app)
+
+                # Oder in CloudM
+                self.app.run_any(
+                    ("CloudM", "add_ui"),
+                    name="AgentUI",
+                    title="FlowAgent Chat",
+                    description="Chat with your FlowAgents",
+                    path="/api/Minu/render?view=agent_ui&ssr=true",
+                )
 
             # Ensure directories exist
             Path(f"{get_app('isaa-initIsaa').data_dir}/Agents/").mkdir(parents=True, exist_ok=True)
             Path(f"{get_app('isaa-initIsaa').data_dir}/Memory/").mkdir(parents=True, exist_ok=True)
 
-        #initialize_isaa_webui_module(self.app, self)
-        #self.print("ISAA module started. fallback")
 
     def get_augment(self):
         # This needs to be adapted. Serialization of FlowAgent is through AgentConfig.
@@ -590,8 +600,6 @@ class Tools(MainTool, FileHandler):
         return self.version
 
     def on_start(self):
-
-        initialize_isaa_webui_module(self.app, self)
 
         threading.Thread(target=self.load_to_mem_sync, daemon=True).start()
         self.print("ISAA module started.")

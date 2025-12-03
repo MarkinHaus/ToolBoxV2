@@ -13,6 +13,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from toolboxv2 import Spinner
+from toolboxv2.mods.isaa.base.Agent.mda_accomplish import bind_accomplish_to_agent
 from toolboxv2.mods.isaa.base.Agent.types import CheckpointConfig
 
 # Import agent components
@@ -1417,6 +1418,7 @@ class FlowAgentBuilder:
                     info_print(f"loading completed {res}")
 
                 await agent.voting_as_tool()
+                await bind_accomplish_to_agent(agent)
                 # Final summary
                 iprint("ok FlowAgent built successfully!")
                 iprint(f"   Agent: {agent.amd.name}")

@@ -105,7 +105,6 @@ impl NuitkaClient {
         // Ensure App is initialized (only once)
         let mut app_init = self.app_initialized.lock().unwrap();
         if !*app_init {
-            info!("First initialize() call - creating Python instance and calling init_app()");
             drop(app_init); // Release lock before async operation
 
             // Create first instance (this calls init_app())
@@ -115,38 +114,18 @@ impl NuitkaClient {
             *self.app_initialized.lock().unwrap() = true;
 
             // Enable WebSocket bridge
-            info!("Enabling Rust WebSocket bridge...");
             if let Err(e) = self.enable_ws_bridge().await {
                 error!("Failed to enable WebSocket bridge: {}", e);
             } else {
                 info!("WebSocket bridge enabled successfully");
             }
 
-            // TEMPORARILY DISABLED: Load modules into this instance
-            // TODO: Fix event loop deadlock issue in call_module_function
-            info!("Module preloading DISABLED - modules will be loaded on-demand");
-            // for module in modules {
-            //     info!("Preloading module: {}", module);
-            //     if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
-            //         error!("Failed to preload module {}: {}", module, e);
-            //     }
-            // }
         } else {
-            info!("App already initialized - using existing instance");
             drop(app_init);
 
             // Get existing instance
             let instance_id = self.instances.lock().unwrap()[0].id.clone();
 
-            // TEMPORARILY DISABLED: Load modules into existing instance
-            // TODO: Fix event loop deadlock issue in call_module_function
-            info!("Module preloading DISABLED - modules will be loaded on-demand");
-            // for module in modules {
-            //     info!("Preloading module: {}", module);
-            //     if let Err(e) = self.load_module_into_instance(&instance_id, &module, attr_name).await {
-            //         error!("Failed to preload module {}: {}", module, e);
-            //     }
-            // }
         }
 
         Ok(())
@@ -273,7 +252,7 @@ impl NuitkaClient {
         // TEMPORARILY DISABLED: Load module
         // TODO: Fix event loop deadlock issue in call_module_function
         info!("On-demand module loading DISABLED - assuming module is already available");
-        // self.load_module_into_instance(&instance_id, &module_name, None).await?;
+        self.load_module_into_instance(&instance_id, &module_name, None).await?;
 
         Ok(instance_id)
     }

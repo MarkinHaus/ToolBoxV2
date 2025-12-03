@@ -21,57 +21,32 @@ unsafe impl Sync for AppSingleton {}
 impl AppSingleton {
     /// Erstellt neuen AppSingleton und lädt das Nuitka-Modul
     pub fn new(ffi: Arc<PythonFFI>) -> Result<Self> {
-        info!("Loading app_singleton module...");
 
-        // Import module ONCE and cache it (WICHTIG: Nicht neu importieren!)
-        info!("Importing app_singleton module (will be cached)...");
         let module = ffi.import_module("app_singleton")?;
-        info!("app_singleton module imported and cached successfully!");
 
-        info!("Creating AppSingleton struct...");
         let app_singleton = Self {
             ffi,
             module_name: "app_singleton".to_string(),
             module_obj: Some(module), // Cache the module PyObject
             app_instance: None,
         };
-        info!("AppSingleton struct created successfully!");
 
-        info!("Returning AppSingleton...");
         Ok(app_singleton)
     }
 
     /// Initialisiert den globalen App Singleton
     pub fn init_app(&mut self, instance_id: &str) -> Result<Value> {
-        info!("Initializing App singleton with instance_id: {}", instance_id);
 
         // Use cached module (NICHT neu importieren!)
         let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;
-        info!("Using cached {} module", self.module_name);
-
-        // Hole init_app Funktion
-        info!("Getting init_app function from module...");
         let init_app_fn = self.ffi.get_attr(module, "init_app")?;
-        info!("Got init_app function successfully");
 
-        // Erstelle Args tuple mit instance_id
-        info!("Creating args tuple...");
         let args = self.ffi.create_tuple(1)?;
         let id_str = self.ffi.string_from_str(instance_id)?;
-        info!("Created args tuple successfully");
 
-        // Setze args[0] = instance_id
-        info!("Setting args[0] = instance_id...");
         self.ffi.tuple_set_item(args, 0, id_str)?;
-        info!("Set args[0] successfully");
 
-        // Rufe init_app(instance_id) auf
-        info!("Calling init_app(instance_id) - THIS MAY TAKE 1-2 MINUTES...");
         let _result = self.ffi.call_function(init_app_fn, args, None)?;
-        info!("init_app() returned successfully!");
-
-        // Konvertiere Result zu JSON
-        // TODO: Implementiere py_to_json Konvertierung
 
         info!("App singleton initialized successfully");
 
@@ -154,7 +129,6 @@ impl AppSingleton {
     ///     function_name: Name der Funktion in app_singleton.py
     ///     kwargs: JSON-Argumente für die Funktion
     pub fn call_function_json(&self, function_name: &str, kwargs: &Value) -> Result<Value> {
-        info!("Calling app_singleton function: {}", function_name);
 
         // Use cached module
         let module = self.module_obj.ok_or_else(|| anyhow::anyhow!("Module not loaded"))?;

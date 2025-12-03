@@ -18,7 +18,6 @@ impl RustWsBridge {
                 target_conn_id: Some(conn_id.clone()),
                 target_channel_id: None,
             });
-            info!("Message sent to connection: {}", conn_id);
         } else {
             warn!("RustWsBridge: Connection ID '{}' not found for sending.", conn_id);
         }

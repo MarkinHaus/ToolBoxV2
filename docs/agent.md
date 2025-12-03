@@ -776,3 +776,562 @@ async def health_check(agent: FlowAgent):
 *   **Use `fast_run` Wisely**: Enable `fast_run=True` for simple queries in voice interfaces or real-time applications, but use the default detailed planning for complex, multi-step tasks.
 *   **Combine Features**: You can combine `fast_run=True` with `as_callback` for ultra-fast event processing in reactive systems.
 *   **Callback Context**: When using `as_callback`, ensure the callback function has a meaningful `__name__` attribute for better debugging and context tracking.
+
+
+# MDA Framework Dokumentation v2
+## Mit Tool-Integration und externem Kontext
+
+> **NEU in v2**: Atomare Tasks können externe Tools aufrufen und Kontext abrufen
+
+---
+
+## Tool-Integration Übersicht
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ATOMARE TASK AUSFÜHRUNG MIT TOOLS                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      AtomicConquerNode                               │    │
+│  │                                                                      │    │
+│  │  1. ACTION PLANNING                                                  │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  LLM analysiert Task:                                    │    │    │
+│  │     │  - Braucht der Task externe Daten?                       │    │    │
+│  │     │  - Welche Tools werden benötigt?                         │    │    │
+│  │     │  - In welcher Reihenfolge?                               │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → TaskActionPlan erstellen                              │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                           │                                          │    │
+│  │                           ▼                                          │    │
+│  │  2. PRE-ACTION EXECUTION                                             │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  FOR each action in plan:                                │    │    │
+│  │     │                                                          │    │    │
+│  │     │  IF action.type == TOOL_CALL:                           │    │    │
+│  │     │     result = agent.arun_function(tool_name, **args)     │    │    │
+│  │     │     tool_results[tool_name] = result                    │    │    │
+│  │     │                                                          │    │    │
+│  │     │  IF action.type == CONTEXT_FETCH:                       │    │    │
+│  │     │     data = fetch_from_source(source_type, path)         │    │    │
+│  │     │     fetched_context[path] = data                        │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → Enriched Context aufbauen                            │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                           │                                          │    │
+│  │                           ▼                                          │    │
+│  │  3. REASONING + VOTING (wie vorher)                                  │    │
+│  │     ┌──────────────────────────────────────────────────────────┐    │    │
+│  │     │  Mit angereichertem Kontext:                             │    │    │
+│  │     │  - Tool-Ergebnisse                                       │    │    │
+│  │     │  - Abgerufener Kontext                                   │    │    │
+│  │     │  - Abhängigkeits-Ergebnisse                              │    │    │
+│  │     │                                                          │    │    │
+│  │     │  → k-Voting für Konsensus                               │    │    │
+│  │     └──────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Action Types
+
+### 1. REASONING (Standard)
+Reine LLM-basierte Verarbeitung ohne externe Interaktion.
+
+```python
+AtomicAction(
+    action_type=ActionType.REASONING,
+    reasoning_prompt="Analysiere die Datenstruktur..."
+)
+```
+
+### 2. TOOL_CALL
+Führt ein externes Tool über `agent.arun_function` aus.
+
+```python
+AtomicAction(
+    action_type=ActionType.TOOL_CALL,
+    tool_call=ToolCallSpec(
+        tool_name="file_read",
+        arguments={"path": "/config/settings.json"},
+        purpose="Konfigurationsdaten laden",
+        fallback_on_error="Verwende Standard-Konfiguration"
+    )
+)
+```
+
+### 3. CONTEXT_FETCH
+Ruft externen Kontext aus verschiedenen Quellen ab.
+
+```python
+AtomicAction(
+    action_type=ActionType.CONTEXT_FETCH,
+    context_fetch=ContextFetchSpec(
+        source_type="variable",       # oder "session", "tool", "world_model"
+        source_path="user.preferences",
+        query=None,                   # Optional für gefilterten Abruf
+        transform=None                # Optional für Transformation
+    )
+)
+```
+
+### 4. MULTI_ACTION
+Sequenz von mehreren Aktionen.
+
+---
+
+## Datenfluss mit Tools
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TASK EXECUTION FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+     Atomarer Task                    Action Planning
+         │                                 │
+         │  task.requires_tools == true    │
+         │  task.suggested_tools = [...]   │
+         │                                 │
+         ▼                                 ▼
+┌─────────────────┐              ┌─────────────────────────┐
+│  Task Context   │              │   TaskActionPlan        │
+│  - description  │──────────────│   - requires_tools: T/F │
+│  - base_context │              │   - actions: [...]      │
+│  - dependencies │              │   - tools_used: [...]   │
+└────────┬────────┘              └───────────┬─────────────┘
+         │                                   │
+         │                                   │
+         ▼                                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    PRE-ACTION EXECUTION                      │
+│                                                              │
+│   FOR action in plan.actions:                               │
+│                                                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  TOOL_CALL: file_read("/config.json")               │   │
+│   │  → result: {"db_host": "localhost", ...}            │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                           │                                  │
+│                           ▼                                  │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  CONTEXT_FETCH: variable("user.settings")           │   │
+│   │  → data: {"theme": "dark", "lang": "de"}            │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    ENRICHED CONTEXT                          │
+│                                                              │
+│  base_context +                                             │
+│  [Tool file_read]: {"db_host": "localhost", ...}            │
+│  [Context user.settings]: {"theme": "dark", "lang": "de"}   │
+│  [Ergebnis von dep_task_1]: "Datenbank-Schema analysiert"   │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    REASONING + VOTING                        │
+│                                                              │
+│  Attempt 1 → Result A (confidence: 0.9)                     │
+│  Attempt 2 → Result A (confidence: 0.85)  ← k-margin!       │
+│                                                              │
+│  Winner: Result A                                           │
+│                                                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    AtomicResult                              │
+│                                                              │
+│  {                                                          │
+│    success: true,                                           │
+│    result: "Konfiguration erfolgreich geladen...",          │
+│    context_for_next: "DB auf localhost:5432",               │
+│    confidence: 0.9,                                         │
+│    tool_results: {                                          │
+│      "file_read": {"db_host": "localhost", ...}             │
+│    },                                                       │
+│    context_fetched: {                                       │
+│      "user.settings": {"theme": "dark", ...}                │
+│    },                                                       │
+│    actions_executed: [                                      │
+│      {"type": "tool_call", "tool": "file_read"},            │
+│      {"type": "context_fetch", "source": "variable"},       │
+│      {"type": "reasoning", "attempt": 1}                    │
+│    ]                                                        │
+│  }                                                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Pydantic-Modelle (Neu)
+
+### ActionType Enum
+
+```python
+class ActionType(str, Enum):
+    REASONING = "reasoning"           # Reine LLM-Verarbeitung
+    TOOL_CALL = "tool_call"           # Externes Tool aufrufen
+    CONTEXT_FETCH = "context_fetch"   # Kontext abrufen
+    MULTI_ACTION = "multi_action"     # Mehrere Aktionen
+```
+
+### ToolCallSpec
+
+```python
+class ToolCallSpec(BaseModel):
+    tool_name: str              # Name des Tools (muss registriert sein)
+    arguments: dict[str, Any]   # Argumente für das Tool
+    purpose: str                # Warum wird das Tool benötigt
+    fallback_on_error: str      # Fallback bei Fehler (optional)
+```
+
+### ContextFetchSpec
+
+```python
+class ContextFetchSpec(BaseModel):
+    source_type: Literal["variable", "session", "tool", "world_model"]
+    source_path: str            # Pfad oder Identifier
+    query: Optional[str]        # Optionale Query für Filter
+    transform: Optional[str]    # Optionale Transformation
+```
+
+### TaskActionPlan
+
+```python
+class TaskActionPlan(BaseModel):
+    requires_tools: bool                    # Werden Tools benötigt?
+    requires_context: bool                  # Wird externer Kontext benötigt?
+    actions: list[AtomicAction]             # Sequenz von Aktionen
+    final_synthesis: bool                   # Ergebnisse zusammenführen?
+    available_tools_used: list[str]         # Verwendete Tools
+```
+
+---
+
+## API Erweiterungen
+
+### a_accomplish (erweitert)
+
+```python
+result = await agent.a_accomplish(
+    task="Lies die Konfiguration und aktualisiere die Datenbank",
+    context="Projekt-Root: /home/user/project",
+
+    # Tool-Konfiguration (NEU)
+    enable_tools=True,              # Tools erlauben
+    enable_context_fetch=True,      # Kontext-Abruf erlauben
+    allowed_tools=[                 # Nur diese Tools erlauben
+        "file_read",
+        "file_write",
+        "db_query",
+        "db_execute"
+    ],
+
+    # Standard-Parameter
+    min_complexity=2,
+    k_margin=2
+)
+```
+
+### Rückgabe (erweitert)
+
+```python
+{
+    "success": True,
+    "result": "Konfiguration geladen und Datenbank aktualisiert",
+    "partial_results": {...},
+    "checkpoint": {...},
+    "stats": {
+        "total_divisions": 3,
+        "voting_rounds": 8,
+        "red_flags_caught": 1,
+        "tool_calls": 5,           # NEU
+        "context_fetches": 2,       # NEU
+        "total_tasks": 6,
+        "successful_tasks": 6,
+        "failed_tasks": 0
+    },
+    "cost_info": {...}
+}
+```
+
+---
+
+## Verwendungsbeispiele
+
+### Beispiel 1: Datei-basierte Aufgabe
+
+```python
+# Task: Lies eine Datei und analysiere ihren Inhalt
+result = await agent.a_accomplish(
+    task="Lies config.yaml und extrahiere alle Datenbankverbindungen",
+    context="Projekt verwendet PostgreSQL und Redis",
+    enable_tools=True,
+    allowed_tools=["file_read", "yaml_parse"]
+)
+
+# Der Task wird automatisch erkannt als tool-abhängig:
+# 1. Action: TOOL_CALL → file_read("config.yaml")
+# 2. Action: REASONING → Analysiere YAML-Struktur
+# 3. Action: REASONING → Extrahiere DB-Verbindungen
+```
+
+### Beispiel 2: Web-Recherche
+
+```python
+result = await agent.a_accomplish(
+    task="Recherchiere aktuelle Python 3.12 Features und erstelle Zusammenfassung",
+    context="Fokus auf Performance-Verbesserungen",
+    enable_tools=True,
+    allowed_tools=["web_search", "web_fetch"]
+)
+
+# Automatische Tool-Nutzung:
+# 1. TOOL_CALL → web_search("Python 3.12 new features")
+# 2. TOOL_CALL → web_fetch(result_urls)
+# 3. REASONING → Zusammenfassung erstellen
+```
+
+### Beispiel 3: Kontext aus Session
+
+```python
+result = await agent.a_accomplish(
+    task="Basierend auf unserer bisherigen Diskussion, erstelle eine Projekt-Roadmap",
+    context="",
+    enable_context_fetch=True,
+    session_id="project_planning_session"
+)
+
+# Automatischer Kontext-Abruf:
+# 1. CONTEXT_FETCH → session("project_planning_session")
+# 2. REASONING → Roadmap erstellen mit Kontext
+```
+
+### Beispiel 4: Komplexe Multi-Tool Aufgabe
+
+```python
+result = await agent.a_accomplish(
+    task="""
+    1. Lies alle Python-Dateien im src/ Verzeichnis
+    2. Analysiere den Code auf Sicherheitslücken
+    3. Erstelle einen Bericht und speichere ihn
+    """,
+    context="Security-Audit für Production-Release",
+    enable_tools=True,
+    allowed_tools=[
+        "file_list",
+        "file_read",
+        "code_analyze",
+        "file_write"
+    ],
+    min_complexity=2,  # Gründliche Zerlegung
+    k_margin=2
+)
+
+# Zerlegung in atomare Tasks:
+# Task 1: file_list("src/") → Python-Dateien auflisten
+# Task 2: file_read(file) für jede Datei (parallel)
+# Task 3: code_analyze(code) für jeden Inhalt
+# Task 4: REASONING → Findings aggregieren
+# Task 5: file_write("report.md") → Bericht speichern
+```
+
+---
+
+## Tool-Integration Architektur
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              FlowAgent                                       │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        _tool_registry                                │    │
+│  │  {                                                                   │    │
+│  │    "file_read": {"func": ..., "description": "...", "args": "..."},│    │
+│  │    "web_search": {...},                                             │    │
+│  │    "db_query": {...},                                               │    │
+│  │    ...                                                              │    │
+│  │  }                                                                   │    │
+│  └───────────────────────────────────┬─────────────────────────────────┘    │
+│                                      │                                       │
+│                                      │ arun_function(name, **kwargs)        │
+│                                      │                                       │
+│  ┌───────────────────────────────────▼─────────────────────────────────┐    │
+│  │                        MDA System                                    │    │
+│  │                                                                      │    │
+│  │  AtomicConquerNode._execute_tool_call()                             │    │
+│  │       │                                                              │    │
+│  │       └──► agent.arun_function("file_read", path="/config.json")    │    │
+│  │              │                                                       │    │
+│  │              ▼                                                       │    │
+│  │            Result: {"key": "value", ...}                            │    │
+│  │                                                                      │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Context Fetch Quellen
+
+| Source Type | Beschreibung | Beispiel |
+|-------------|--------------|----------|
+| `variable` | Aus VariableManager | `user.preferences`, `results.task_1` |
+| `session` | Aus Session-Historie | Gesamter Chat-Kontext |
+| `world_model` | Aus Agent World Model | `entities.customers` |
+| `tool` | Über Tool-Aufruf | `web_search("query")` |
+
+```python
+# Variable
+ContextFetchSpec(
+    source_type="variable",
+    source_path="user.api_keys"
+)
+
+# Session
+ContextFetchSpec(
+    source_type="session",
+    source_path="chat_history",
+    query="letzte 10 Nachrichten"
+)
+
+# World Model
+ContextFetchSpec(
+    source_type="world_model",
+    source_path="project.dependencies"
+)
+
+# Via Tool
+ContextFetchSpec(
+    source_type="tool",
+    source_path="web_search",
+    query="Python best practices 2025"
+)
+```
+
+---
+
+## Checkpoint-Erweiterungen
+
+### Neue Felder in MDATaskNode
+
+```python
+@dataclass
+class MDATaskNode:
+    # ... bestehende Felder ...
+
+    # NEU: Tool-bezogene Felder
+    requires_tools: bool = False
+    suggested_tools: list[str] = field(default_factory=list)
+    requires_external_context: bool = False
+    action_plan: Optional[dict] = None      # Serialisierter TaskActionPlan
+    tool_results: dict = field(default_factory=dict)
+    fetched_context: dict = field(default_factory=dict)
+```
+
+### Resume mit Tool-State
+
+```python
+# Bei Resume werden Tool-Ergebnisse wiederhergestellt
+checkpoint = MDACheckpoint.from_dict(saved_data)
+
+# task_nodes enthalten:
+# - Bereits ausgeführte tool_results
+# - Bereits abgerufenen fetched_context
+# - action_plan für unfertige Tasks
+
+result = await agent.a_accomplish(
+    task="...",
+    resume_checkpoint=checkpoint
+)
+# → Nutzt gecachte Tool-Ergebnisse, führt nur fehlende aus
+```
+
+---
+
+## Best Practices für Tool-Nutzung
+
+### 1. Tool-Beschränkung
+
+```python
+# SCHLECHT: Alle Tools erlaubt
+result = await agent.a_accomplish(task="...", enable_tools=True)
+
+# BESSER: Nur benötigte Tools
+result = await agent.a_accomplish(
+    task="...",
+    enable_tools=True,
+    allowed_tools=["file_read", "file_write"]  # Explizite Liste
+)
+```
+
+### 2. Atomare Tool-Aufrufe
+
+```python
+# SCHLECHT: Task macht alles auf einmal
+task = "Lies alle Dateien, analysiere sie, und schreibe Ergebnisse"
+
+# BESSER: Task wird automatisch zerlegt in atomare Schritte
+# - Task 1: file_list() → Liste
+# - Task 2: file_read(file) für jede
+# - Task 3: Analysiere Inhalt
+# - Task 4: file_write(report)
+```
+
+### 3. Fehlerbehandlung bei Tools
+
+```python
+# Tools können fehlschlagen - MDA behandelt das:
+# 1. Tool-Fehler wird gefangen
+# 2. fallback_on_error wird verwendet (wenn definiert)
+# 3. Task kann trotzdem fortfahren mit Fallback-Kontext
+# 4. Bei wiederholtem Fehler: Red-Flagging
+
+ToolCallSpec(
+    tool_name="api_call",
+    arguments={"endpoint": "/data"},
+    purpose="Daten abrufen",
+    fallback_on_error="Verwende gecachte Daten von gestern"
+)
+```
+
+---
+
+## Statistiken
+
+Neue Metriken in `stats`:
+
+| Metrik | Beschreibung |
+|--------|--------------|
+| `tool_calls` | Anzahl erfolgreicher Tool-Aufrufe |
+| `context_fetches` | Anzahl erfolgreicher Kontext-Abrufe |
+| `tool_errors` | Anzahl fehlgeschlagener Tool-Aufrufe |
+| `tool_fallbacks` | Anzahl verwendeter Fallbacks |
+
+```python
+result["stats"] = {
+    "total_divisions": 5,
+    "voting_rounds": 15,
+    "red_flags_caught": 2,
+    "tool_calls": 8,           # NEU
+    "context_fetches": 3,       # NEU
+    "total_tasks": 12,
+    "successful_tasks": 11,
+    "failed_tasks": 1
+}
+```
+
+---
