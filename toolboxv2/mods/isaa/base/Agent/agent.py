@@ -2565,13 +2565,13 @@ class LLMToolNode(AsyncNode):
                     model=model_to_use,
                     messages=messages,
                     temperature=0.7,
-                    stream=False,
+                    stream=True,
                     # max_tokens=2048,
                     node_name="LLMToolNode", task_id="llm_phase_" + str(runs)
                 )
 
                 llm_response = response
-                if not llm_response and  not final_response:
+                if not llm_response and not final_response:
                     final_response = "I encountered an error while processing your request."
                     break
 

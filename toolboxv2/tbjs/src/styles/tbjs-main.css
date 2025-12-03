@@ -1060,6 +1060,16 @@ button:disabled,
    15. ANIMATIONS
    ========================================================================== */
 
+@keyframes hologram {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; filter: hue-rotate(0deg); }
+}
+
+@keyframes animate-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }

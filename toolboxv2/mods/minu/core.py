@@ -23,6 +23,8 @@ from enum import Enum
 from functools import wraps
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
+from toolboxv2 import RequestData
+
 # Type definitions
 T = TypeVar("T")
 EventHandler = Callable[..., Any]
@@ -78,11 +80,16 @@ class ReactiveState(Generic[T]):
     _observers: weakref.WeakSet
     _value: T
     _path: str
+    _str_hash: str
 
     def __init__(self, initial: T, path: str = ""):
         self._value = initial
         self._path = path
         self._observers = weakref.WeakSet()
+        self._str_hash = f"ReactiveState({self._value!r})"
+
+    def update_hash(self):
+        self._str_hash = f"ReactiveState({self._value!r})"
 
     @property
     def value(self) -> T:
@@ -90,11 +97,13 @@ class ReactiveState(Generic[T]):
 
     @value.setter
     def value(self, new_value: T):
-        if self._value != new_value:
+
+        if self._value != new_value or self._str_hash != f"ReactiveState({new_value!r})":
             old = self._value
             self._value = new_value
             change = StateChange(self._path, old, new_value)
             self._notify(change)
+            self.update_hash()
         else:
             print("Same value, no change", new_value == self._value)
 
@@ -414,7 +423,7 @@ def Button(
     return Component(
         type=ComponentType.BUTTON,
         children=children if len(children) > 1 else [],
-        props={"label": label, "disabled": disabled, **props},
+        props={"disabled": disabled, **props},
         className=class_name,
         events=events,
     )
@@ -961,6 +970,7 @@ class MinuView:
     _pending_changes: List[StateChange]
     _state_attrs: Dict[str, ReactiveState]
     _dynamic_components: set  # Changed from WeakSet - we need strong references!
+    request_data: RequestData | None = None
 
     def __init__(self, view_id: str | None = None):
         self._view_id = view_id or f"view-{uuid.uuid4().hex[:8]}"
@@ -1197,7 +1207,7 @@ class MinuSession:
         await self._send(json.dumps(message, cls=MinuJSONEncoder))
 
 
-    async def handle_event(self, event_data: Dict[str, Any]):
+    async def handle_event(self, event_data: Dict[str, Any], request = None):
         """Handle an event from the client with improved callback lookup."""
         view_id = event_data.get("viewId")
         handler_name = event_data.get("handler")
@@ -1229,6 +1239,9 @@ class MinuSession:
 
         if not handler or not callable(handler):
             return {"error": f"Handler '{handler_name}' not found on view '{view_id}'"}
+
+        if hasattr(view, 'request_data'):
+            view.request_data = request
 
         try:
             result = handler(payload)

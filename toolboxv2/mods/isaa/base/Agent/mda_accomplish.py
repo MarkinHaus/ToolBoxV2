@@ -22,6 +22,7 @@ Author: Integration with ToolBoxV2 FlowAgent
 """
 
 import asyncio
+import functools
 import hashlib
 import json
 import re
@@ -34,6 +35,7 @@ from typing import Any, Callable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from toolboxv2.mods.isaa.base.Agent.types import ProgressEvent, TaskPlan, NodeStatus
 # Import from existing framework
 from toolboxv2.mods.isaa.base.tbpocketflow import AsyncFlow, AsyncNode
 
@@ -320,7 +322,264 @@ class MDACheckpoint:
 # ============================================================================
 # ASYNC NODES FOR MDA PROCESS
 # ============================================================================
+def with_progress_tracking(cls):
+    """
+    Ein Klassendekorator, der die Methoden run_async, prep_async, exec_async,
+    und exec_fallback_async automatisch mit umfassendem Progress-Tracking umwickelt.
+    """
 
+    # --- Wrapper für run_async ---
+    original_run = getattr(cls, 'run_async', None)
+    if original_run:
+        @functools.wraps(original_run)
+        async def wrapped_run_async(self, shared):
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
+
+            if not progress_tracker:
+                return await original_run(self, shared)
+
+            timer_key = f"{node_name}_total"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_enter",
+                timestamp=time.time(),
+                node_name=node_name,
+                session_id=shared.get("session_id"),
+                task_id=shared.get("current_task_id"),
+                plan_id=shared.get("current_plan", TaskPlan(id="none", name="none", description="none")).id if shared.get("current_plan") else None,
+                status=NodeStatus.RUNNING,
+                success=None
+            ))
+
+            try:
+                # Hier wird die ursprüngliche Methode aufgerufen
+                result = await original_run(self, shared)
+
+                total_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_exit",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    node_duration=total_duration,
+                    routing_decision=result,
+                    session_id=shared.get("session_id"),
+                    task_id=shared.get("current_task_id"),
+                    metadata={"success": True}
+                ))
+
+                return result
+            except Exception as e:
+                total_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=total_duration,
+                    session_id=shared.get("session_id"),
+                    metadata={"error": str(e), "error_type": type(e).__name__}
+                ))
+                raise
+
+        cls.run_async = wrapped_run_async
+
+    # --- Wrapper für prep_async ---
+    original_prep = getattr(cls, 'prep_async', None)
+    if original_prep:
+        @functools.wraps(original_prep)
+        async def wrapped_prep_async(self, shared):
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
+
+            if not progress_tracker:
+                return await original_prep(self, shared)
+            timer_key = f"{node_name}_total_p"
+            progress_tracker.start_timer(timer_key)
+            timer_key = f"{node_name}_prep"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.STARTING,
+                node_phase="prep",
+                session_id=shared.get("session_id")
+            ))
+
+            try:
+                result = await original_prep(self, shared)
+
+                prep_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_phase",
+                    timestamp=time.time(),
+                    status=NodeStatus.RUNNING,
+                    success=True,
+                    node_name=node_name,
+                    node_phase="prep_complete",
+                    node_duration=prep_duration,
+                    session_id=shared.get("session_id")
+                ))
+                return result
+            except Exception as e:
+                progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    metadata={"error": str(e), "error_type": type(e).__name__},
+                    node_phase="prep_failed"
+                ))
+                raise
+
+
+        cls.prep_async = wrapped_prep_async
+
+    # --- Wrapper für exec_async ---
+    original_exec = getattr(cls, 'exec_async', None)
+    if original_exec:
+        @functools.wraps(original_exec)
+        async def wrapped_exec_async(self, prep_res):
+            progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+            node_name = self.__class__.__name__
+
+            if not progress_tracker:
+                return await original_exec(self, prep_res)
+
+            timer_key = f"{node_name}_exec"
+            progress_tracker.start_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.RUNNING,
+                node_phase="exec",
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
+
+            # In exec gibt es normalerweise keine Fehlerbehandlung, da diese von run_async übernommen wird
+            result = await original_exec(self, prep_res)
+
+            exec_duration = progress_tracker.end_timer(timer_key)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.RUNNING,
+                success=True,
+                node_phase="exec_complete",
+                node_duration=exec_duration,
+                session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None
+            ))
+            return result
+
+        cls.exec_async = wrapped_exec_async
+
+    # --- Wrapper für post_async ---
+    original_post = getattr(cls, 'post_async', None)
+    if original_post:
+        @functools.wraps(original_post)
+        async def wrapped_post_async(self, shared, prep_res, exec_res):
+            if isinstance(exec_res, str):
+                print("exec_res is string:", exec_res)
+            progress_tracker = shared.get("progress_tracker")
+            node_name = self.__class__.__name__
+
+            if not progress_tracker:
+                return await original_post(self, shared, prep_res, exec_res)
+
+            timer_key_post = f"{node_name}_post"
+            progress_tracker.start_timer(timer_key_post)
+            await progress_tracker.emit_event(ProgressEvent(
+                event_type="node_phase",
+                timestamp=time.time(),
+                node_name=node_name,
+                status=NodeStatus.COMPLETING,  # Neue Phase "completing"
+                node_phase="post",
+                session_id=shared.get("session_id")
+            ))
+
+            try:
+                # Die eigentliche post_async Methode aufrufen
+                result = await original_post(self, shared, prep_res, exec_res)
+
+                post_duration = progress_tracker.end_timer(timer_key_post)
+                total_duration = progress_tracker.end_timer(f"{node_name}_total_p")  # Gesamtdauer stoppen
+
+                # Sende das entscheidende "node_exit" Event nach erfolgreicher post-Phase
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_exit",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.COMPLETED,
+                    success=True,
+                    node_duration=total_duration,
+                    routing_decision=result,
+                    session_id=shared.get("session_id"),
+                    task_id=shared.get("current_task_id"),
+                    metadata={
+                        "success": True,
+                        "post_duration": post_duration
+                    }
+                ))
+
+                return result
+            except Exception as e:
+                # Fehler in der post-Phase
+
+                post_duration = progress_tracker.end_timer(timer_key_post)
+                total_duration = progress_tracker.end_timer(f"{node_name}_total")
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="error",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    node_duration=total_duration,
+                    metadata={"error": str(e), "error_type": type(e).__name__, "phase": "post"},
+                    node_phase="post_failed"
+                ))
+                raise
+
+        cls.post_async = wrapped_post_async
+
+    # --- Wrapper für exec_fallback_async ---
+    original_fallback = getattr(cls, 'exec_fallback_async', None)
+    if original_fallback:
+        @functools.wraps(original_fallback)
+        async def wrapped_fallback_async(self, prep_res, exc):
+            progress_tracker = prep_res.get("progress_tracker") if isinstance(prep_res, dict) else None
+            node_name = self.__class__.__name__
+
+            if progress_tracker:
+                timer_key = f"{node_name}_exec"
+                exec_duration = progress_tracker.end_timer(timer_key)
+                await progress_tracker.emit_event(ProgressEvent(
+                    event_type="node_phase",
+                    timestamp=time.time(),
+                    node_name=node_name,
+                    node_phase="exec_fallback",
+                    node_duration=exec_duration,
+                    status=NodeStatus.FAILED,
+                    success=False,
+                    session_id=prep_res.get("session_id") if isinstance(prep_res, dict) else None,
+                    metadata={"error": str(exc), "error_type": type(exc).__name__},
+                ))
+
+            return await original_fallback(self, prep_res, exc)
+
+        cls.exec_fallback_async = wrapped_fallback_async
+
+    return cls
+
+
+@with_progress_tracking
 class DivideNode(AsyncNode):
     """
     Recursively divides tasks until minimum complexity is reached.
@@ -333,6 +592,7 @@ class DivideNode(AsyncNode):
                  min_complexity: int = 2,
                  max_subtasks: int = 5,
                  model_strength: Literal["weak", "medium", "strong"] = "medium"):
+        super().__init__()
         self.min_complexity = min_complexity
         self.max_subtasks_map = {"weak": 2, "medium": 3, "strong": 5}
         self.max_subtasks = self.max_subtasks_map.get(model_strength, 3)
@@ -608,7 +868,7 @@ WICHTIG für context_mappings:
 
         return "error"
 
-
+@with_progress_tracking
 class TaskTreeBuilderNode(AsyncNode):
     """
     Builds execution tree with parallel groups from atomic tasks.
@@ -704,7 +964,7 @@ class TaskTreeBuilderNode(AsyncNode):
 
         return "tree_built"
 
-
+@with_progress_tracking
 class AtomicConquerNode(AsyncNode):
     """
     Executes atomic tasks with k-voting and red-flagging.
@@ -721,6 +981,7 @@ class AtomicConquerNode(AsyncNode):
                  red_flag_patterns: list[str] = None,
                  enable_tools: bool = True,
                  enable_context_fetch: bool = True):
+        super().__init__()
         self.num_attempts = num_attempts
         self.k_margin = k_margin
         self.max_response_tokens = max_response_tokens
@@ -732,7 +993,13 @@ class AtomicConquerNode(AsyncNode):
             r"(?i)ich kann (das )?nicht",
             r"(?i)es ist schwierig",
             r"(?i)möglicherweise",
-            r"(?i)vielleicht"
+            r"(?i)vielleicht",
+            r"(?i)i('m| am) not sure",
+            r"(?i)that is (very )?complex",
+            r"(?i)i can('t|not)( do this)?",
+            r"(?i)it('s| is) difficult",
+            r"(?i)possibly",
+            r"(?i)maybe"
         ]
 
     async def prep_async(self, shared) -> dict:
@@ -1258,7 +1525,7 @@ VERSUCH: {attempt + 1}"""
 
         return "continue_execution"
 
-
+@with_progress_tracking
 class ResultAggregatorNode(AsyncNode):
     """Aggregates partial results into final result"""
 
@@ -1522,7 +1789,7 @@ class MDAState:
 # ============================================================================
 # MDA FLOW - MAIN ORCHESTRATOR
 # ============================================================================
-
+@with_progress_tracking
 class MDAFlow(AsyncFlow):
     """
     Massively Decomposed Agentic Process Flow.
@@ -1580,8 +1847,8 @@ class MDAFlow(AsyncFlow):
         self.atomic_conquer - "all_complete" >> self.aggregator
         self.atomic_conquer - "paused" >> None
 
-        self.aggregator - "aggregated" >> None
-        self.aggregator - "paused" >> None
+        #self.aggregator - "aggregated" >> None
+        #self.aggregator - "paused" >> None
 
         super().__init__(start=self.divide_node)
 
@@ -2319,7 +2586,7 @@ async def bind_accomplish_to_agent(agent, and_as_tool=True):
         ) -> str:
 
             session_id = agent.active_session or "default"
-            return await agent.a_accomplish(
+            res = await agent.a_accomplish(
                         task=task,
                         context=context,
                         min_complexity=min_complexity,
@@ -2329,6 +2596,9 @@ async def bind_accomplish_to_agent(agent, and_as_tool=True):
                         session_id=session_id,  # Wichtig: Gleiche Session nutzen
                         **kwargs,
                     )
+
+            res['checkpoint'] = {}
+            return res.get("result", str(res)) if res.get("success") else f"Error: {res.get('error', str(res))}"
 
 
         # Das Tool registrieren

@@ -132,6 +132,8 @@ class AgentChatView(MinuView):
     # Agent Config
     agent_name = State("self")
 
+    sessions = State([])  # List[{id: str, name: str, created: str}]
+    session_manager_open = State(False)
 
     # Internal
     _agent = None
@@ -154,15 +156,13 @@ class AgentChatView(MinuView):
 
     def _render_chat_container(self) -> Component:
         """Main chat container with messages and input"""
-        messages = self.messages.value or []
-        status = self.status.value
 
         return Column(
             # Messages Area
-            self._dynamic_wrapper_messages()
-            ,
+            self._dynamic_wrapper_messages(),
             # Input Area (fixed at bottom)
-            self._dynamic_wrapper(),
+            self._render_input_area(),
+            self._dynamic_wrapper_session_manager(),
             className="flex-1 flex flex-col max-w-4xl mx-auto w-full",
         )
 
@@ -184,7 +184,7 @@ class AgentChatView(MinuView):
 
     def _dynamic_wrapper(self) -> Component:
         dyn = Dynamic(
-            render_fn=self._render_input_area,
+            render_fn=self._render_buttons,
             bind=[self.status, self.input_text],
         )
         # Registrieren damit die View Bescheid weiß (wichtig für Dependency Tracking)
@@ -244,7 +244,7 @@ class AgentChatView(MinuView):
         return Row(
             Custom(
                 html=f"""
-                <div style="border-radius: 1rem;word-break: break-all; background-color: var(--color-neutral-900);">
+                <div style="border-radius: 1rem;word-break: break-all; background-color: var(--bg-elevated);">
                     <p class="text-neutral-800 dark:text-neutral-100 whitespace-pre-wrap">{self._escape_html(content)}</p>
                 </div>
                 """
@@ -285,24 +285,12 @@ class AgentChatView(MinuView):
 
         # 5. Regular Tool Outputs (Code blocks / Results)
         if regular_tools:
-            blocks.append(self._render_regular_tools(regular_tools))
+            blocks.append(self._render_tool_badges(regular_tools))
 
         # 6. Main Text Content (Markdown)
         if content or is_streaming:
-            cursor = (
-                '<span class="inline-block w-2 h-5 bg-blue-400 align-middle ml-1 animate-pulse"></span>'
-                if is_streaming
-                else ""
-            )
-            blocks.append(
-                Custom(
-                    html=f"""
-                   <div class="prose prose-invert prose-neutral max-w-none text-neutral-200 leading-relaxed text-base">
-                       {self._process_markdown(content)}{cursor}
-                   </div>
-               """
-                )
-            )
+            blocks.append(self._render_content_block(content, is_streaming))
+
 
         return Row(
             # Avatar Icon
@@ -322,210 +310,6 @@ class AgentChatView(MinuView):
 
     def _render_reasoning_block(self, steps: list) -> Component:
         """Renders the reasoning steps as a professional Insight Card"""
-        latest = steps[-1]
-        count = len(steps)
-        total = latest.get("total_thoughts", count)
-        confidence = latest.get("confidence_level", 0.0) * 100
-
-        # Color coding for confidence
-        conf_color = (
-            "text-emerald-400"
-            if confidence > 80
-            else "text-amber-400"
-            if confidence > 50
-            else "text-red-400"
-        )
-
-        return Custom(
-            html=f"""
-           <div class="rounded-lg border border-neutral-700/50 bg-neutral-800/40 overflow-hidden">
-               <details class="group" {"open" if count == 1 else ""}>
-                   <summary class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-neutral-800/60 transition-colors list-none">
-                       <div class="flex items-center gap-3">
-                           <span class="text-purple-400 bg-purple-400/10 p-1.5 rounded-md"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg></span>
-                           <div class="flex flex-col">
-                               <span class="text-sm font-medium text-neutral-200">Reasoning Process</span>
-                               <span class="text-xs text-neutral-500">Step {
-                latest.get("thought_number", count)
-            }/{total} &bull; Focus: {latest.get("current_focus", "Thinking...")}</span>
-                           </div>
-                       </div>
-                       <div class="flex items-center gap-3">
-                           <div class="flex flex-col items-end">
-                               <span class="text-xs font-mono {conf_color}">{
-                confidence:.0f}% Conf.</span>
-                           </div>
-                           <span class="text-neutral-500 transform group-open:rotate-180 transition-transform">▼</span>
-                       </div>
-                   </summary>
-                   <div class="px-4 pb-4 pt-2 border-t border-neutral-700/30 bg-neutral-900/30">
-                       <div class="space-y-3">
-                           {
-                "".join(
-                    [
-                        f'''
-                           <div class="pl-4 border-l-2 border-purple-500/20 py-1">
-                               <div class="text-xs text-neutral-500 mb-1">Step {s.get("thought_number")}</div>
-                               <div class="text-sm text-neutral-300">{s.get("key_insights", [""])[0] if s.get("key_insights") else "Analysing context..."}</div>
-                           </div>
-                           '''
-                        for s in steps[-3:]
-                    ]
-                )
-            } <!-- Show last 3 steps -->
-                       </div>
-                   </div>
-               </details>
-           </div>
-           """
-        )
-
-    def _render_meta_tools_log(self, calls: list) -> Component:
-        """Renders meta tools (Agent Actions) in a clean, collapsed log"""
-        unique_tools = list(set([c["tool_name"] for c in calls]))
-
-        items_html = ""
-        for call in calls[::-1][:10]:  # Show last 10, newest first
-            status_color = "text-emerald-400" if call.get("success") else "text-red-400"
-            duration = call.get("duration", 0) or 0
-
-            # Format Tool Name nicely
-            name = call["tool_name"].replace("_", " ").title()
-
-            items_html += f"""
-               <div class="flex items-center justify-between py-2 border-b border-neutral-800 last:border-0 text-sm">
-                   <div class="flex items-center gap-2">
-                       <span class="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
-                       <span class="text-neutral-300 font-medium">{name}</span>
-                   </div>
-                   <div class="flex items-center gap-3 font-mono text-xs">
-                       <span class="text-neutral-600">{duration:.2f}s</span>
-                       <span class="{status_color}">{"✓" if call.get("success") else "✗"}</span>
-                   </div>
-               </div>
-               """
-
-        return Custom(
-            html=f"""
-           <div class="rounded-lg border border-neutral-700/50 bg-neutral-800/20">
-               <details class="group">
-                   <summary class="flex items-center justify-between px-4 py-2 cursor-pointer hover:bg-neutral-800/40 transition-colors text-xs uppercase tracking-wider font-semibold text-neutral-500">
-                       <span>Agent Actions ({len(calls)})</span>
-                       <span class="transform group-open:rotate-180 transition-transform">▼</span>
-                   </summary>
-                   <div class="px-4 pb-2">
-                       {items_html}
-                   </div>
-               </details>
-           </div>
-           """
-        )
-
-    def _render_phase_indicator(self, phase: str) -> Component:
-        icons = {
-            "reasoning": "🧠",
-            "planning": "📋",
-            "executing": "⚡",
-            "delegating": "🤝",
-        }
-        icon = icons.get(phase, "⏳")
-        return Custom(
-            html=f"""
-               <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium animate-pulse">
-                   <span>{icon}</span>
-                   <span class="uppercase tracking-wide">{phase}</span>
-               </div>
-           """
-        )
-
-    def _render_outline_bar(self, outline: dict) -> Component:
-        # Simple progress bar based on step/total
-        current = outline.get("current_step", 0)
-        total = outline.get("total_steps", 1)
-        pct = min(100, int((current / total) * 100))
-        return Custom(
-            html=f"""
-               <div class="flex flex-col gap-1 mb-2">
-                   <div class="flex justify-between text-xs text-neutral-500">
-                       <span>Task Progress</span>
-                       <span>{current}/{total}</span>
-                   </div>
-                   <div class="h-1 w-full bg-neutral-800 rounded-full overflow-hidden">
-                       <div class="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-500 ease-out" style="width: {pct}%"></div>
-                   </div>
-               </div>
-           """
-        )
-
-    # =========================================================================
-    # HUMANIZED PROGRESS UI COMPONENTS
-    # =========================================================================
-
-    def _render_outline_progress(self, progress: dict) -> Component:
-        """Render outline step progress bar"""
-        current = progress.get("current_step", 0)
-        total = progress.get("total_steps", 1)
-        step_name = progress.get("step_name", "")
-        percentage = min(100, int((current / max(total, 1)) * 100))
-
-        return Custom(
-            html=f"""
-            <div class="mb-3">
-                <div class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                    <span class="flex items-center gap-1">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
-                        </svg>
-                        Schritt {current} von {total}
-                    </span>
-                    <span>{percentage}%</span>
-                </div>
-                <div class="h-1 bg-neutral-700 rounded-full overflow-hidden">
-                    <div class="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500"
-                         style="width: {percentage}%"></div>
-                </div>
-                {f'<p class="text-xs text-neutral-500 mt-1 truncate">{self._escape_html(step_name)}</p>' if step_name else ''}
-            </div>
-            """
-        )
-
-    def _render_phase_indicator(self, phase: str) -> Component:
-        """Render current agent phase with icon"""
-        phase_config = {
-            "reasoning": ("💭", "Analysiere...", "text-purple-400"),
-            "planning": ("📋", "Plane Vorgehen...", "text-blue-400"),
-            "executing": ("⚡", "Führe aus...", "text-amber-400"),
-            "delegating": ("🔄", "Delegiere Aufgabe...", "text-cyan-400"),
-            "thinking": ("🧠", "Denke nach...", "text-purple-400"),
-            "tool_call": ("🔧", "Nutze Werkzeug...", "text-orange-400"),
-        }
-
-        icon, label, color = phase_config.get(phase, ("⏳", phase, "text-neutral-400"))
-
-        return Custom(
-            html=f"""
-                    <div style="display:flex; align-items:center; gap:8px; font-size:0.875rem; padding:4px 0; {color}">
-            <span>{icon}</span>
-            <span>{label}</span>
-<style>
-@keyframes pulse {{
-    0%, 100% {{opacity: 1; }}
-    50% {{opacity: 0.4; }}
-}}
-</style>
-
-            <span style="display:flex; gap:2px;">
-                <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1.5s infinite;"></span>
-                <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1.5s infinite; animation-delay:150ms;"></span>
-                <span style="width:4px; height:4px; border-radius:50%; background:currentColor; animation:pulse 1.5s infinite; animation-delay:300ms;"></span>
-            </span>
-        </div>
-
-            """
-        )
-
-    def _render_reasoning_cards(self, steps: List[dict]) -> Component:
-        """Render last 3 internal reasoning steps as beautiful cards"""
         if not steps:
             return Spacer(size="0")
 
@@ -631,9 +415,12 @@ class AgentChatView(MinuView):
             </div>
             """
 
-        return Custom(html=f'<div style="display:flex; flex-direction:column; gap:var(--space-2);">{cards_html}</div>')
+        return Custom(
+            html=f'<div style="display:flex; flex-direction:column; gap:var(--space-2);">{cards_html}</div>'
+        )
 
-    def _render_meta_tools_card(self, tool_calls: List[dict]) -> Component:
+    def _render_meta_tools_log(self, tool_calls: list) -> Component:
+        """Renders meta tools (Agent Actions) in a clean, collapsed log"""
         """Render collective meta-tool calls as collapsible card"""
         if not tool_calls:
             return Spacer(size="0")
@@ -668,27 +455,28 @@ class AgentChatView(MinuView):
             count = len(calls)
             count_badge = (
                 f'<span style="font-size: var(--text-xs);background: var(--color-neutral-600);padding: 0 var(--space-1);border-radius: var(--radius-sm);color: var(--color-neutral-0);">{count}</span>'
-            if count > 1 else ""
+                if count > 1
+                else ""
             )
 
             badges_html += f"""
-            <span style="
-                display: inline-flex;
-                align-items: center;
-                gap: var(--space-1);
-                padding: var(--space-1) var(--space-2);
-                background: color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
-                border-radius: var(--radius-md);
-                font-size: var(--text-xs);
-                color: var(--color-neutral-300);
-            ">
-                {icon} {human_name} {count_badge}
-            </span>
-            """
+                    <span style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: var(--space-1);
+                        padding: var(--space-1) var(--space-2);
+                        background: color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+                        border-radius: var(--radius-md);
+                        font-size: var(--text-xs);
+                        color: var(--color-neutral-300);
+                    ">
+                        {icon} {human_name} {count_badge}
+                    </span>
+                    """
 
         # Detailed list for expansion
         details_html = ""
-        for call in tool_calls[-5:]:  # Show last 5
+        for call in tool_calls[-10:]:  # Show last 5
             tool_name = call.get("tool_name", "unknown")
             icon = tool_icons.get(tool_name, "🔧")
             success = call.get("success", True)
@@ -703,231 +491,189 @@ class AgentChatView(MinuView):
             info_parts = []
             if metadata.get("task_description"):
                 info_parts.append(metadata["task_description"][:50])
-            if metadata.get("stack_action"):
-                info_parts.append(f"Aktion: {metadata['stack_action']}")
+            if metadata.get("args"):
+                info_parts.append(f"Aktion: {metadata['args']}")
             if metadata.get("tools_count"):
                 info_parts.append(f"{metadata['tools_count']} Tools")
 
             info_str = " · ".join(info_parts) if info_parts else ""
 
             details_html += f"""
-            <div style="
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:var(--space-2) 0;
-    border-bottom:var(--border-width) solid var(--color-neutral-700);
-">
-    <div style="display:flex; align-items:center; gap:var(--space-2);">
-        <span>{icon}</span>
-
-        <span style="
-            color:var(--color-neutral-300);
-            font-size:var(--text-sm);
-            font-weight:var(--weight-medium);
+                    <div style="
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            padding:var(--space-2) 0;
+            border-bottom:var(--border-width) solid var(--color-neutral-700);
         ">
-            {tool_name.replace('_', ' ').title()}
-        </span>
+            <div style="display:flex; align-items:center; gap:var(--space-2);">
+                <span>{icon}</span>
 
-        {f'''
-        <span style="
-            color:var(--color-neutral-500);
-            font-size:var(--text-xs);
-            white-space:nowrap;
-            overflow:hidden;
-            text-overflow:ellipsis;
-            max-width:200px;
-        ">
-            {self._escape_html(info_str)}
-        </span>
-        ''' if info_str else ''}
-    </div>
+                <span style="
+                    color:var(--color-neutral-300);
+                    font-size:var(--text-sm);
+                    font-weight:var(--weight-medium);
+                ">
+                    {tool_name.replace("_", " ").title()}
+                </span>
 
-    <div style="display:flex; align-items:center; gap:var(--space-2);">
+                {
+                f'''
+                <span style="
+                    color:var(--color-neutral-500);
+                    font-size:var(--text-xs);
+                    white-space:nowrap;
+                    overflow:hidden;
+                    text-overflow:ellipsis;
+                    max-width:200px;
+                ">
+                    {self._escape_html(info_str)}
+                </span>
+                '''
+                if info_str
+                else ""
+            }
+            </div>
 
-        {f'''
-        <span style="
-            color:var(--color-neutral-500);
-            font-size:var(--text-xs);
-        ">
-            {duration_str}
-        </span>
-        ''' if duration_str else ''}
+            <div style="display:flex; align-items:center; gap:var(--space-2);">
 
-        <span style="{status_color}">{status_icon}</span>
-    </div>
-</div>
-            """
+                {
+                f'''
+                <span style="
+                    color:var(--color-neutral-500);
+                    font-size:var(--text-xs);
+                ">
+                    {duration_str}
+                </span>
+                '''
+                if duration_str
+                else ""
+            }
+
+                <span style="{status_color}">{status_icon}</span>
+            </div>
+        </div>
+                    """
 
         return Custom(
             html=f"""
-            <details style="
-    background: color-mix(in oklch, var(--color-neutral-800) 30%, transparent);
-    border: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    margin-bottom: var(--space-2);
-">
-    <summary style="
-        cursor: pointer;
-        padding: var(--space-2) var(--space-3);
-        transition: background-color var(--duration-normal) var(--ease-default);
-    "
-        onmouseover="this.style.background='color-mix(in oklch, var(--color-neutral-700) 30%, transparent)'"
-        onmouseout="this.style.background='transparent'"
-    >
-        <div style="
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+                    <details style="
+            background: color-mix(in oklch, var(--color-neutral-800) 30%, transparent);
+            border: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            margin-bottom: var(--space-2);
         ">
-            <div style="display:flex; align-items:center; gap:var(--space-2);">
-
-                <svg style="
-                    width: 1rem;
-                    height: 1rem;
-                    color: var(--color-neutral-400);
-                    transition: transform var(--duration-normal) var(--ease-default);
-                " fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M9 5l7 7-7 7"/>
-                </svg>
-
-                <span style="
-                    font-size: var(--text-sm);
-                    color: var(--color-neutral-300);
+            <summary style="
+                cursor: pointer;
+                padding: var(--space-2) var(--space-3);
+                transition: background-color var(--duration-normal) var(--ease-default);
+            "
+                onmouseover="this.style.background='color-mix(in oklch, var(--color-neutral-700) 30%, transparent)'"
+                onmouseout="this.style.background='transparent'"
+            >
+                <div style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
                 ">
-                    Agent-Aktionen
-                </span>
+                    <div style="display:flex; align-items:center; gap:var(--space-2);">
 
-                <span style="
-                    font-size: var(--text-xs);
-                    color: var(--color-neutral-500);
+                        <svg style="
+                            width: 1rem;
+                            height: 1rem;
+                            color: var(--color-neutral-400);
+                            transition: transform var(--duration-normal) var(--ease-default);
+                        " fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M9 5l7 7-7 7"/>
+                        </svg>
+
+                        <span style="
+                            font-size: var(--text-sm);
+                            color: var(--color-neutral-300);
+                        ">
+                            Agent-Aktionen
+                        </span>
+
+                        <span style="
+                            font-size: var(--text-xs);
+                            color: var(--color-neutral-500);
+                        ">
+                            {len(tool_calls)} ausgeführt
+                        </span>
+                    </div>
+                </div>
+
+                <div style="
+                    display:flex;
+                    flex-wrap:wrap;
+                    gap:var(--space-1);
+                    margin-top:var(--space-2);
                 ">
-                    {len(tool_calls)} ausgeführt
-                </span>
+                    {badges_html}
+                </div>
+            </summary>
+
+            <div style="
+                padding: var(--space-2) var(--space-3);
+                border-top: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
+                font-size: var(--text-sm);
+                color: var(--color-neutral-300);
+            ">
+                {details_html}
             </div>
-        </div>
+        </details>
 
-        <div style="
-            display:flex;
-            flex-wrap:wrap;
-            gap:var(--space-1);
-            margin-top:var(--space-2);
-        ">
-            {badges_html}
-        </div>
-    </summary>
-
-    <div style="
-        padding: var(--space-2) var(--space-3);
-        border-top: var(--border-width) solid color-mix(in oklch, var(--color-neutral-700) 50%, transparent);
-        font-size: var(--text-sm);
-        color: var(--color-neutral-300);
-    ">
-        {details_html}
-    </div>
-</details>
-
-            """
+                    """
         )
 
-    def _render_thinking_section(self, thinking_text: str, is_thinking: bool) -> Component:
-        """Collapsible thinking section like DeepSeek"""
-        if is_thinking and not thinking_text:
-            # Still thinking - show animation
-            return Custom(
-                html="""
-                <div style="
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--color-neutral-400);
-    font-size: var(--text-sm);
-    padding: var(--space-2) 0;
-">
-                <style>
-@keyframes bounce-dot {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-4px); }
-}
-</style>
-    <div style="display:flex; gap: var(--space-1);">
-        <span style="
-            width: 6px;
-            height: 6px;
-            background: var(--color-primary-400);
-            border-radius: var(--radius-full);
-            animation: bounce-dot 0.6s infinite;
-        "></span>
+    def _render_phase_indicator(self, phase: str) -> Component:
+        icons = {
+            "reasoning": "🧠",
+            "planning": "📋",
+            "executing": "⚡",
+            "delegating": "🤝",
+        }
+        icon = icons.get(phase, "⏳")
+        return Custom(
+            html=f"""
+               <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium animate-pulse">
+                   <span>{icon}</span>
+                   <span class="uppercase tracking-wide">{phase}</span>
+               </div>
+           """
+        )
 
-        <span style="
-            width: 6px;
-            height: 6px;
-            background: var(--color-primary-400);
-            border-radius: var(--radius-full);
-            animation: bounce-dot 0.6s infinite;
-            animation-delay: 0.15s;
-        "></span>
+    def _render_outline_bar(self, outline: dict) -> Component:
+        # Simple progress bar based on step/total
+        current = outline.get("current_step", 0)
+        total = outline.get("total_steps", 1)
+        step_name = outline.get("step_name", "")
+        percentage = min(100, int((current / max(total, 1)) * 100))
 
-        <span style="
-            width: 6px;
-            height: 6px;
-            background: var(--color-primary-400);
-            border-radius: var(--radius-full);
-            animation: bounce-dot 0.6s infinite;
-            animation-delay: 0.3s;
-        "></span>
-    </div>
-    <span>Nachdenken...</span>
-</div>
-                """
-            )
+        return Custom(
+            html=f"""
+                    <div class="mb-3">
+                        <div class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                            <span class="flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                                </svg>
+                                Schritt {current} von {total}
+                            </span>
+                            <span>{percentage}%</span>
+                        </div>
+                        <div class="h-1 bg-neutral-700 rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500"
+                                 style="width: {percentage}%"></div>
+                        </div>
+                        {f'<p class="text-xs text-neutral-500 mt-1 truncate">{self._escape_html(step_name)}</p>' if step_name else ""}
+                    </div>
+                    """
+        )
 
-        if thinking_text:
-            # Show thinking summary (collapsed by default)
-            lines = thinking_text.strip().split('\n')
-            preview = lines[0][:80] + "..." if len(lines[0]) > 80 else lines[0]
-
-            return Custom(
-                html=f"""
-                <details style="font-size: var(--text-sm);">
-    <summary style="
-        cursor: pointer;
-        color: var(--color-neutral-400);
-        padding: var(--space-1) 0;
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
-        transition: color var(--duration-normal) var(--ease-default);
-    "
-        onmouseover="this.style.color='var(--color-neutral-300)'"
-        onmouseout="this.style.color='var(--color-neutral-400)'"
-    >
-        <svg style="width:1rem;height:1rem;color:inherit;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-        Gedankengang anzeigen
-    </summary>
-    <div style="
-        margin-top: var(--space-2);
-        padding: var(--space-3);
-        background: color-mix(in oklch, var(--color-neutral-800) 50%, transparent);
-        border-radius: var(--radius-lg);
-        color: var(--color-neutral-300);
-        white-space: pre-wrap;
-        font-size: var(--text-sm);
-    ">
-        {self._escape_html(thinking_text)}
-    </div>
-</details>
-
-                """
-            )
-
-        return Spacer(size="0")
-
-    def _render_tool_badges(self, tool_names: List[str]) -> Component:
+    def _render_tool_badges(self, tool_names: List[dict[str, Any]]) -> Component:
         """Compact tool usage badges"""
         badges_html = " ".join(
             [
@@ -957,10 +703,11 @@ class AgentChatView(MinuView):
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                 </svg>
-                {self._escape_html(name)}
+                {self._escape_html(data.get("name", "Unknown"))} <hr/>
+                {self._escape_html(data.get("args", "Unknown"))}
             </span>
             """
-                for name in tool_names[:5]
+                for data in tool_names[:5]
             ]
         )
 
@@ -996,12 +743,11 @@ class AgentChatView(MinuView):
     50% {{opacity:0.2 }}
 }}
 </style>
-            <div style="max-width:none; color:#e5e5e5; font-size:0.875rem; line-height:1.6;">
-    <div style="color:#f5f5f5; white-space:pre-wrap; line-height:1.6;">
+            <div style="max-width:none; color:var(--color-neutral-300); font-size:0.875rem; line-height:1.6;">
+    <div style="color:var(--text-primary); white-space:pre-wrap; line-height:1.6;">
         {html_content}{cursor}
     </div>
 </div>
-
             """
         )
 
@@ -1011,8 +757,6 @@ class AgentChatView(MinuView):
         is_busy = status not in ["idle", "error"]
 
         return Column(
-            # Status Bar (only visible when not idle)
-            self._render_status_bar() if status != "idle" else Spacer(size="0"),
             # Input Card
             Card(
                 Column(
@@ -1027,38 +771,8 @@ class AgentChatView(MinuView):
                     ),
                     # Action Row
                     Row(
-                        # Left side - info text
-                        Text(
-                            "Enter zum Senden",
-                            className="text-neutral-500 text-xs",
-                        ),
                         # Right side - buttons
-                        Row(
-                            # Clear Button - always functional
-                            Button(
-                                "Löschen",
-                                on_click="clear_chat",
-                                variant="ghost",
-                                icon="delete",
-                                className="text-neutral-400 hover:text-white",
-                            ) if self.messages.value else None,
-                            # Stop Button - only when busy
-                            Button(
-                                "Stopp",
-                                on_click="stop_generation",
-                                variant="error",
-                                icon="stop",
-                            ) if is_busy else None,
-                            # Send Button - only when not busy
-                            Button(
-                                "Senden",
-                                on_click="send_message",
-                                variant="primary",
-                                icon="send",
-                                disabled=is_busy or not self.input_text.value.strip(),
-                            ) if not is_busy else None,
-                            gap="2",
-                        ),
+                        self._dynamic_wrapper(),
                         justify="between",
                         align="center",
                         className="pt-2 border-t border-neutral-700/50",
@@ -1071,28 +785,50 @@ class AgentChatView(MinuView):
             className="px-4",
         )
 
-    def _render_status_bar(self) -> Component:
-        """Status bar showing current operation"""
+    def _render_buttons(self) -> Component:
+
         status = self.status.value
-        status_text = self.status_text.value
-
-        status_configs = {
-            "sending": ("Wird gesendet...", "blue"),
-            "thinking": ("Agent denkt nach...", "amber"),
-            "streaming": ("Antwort wird generiert...", "green"),
-            "error": ("Fehler aufgetreten", "red"),
-        }
-
-        text, color = status_configs.get(status, ("", "neutral"))
-        display_text = status_text or text
-
+        is_busy = status not in ["idle", "error"]
         return Row(
-            Spinner(size="sm"),
-            Text(display_text, className=f"text-{color}-400 text-sm"),
+            # Clear Button - always functional
+            Button(
+                "Löschen",
+                on_click="clear_chat",
+                variant="ghost",
+                icon="delete",
+                className="text-neutral-400 hover:text-white",
+            )
+            if self.messages.value
+            else None,
+            # Stop Button - only when busy
+            Button(
+                "Stopp",
+                on_click="stop_generation",
+                variant="error",
+                icon="stop",
+            )
+            if is_busy
+            else None,
+            # Send Button - only when not busy
+            Button(
+                "Senden",
+                on_click="send_message",
+                variant="primary",
+                icon="send",
+                disabled=is_busy or not self.input_text.value.strip(),
+            )
+            if not is_busy
+            else None,
+            Button(
+                f"Sessions ({len(self.sessions.value)})",
+                on_click="toggle_session_manager",
+                variant="secondary",
+                icon="folder",
+                style="width: min-content;"
+            ) if not is_busy else None,
             gap="2",
-            align="center",
-            className="px-4 py-2",
         )
+
 
     # ===== HELPER METHODS =====
 
@@ -1208,10 +944,11 @@ class AgentChatView(MinuView):
         # Local containers to accumulate state before updating view
         local_reasoning = []
         local_meta = []
+        local_regular = []
         local_outline = {}
 
         async def on_progress(event):
-            nonlocal collected_content, local_reasoning, local_meta, local_outline
+            nonlocal collected_content, local_reasoning, local_meta, local_outline, local_regular
 
             # Detect Event Type (Attribute or Dict access)
             e_type = getattr(event, "event_type", None) or event.get("event_type")
@@ -1234,13 +971,13 @@ class AgentChatView(MinuView):
                     event.get(name, default) if isinstance(event, dict) else default
                 )
 
-            tool_name = get_attr("tool_name")
+            tool_name = get_attr("tool_name", "unknown")
             is_meta = get_attr("is_meta_tool")
             metadata = get_attr("metadata", {})
 
             # Case A: Internal Reasoning (Special Meta Tool)
-            if e_type == "meta_tool_call" or tool_name == "internal_reasoning":
-                tool_args = get_attr("tool_args", {})
+            if e_type == "meta_tool_call" or "reasoning" in tool_name:
+                tool_args = get_attr("tool_args", metadata) or metadata
 
                 # Extract clean thought object
                 thought = {
@@ -1252,7 +989,8 @@ class AgentChatView(MinuView):
                     "confidence_level": tool_args.get("confidence_level", 0.5),
                     "key_insights": tool_args.get("key_insights", []),
                 }
-                local_reasoning.append(thought)
+                if thought not in local_reasoning and (tool_args.get("current_focus") or tool_args.get("key_insights")):
+                    local_reasoning.append(thought)
 
                 self._update_msg(
                     ass_id, reasoning_steps=local_reasoning, current_phase="reasoning"
@@ -1294,7 +1032,14 @@ class AgentChatView(MinuView):
             # Case C: Regular Tools (Search, etc.)
             elif e_type == "tool_call" and not is_meta:
                 # Add to regular tools list (Implement logic if needed)
-                self._update_msg(ass_id, current_phase="using_tool", **metadata)
+                entry = {
+                    "tool_name": tool_name,
+                    "success": get_attr("success"),
+                    "duration": get_attr("duration"),
+                    "args": get_attr("tool_args"),
+                }
+                local_regular.append(entry)
+                self._update_msg(ass_id, current_phase="using_tool", regular_tool_calls=local_regular)
                 if self._session:
                     await self._session.force_flush()
 
@@ -1304,6 +1049,27 @@ class AgentChatView(MinuView):
                 if "outline_status" in metadata:
                     local_outline = metadata["outline_status"]
                     self._update_msg(ass_id, outline_progress=local_outline)
+                    if self._session:
+                        await self._session.force_flush()
+
+            # Case C: reasoning_loop
+            elif e_type == "reasoning_loop":
+                # Extract Outline Status
+                """metadata={
+                        "loop_number": self.current_loop_count,
+                        "outline_step": self.current_outline_step,
+                        "outline_total": len(self.outline.get("steps", [])) if self.outline else 0,
+                        "context_size": len(self.reasoning_context),
+                        "task_stack_size": len(self.internal_task_stack),
+                        "auto_recovery_attempts": self.auto_recovery_attempts,
+                        "performance_metrics": self.performance_metrics = {
+                "loop_times": [],
+                "progress_loops": 0,
+                "total_loops": 0
+            }
+                    }"""
+                if "outline_step" in metadata:
+                    self._update_msg(ass_id, reasoning_loop=metadata)
                     if self._session:
                         await self._session.force_flush()
 
@@ -1345,8 +1111,8 @@ class AgentChatView(MinuView):
     def _update_msg(self, msg_id, **kwargs):
         """Helper to update a specific message in the state list efficiently"""
         # Note: We must create a NEW list to trigger ReactiveState detection
-        from copy import deepcopy
-        current = deepcopy(self.messages.value)
+        # from copy import deepcopy
+        current = list(self.messages.value)
         for i, m in enumerate(current):
             if m["id"] == msg_id:
                 current[i].update(kwargs)  # Update dict in place
@@ -1358,6 +1124,9 @@ class AgentChatView(MinuView):
         self.status.value = "idle"
         self.status_text.value = ""
 
+        agent = await self._get_agent()
+        #if agent: # TODO
+        #    await agent.stop()
         # Mark any streaming message as complete
         messages = list(self.messages.value)
         for i, msg in enumerate(messages):
@@ -1401,6 +1170,193 @@ class AgentChatView(MinuView):
 
         return None
 
+    # ===== NEUE METHODEN =====
+
+    def _render_session_manager(self) -> Component:
+        """Kompakter Session Manager - Glassmorphism Style"""
+        is_open = self.session_manager_open.value
+        sessions = self.sessions.value or []
+        current_id = self._session_id
+
+        if not is_open:
+            return Spacer(size="0")
+
+        # Session Items
+        session_items = []
+        for sess in sessions:
+            is_active = sess["id"] == current_id
+            session_items.append(
+                Row(
+                    # Session Info
+                    Column(
+                        Text(
+                            sess.get("name", sess["id"][:8]),
+                            className="text-neutral-200 text-sm",
+                        ),
+                        Text(
+                            sess.get("created", ""), className="text-neutral-500 text-xs"
+                        ),
+                        gap="0",
+                    ),
+                    # Actions
+                    Row(
+                        Button(
+                            "✓" if is_active else "→",
+                            on_click=f"switch_session:{sess['id']}",
+                            variant="ghost",
+                            disabled=is_active,
+                            className="text-xs px-2",
+                        ),
+                        Button(
+                            "×",
+                            on_click=f"delete_session:{sess['id']}",
+                            variant="ghost",
+                            className="text-neutral-500 text-xs px-1",
+                        ),
+                        gap="1",
+                    ),
+                    justify="between",
+                    align="center",
+                    className=f"px-3 py-2 rounded-lg {'bg-primary-500/10 border border-primary-500/20' if is_active else 'hover:bg-neutral-800/50'}",
+                )
+            )
+
+        # Panel Content
+        panel = Card(
+            Column(
+                # Liste oder Empty State
+                Column(
+                    *session_items,
+                    gap="1",
+                    className="max-h-32 overflow-y-auto",
+                )
+                if sessions
+                else Text(
+                    "Keine Sessions",
+                    className="text-neutral-500 text-sm text-center py-3",
+                ),
+                # Neue Session Button
+                Divider(className="border-neutral-700/50 my-2"),
+                Button(
+                    "Neue Session",
+                    on_click="create_new_session",
+                    variant="ghost",
+                    icon="add",
+                    className="w-full text-sm",
+                ),
+                gap="2",
+            ),
+            className="bg-neutral-800/80 backdrop-blur-xl border border-neutral-700/50 rounded-xl p-3",
+        )
+
+        return Column(
+            panel,
+            gap="2",
+            className="pb-4",
+        )
+
+    def _dynamic_wrapper_session_manager(self) -> Component:
+        """Dynamic wrapper für Session Manager"""
+        dyn = Dynamic(
+            render_fn=self._render_session_manager,
+            bind=[self.session_manager_open, self.sessions],
+        )
+        self.register_dynamic(dyn)
+        return dyn
+
+    # ===== EVENT HANDLERS =====
+
+    async def toggle_session_manager(self, event):
+        """Toggle Session Manager"""
+        self.session_manager_open.value = not self.session_manager_open.value
+        if self._session:
+            await self._session.force_flush()
+
+    async def create_new_session(self, event):
+        """Neue Session erstellen"""
+        # Aktuelle speichern
+        if self.messages.value:
+            self._save_current_session()
+
+        # Neue Session
+        new_id = f"chat_{uuid.uuid4().hex[:8]}"
+        new_session = {
+            "id": new_id,
+            "name": f"Session {len(self.sessions.value) + 1}",
+            "created": datetime.now().strftime("%d.%m %H:%M"),
+        }
+
+        sessions = list(self.sessions.value)
+        sessions.insert(0, new_session)
+        self.sessions.value = sessions
+
+        self._session_id = new_id
+        self.messages.value = []
+
+        if self._session:
+            await self._session.force_flush()
+
+    async def switch_session(self, event):
+        """Session wechseln - event enthält session_id nach dem Doppelpunkt"""
+        # Parse session_id aus event
+        session_id = None
+        if isinstance(event, dict):
+            session_id = event.get("session_id") or event.get("value")
+        elif isinstance(event, str) and ":" in event:
+            session_id = event.split(":", 1)[1]
+
+        if not session_id or session_id == self._session_id:
+            return
+
+        self._save_current_session()
+        self._session_id = session_id
+        self.messages.value = self._load_session_messages(session_id)
+
+        if self._session:
+            await self._session.force_flush()
+
+    async def delete_session(self, event):
+        """Session löschen"""
+        session_id = None
+        if isinstance(event, dict):
+            session_id = event.get("session_id") or event.get("value")
+        elif isinstance(event, str) and ":" in event:
+            session_id = event.split(":", 1)[1]
+
+        if not session_id:
+            return
+
+        self.sessions.value = [s for s in self.sessions.value if s["id"] != session_id]
+
+        if session_id == self._session_id:
+            self._session_id = f"chat_{uuid.uuid4().hex[:8]}"
+            self.messages.value = []
+
+        if self._session:
+            await self._session.force_flush()
+
+    def _save_current_session(self):
+        """Aktuelle Session speichern"""
+        sessions = list(self.sessions.value)
+        exists = any(s["id"] == self._session_id for s in sessions)
+
+        if not exists and self.messages.value:
+            sessions.insert(
+                0,
+                {
+                    "id": self._session_id,
+                    "name": f"Session {len(sessions) + 1}",
+                    "created": datetime.now().strftime("%d.%m %H:%M"),
+                },
+            )
+            self.sessions.value = sessions
+
+    def _load_session_messages(self, session_id: str) -> list:
+        """Messages laden (Stub)"""
+        return []
+
+
+
 
 # ============================================================================
 # REGISTRATION
@@ -1410,7 +1366,6 @@ class AgentChatView(MinuView):
 def register_agent_chat_ui():
     """Register the Agent Chat UI view"""
     register_view("agent_chat", AgentChatView)
-    register_view("flowagent_chat", AgentChatView)  # Alias
     register_view("agent_ui", AgentChatView)  # Override old
 
 
