@@ -173,10 +173,13 @@ class AgentChatView(MinuView):
 
     def _render_chat_messages_content(self)-> Component:
         return Column(
-                # Empty State oder Messages
-                self._render_empty_state() if not self.messages.value else self._render_messages(),
-                className="flex-1 overflow-y-auto px-4 py-6",
-            )
+            # Empty State oder Messages
+            self._render_empty_state()
+            if not self.messages.value
+            else self._render_messages(),
+            className="flex-1 overflow-y-auto px-4 py-6",
+            style="overflow-anchor: none;",
+        )
 
     def _dynamic_wrapper_messages(self) -> Component:
         dyn = Dynamic(

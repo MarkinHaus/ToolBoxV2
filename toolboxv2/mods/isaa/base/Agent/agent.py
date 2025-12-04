@@ -6166,6 +6166,9 @@ You MUST use the specified method and achieve the expected outcome before advanc
                     ))
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self._track_action_type(tool_name, success=False)
                 meta_tool_duration = time.perf_counter() - meta_tool_start
                 error_details = {
                     "meta_tool_name": tool_name,
@@ -6208,41 +6211,57 @@ You MUST use the specified method and achieve the expected outcome before advanc
             batch_performance = self._calculate_batch_performance(matches)
             reasoning_progress = self._assess_reasoning_progress()
 
-            await progress_tracker.emit_event(ProgressEvent(
-                event_type="meta_tool_batch_complete",
-                timestamp=time.time(),
-                node_name="LLMReasonerNode",
-                status=NodeStatus.COMPLETED,
-                session_id=session_id,
-                metadata={
-                    "total_meta_tools_processed": len(matches),
-                    "reasoning_loop": self.current_loop_count,
-                    "outline_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                    "batch_execution_complete": True,
-                    "final_context_size": len(self.reasoning_context),
-                    "final_task_stack_size": len(self.internal_task_stack),
-                    "meta_tools_executed": [match[0] for match in matches],
-                    "execution_phase": "meta_tool_batch_summary",
-                    "batch_performance": batch_performance,
-                    "reasoning_progress": reasoning_progress,
-                    "progress_made": result["progress_made"],
-                    "action_taken": result["action_taken"],
-                    "outline_status": {
-                        "current_step": self.current_outline_step if hasattr(self, 'current_outline_step') else 0,
-                        "total_steps": len(self.outline.get('steps', [])) if self.outline else 0,
-                        "completion_ratio": (
-                                self.current_outline_step / len(self.outline.get('steps', [1]))) if self.outline else 0
+            await progress_tracker.emit_event(
+                ProgressEvent(
+                    event_type="meta_tool_batch_complete",
+                    timestamp=time.time(),
+                    node_name="LLMReasonerNode",
+                    status=NodeStatus.COMPLETED,
+                    session_id=session_id,
+                    metadata={
+                        "total_meta_tools_processed": len(matches),
+                        "reasoning_loop": self.current_loop_count,
+                        "outline_step": self.current_outline_step
+                        if hasattr(self, "current_outline_step")
+                        else 0,
+                        "batch_execution_complete": True,
+                        "final_context_size": len(self.reasoning_context),
+                        "final_task_stack_size": len(self.internal_task_stack),
+                        "meta_tools_executed": [match[0] for match in matches],
+                        "execution_phase": "meta_tool_batch_summary",
+                        "batch_performance": batch_performance,
+                        "reasoning_progress": reasoning_progress,
+                        "progress_made": result["progress_made"],
+                        "action_taken": result["action_taken"],
+                        "outline_status": {
+                            "current_step": self.current_outline_step
+                            if hasattr(self, "current_outline_step")
+                            else 0,
+                            "total_steps": len(self.outline.get("steps", []))
+                            if self.outline
+                            else 0,
+                            "completion_ratio": (
+                                self.current_outline_step
+                                / len(self.outline.get("steps", [1]))
+                            )
+                            if self.outline
+                            else 0,
+                        },
+                        "performance_summary": {
+                            "loop_efficiency": self.performance_metrics.get(
+                                "action_efficiency", 0
+                            )
+                            if hasattr(self, "performance_metrics")
+                            else 0,
+                            "recovery_attempts": getattr(
+                                self, "auto_recovery_attempts", 0
+                            ),
+                            "context_management_active": len(self.reasoning_context)
+                            >= getattr(self, "context_summary_threshold", 15),
+                        },
                     },
-                    "performance_summary": {
-                        "loop_efficiency": self.performance_metrics.get("action_efficiency", 0) if hasattr(self,
-                                                                                                           'performance_metrics') else 0,
-                        "recovery_attempts": getattr(self, 'auto_recovery_attempts', 0),
-                        "context_management_active": len(self.reasoning_context) >= getattr(self,
-                                                                                            'context_summary_threshold',
-                                                                                            15)
-                    }
-                }
-            ))
+                )
+            )
 
         return result
 
@@ -6346,12 +6365,13 @@ You MUST use the specified method and achieve the expected outcome before advanc
 
                 # 3. Store individual tool results with direct access
                 for result_id, result_data in tool_results.items():
-                    self.variable_manager.set(f"results.{result_id}.data", result_data.get("data"))
+                    result_id = f"delegation.loop_{self.current_loop_count}.result_{result_id}"
+                    self.variable_manager.set(f"results.{result_id}.data", result_data.get("data") if isinstance(result_data, dict) else result_data)
 
                 # 4. Create smart access keys for common patterns
                 if "read_file" in tools_list and tool_results:
-                    file_content = next((res.get("data") for res in tool_results.values()
-                                         if res.get("data") and isinstance(res.get("data"), str)), None)
+                    file_content = next((res.get("data") if isinstance(res, dict) else res for res in tool_results.values()
+                                         if (res.get("data") if isinstance(res, dict) else res) and isinstance(res.get("data") if isinstance(res, dict) else res, str)), None)
                     if file_content:
                         self.variable_manager.set("var.file_content", file_content)
                         self.variable_manager.set("latest_file_content", file_content)
@@ -6396,6 +6416,8 @@ DELEGATION END
             return {"context_addition": context_addition}
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             error_msg = f"❌ DELEGATION FAILED: {str(e)}"
             # Store error for debugging
             if self.variable_manager:
@@ -6677,7 +6699,6 @@ Access: Successfully retrieved from variable system"""
         # Fallback: show available scopes
         available_vars = self.variable_manager.get_available_variables()
         return f"❌ Variable not found: {scope}.{key}\n\n📋 Available scopes: {', '.join(available_vars.keys())}"
-
 
     async def _execute_write_to_variables(self, args: dict) -> dict[str, Any]:
         """Enhanced variable writing with automatic result storage"""
@@ -7206,7 +7227,6 @@ Access: Successfully retrieved from variable system"""
         score -= 0.1 * recovery_attempts
 
         return min(1.0, max(0.0, score))
-
 
     def _summarize_reasoning_context(self) -> str:
         """Summarize the current reasoning context"""

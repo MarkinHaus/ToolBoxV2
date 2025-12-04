@@ -279,32 +279,71 @@ class ApiKeyHandler(metaclass=Singleton):
     def __init__(self, storage_directory: str):
         self.storage_directory = storage_directory
         os.makedirs(storage_directory, exist_ok=True)
-        self.keys_file = os.path.join(storage_directory, 'api_keys.enc')
+        self.keys_file = os.path.join(storage_directory, "api_keys.enc")
         self._keys: Dict[str, Dict[str, str]] = {}
+        self._load_env_keys()
         self._load_keys()
 
+    def _load_env_keys(self):
+        """Load API keys from environment variables"""
+        # Format: TB_BLOB_API_KEY_<PORT>=<key>
+        # oder: TB_BLOB_API_KEY_<HOST>_<PORT>=<key>
+        import re
+
+        for key, value in os.environ.items():
+            match = re.match(r"TB_BLOB_API_KEY_(\d+)$", key)
+            if match:
+                port = match.group(1)
+                server_url = f"http://127.0.0.1:{port}"
+                self._keys[server_url] = {
+                    "api_key": value,
+                    "user_id": os.environ.get(f"TB_BLOB_USER_ID_{port}"),
+                    "from_env": True,  # Markieren als ENV-Key
+                }
+                get_logger().info(f"Loaded API key from ENV for port {port}")
+
     def _load_keys(self):
+        """Load stored keys (skipping ENV-overridden servers)"""
         if not os.path.exists(self.keys_file):
             return
         try:
-            with open(self.keys_file, 'r') as f:
+            with open(self.keys_file, "r") as f:
                 encrypted_data = f.read()
             if encrypted_data:
                 device_key = DEVICE_KEY()
                 decrypted = Code.decrypt_symmetric(encrypted_data, device_key)
                 loaded = json.loads(decrypted)
                 for server, value in loaded.items():
+                    # Skip wenn wir schon einen ENV-Key haben
+                    if server in self._keys and self._keys[server].get("from_env"):
+                        continue
+
                     if isinstance(value, str):
-                        self._keys[server] = {'api_key': value, 'user_id': None}
+                        self._keys[server] = {"api_key": value, "user_id": None}
                     else:
                         self._keys[server] = value
-                get_logger().info(f"Loaded {len(self._keys)} API keys from storage")
+                get_logger().info(f"Loaded {len(self._keys)} API keys")
         except Exception as e:
             get_logger().error(f"Failed to load API keys: {e}")
-            self._keys = {}
-            import traceback
-            get_logger().error(traceback.format_exc())
-            exit(1)
+
+    def set_key(self, server_url: str, api_key: str, user_id: Optional[str] = None):
+        """Set key - aber nicht überschreiben wenn ENV-Key"""
+        if server_url in self._keys and self._keys[server_url].get("from_env"):
+            get_logger().debug(f"Skipping key update for {server_url} (ENV override)")
+            return
+
+        self._keys[server_url] = {"api_key": api_key, "user_id": user_id}
+        self._save_keys()
+
+    def remove_key(self, server_url: str):
+        """Remove key - aber nicht wenn ENV-Key"""
+        if server_url in self._keys:
+            if self._keys[server_url].get('from_env'):
+                get_logger().debug(f"Cannot remove ENV key for {server_url}")
+                return
+            del self._keys[server_url]
+            self._save_keys()
+            get_logger().info(f"Removed API key for {server_url}")
 
     def _save_keys(self):
         try:
@@ -328,22 +367,8 @@ class ApiKeyHandler(metaclass=Singleton):
             return server_data.get('user_id')
         return None
 
-    def set_key(self, server_url: str, api_key: str, user_id: Optional[str] = None):
-        self._keys[server_url] = {
-            'api_key': api_key,
-            'user_id': user_id
-        }
-        self._save_keys()
-
     def has_key(self, server_url: str) -> bool:
         return server_url in self._keys
-
-    def remove_key(self, server_url: str):
-        """Remove an API key for a server"""
-        if server_url in self._keys:
-            del self._keys[server_url]
-            self._save_keys()
-            get_logger().info(f"Removed API key for {server_url}")
 
     def get_all_servers(self) -> List[str]:
         """Get all servers with stored keys"""
@@ -443,16 +468,31 @@ class BlobStorage:
 
     def _ensure_api_keys(self):
         """Ensure we have API keys for all servers, creating them if needed"""
+        servers_needing_keys = []
+
         for server in self.servers:
             if not self.api_key_handler.has_key(server):
-                try:
-                    self._create_api_key(server)
-                except Exception as e:
-                    get_logger().warning(f"Failed to create API key for {server}: {e}")
-                    self._server_status[server].mark_error(str(e), ConnectionState.UNREACHABLE)
+                servers_needing_keys.append(server)
 
-    def _create_api_key(self, server: str, device_name: Optional[str] = None):
-        """Create a new API key on the server"""
+        if not servers_needing_keys:
+            return
+
+        get_logger().info(f"Creating API keys for {len(servers_needing_keys)} servers...")
+
+        for server in servers_needing_keys:
+            try:
+                success = self._create_api_key(server)
+                if not success:
+                    self._server_status[server].mark_error(
+                        "Failed to create key", ConnectionState.UNAUTHORIZED
+                    )
+            except Exception as e:
+                get_logger().warning(f"Failed to create API key for {server}: {e}")
+                self._server_status[server].mark_error(str(e), ConnectionState.UNREACHABLE)
+
+
+    def _create_api_key(self, server: str, device_name: Optional[str] = None) -> bool:
+        """Create a new API key on the server and validate it works"""
         url = f"{server.rstrip('/')}/keys"
         if device_name is None:
             device_name = platform.node()
@@ -463,16 +503,31 @@ class BlobStorage:
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
-            api_key = data.get('key')
-            user_id = data.get('user_id')
+            api_key = data.get("key")
+            user_id = data.get("user_id")
 
-            if api_key:
-                self.api_key_handler.set_key(server, api_key, user_id)
+            if not api_key:
+                get_logger().error(f"Server {server} returned no API key")
+                return False
+
+            # Speichere den Key
+            self.api_key_handler.set_key(server, api_key, user_id)
+            get_logger().info(f"Created API key for {server} (user_id: {user_id})")
+
+            # WICHTIG: Kurz warten, damit Server den Key committen kann
+            time.sleep(0.1)
+
+            # Validiere, dass der Key wirklich funktioniert
+            if self._validate_key(server):
                 self._server_status[server].mark_healthy()
-                get_logger().info(f"Created API key for {server} (user_id: {user_id})")
+                return True
+            else:
+                get_logger().warning(f"Newly created key for {server} failed validation")
+                return False
+
         except Exception as e:
             get_logger().error(f"Failed to create API key for {server}: {e}")
-            raise
+            return False
 
     def _validate_key(self, server: str) -> bool:
         """Validate an API key with the server"""
@@ -480,43 +535,74 @@ class BlobStorage:
         if not api_key:
             return False
 
+        # Versuche erst /keys/validate
         url = f"{server.rstrip('/')}/keys/validate"
         try:
-            response = requests.get(
-                url,
-                headers={'x-api-key': api_key},
-                timeout=5
-            )
+            response = requests.get(url, headers={"x-api-key": api_key}, timeout=5)
             if response.status_code == 200:
                 self._server_status[server].mark_healthy()
                 get_logger().debug(f"API key validated for {server}")
                 return True
             elif response.status_code == 401:
-                get_logger().warning(f"API key invalid for {server}, will re-create")
-                self._server_status[server].mark_error("Key invalid", ConnectionState.UNAUTHORIZED)
+                get_logger().warning(f"API key invalid for {server}")
+                self._server_status[server].mark_error(
+                    "Key invalid", ConnectionState.UNAUTHORIZED
+                )
                 return False
+            elif response.status_code in (404, 405):
+                # /keys/validate Endpoint existiert nicht - versuche alternativen Check
+                get_logger().debug(
+                    f"Validation endpoint not available for {server}, trying health check"
+                )
+                return self._validate_key_via_health(server, api_key)
             else:
-                get_logger().warning(f"Key validation returned {response.status_code} for {server}")
+                get_logger().warning(
+                    f"Key validation returned {response.status_code} for {server}"
+                )
                 return False
         except requests.exceptions.ConnectionError:
             get_logger().debug(f"Server {server} unreachable during key validation")
-            self._server_status[server].mark_error("Unreachable", ConnectionState.UNREACHABLE)
+            self._server_status[server].mark_error(
+                "Unreachable", ConnectionState.UNREACHABLE
+            )
             return False
         except Exception as e:
             get_logger().warning(f"Key validation failed for {server}: {e}")
             return False
 
+    def _validate_key_via_health(self, server: str, api_key: str) -> bool:
+        """Fallback: Validiere Key über health endpoint"""
+        try:
+            url = f"{server.rstrip('/')}/health"
+            response = requests.get(url, headers={"x-api-key": api_key}, timeout=5)
+            # Health endpoint sollte 200 zurückgeben wenn Key valid
+            if response.status_code == 200:
+                self._server_status[server].mark_healthy()
+                return True
+            elif response.status_code == 401:
+                return False
+            # Health ohne Auth? Dann ist der Key vielleicht trotzdem ok
+            return response.status_code == 200
+        except:
+            return False
+
     def _validate_all_keys(self):
         """Validate all API keys and re-create if needed"""
         for server in self.servers:
-            if self.api_key_handler.has_key(server):
-                if not self._validate_key(server):
-                    # Key is invalid, remove and re-create
-                    self.api_key_handler.remove_key(server)
-                    try:
-                        self._create_api_key(server)
-                    except Exception as e:
-                        get_logger().error(f"Failed to re-create key for {server}: {e}")
+            if not self.api_key_handler.has_key(server):
+                continue
+
+            if not self._validate_key(server):
+                # Key ist invalid - entfernen und neu erstellen
+                get_logger().info(f"Re-creating invalid key for {server}")
+                self.api_key_handler.remove_key(server)
+
+                # Warten zwischen Remove und Create
+                time.sleep(0.2)
+
+                success = self._create_api_key(server)
+                if not success:
+                    get_logger().error(f"Failed to re-create key for {server}")
 
     def _revalidate_keys(self):
         """Re-validate all keys (called after 401 errors)"""
@@ -587,8 +673,12 @@ class BlobStorage:
                     get_app().sprint(f"response {response.status_code}")
 
                     if 500 <= response.status_code < 600:
-                        self._server_status[server].mark_error(f"Server error {response.status_code}")
-                        get_logger().warning(f"Server {server} returned {response.status_code}. Retrying...")
+                        self._server_status[server].mark_error(
+                            f"Server error {response.status_code}"
+                        )
+                        get_logger().warning(
+                            f"Server {server} returned {response.status_code}. Retrying..."
+                        )
                         continue
 
                     if response.status_code == 403:
@@ -603,33 +693,12 @@ class BlobStorage:
                         get_logger().error(f"API key invalid for {server} - {response.text} ({endpoint}, {method})")
                         self._server_status[server].mark_error(error_msg, ConnectionState.UNAUTHORIZED)
 
-                        # Try to re-validate/recreate key for this server
+                        # Markiere Key als ungültig, aber erstelle NICHT sofort neu
+                        # Das passiert erst beim nächsten Server-Versuch
+                        self.api_key_handler.remove_key(server)
 
-                        if not self._validate_key(server):
-                            # Nur wenn Validierung fehlschlägt: Neu erstellen
-                            self.api_key_handler.remove_key(server)
-                            self._create_api_key(server)
-
-                        if self._auto_validate_keys:
-                            try:
-                                # Retry with new key
-                                api_key = self.api_key_handler.get_key(server)
-                                if api_key:
-                                    kwargs['headers']['x-api-key'] = api_key
-                                    retry_response = self.session.request(method, url, timeout=request_timeout,
-                                                                          **kwargs)
-                                    if retry_response.status_code != 401:
-                                        self._server_status[server].mark_healthy()
-                                        retry_response.raise_for_status()
-                                        return retry_response
-                            except Exception as e:
-                                get_logger().error(f"Failed to recreate key: {e}")
-
-                        # Fall through to try next server
-
-                    response.raise_for_status()
-                    self._server_status[server].mark_healthy()
-                    return response
+                        # Weiter zum nächsten Server statt Retry-Loop hier
+                        continue
 
                 except requests.exceptions.RequestException as e:
                     last_error = e

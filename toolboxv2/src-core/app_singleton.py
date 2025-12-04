@@ -153,6 +153,16 @@ def get_app() -> App:
     global _GLOBAL_APP
 
     if _GLOBAL_APP is None:
+        try:
+            res = init_app()
+            if res.get("status") != "success":
+                raise RuntimeError(f"Failed to initialize app: {res}")
+            if _GLOBAL_APP is None:
+                raise RuntimeError(f"Failed to initialize app: {res}")
+            return _GLOBAL_APP
+        except Exception as e:
+            print(f"Failed to initialize app: {e}")
+            traceback.print_exc()
         raise RuntimeError(
             "App not initialized! Call init_app() first from Rust."
         )
