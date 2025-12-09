@@ -22,11 +22,12 @@ from toolboxv2.flows import flows_dict as flows_dict_func
 from toolboxv2.setup_helper import run_command
 from toolboxv2.tests.a_util import async_test
 from toolboxv2.utils import get_app
+from toolboxv2.utils.clis.cli_worker_manager import main as cli_worker_manager
+from toolboxv2.utils.workers import cli_config, cli_session, cli_event, cli_http_worker, cli_ws_worker
 from toolboxv2.utils.clis.tb_lang_cli import cli_tbx_main
-from toolboxv2.utils.clis.tbx_core_v3_cli import cli_tbx_core
+from toolboxv2.utils.clis.minio_user_manager import main as minio_user_manager_main
 # TEMPORARY FIX: Disabled user_dashboard import due to pywintypes dependency issue
-# from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
-interactive_user_dashboard = None  # Placeholder to prevent NameError
+from toolboxv2.utils.clis.user_dashboard import interactive_user_dashboard
 from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
@@ -38,6 +39,7 @@ from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
 from toolboxv2.utils.system.main_tool import MainTool, get_version_from_pyproject
 from toolboxv2.utils.clis.tcm_p2p_cli import cli_tcm_runner
 from .utils.toolbox import App as TbApp
+from .mcp_server import main as cli_mcp_server
 
 load_dotenv()
 
@@ -316,7 +318,8 @@ def setup_service_linux():
 RUNNER_KEYS = [
     "venv", "api", "ipy", "db", "gui", "p2p",
     "status", "browser", "mcp", "login", "logout",
-    "run", "mods", "flow", "core"
+    "run", "mods", "flow", "user", "workers",
+    "config","session","broker","http_worker","ws_worker",
 ]
 
 DEFAULT_MODI = "cli"
@@ -653,23 +656,17 @@ def parse_args():
                             const=True,
                             default=False)
 
-    extensions.add_argument("api",
-                            help="Manage API server (use: tb api -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
-
     extensions.add_argument("mods",
                             help="Open interactive module manager",
                             nargs='?',
                             const=True,
                             default=False)
 
-    extensions.add_argument("p2p",
-                            help="Manage P2P client (use: tb p2p -h)",
-                            nargs='?',
-                            const=True,
-                            default=False)
+    # extensions.add_argument("p2p",
+    #                         help="Manage P2P client (use: tb p2p -h)",
+    #                         nargs='?',
+    #                         const=True,
+    #                         default=False)
 
     extensions.add_argument("db",
                             help="Database commands (use: tb db -h)",
@@ -721,7 +718,42 @@ def parse_args():
                             default=False)
 
     extensions.add_argument("status",
-                            help="Display system status (DB, API, P2P)",
+                            help="Display system status (DB, API, P2P, Workers)",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("user",
+                            help="User management",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("workers",
+                            help="Worker management",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("config",
+                            help="Manage configuration for Worker system",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("session",
+                            help="Session management for workers",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("event",
+                            help="Event management for workers",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("http_worker",
+                            help="HTTP worker",
+                            nargs='?',
+                            const=True,
+                            default=False)
+    extensions.add_argument("ws_worker",
+                            help="WebSocket worker",
                             nargs='?',
                             const=True,
                             default=False)
@@ -1972,16 +2004,25 @@ def runner_setup():
         "gui": helper_gui,
         "p2p": cli_tcm_runner,
         "status": status_helper,
+
         "browser": lambda: __import__('toolboxv2.tb_browser.install', fromlist=['main']).main(),
-        "mcp": lambda: __import__('toolboxv2.mcp_server', fromlist=['main']).main(),
+        "mcp": cli_mcp_server,
         "login": cli_web_login,
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
         "run": cli_tbx_main,
-        "core": cli_tbx_core,
-        "default": interactive_user_dashboard
+        "user": minio_user_manager_main,
+        "default": interactive_user_dashboard,
+
+        "workers": cli_worker_manager,
+        "config": cli_config,
+        "session": cli_session,
+        "broker": cli_event,
+        "http_worker": cli_http_worker,
+        "ws_worker": cli_ws_worker,
     }
+
     return runner
 
 def main_runner():
@@ -2034,8 +2075,6 @@ def main_runner():
             pass
 
 
-
-
 import ctypes
 
 
@@ -2056,7 +2095,7 @@ def get_real_python_executable():
 def server_helper(instance_id:str="main", db_mode=None):
     # real_exe = get_real_python_executable()
     from pathlib import Path
-    sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE")))
+    sys.executable = str(Path(os.getenv("PYTHON_EXECUTABLE", sys.executable)))
     print("Using Python executable env:", sys.executable)
     loop = asyncio.new_event_loop()
     sys.argv.append('-l')

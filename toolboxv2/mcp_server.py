@@ -23,6 +23,7 @@ from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 import mcp.server.stdio
 import mcp.types as types
+from pydantic import AnyUrl
 
 # ToolBoxV2 imports
 from toolboxv2 import get_app, App, Result, Code, Style
@@ -30,6 +31,33 @@ from toolboxv2.utils.extras import stram_print, quick_info as _quick_info, quick
 from toolboxv2.utils.extras.blobs import BlobFile
 from toolboxv2.utils.system.types import CallingObject
 from toolboxv2.flows import flows_dict as flows_dict_func
+GLOBAL_SERVER: Optional[Server] = None
+
+class MCPOutputProxy(io.StringIO):
+    """Proxy that forwards all stdout/stderr writes into MCP log messages."""
+
+    def __init__(self, stream_name: str):
+        super().__init__()
+        self.stream_name = stream_name
+
+    def write(self, data):
+        # Buffer locally (so code that reads from stdout still behaves)
+        super().write(data)
+
+        # Only send meaningful messages (no empty newline spam)
+        if data.strip():
+            if GLOBAL_SERVER:
+                try:
+                    if not hasattr(GLOBAL_SERVER, 'request_context'):
+                        return len(data)
+                    GLOBAL_SERVER.request_context.session.send_log_message(
+                        level="info" if self.stream_name == "stdout" else "error",
+                        data=data,
+                    )
+                except Exception:
+                    pass  # fail-safe, MCP must not crash
+
+        return len(data)
 
 
 # Suppress stdout/stderr during critical MCP operations
@@ -44,10 +72,16 @@ class MCPSafeIO:
     def __enter__(self):
         if self.suppress_stdout:
             self.original_stdout = sys.stdout
-            sys.stdout = io.StringIO()
+            if GLOBAL_SERVER:
+                sys.stdout = MCPOutputProxy("stdout")
+            else:
+                sys.stdout = io.StringIO()
         if self.suppress_stderr:
             self.original_stderr = sys.stderr
-            sys.stderr = io.StringIO()
+            if GLOBAL_SERVER:
+                sys.stderr = MCPOutputProxy("stderr")
+            else:
+                sys.stderr = io.StringIO()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -697,8 +731,10 @@ class ToolBoxV2MCPServer:
     """Production-ready unified MCP Server with smart features"""
 
     def __init__(self, config: MCPConfig = None):
+        global GLOBAL_SERVER
         self.config = config or MCPConfig()
         self.server = Server(self.config.server_name)
+        GLOBAL_SERVER = self.server
         self.api_key_manager = UnifiedAPIKeyManager(self.config.api_keys_file)
         self.flow_session_manager = EnhancedFlowSessionManager()
         self.init_manager = SmartInitManager(self.config)
@@ -962,8 +998,9 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
             return resources
 
         @self.server.read_resource()
-        async def handle_read_resource(uri: str) -> str:
+        async def handle_read_resource(uri: AnyUrl) -> str:
             """Read resource with enhanced caching"""
+            uri = str(uri)
             if uri.startswith("flowagents://"):
                 resource_id = uri.replace("flowagents://", "")
                 if resource_id in self.flowagents_resources:
@@ -1835,7 +1872,6 @@ class ProductionMCPInterface:
 async def main():
     """Production main entry point with comprehensive CLI"""
     import argparse
-
     parser = argparse.ArgumentParser(
         description="ToolBoxV2 MCP Server - Production Ready",
         formatter_class=argparse.RawDescriptionHelpFormatter,

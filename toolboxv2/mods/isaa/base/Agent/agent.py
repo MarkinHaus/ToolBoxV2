@@ -18,8 +18,12 @@ from typing import Any
 
 import yaml
 
-from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import IntelligentRateLimiter, \
-    LiteLLMRateLimitHandler
+from toolboxv2.mods.isaa.base.IntelligentRateLimiter.intelligent_rate_limiter import (
+    IntelligentRateLimiter,
+    LiteLLMRateLimitHandler,
+    load_handler_from_file,
+    create_handler_from_config,
+)
 from toolboxv2.mods.isaa.base.tbpocketflow import AsyncFlow, AsyncNode
 
 from pydantic import BaseModel, ValidationError
@@ -2626,29 +2630,31 @@ class LLMToolNode(AsyncNode):
 
                 conversation_history.append({"role": "user", "content": next_prompt})
                 # Update variable manager with tool results
-                self._update_variables_with_results(tool_results, prep_res["variable_manager"])
+                self._update_variables_with_results(
+                    tool_results, prep_res["variable_manager"]
+                )
 
             except Exception as e:
                 llm_duration = time.perf_counter() - llm_start
 
                 if progress_tracker:
-                    await progress_tracker.emit_event(ProgressEvent(
-                        event_type="llm_call",  # Konsistenter Event-Typ
-                        node_name="LLMToolNode",
-                        session_id=prep_res.get("session_id"),
-                        status=NodeStatus.FAILED,
-                        success=False,
-                        duration=llm_duration,
-                        llm_model=model_to_use,
-                        error_details={
-                            "message": str(e),
-                            "type": type(e).__name__
-                        },
-                        metadata={"call_number": total_llm_calls + 1}
-                    ))
+                    await progress_tracker.emit_event(
+                        ProgressEvent(
+                            event_type="llm_call",  # Konsistenter Event-Typ
+                            node_name="LLMToolNode",
+                            session_id=prep_res.get("session_id"),
+                            status=NodeStatus.FAILED,
+                            success=False,
+                            duration=llm_duration,
+                            llm_model=model_to_use,
+                            error_details={"message": str(e), "type": type(e).__name__},
+                            metadata={"call_number": total_llm_calls + 1},
+                        )
+                    )
                 eprint(f"LLM tool execution failed: {e}")
                 final_response = f"I encountered an error while processing: {str(e)}"
                 import traceback
+
                 print(traceback.format_exc())
                 break
 
@@ -2679,6 +2685,23 @@ class LLMToolNode(AsyncNode):
         agent_instance = prep_res.get("agent_instance")
         query = prep_res.get('task_description', '').lower()
 
+        internal_worker_prompt = (
+            "ROLE: INTERNAL EXECUTION UNIT\n"
+            "You are a specialized internal sub-agent working for a Supervisor Agent, NOT a human user.\n"
+            "Your inputs come from a larger reasoning loop, and your outputs will be parsed programmatically.\n\n"
+
+            "COMMANDMENTS:\n"
+            "1. NO CHITCHAT: Do not use conversational filler (e.g., 'Sure', 'I will do this', 'Here is the result').\n"
+            "2. PRECISE EXECUTION: Execute ONLY the specific task or step assigned in the 'Current Request'.\n"
+            "3. FINAL REPORT: Your final answer via 'direct_response' must be a structured result summary.\n"
+            "   - State clearly what was done.\n"
+            "   - List any data or facts found.\n"
+            "   - If a file was written, confirm the path.\n"
+            "4. NO SCOPE CREEP: Do not try to solve the entire project; focus only on the current atomic step.\n"
+            "\n"
+            "CONTEXT:\n"
+        )
+        base_message = internal_worker_prompt + base_message
         base_message += ("\n\nAlways follow this action pattern"
                          "**THINK** -> **PLAN** -> **ACT** using tools!\n"
                          "all progress must be stored to ( variable system, memory, external services )!\n"
@@ -3058,7 +3081,9 @@ You can call multiple tools in one response. Use | for multi-line strings contai
                     if active_tasks:
                         unified_context_parts.append(f"Active Tasks: {len(active_tasks)}")
                     if recent_completions:
-                        unified_context_parts.append(f"Recent Completions: {len(recent_completions)}")
+                        unified_context_parts.append(
+                            f"Recent Completions: {len(recent_completions)}"
+                        )
 
                 # Available results from unified context
                 variables_context = unified_context.get("variables", {})
@@ -3115,6 +3140,12 @@ You can call multiple tools in one response. Use | for multi-line strings contai
 
         # Final variable resolution
         final_prompt = "\n".join(prompt_parts)
+        reminder_footer = (
+            "\n\n--- INTERNAL INSTRUCTION ---\n"
+            "Perform this specific step efficiently.\n"
+            "Return a REPORT summarizing the outcome. Do not ask follow-up questions."
+        )
+        final_prompt += reminder_footer
         if variable_manager:
             final_prompt = variable_manager.format_text(final_prompt)
 
@@ -5142,7 +5173,7 @@ You have access to these meta-tools to control sub-systems. Use the EXACT syntax
 - Purpose: Manage your high-level to-do list
 - Actions: "add", "remove", "complete", "get_current"
 - Example: META_TOOL_CALL: manage_internal_task_stack(action="add", task_description="Research competitor analysis data")
-- ACTIONS ONL AVALABLE ACTIONS ("add", "remove", "complete", "get_current")
+- ACTIONS ONL AVAILABLE ACTIONS ("add", "remove", "complete", "get_current")
 
 **META_TOOL_CALL: delegate_to_llm_tool_node(task_description: str, tools_list: list[str])**
 - Purpose: Delegate specific, self-contained tasks requiring external tools
@@ -5231,7 +5262,7 @@ Latest unified context: (note delegation results could be wrong or misleading)
 must validate <immediate_context> output!
 - validate the <immediate_context> output! before proceeding with the outline!
 - output compleat fail -> direct_response
-- informations missing or output recovery needed -> repeat step with a different strategy
+- information's missing or output recovery needed -> repeat step with a different strategy
 - not enough structure -> use create_and_execute_plan meta-tool call
 - output is valid -> continue with the outline!
 - if dynamic Planing is needed, you must use the appropriate meta-tool call
@@ -8023,11 +8054,11 @@ class VariableManager:
             if scope_name == "shared":
                 continue
             if isinstance(scope_data, dict):
-                pass
+                scope_data = f"Dict with keys: {list(scope_data.keys())}"
             elif isinstance(scope_data, list):
-                pass
+                scope_data = f"List with {len(scope_data)} items"
             elif isinstance(scope_data, str | int):
-                pass
+                scope_data = f"{scope_data}"[:70]
             else:
                 continue
 
@@ -9116,8 +9147,12 @@ class FlowAgent:
         self.resent_tools_called = []
 
         # LLM Rate Limiter (P1 - HOCH: Prevent cost explosions)
-        self.llm_rate_limiter = IntelligentRateLimiter()
-        self.llm_handler = LiteLLMRateLimitHandler(self.llm_rate_limiter, max_retries=3)
+        if isinstance(amd.handler_path_or_dict, dict):
+            self.llm_handler = create_handler_from_config(amd.handler_path_or_dict)
+        elif isinstance(amd.handler_path_or_dict, str) and os.path.exists(amd.handler_path_or_dict):
+            self.llm_handler = load_handler_from_file(amd.handler_path_or_dict)
+        else:
+            self.llm_handler = LiteLLMRateLimitHandler(max_retries=3)
 
 
         # MCP Session Health Tracking (P0 - KRITISCH: Circuit breaker pattern)

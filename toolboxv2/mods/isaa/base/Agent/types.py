@@ -796,6 +796,7 @@ class AgentModelData(BaseModel):
     caching: bool = True
     persona: PersonaConfig | None = True
     use_fast_response: bool = True
+    handler_path_or_dict: str | dict[str, Any] | None = None
 
     def get_system_message_with_persona(self) -> str:
         """Get system message with persona integration"""

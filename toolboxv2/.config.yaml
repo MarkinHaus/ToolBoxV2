@@ -1,0 +1,117 @@
+# ToolBoxV2 Worker System Configuration
+# Environment variables can be used: ${VAR_NAME} or ${VAR_NAME:default}
+
+# Runtime environment: development, production, tauri
+environment: "${TB_ENV:development}"
+debug: false
+log_level: "INFO"
+data_dir: "${TB_DATA_DIR:}"
+
+# ZeroMQ IPC Configuration
+# WICHTIG: Jeder Socket braucht einen eigenen Port!
+zmq:
+  pub_endpoint: "tcp://127.0.0.1:5555"   # Broker XPUB -> Worker SUB
+  sub_endpoint: "tcp://127.0.0.1:5556"   # Worker PUB -> Broker XSUB
+  req_endpoint: "tcp://127.0.0.1:5557"   # RPC (ROUTER/DEALER)
+  rep_endpoint: "tcp://127.0.0.1:5557"   # Same as req for RPC
+  http_to_ws_endpoint: "tcp://127.0.0.1:5558"  # HTTP->WS PUSH/PULL
+  hwm_send: 10000
+  hwm_recv: 10000
+  reconnect_interval: 1000
+  heartbeat_interval: 5000
+
+# Session Configuration (Signed Cookies - Stateless)
+session:
+  cookie_name: "tb_session"
+  cookie_secret: "${TB_COOKIE_SECRET:}"  # Required in production!
+  cookie_max_age: 604800  # 7 days
+  cookie_secure: true
+  cookie_httponly: true
+  cookie_samesite: "Lax"
+  payload_fields:
+    - "user_id"
+    - "session_id"
+    - "level"
+    - "spec"
+    - "user_name"
+    - "exp"
+
+# Authentication
+auth:
+  clerk_enabled: true
+  clerk_secret_key: "${CLERK_SECRET_KEY:}"
+  clerk_publishable_key: "${CLERK_PUBLISHABLE_KEY:}"
+  jwt_algorithm: "HS256"
+  jwt_expiry: 3600
+  api_key_header: "X-API-Key"
+  bearer_header: "Authorization"
+
+# HTTP Worker Configuration
+http_worker:
+  host: "127.0.0.1"
+  port: 8000
+  workers: 4  # Number of worker processes
+  max_concurrent: 100  # Max concurrent requests per worker
+  timeout: 30
+  keepalive: 65
+  backlog: 2048
+  instance_prefix: "http"
+
+# WebSocket Worker Configuration
+ws_worker:
+  host: "127.0.0.1"
+  port: 8001
+  max_connections: 10000
+  ping_interval: 30
+  ping_timeout: 10
+  max_message_size: 1048576  # 1MB
+  compression: true
+  instance_prefix: "ws"
+
+# Nginx Configuration
+nginx:
+  enabled: true
+  config_path: "/etc/nginx/sites-available/toolboxv2"
+  symlink_path: "/etc/nginx/sites-enabled/toolboxv2"
+  pid_file: "/run/nginx.pid"
+  access_log: "/var/log/nginx/toolboxv2_access.log"
+  error_log: "/var/log/nginx/toolboxv2_error.log"
+  server_name: "${TB_NGINX_SERVER_NAME:localhost}"
+  listen_port: 80
+  listen_ssl_port: 443
+  ssl_enabled: false
+  ssl_certificate: ""
+  ssl_certificate_key: ""
+  # Static files
+  static_root: "${TB_STATIC_ROOT:./dist}"
+  static_enabled: true
+  # Rate limiting
+  rate_limit_enabled: true
+  rate_limit_zone: "tb_limit"
+  rate_limit_rate: "10r/s"
+  rate_limit_burst: 20
+  # Upstreams
+  upstream_http: "tb_http_backend"
+  upstream_ws: "tb_ws_backend"
+
+# Worker Manager Configuration
+manager:
+  web_ui_enabled: true
+  web_ui_host: "127.0.0.1"
+  web_ui_port: 9000
+  control_socket: ""  # Auto-set based on data_dir
+  pid_file: ""  # Auto-set based on data_dir
+  log_file: ""  # Auto-set based on data_dir
+  health_check_interval: 10
+  restart_delay: 2
+  max_restart_attempts: 5
+  rolling_update_delay: 5
+
+# ToolBoxV2 Integration
+toolbox:
+  instance_id: "tbv2_worker"
+  modules_preload: []
+  api_prefix: "/api"
+  api_allowed_mods: []
+  auth_module: "CloudM.AuthClerk"
+  verify_session_func: "verify_session"

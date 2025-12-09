@@ -2604,18 +2604,14 @@ async def bind_accomplish_to_agent(agent, and_as_tool=True):
         # Das Tool registrieren
         # Hinweis: add_tool muss in deiner Implementierung existieren
         # und idealerweise awaitable sein.
-        await agent.add_tool(
+        agent.add_first_class_tool(
             accomplish_background_wrapper,
-            "accomplish",
-            description="""Starts a complex task in the background using the MDAP (Massively Decomposed Agentic Process).
-    Use this for hard problems requiring research, coding, or multiple steps.
-    Returns immediately with 'Task started'. The agent will be notified asynchronously when done.
-
-    Args:
-        task: The main objective description.
-        context: Additional background info.
-        min_complexity: (0-10) How complex the decomposition should be.
-        enable_tools: Allow the sub-agent to use tools (read files, etc).""",
+            "MAKER",
+            description="""**META_TOOL_CALL: MAKER(task: str, context: str, min_complexity: int, enable_tools: bool)**
+        - **Purpose:** Orchestrate massive, high-complexity missions using the MDAP (Massively Decomposed Agentic Process). Splits tasks recursively, executes parallelly, and uses consensus voting.
+        - **Use for:** Complex coding, deep research, "Zero Error" analysis, tasks requiring >10 steps.
+        - **Do NOT use for:** Simple linear tasks (use `create_and_execute_plan` , `delegate_to_llm_tool_node`), or tasks with **irreversible side effects** (sending emails/payments) as voting executes actions multiple times.
+        - **Example:** `MAKER(task="Refactor entire auth module", context="Use JWT", min_complexity=7, enable_tools=True)`""",
         )
 
     return agent

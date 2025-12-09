@@ -58,6 +58,9 @@ dependencies = [
     "mcp[cli]>=1.13.1",
     "pydantic[email]>=2.11.7",
     "clerk-backend-api>=4.0.0",
+    "minio>=7.2.20",
+    "waitress>=3.0.2",
+    "pyzmq>=27.1.0",
 ]
 
 [project.scripts]

@@ -252,7 +252,7 @@ class Tools(MainTool, FileHandler):
         if auth.value == AuthenticationTypes.location.value:
             local_key = Code.DK()() #self.app.config_fh.get_file_handler("LocalDbKey")
             if self.mode.value == DatabaseModes.CB.value:
-                evaluation = self.data_base.initialize(f"BlobDataDB/{self.spec}", local_key, self.app.root_blob_storage)
+                evaluation = self.data_base.initialize()
             if self.mode.value == DatabaseModes.LC.value:
                 evaluation = self.data_base.initialize(self.app.data_dir, local_key)
         if not evaluation.is_error():

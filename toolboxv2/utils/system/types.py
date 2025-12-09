@@ -21,9 +21,8 @@ import psutil
 from pydantic import BaseModel
 
 from ..extras import generate_test_cases
-from ..extras.blobs import BlobStorage, ApiKeyHandler
+from ..extras.blobs import BlobStorage
 from ..extras.Style import Spinner
-from toolboxv2.utils.clis.db_cli_manager import ClusterManager
 from .all_functions_enums import *
 from .file_handler import FileHandler
 
@@ -1554,8 +1553,6 @@ class AppType:
         "develop-mode": bool,
     }
 
-    db_api_key_handler: ApiKeyHandler
-    cluster_manager: ClusterManager
     root_blob_storage: BlobStorage
     config_fh: FileHandler
     _debug: bool

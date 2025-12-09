@@ -197,18 +197,11 @@ class App(AppType, metaclass=Singleton):
 
         from .system.session import Session
         self.session: Session = Session(self.get_username())
-        from .extras.blobs import ApiKeyHandler
-        self.db_api_key_handler = ApiKeyHandler(self.start_dir + '\\.info\\'+ 'api_keys\\')
         if len(sys.argv) > 2 and sys.argv[1] == "db":
             return
-        from toolboxv2.utils.clis.db_cli_manager import ClusterManager, get_executable_path
-        self.cluster_manager = ClusterManager()
-        online_list, server_list = self.cluster_manager.status_all(silent=True)
-        if not server_list:
-            self.cluster_manager.start_all(get_executable_path(), self.version)
-            _, server_list = self.cluster_manager.status_all()
-        from .extras.blobs import BlobStorage
-        self.root_blob_storage = BlobStorage(servers=server_list, storage_directory=self.data_dir+ '\\blob_cache\\', db_api_key_handler=self.db_api_key_handler)
+        from .extras.blobs import create_server_storage, create_desktop_storage, create_offline_storage
+        self.root_blob_storage = create_server_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
+        self.desktop_blob_storage = create_desktop_storage() if os.getenv("IS_OFFLINE_DB", "false")!="true" else create_offline_storage()
         self.mkdocs = add_to_app(self)
         # self._start_event_loop()
 

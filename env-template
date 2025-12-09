@@ -5,6 +5,19 @@ TOOLBOXV2_REMOTE_BASE_PORT=6587
 TOOLBOXV2_REMOTE_IP="139.162.136.35"
 APP_BASE_URL="http://localhost:8080"
 
+
+MINIO_ENDPOINT=
+MINIO_ACCESS_KEY=
+MINIO_SECRET_KEY=
+
+CLOUD_ENDPOINT=
+CLOUD_ACCESS_KEY=
+CLOUD_SECRET_KEY=
+
+IS_OFFLINE_DB="false"       # true = nur SQLite
+SERVER_ID="myserver"        # Default: hostname
+DB_CACHE_TTL="60"
+
 MOD_PROVIDER="https://simplecore.app"
 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 GUI_COMMAND="wt new-tab powershell -NoExit -Command"
@@ -69,6 +82,7 @@ TB_R_KEY="root@remote"
 VAULTS =
 HOSTNAME="localhost"
 
+TB_COOKIE_SECRET=
 TOKEN_SECRET="012345678900000987654321asdfghjkl"
 
 WHATSAPP_PHONE_NUMBER_ID=

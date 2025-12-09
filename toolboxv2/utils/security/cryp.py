@@ -164,13 +164,11 @@ class Code:
         """
         if isinstance(text, str):
             text = text.encode()
+        if isinstance(key, str):
+            key = key.encode()
 
-        try:
-            fernet = Fernet(key.encode())
-            return fernet.encrypt(text).decode()
-        except Exception as e:
-            get_logger().error(f"Error encrypt_symmetric #{str(e)}#")
-            return "Error encrypt"
+        fernet = Fernet(key)
+        return fernet.encrypt(text).decode()
 
     @staticmethod
     def decrypt_symmetric(encrypted_text: str, key: str, to_str=True, mute=False) -> str or bytes:

@@ -34,6 +34,7 @@ from .flows import (
     action_bar,
     ui_result,
 )
+from .shared_api import get_shared_websocket_handlers
 
 # Module metadata
 Name = "Minu"
@@ -515,7 +516,7 @@ async def handle_event(
         "payload": payload or {},
     }
 
-    result = await session.handle_event(event_data)
+    result = await session.handle_event(event_data, request=request, app=app)
 
     if "error" in result:
         return Result.default_user_error(info=result["error"])
@@ -591,13 +592,15 @@ async def list_registered_views(app: App) -> Result:
 # ============================================================================
 
 
-@export(mod_name=Name, websocket_handler="ui")
-def register_ui_websocket(app: App):
+@export(mod_name=Name, websocket_handler="ui", request_as_kwarg=True)
+def register_ui_websocket(app: App, request: RequestData = None):
+    shared_handlers = get_shared_websocket_handlers(app)
     async def on_connect(session: Dict[str, Any], conn_id=None, **kwargs):
         conn_id = conn_id or session.get("connection_id", "unknown")
         app.logger.info(f"[Minu] WebSocket connected: {conn_id}")
 
         session = get_or_create_session(conn_id)
+
 
         async def send_message(msg: str):
             await app.ws_send(conn_id, json.loads(msg))
@@ -629,7 +632,15 @@ def register_ui_websocket(app: App):
         try:
             msg_type = payload.get("type")
 
-            if msg_type == "subscribe":
+            if msg_type.startswith("shared_"):
+                result = await shared_handlers["handle_message"](
+                    conn_id, msg_type, payload, request
+                )
+                if result:
+                    await app.ws_send(conn_id, result)
+                    return
+
+            elif msg_type == "subscribe":
                 view_name = payload.get("viewName")
                 view_class = get_view_class(view_name)
 
@@ -659,7 +670,7 @@ def register_ui_websocket(app: App):
                 event_payload = payload.get("payload", {})
 
                 # Event verarbeiten
-                result = await session.handle_event(payload)
+                result = await session.handle_event(payload, request=kwargs.get("request"), app=app)
 
                 # Prüfe ob es ein Error gab
                 if isinstance(result, dict) and result.get("error"):
@@ -760,6 +771,7 @@ def register_ui_websocket(app: App):
     async def on_disconnect(session: Dict[str, Any], conn_id=None, **kwargs):
         conn_id = conn_id or session.get("connection_id", "unknown")
         app.logger.info(f"[Minu] WebSocket disconnected: {conn_id}")
+        shared_handlers["cleanup"](conn_id)
         cleanup_session(conn_id)
 
     return {

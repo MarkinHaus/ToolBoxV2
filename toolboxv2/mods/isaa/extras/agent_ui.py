@@ -201,6 +201,7 @@ class AgentChatView(MinuView):
 
     def _render_empty_state(self) -> Component:
         """Empty state when no messages"""
+        user_name = self.user.name if self.user.is_authenticated else "??"
         return Column(
             # Logo/Icon
             Custom(
@@ -223,7 +224,7 @@ class AgentChatView(MinuView):
                 """
             ),
             Text(
-                "Wie kann ich Ihnen helfen?",
+                f"Wie kann ich Ihnen helfen {user_name}?",
                 style="font-size: var(--text-2xl); font-weight: var(--weight-medium); color: var(--text-primary); margin-bottom: var(--space-2);",
             ),
             Text(
@@ -1612,15 +1613,7 @@ class AgentChatView(MinuView):
 
 def register_agent_chat_ui():
     """Register the Agent Chat UI view"""
-    register_view("agent_chat", AgentChatView)
     register_view("agent_ui", AgentChatView)  # Override old
-
-
-# Auto-register
-try:
-    register_agent_chat_ui()
-except:
-    pass
 
 
 # ============================================================================
@@ -1643,6 +1636,7 @@ def initialize(app: App, **kwargs) -> Result:
         path="/api/Minu/render?view=agent_chat&ssr=true",
         description="Elegante Chat-Oberfläche für FlowAgent",
         icon="chat",
+        auth=True,
     )
 
     return Result.ok(info="Agent Chat UI initialized")

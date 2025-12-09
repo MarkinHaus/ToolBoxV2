@@ -75,7 +75,8 @@ def setup_logging(level: int, name=loggerNameOfToolboxv2, online_level=None, is_
                 os.rename(log_filename,
                           f"{logs_directory}/{filename}#{log_info_data[filename]}.log")
             except PermissionError:
-                print(Style.YELLOW(Style.Bold(f"Could not rename log file appending on {filename}")))
+                pass
+                # print(Style.YELLOW(Style.Bold(f"Could not rename log file appending on {filename}")))
 
     with open(f"{logs_directory}/Logs.info", "w") as li:
         if len(log_info_data.keys()) >= 7:

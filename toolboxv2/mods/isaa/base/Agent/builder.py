@@ -181,6 +181,8 @@ Always utilize available tools when they can help solve the user's request effic
     custom_variables: dict[str, Any] = Field(default_factory=dict)
     initial_world_model: dict[str, Any] = Field(default_factory=dict)
 
+    handler_path_or_dict: Optional[str | dict] = Field(default=r"C:\Users\Markin\Workspace\ToolBoxV2\toolboxv2\.data\main-DESKTOP-CI57V1L\Agents\rate_limiter_config.json")
+
 
 # ===== PRODUCTION FLOWAGENT BUILDER =====
 
@@ -1266,6 +1268,11 @@ class FlowAgentBuilder:
     def set_max_checkpoint_age(self, max_age_hours: int) -> 'FlowAgentBuilder':
         """Set the maximum age for checkpoints in hours"""
         self.config.checkpoint.max_age_hours = max_age_hours
+        return self
+
+    def set_handler_path_or_dict(self, handler_path_or_dict: str | dict) -> 'FlowAgentBuilder':
+        """Set the handler path or dict"""
+        self.config.handler_path_or_dict = handler_path_or_dict
         return self
 
     # ===== MAIN BUILD METHOD =====

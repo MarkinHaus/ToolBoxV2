@@ -23,7 +23,9 @@ from enum import Enum
 from functools import wraps
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
-from toolboxv2 import RequestData
+from toolboxv2 import RequestData, get_app
+from toolboxv2.mods.minu.shared import SharedSection
+from toolboxv2.mods.minu.user import AuthenticatedUserWrapper, AnonymousUser
 
 # Type definitions
 T = TypeVar("T")
@@ -208,7 +210,7 @@ class ComponentStyle:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
     @classmethod
-    def from_str(cls, css_string: str) -> "ComponentStyle":
+    def from_str(cls, css_string: str) -> ComponentStyle:
         """
         Parse CSS string into ComponentStyle.
 
@@ -1025,20 +1027,82 @@ def Custom(html: str = "", component_name: str | None = None, **props) -> Compon
 
 
 class MinuView:
+    """
+    Base class for Minu UI views with integrated User and Shared support.
+
+    Features:
+    - Reactive state management
+    - User property (authenticated or anonymous)
+    - Shared sections for multi-user collaboration
+
+    Usage:
+        class MyDashboard(MinuView):
+            title = State("Dashboard")
+
+            def render(self):
+                # User ist automatisch verfügbar
+                if self.user.is_authenticated:
+                    greeting = f"Willkommen, {self.user.name}!"
+                else:
+                    greeting = "Willkommen, Gast!"
+
+                return Column(
+                    Heading(self.title.value),
+                    Text(greeting),
+                    Button("Click me", on_click="handle_click")
+                )
+
+            async def handle_click(self, event):
+                # User-Daten speichern
+                if self.user.is_authenticated:
+                    await self.user.set_mod_data('MyMod', {'clicked': True})
+                else:
+                    self.user.set_mod_data('MyMod', {'clicked': True})
+
+    Multi-User Example:
+        class GameLobby(MinuView):
+            async def on_mount(self):
+                # Shared Section erstellen oder beitreten
+                self.game = await self.create_shared(
+                    name="game_123",
+                    initial_data={'players': [], 'state': 'waiting'}
+                )
+
+                # Auf Änderungen reagieren
+                self.game.on_change('state', self.on_game_state_change)
+
+            async def on_join(self, event):
+                await self.game.append('players', {
+                    'id': self.user.uid,
+                    'name': self.user.name,
+                    'score': 0
+                })
+    """
+
     _view_id: str
     _session: MinuSession | None
     _pending_changes: List[StateChange]
     _state_attrs: Dict[str, ReactiveState]
-    _dynamic_components: set  # Changed from WeakSet - we need strong references!
+    _dynamic_components: set
+
+    # User Integration
+    _user_cache: AuthenticatedUserWrapper | AnonymousUser | None = None
+    _app: Any | None = None
     request_data: RequestData | None = None
+
+    # Shared Integration
+    _shared_sections: Dict[str, SharedSection] = None
 
     def __init__(self, view_id: str | None = None):
         self._view_id = view_id or f"view-{uuid.uuid4().hex[:8]}"
         self._session = None
         self._pending_changes = []
         self._state_attrs = {}
-        self._dynamic_components = set()  # Strong references to keep Dynamic alive
+        self._dynamic_components = set()
+        self._user_cache = None
+        self._shared_sections = {}
 
+        # State-Attribute initialisieren
         for attr_name in dir(self.__class__):
             if not attr_name.startswith("_"):
                 attr = getattr(self.__class__, attr_name)
@@ -1047,6 +1111,135 @@ class MinuView:
                     state_copy.bind(self)
                     self._state_attrs[attr_name] = state_copy
                     setattr(self, attr_name, state_copy)
+
+    # =================== User Property ===================
+
+    @property
+    def user(self) -> AuthenticatedUserWrapper | AnonymousUser:
+        """
+        Aktueller User (angemeldet oder anonym).
+
+        Für angemeldete Nutzer:
+            - user.name, user.uid, user.email, etc.
+            - user.get_mod_client('ModName') für ModDataClient
+            - await user.get_mod_data('ModName')
+            - await user.set_mod_data('ModName', {...})
+
+        Für anonyme Nutzer:
+            - user.name == "anonymous"
+            - user.level == -1
+            - user.uid == "anon_<session_id>"
+            - user.get_mod_data('ModName') (synchron, Session-basiert)
+            - user.set_mod_data('ModName', {...}) (synchron, Session-basiert)
+        """
+        if self._user_cache is not None:
+            return self._user_cache
+
+        # Import hier um Circular Imports zu vermeiden
+        from .user import AnonymousUser, MinuUser
+
+        # Sync fallback wenn async nicht möglich
+        if self.request_data:
+            self._user_cache = MinuUser.from_request_sync(
+                self._app, self.request_data
+            )
+            return self._user_cache
+
+        # Default: Anonymous ohne Session
+        return AnonymousUser(session_id=f"no-session-{uuid.uuid4().hex[:8]}")
+
+    async def ensure_user(self) -> AuthenticatedUserWrapper | AnonymousUser:
+        """
+        Async User-Laden. Sollte zu Beginn eines Event-Handlers aufgerufen werden.
+
+        Usage:
+            async def on_submit(self, event):
+                user = await self.ensure_user()
+                if user.is_authenticated:
+                    await user.set_mod_data('MyMod', {'score': 100})
+        """
+        from .user import AnonymousUser, MinuUser
+
+        if self._user_cache is not None and self._user_cache.is_authenticated:
+            return self._user_cache
+
+        if self.request_data and self._app:
+            self._user_cache = await MinuUser.from_request(
+                self._app, self.request_data
+            )
+            # Cache im Request für spätere Zugriffe
+            if self.request_data:
+                self.request_data._cached_minu_user = self._user_cache
+
+        return self._user_cache or AnonymousUser()
+
+    def set_app(self, app):
+        """App-Referenz setzen (wird von Session-Handler aufgerufen)"""
+        self._app = app
+
+    # =================== Shared Section Methods ===================
+
+    @property
+    def shared_manager(self) -> 'SharedManager':
+        """SharedManager Instanz"""
+        from .shared import SharedManager
+
+        return SharedManager.get_(self._app)
+
+    async def create_shared(
+        self, name: str, initial_data: Dict[str, Any] = None, **kwargs
+    ) -> SharedSection:
+        """
+        Neue Shared Section erstellen.
+
+        Args:
+            name: Name der Section
+            initial_data: Initiale Daten
+            **kwargs: Weitere Optionen (max_participants, allow_anonymous, etc.)
+
+        Returns:
+            SharedSection Instanz
+        """
+        from .shared import SharedManager
+
+        section = await self.shared_manager.create(
+            self.request_data, name, initial_data, **kwargs
+        )
+
+        self._shared_sections[section.id] = section
+        return section
+
+    async def join_shared(self, section_id: str) -> SharedSection | None:
+        """
+        Shared Section beitreten.
+
+        Args:
+            section_id: ID der Section
+
+        Returns:
+            SharedSection oder None wenn nicht erlaubt
+        """
+        section = await self.shared_manager.join(
+            section_id, self.request_data, self._session
+        )
+
+        if section:
+            self._shared_sections[section.id] = section
+
+        return section
+
+    async def leave_shared(self, section_id: str) -> bool:
+        """Shared Section verlassen"""
+        result = await self.shared_manager.leave(section_id, self.request_data)
+
+        if result and section_id in self._shared_sections:
+            del self._shared_sections[section_id]
+
+        return result
+
+    def get_shared(self, section_id: str) -> SharedSection | None:
+        """Lokale Shared Section abrufen"""
+        return self._shared_sections.get(section_id)
 
     def render(self) -> Component:
         raise NotImplementedError("Subclass must implement render()")
@@ -1091,7 +1284,7 @@ class MinuView:
         """Serialize view to dict, setting context for callback registration."""
         # Setze den aktuellen View-Context für Callback-Registrierung
         try:
-            from .flows import set_current_view, clear_current_view
+            from .flows import clear_current_view, set_current_view
             set_current_view(self)
         except ImportError:
             pass
@@ -1184,8 +1377,10 @@ class MinuSession:
     def set_send_callback(self, callback: Callable[[str], Any]):
         self._send_callback = callback
 
-    def register_view(self, view: MinuView) -> str:
+    def register_view(self, view: MinuView, app=None) -> str:
         view._session = self
+        app = app or get_app(f"minu.register_view.{view._view_id}")
+        view.set_app(app)
         self._views[view._view_id] = view
         return view._view_id
 
@@ -1258,7 +1453,7 @@ class MinuSession:
         await self._send(json.dumps(message, cls=MinuJSONEncoder))
 
 
-    async def handle_event(self, event_data: Dict[str, Any], request = None):
+    async def handle_event(self, event_data: Dict[str, Any], request = None, app = None):
         """Handle an event from the client with improved callback lookup."""
         view_id = event_data.get("viewId")
         handler_name = event_data.get("handler")
@@ -1267,8 +1462,10 @@ class MinuSession:
         view = self._views.get(view_id)
         if not view:
             return {"error": f"View {view_id} not found"}
-
-        # 1. Versuche Handler direkt auf der View zu finden
+        if request:
+            view.request_data = request
+        if app:
+            view.set_app(app)
         handler = getattr(view, handler_name, None)
 
         # 2. Wenn nicht gefunden, prüfe _callback_registry der View
@@ -1373,3 +1570,214 @@ __all__ = [
     # Integration
     "minu_handler",
 ]
+
+
+# ============================================================================
+# USAGE EXAMPLE
+# ============================================================================
+
+"""
+# Beispiel 1: Einfache View mit User-Zugriff
+
+class UserDashboard(MinuView):
+    greeting = State("")
+
+    def render(self):
+        return Column(
+            Heading("Dashboard"),
+            Text(self.greeting.value or f"Hallo, {self.user.name}!"),
+
+            # Zeige verschiedene Inhalte basierend auf Auth-Status
+            *self._render_content()
+        )
+
+    def _render_content(self):
+        if self.user.is_authenticated:
+            return [
+                Text(f"Level: {self.user.level}"),
+                Text(f"Email: {self.user.email}"),
+                Button("Abmelden", on_click="logout")
+            ]
+        else:
+            return [
+                Text("Du bist nicht angemeldet."),
+                Button("Anmelden", on_click="login")
+            ]
+
+    async def on_mount(self):
+        # User async laden für vollständige Daten
+        user = await self.ensure_user()
+
+        # Mod-Daten laden
+        if user.is_authenticated:
+            data = await user.get_mod_data('Dashboard')
+            if data.get('last_visit'):
+                self.greeting.value = f"Willkommen zurück, {user.name}!"
+
+
+# Beispiel 2: Multi-User Chat
+
+class ChatRoom(MinuView):
+    messages = State([])
+    input_text = State("")
+
+    async def on_mount(self):
+        # Shared Section für den Chat-Room
+        self.chat = await self.join_shared('chat_room_general')
+
+        if self.chat:
+            # Existierende Nachrichten laden
+            self.messages.value = self.chat.get('messages', [])
+
+            # Auf neue Nachrichten reagieren
+            self.chat.on_change('messages', self._on_new_message)
+
+    def _on_new_message(self, change):
+        # Update UI wenn neue Nachrichten ankommen
+        if change.operation == 'append':
+            current = self.messages.value.copy()
+            current.append(change.value)
+            self.messages.value = current
+
+    def render(self):
+        return Column(
+            Heading("Chat Room"),
+
+            # Message List
+            List(*[
+                ListItem(
+                    Text(f"{msg['author']}: {msg['text']}")
+                ) for msg in self.messages.value
+            ]),
+
+            # Input
+            Row(
+                Input(
+                    placeholder="Nachricht...",
+                    bind_value="input_text"
+                ),
+                Button("Senden", on_click="send_message")
+            )
+        )
+
+    async def send_message(self, event):
+        text = self.input_text.value.strip()
+        if not text:
+            return
+
+        # Nachricht an alle Teilnehmer senden
+        await self.chat.append('messages', {
+            'author': self.user.name,
+            'author_id': self.user.uid,
+            'text': text,
+            'timestamp': time.time()
+        }, author_id=self.user.uid)
+
+        self.input_text.value = ""
+
+
+# Beispiel 3: Multiplayer Game
+
+class GameLobby(MinuView):
+    players = State([])
+    game_state = State("waiting")  # waiting, playing, finished
+
+    async def on_mount(self):
+        # Game Session erstellen oder beitreten
+        game_id = self.props.get('game_id', 'default_game')
+
+        self.game = await self.join_shared(f'game_{game_id}')
+
+        if not self.game:
+            # Neues Spiel erstellen
+            self.game = await self.create_shared(
+                name=f'game_{game_id}',
+                initial_data={
+                    'players': [],
+                    'state': 'waiting',
+                    'scores': {}
+                },
+                max_participants=4,
+                allow_anonymous=True
+            )
+
+        # State synchronisieren
+        self.players.value = self.game.get('players', [])
+        self.game_state.value = self.game.get('state', 'waiting')
+
+        # Auf Änderungen reagieren
+        self.game.on_change('players', self._on_players_change)
+        self.game.on_change('state', self._on_state_change)
+
+        # Selbst als Spieler hinzufügen
+        await self._join_game()
+
+    async def _join_game(self):
+        players = self.game.get('players', [])
+
+        # Prüfen ob bereits im Spiel
+        if any(p['id'] == self.user.uid for p in players):
+            return
+
+        await self.game.append('players', {
+            'id': self.user.uid,
+            'name': self.user.name,
+            'ready': False
+        }, author_id=self.user.uid)
+
+    def _on_players_change(self, change):
+        self.players.value = self.game.get('players', [])
+
+    def _on_state_change(self, change):
+        self.game_state.value = change.value
+
+    def render(self):
+        return Column(
+            Heading(f"Game Lobby ({self.game_state.value})"),
+
+            # Spielerliste
+            Card(
+                Heading("Spieler", level=3),
+                List(*[
+                    ListItem(
+                        Row(
+                            Text(p['name']),
+                            Badge("Bereit" if p.get('ready') else "Wartet",
+                                  variant="success" if p.get('ready') else "default")
+                        )
+                    ) for p in self.players.value
+                ])
+            ),
+
+            # Aktionen
+            Row(
+                Button("Bereit", on_click="toggle_ready",
+                       variant="primary" if not self._am_ready() else "default"),
+                Button("Spiel starten", on_click="start_game",
+                       disabled=not self._can_start())
+            ) if self.game_state.value == "waiting" else None
+        )
+
+    def _am_ready(self) -> bool:
+        for p in self.players.value:
+            if p['id'] == self.user.uid:
+                return p.get('ready', False)
+        return False
+
+    def _can_start(self) -> bool:
+        if len(self.players.value) < 2:
+            return False
+        return all(p.get('ready') for p in self.players.value)
+
+    async def toggle_ready(self, event):
+        players = self.game.get('players', [])
+        for i, p in enumerate(players):
+            if p['id'] == self.user.uid:
+                players[i]['ready'] = not p.get('ready', False)
+                await self.game.set('players', players, author_id=self.user.uid)
+                break
+
+    async def start_game(self, event):
+        if self._can_start():
+            await self.game.set('state', 'playing', author_id=self.user.uid)
+"""
