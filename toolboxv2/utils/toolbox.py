@@ -243,7 +243,7 @@ class App(AppType, metaclass=Singleton):
         """proxi attr"""
 
     def set_logger(self, debug=False, logger_prefix=None):
-        if os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING") == "DEBUG":
+        if debug is None and os.getenv("TOOLBOX_LOGGING_LEVEL") is not None:
             debug = True
         if logger_prefix is None:
             logger_prefix = self.logger_prefix
@@ -264,9 +264,11 @@ class App(AppType, metaclass=Singleton):
             logger_info_str = "in debug Mode"
             self.debug = True
         elif debug:
-            logger, logging_filename = setup_logging(logging.DEBUG, name=f"toolbox-{self.logger_prefix}-debug",
-                                                     interminal=True,
-                                                     file_level=logging.DEBUG, app_name=logger_prefix)
+            level = logging.getLevelNamesMapping().get(os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING"))
+            logger, logging_filename = setup_logging(
+                level=level, name=f"toolbox-{self.logger_prefix}-debug",
+                interminal=True,
+                file_level=level, app_name=logger_prefix)
             logger_info_str = "in args debug Mode"
         else:
             logger, logging_filename = setup_logging(logging.ERROR, name=f"toolbox-{self.logger_prefix}", app_name=logger_prefix)
