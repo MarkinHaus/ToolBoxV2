@@ -519,25 +519,57 @@ class WSWorker:
 
     async def run(self):
         """Run the WebSocket worker (blocking)."""
-        loop = asyncio.get_event_loop()
+        import sys
+
+        # Windows: Use SelectorEventLoop for ZMQ compatibility
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+        loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        # Signal handlers
-        def signal_handler():
-            loop.create_task(self.stop())
+        # Signal handlers (Unix only, Windows uses different mechanism)
+        if sys.platform != "win32":
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, signal_handler)
-            except NotImplementedError:
-                pass  # Windows
+            def signal_handler():
+                loop.create_task(self.stop())
+
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, signal_handler)
+                except NotImplementedError:
+                    pass
 
         try:
             await self.start()
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received")
+            await self.stop()
         except Exception as e:
             logger.error(f"WS worker error: {e}")
+            await self.stop()
         finally:
-            loop.close()
+            # Proper cleanup
+            try:
+                # Cancel all pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+
+                # Wait for cancellation
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+
+                # Shutdown async generators
+                loop.run_until_complete(loop.shutdown_asyncgens())
+
+            except Exception as e:
+                logger.debug(f"Cleanup error: {e}")
+            finally:
+                if not loop.is_closed():
+                    loop.close()
 
 
 # ============================================================================
@@ -587,4 +619,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    # Windows: Use SelectorEventLoop for ZMQ compatibility
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    asyncio.run(main())

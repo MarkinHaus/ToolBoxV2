@@ -428,16 +428,8 @@ def _run_broker_process(config_dict: Dict):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     # Try relative import first, then absolute
-    try:
-        from .config import Config
-        from .event_manager import run_broker
-    except ImportError:
-        try:
-            from toolboxv2.utils.workers.config import Config
-            from toolboxv2.utils.workers.event_manager import run_broker
-        except ImportError:
-            from config import Config
-            from event_manager import run_broker
+    from toolboxv2.utils.workers.config import Config
+    from toolboxv2.utils.workers.event_manager import run_broker
 
     # Reconstruct config from dict
     config = Config.from_dict(config_dict)
@@ -447,17 +439,8 @@ def _run_broker_process(config_dict: Dict):
 def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int):
     """Run HTTP worker in separate process. Must be module-level for Windows."""
     # Try relative import first, then absolute
-    try:
-        from .config import Config
-        from .server_worker import HTTPWorker
-    except ImportError:
-        try:
-            from toolboxv2.utils.workers.config import Config
-            from toolboxv2.utils.workers.server_worker import HTTPWorker
-        except ImportError:
-            from config import Config
-            from server_worker import HTTPWorker
-
+    from toolboxv2.utils.workers.config import Config
+    from toolboxv2.utils.workers.server_worker import HTTPWorker
     config = Config.from_dict(config_dict)
     worker = HTTPWorker(worker_id, config)
     worker.run(port=port)
@@ -473,22 +456,15 @@ def _run_ws_worker_process(worker_id: str, config_dict: Dict, port: int):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     # Try relative import first, then absolute
-    try:
-        from .config import Config
-        from .ws_worker import WSWorker
-    except ImportError:
-        try:
-            from toolboxv2.utils.workers.config import Config
-            from toolboxv2.utils.workers.ws_worker import WSWorker
-        except ImportError:
-            from config import Config
-            from ws_worker import WSWorker
+    from toolboxv2.utils.workers.config import Config
+    from toolboxv2.utils.workers.ws_worker import WSWorker
 
+    import asyncio
     config = Config.from_dict(config_dict)
     # Override port in config
     config.ws_worker.port = port
     worker = WSWorker(worker_id, config)
-    worker.run()
+    asyncio.run(worker.run())
 
 
 # ============================================================================
@@ -1189,4 +1165,7 @@ Commands:
 
 if __name__ == "__main__":
     # Required for Windows multiprocessing
+    from multiprocessing import freeze_support
+    freeze_support()
+
     main()

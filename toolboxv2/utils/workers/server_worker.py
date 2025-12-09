@@ -328,6 +328,12 @@ class HTTPWorker:
         if self._app is not None:
             return
 
+        import sys
+
+        # Windows: Use SelectorEventLoop for ZMQ compatibility
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
         try:
             from toolboxv2 import get_app
             instance_id = f"{self.config.toolbox.instance_id}_{self.worker_id}"

@@ -2028,8 +2028,9 @@ def runner_setup():
 def main_runner():
     # The fuck is uv not PyO3 compatible
     sys.excepthook = sys.__excepthook__
-
-
+    # Windows: Use SelectorEventLoop for ZMQ compatibility
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     # IPython special case
     if '--ipy' in sys.argv:
