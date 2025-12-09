@@ -1520,6 +1520,7 @@ class AppType:
     data_dir: str
     config_dir: str
     info_dir: str
+    appdata: str
     is_server:bool = False
 
     logger: logging.Logger

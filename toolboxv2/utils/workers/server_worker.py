@@ -549,10 +549,19 @@ class AuthHandler:
             )
 
             if hasattr(result, 'is_error') and result.is_error():
+                self._logger.debug(f"Clerk verification returned error: {result}")
                 return False, None
 
             data = result.get() if hasattr(result, 'get') else result
-            if not data or not data.get('valid', False):
+
+            # Check for 'authenticated' key (returned by verify_session)
+            # Also support legacy 'valid' key for backwards compatibility
+            if not data:
+                return False, None
+
+            is_authenticated = data.get('authenticated', data.get('valid', False))
+            if not is_authenticated:
+                self._logger.debug(f"Clerk verification: not authenticated, data={data}")
                 return False, None
 
             return True, data

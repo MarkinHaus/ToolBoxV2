@@ -201,6 +201,7 @@ class SSLManager:
 class NginxManager:
     def __init__(self, config):
         self.config = config.nginx
+        self._manager = config.manager
         self._nginx_path = self._find_nginx()
         self._ssl = SSLManager(getattr(self.config, 'server_name', None))
         self._ssl.discover()
@@ -459,6 +460,10 @@ class NginxManager:
             upstream_ws, upstream_http
         )
 
+        admin_ui_port = getattr(self._manager, "web_ui_port", 9002)
+        admin_block = self._generate_admin_ui_block(admin_ui_port)
+
+
         return f"""# ToolBoxV2 Nginx Configuration - {SYSTEM}
     # Generated automatically - do not edit manually
     # Regenerate with: tb manager nginx-config
@@ -593,6 +598,9 @@ class NginxManager:
                 # deny all;
             }}
 
+
+            {admin_block}
+
             # Error pages
             error_page 500 502 503 504 /50x.html;
             location = /50x.html {{
@@ -618,6 +626,7 @@ class NginxManager:
                 return 403 '{{"error": "Forbidden", "message": "Access denied"}}';
             }}
         }}
+
     }}
     """
 
@@ -818,6 +827,666 @@ class NginxManager:
                 proxy_read_timeout 3600s;
                 proxy_buffering off;
             }}"""
+
+    def _generate_admin_ui_block(self, web_port: int) -> str:
+        """
+        Generates a password-protected admin UI route on /admin/
+        exposed on config.manager.web_ui_port.
+
+        Password is read from ENV ADMIN_UI_PASSWORD.
+        Proxies to DB (9000) and Worker Manager (9001) internally.
+        Admin index must be outside static_root.
+        """
+
+        import os
+
+        pwd = os.environ.get("ADMIN_UI_PASSWORD", "")
+        if not pwd:
+            raise RuntimeError("Environment variable ADMIN_UI_PASSWORD is missing.")
+
+        # htpasswd hash generieren (bcrypt)
+        from platform import system
+
+        if system() == "Windows":
+            import bcrypt, toolboxv2
+            hashed = bcrypt.hashpw(
+                pwd.encode("utf-8"), bcrypt.gensalt(rounds=12)
+            ).decode()
+            admin_htpasswd = toolboxv2.get_app().appdata + "/admin_htpasswd"
+            admin_root = toolboxv2.get_app().appdata + "/admin_ui"
+            auth_basic = ""
+        else:
+            import crypt
+
+            hashed = crypt.crypt(pwd, crypt.mksalt(crypt.METHOD_BLOWFISH))
+            admin_htpasswd = "/etc/nginx/admin_htpasswd"
+            admin_root = "/var/lib/toolboxv2/admin_ui"
+
+            auth_basic = f'auth_basic "Restricted Admin UI";\n                    auth_basic_user_file {admin_htpasswd};'
+
+        # htpasswd speichern
+        with open(admin_htpasswd, "w") as f:
+            f.write(f"admin:{hashed}\n")
+
+        # Admin root directory erstellen falls nicht vorhanden
+        os.makedirs(admin_root, exist_ok=True)
+
+        self._populate_admin_ui(admin_root, manager_port=web_port)
+
+        return f"""
+            # Admin UI Server (Basic Auth protected)
+                # Admin UI mit Basic Auth
+                location /admin/ {{
+                    {auth_basic}
+
+                    # Admin static files (außerhalb static_root!)
+                    root {admin_root}/index.html;
+                    try_files $uri $uri/ /;
+                }}
+
+                # Proxy zu DB auf Port 9000 (nur mit Auth)
+                location /admin/db/ {{
+                    {auth_basic}
+
+                    proxy_pass http://127.0.0.1:9000/;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                }}
+
+                # Proxy zu Worker Manager auf Port {web_port} (nur mit Auth)
+                location /admin/manager/ {{
+                    {auth_basic}
+
+                    proxy_pass http://127.0.0.1:{web_port}/;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                }}
+
+        """
+
+    def _populate_admin_ui(
+        self,
+        admin_root: str,
+        minio_port: int = 9000,
+        minio_console_port: int = 9001,
+        manager_port: int = 9002,
+    ) -> None:
+        """
+        Populates admin_ui directory with a minimal HUNIZED UI if not already present.
+        Creates index.html that directly fetches from MinIO and Manager APIs.
+        """
+        import os
+
+        admin_index = os.path.join(admin_root, "admin", "index.html")
+
+        # Nur erstellen wenn noch nicht vorhanden
+        if os.path.exists(admin_index):
+            return
+
+        # Directory struktur erstellen
+        os.makedirs(os.path.dirname(admin_index), exist_ok=True)
+
+        # Minimal HUNIZED Admin UI mit direkten API Calls
+        html_content = f"""<!DOCTYPE html>
+    <html lang="de">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ToolBoxV2 Admin</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                background: #0a0a0a;
+                color: #e0e0e0;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+            }}
+
+            header {{
+                background: #111;
+                border-bottom: 1px solid #222;
+                padding: 1rem 2rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }}
+
+            h1 {{
+                font-size: 1.2rem;
+                font-weight: 600;
+                color: #fff;
+            }}
+
+            .tabs {{
+                display: flex;
+                gap: 0.5rem;
+            }}
+
+            .tab {{
+                padding: 0.5rem 1rem;
+                background: transparent;
+                border: 1px solid #333;
+                border-radius: 6px;
+                color: #999;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-size: 0.9rem;
+            }}
+
+            .tab:hover {{
+                background: #1a1a1a;
+                border-color: #444;
+                color: #fff;
+            }}
+
+            .tab.active {{
+                background: #2563eb;
+                border-color: #2563eb;
+                color: #fff;
+            }}
+
+            .content {{
+                flex: 1;
+                padding: 2rem;
+                overflow-y: auto;
+            }}
+
+            .panel {{
+                display: none;
+            }}
+
+            .panel.active {{
+                display: block;
+            }}
+
+            .status {{
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                font-size: 0.85rem;
+                color: #666;
+            }}
+
+            .status-dot {{
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #22c55e;
+                animation: pulse 2s infinite;
+            }}
+
+            .status-dot.error {{
+                background: #ef4444;
+            }}
+
+            .status-dot.warning {{
+                background: #f59e0b;
+            }}
+
+            @keyframes pulse {{
+                0%, 100% {{ opacity: 1; }}
+                50% {{ opacity: 0.5; }}
+            }}
+
+            .card {{
+                background: #111;
+                border: 1px solid #222;
+                border-radius: 8px;
+                padding: 1.5rem;
+                margin-bottom: 1rem;
+            }}
+
+            .card h2 {{
+                font-size: 1rem;
+                margin-bottom: 1rem;
+                color: #fff;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }}
+
+            .badge {{
+                padding: 0.25rem 0.75rem;
+                background: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 12px;
+                font-size: 0.75rem;
+                font-weight: 500;
+            }}
+
+            .worker-list {{
+                display: grid;
+                gap: 1rem;
+            }}
+
+            .worker-item {{
+                background: #0a0a0a;
+                border: 1px solid #222;
+                border-radius: 6px;
+                padding: 1rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: start;
+                transition: border-color 0.2s;
+            }}
+
+            .worker-item:hover {{
+                border-color: #333;
+            }}
+
+            .worker-item.unhealthy {{
+                border-color: #ef4444;
+            }}
+
+            .worker-main {{
+                flex: 1;
+            }}
+
+            .worker-header {{
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                margin-bottom: 0.5rem;
+            }}
+
+            .worker-name {{
+                font-weight: 600;
+                color: #fff;
+                font-family: 'Courier New', monospace;
+            }}
+
+            .worker-type {{
+                padding: 0.125rem 0.5rem;
+                background: #2563eb;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                text-transform: uppercase;
+            }}
+
+            .worker-type.ws {{
+                background: #8b5cf6;
+            }}
+
+            .worker-details {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                gap: 0.5rem;
+                font-size: 0.85rem;
+                color: #666;
+            }}
+
+            .worker-detail {{
+                display: flex;
+                flex-direction: column;
+            }}
+
+            .worker-detail-label {{
+                font-size: 0.75rem;
+                color: #555;
+            }}
+
+            .worker-detail-value {{
+                color: #e0e0e0;
+                font-family: 'Courier New', monospace;
+            }}
+
+            .worker-detail-value.healthy {{
+                color: #22c55e;
+            }}
+
+            .worker-detail-value.unhealthy {{
+                color: #ef4444;
+            }}
+
+            .worker-actions {{
+                display: flex;
+                gap: 0.5rem;
+            }}
+
+            button {{
+                padding: 0.5rem 1rem;
+                background: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 6px;
+                color: #e0e0e0;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-size: 0.85rem;
+            }}
+
+            button:hover {{
+                background: #222;
+                border-color: #444;
+            }}
+
+            button.danger {{
+                border-color: #ef4444;
+                color: #ef4444;
+            }}
+
+            button.danger:hover {{
+                background: #ef4444;
+                color: #fff;
+            }}
+
+            .loading {{
+                text-align: center;
+                padding: 2rem;
+                color: #666;
+            }}
+
+            .error {{
+                background: #1a0a0a;
+                border: 1px solid #ef4444;
+                border-radius: 6px;
+                padding: 1rem;
+                color: #ef4444;
+            }}
+
+            .minio-link {{
+                display: inline-block;
+                padding: 0.75rem 1.5rem;
+                background: #c72c48;
+                border-radius: 6px;
+                color: #fff;
+                text-decoration: none;
+                font-weight: 500;
+                transition: all 0.2s;
+            }}
+
+            .minio-link:hover {{
+                background: #a81d38;
+            }}
+
+            .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 1rem;
+                margin-top: 1rem;
+            }}
+
+            .stat-card {{
+                background: #0a0a0a;
+                border: 1px solid #222;
+                border-radius: 6px;
+                padding: 1rem;
+            }}
+
+            .stat-value {{
+                font-size: 1.5rem;
+                font-weight: 600;
+                color: #2563eb;
+            }}
+
+            .stat-label {{
+                font-size: 0.85rem;
+                color: #666;
+                margin-top: 0.25rem;
+            }}
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>ToolBoxV2 Admin</h1>
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('manager')">Workers</button>
+                <button class="tab" onclick="switchTab('minio')">MinIO Storage</button>
+            </div>
+            <div class="status">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="status-text">Online</span>
+            </div>
+        </header>
+
+        <div class="content">
+            <!-- Worker Manager Panel -->
+            <div id="manager-panel" class="panel active">
+                <div class="card">
+                    <h2>
+                        Worker Status
+                        <span class="badge" id="worker-count">0 Workers</span>
+                    </h2>
+                    <div id="manager-content" class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- MinIO Panel -->
+            <div id="minio-panel" class="panel">
+                <div class="card">
+                    <h2>MinIO Object Storage</h2>
+                    <p style="color: #666; margin-bottom: 1rem;">
+                        MinIO Console für Bucket Management und Monitoring
+                    </p>
+                    <a href="http://127.0.0.1:{minio_console_port}" target="_blank" class="minio-link">
+                        Open MinIO Console
+                    </a>
+                    <div id="minio-stats" class="stats-grid">
+                        <!-- Stats werden hier geladen -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const MINIO_PORT = {minio_port};
+            const MINIO_CONSOLE_PORT = {minio_console_port};
+            const MANAGER_PORT = {manager_port};
+
+            let currentTab = 'manager';
+
+            function switchTab(target) {{
+                currentTab = target;
+
+                document.querySelectorAll('.tab').forEach(tab => {{
+                    tab.classList.remove('active');
+                }});
+                event.target.classList.add('active');
+
+                document.querySelectorAll('.panel').forEach(panel => {{
+                    panel.classList.remove('active');
+                }});
+                document.getElementById(target + '-panel').classList.add('active');
+
+                if (target === 'manager') {{
+                    loadManagerData();
+                }} else if (target === 'minio') {{
+                    loadMinioData();
+                }}
+            }}
+
+            function formatUptime(seconds) {{
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const secs = Math.floor(seconds % 60);
+                if (hours > 0) return `${{hours}}h ${{minutes}}m`;
+                if (minutes > 0) return `${{minutes}}m ${{secs}}s`;
+                return `${{secs}}s`;
+            }}
+
+            function formatLatency(ms) {{
+                return `${{ms.toFixed(1)}}ms`;
+            }}
+
+            async function loadManagerData() {{
+                const content = document.getElementById('manager-content');
+                const countBadge = document.getElementById('worker-count');
+
+                try {{
+                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers`);
+                    if (!response.ok) throw new Error('Failed to fetch workers');
+
+                    const workers = await response.json();
+
+                    if (!workers || workers.length === 0) {{
+                        content.innerHTML = '<p style="color: #666;">No workers running</p>';
+                        countBadge.textContent = '0 Workers';
+                        return;
+                    }}
+
+                    countBadge.textContent = `${{workers.length}} Worker${{workers.length > 1 ? 's' : ''}}`;
+
+                    const healthyCount = workers.filter(w => w.healthy).length;
+                    const unhealthyCount = workers.length - healthyCount;
+
+                    if (unhealthyCount > 0) {{
+                        updateStatus('warning');
+                    }} else {{
+                        updateStatus('online');
+                    }}
+
+                    const workersHtml = workers.map(worker => `
+                        <div class="worker-item ${{!worker.healthy ? 'unhealthy' : ''}}">
+                            <div class="worker-main">
+                                <div class="worker-header">
+                                    <span class="worker-name">${{worker.worker_id}}</span>
+                                    <span class="worker-type ${{worker.worker_type}}">${{worker.worker_type}}</span>
+                                </div>
+                                <div class="worker-details">
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">PID</span>
+                                        <span class="worker-detail-value">${{worker.pid}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Port</span>
+                                        <span class="worker-detail-value">${{worker.port}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Uptime</span>
+                                        <span class="worker-detail-value">${{formatUptime(worker.uptime)}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Health</span>
+                                        <span class="worker-detail-value ${{worker.healthy ? 'healthy' : 'unhealthy'}}">
+                                            ${{worker.healthy ? '✓ Healthy' : '✗ Unhealthy'}}
+                                        </span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Latency</span>
+                                        <span class="worker-detail-value">${{formatLatency(worker.health_latency_ms)}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Requests</span>
+                                        <span class="worker-detail-value">${{worker.metrics.requests}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Errors</span>
+                                        <span class="worker-detail-value">${{worker.metrics.errors}}</span>
+                                    </div>
+                                    <div class="worker-detail">
+                                        <span class="worker-detail-label">Restarts</span>
+                                        <span class="worker-detail-value">${{worker.restart_count}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="worker-actions">
+                                <button onclick="restartWorker('${{worker.worker_id}}')">Restart</button>
+                                <button class="danger" onclick="stopWorker('${{worker.worker_id}}')">Stop</button>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    content.innerHTML = `<div class="worker-list">${{workersHtml}}</div>`;
+                }} catch (error) {{
+                    content.innerHTML = `<div class="error">Error: ${{error.message}}</div>`;
+                    updateStatus('error');
+                }}
+            }}
+
+            async function loadMinioData() {{
+                const statsDiv = document.getElementById('minio-stats');
+
+                try {{
+                    // MinIO API erfordert auth, daher nur placeholder stats
+                    statsDiv.innerHTML = `
+                        <div class="stat-card">
+                            <div class="stat-value">Active</div>
+                            <div class="stat-label">Status</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">:{minio_port}</div>
+                            <div class="stat-label">API Port</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">:{minio_console_port}</div>
+                            <div class="stat-label">Console Port</div>
+                        </div>
+                    `;
+                    updateStatus('online');
+                }} catch (error) {{
+                    statsDiv.innerHTML = `<div class="error">Error loading MinIO stats</div>`;
+                    updateStatus('error');
+                }}
+            }}
+
+            async function restartWorker(workerId) {{
+                try {{
+                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers/${{workerId}}/restart`, {{
+                        method: 'POST'
+                    }});
+                    if (!response.ok) throw new Error('Failed to restart worker');
+                    setTimeout(loadManagerData, 1000);
+                }} catch (error) {{
+                    alert(`Error restarting worker: ${{error.message}}`);
+                }}
+            }}
+
+            async function stopWorker(workerId) {{
+                if (!confirm(`Stop worker ${{workerId}}?`)) return;
+                try {{
+                    const response = await fetch(`http://127.0.0.1:${{MANAGER_PORT}}/admin/manager/api/workers/${{workerId}}/stop`, {{
+                        method: 'POST'
+                    }});
+                    if (!response.ok) throw new Error('Failed to stop worker');
+                    setTimeout(loadManagerData, 1000);
+                }} catch (error) {{
+                    alert(`Error stopping worker: ${{error.message}}`);
+                }}
+            }}
+
+            function updateStatus(status) {{
+                const dot = document.getElementById('status-dot');
+                const text = document.getElementById('status-text');
+
+                dot.classList.remove('error', 'warning');
+
+                if (status === 'online') {{
+                    text.textContent = 'Online';
+                }} else if (status === 'warning') {{
+                    dot.classList.add('warning');
+                    text.textContent = 'Warning';
+                }} else {{
+                    dot.classList.add('error');
+                    text.textContent = 'Error';
+                }}
+            }}
+
+            // Initial load
+            loadManagerData();
+
+            // Auto-refresh every 5 seconds
+            setInterval(() => {{
+                if (currentTab === 'manager') {{
+                    loadManagerData();
+                }}
+            }}, 5000);
+        </script>
+    </body>
+    </html>"""
+
+        with open(admin_index, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        print(f"✓ Admin UI created at {admin_index}")
 
     def write_config(self, http_ports: List[int], ws_ports: List[int],
                      http_sockets: List[str] = None, ws_sockets: List[str] = None,
@@ -1118,7 +1787,7 @@ class ClusterManager:
         node_id = f"{host}:{port}"
         try:
             conn = http.client.HTTPConnection(host, port, timeout=5)
-            conn.request("GET", "/api/cluster/verify", headers={"X-Cluster-Secret": secret})
+            conn.request("GET", "/admin/manager/api/cluster/verify", headers={"X-Cluster-Secret": secret})
             resp = conn.getresponse()
             conn.close()
             if resp.status != 200:
@@ -1150,7 +1819,7 @@ class ClusterManager:
             for node_id, node in list(self._nodes.items()):
                 try:
                     conn = http.client.HTTPConnection(node.host, node.port, timeout=5)
-                    conn.request("GET", "/api/workers", headers={"X-Cluster-Secret": node.secret})
+                    conn.request("GET", "/admin/manager/api/workers", headers={"X-Cluster-Secret": node.secret})
                     resp = conn.getresponse()
                     data = json.loads(resp.read().decode())
                     conn.close()
@@ -1509,6 +2178,8 @@ class ManagerWebUI(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path.rstrip("/") or "/"
+        if path.startswith("/admin/manager"):
+            path = path[14:]
         if path == "/":
             self._serve_dashboard()
         elif path == "/api/status":
@@ -1538,7 +2209,8 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except Exception:
             data = {}
-
+        if path.startswith("/admin/manager"):
+            path = path[14:]
         if path == "/api/workers/start":
             results = []
             for _ in range(data.get("count", 1)):
@@ -1618,7 +2290,7 @@ class ManagerWebUI(BaseHTTPRequestHandler):
 <div class="card"><div class="title">Workers</div><div class="wl" id="workers"></div></div>
 <script>
 async function fetch_data(){try{
-const[s,m,w]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/metrics').then(r=>r.json()),fetch('/api/workers').then(r=>r.json())]);
+const[s,m,w]=await Promise.all([fetch('/admin/manager/api/status').then(r=>r.json()),fetch('/admin/manager/api/metrics').then(r=>r.json()),fetch('/admin/manager/api/workers').then(r=>r.json())]);
 document.getElementById('status').className='badge '+(s.running?'ok':'err');
 document.getElementById('status').textContent=s.running?'Running':'Stopped';
 document.getElementById('reqs').textContent=m.total_requests;
@@ -1631,12 +2303,12 @@ document.getElementById('platform').textContent=s.platform;
 document.getElementById('cluster').textContent=s.cluster.healthy_nodes;
 document.getElementById('workers').innerHTML=w.map(x=>`<div class="wi"><div><span class="dot ${x.state}"></span><span class="wi-id">${x.worker_id}</span><div class="wi-m">${x.worker_type} | Port ${x.port} | ${x.node||'local'}</div></div><div><button class="btn btn-s" onclick="restart('${x.worker_id}')">Restart</button><button class="btn btn-d" onclick="stop('${x.worker_id}')">Stop</button></div></div>`).join('');
 }catch(e){}}
-async function start(t){await fetch('/api/workers/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t,count:1})});fetch_data()}
-async function stop(id){await fetch('/api/workers/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
-async function restart(id){await fetch('/api/workers/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
-async function update(){await fetch('/api/rolling-update',{method:'POST'})}
-async function reload(){await fetch('/api/nginx/reload',{method:'POST'})}
-async function shutdown(){if(confirm('Shutdown?'))await fetch('/api/shutdown',{method:'POST'})}
+async function start(t){await fetch('/admin/manager/api/workers/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t,count:1})});fetch_data()}
+async function stop(id){await fetch('/admin/manager/api/workers/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
+async function restart(id){await fetch('/admin/manager/api/workers/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
+async function update(){await fetch('/admin/manager/api/rolling-update',{method:'POST'})}
+async function reload(){await fetch('/admin/manager/api/nginx/reload',{method:'POST'})}
+async function shutdown(){if(confirm('Shutdown?'))await fetch('/admin/manager/api/shutdown',{method:'POST'})}
 fetch_data();setInterval(fetch_data,2000);
 </script></body></html>'''
         self.send_response(200)

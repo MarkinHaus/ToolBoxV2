@@ -61,34 +61,45 @@ class MCPOutputProxy(io.StringIO):
 
 
 # Suppress stdout/stderr during critical MCP operations
+# MCPOutputProxy wird nicht mehr benötigt, da es den Deadlock verursacht.
+# Wir leiten stattdessen direkt um.
+
+
 class MCPSafeIO:
-    """Context manager for safe MCP communication without output interference"""
-    def __init__(self, suppress_stdout=True, suppress_stderr=True):
-        self.suppress_stdout = suppress_stdout
-        self.suppress_stderr = suppress_stderr
+    """
+    Sichere Umgebung für Tool-Ausführung im STDIO-Modus.
+
+    Problembehebung:
+    Im stdio-Modus ist sys.stdout der exklusive Kanal für JSON-RPC Nachrichten.
+    Wenn ein Tool 'print()' nutzt, zerstört es das JSON-Format oder verursacht
+    Deadlocks, wenn wir versuchen, es abzufangen und als Log zu senden.
+
+    Lösung:
+    Wir biegen sys.stdout temporär auf sys.stderr um.
+    - print() Ausgaben landen im Inspector-Log (via stderr).
+    - Der echte sys.stdout bleibt sauber für die finale JSON-Antwort des Servers.
+    """
+
+    def __init__(self, suppress_stdout=True, suppress_stderr=False):
         self.original_stdout = None
         self.original_stderr = None
 
     def __enter__(self):
-        if self.suppress_stdout:
+        # Nur eingreifen, wenn der Server läuft (um CLI-Tools nicht zu stören)
+        if GLOBAL_SERVER:
+            # Merke das originale "Leitungs-Rohr" zum Inspector
             self.original_stdout = sys.stdout
-            if GLOBAL_SERVER:
-                sys.stdout = MCPOutputProxy("stdout")
-            else:
-                sys.stdout = io.StringIO()
-        if self.suppress_stderr:
-            self.original_stderr = sys.stderr
-            if GLOBAL_SERVER:
-                sys.stderr = MCPOutputProxy("stderr")
-            else:
-                sys.stderr = io.StringIO()
+
+            # Leite alle print()-Aufrufe des Tools auf den Fehlerkanal um.
+            # Das verhindert den Deadlock und Timeout.
+            sys.stdout = sys.stderr
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        # WICHTIG: Sofort wiederherstellen, bevor der Server die Antwort sendet!
         if self.original_stdout:
             sys.stdout = self.original_stdout
-        if self.original_stderr:
-            sys.stderr = self.original_stderr
 
 def quick_info(*args, **kwargs):
     with MCPSafeIO():
@@ -155,7 +166,7 @@ class SmartInitManager:
                 with MCPSafeIO():
                     # Load modules progressively
                     start_time = time.time()
-                    await tb_app.load_all_mods_in_file()
+                    #await tb_app.load_all_mods_in_file()
                     module_time = time.time() - start_time
 
                     # Set up flows
@@ -163,8 +174,8 @@ class SmartInitManager:
                     tb_app.set_flows(flows_dict)
 
                     # Initialize ISAA if available
-                    if "isaa" in tb_app.functions:
-                        await tb_app.get_mod("isaa").init_isaa()
+                    # if "isaa" in tb_app.functions:
+                    #     await tb_app.get_mod("isaa").init_isaa()
 
                     self.init_status["toolbox"] = True
 
@@ -1234,7 +1245,7 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
             """Enhanced tool execution with notifications and performance tracking"""
             start_time = time.time()
             self.performance_metrics["requests_handled"] += 1
-
+            quick_info("MCP", f"Handling tool call: {name}")
             try:
                 # Ensure smart initialization
                 if not self.init_manager.init_status.get("toolbox", False):
@@ -1260,6 +1271,7 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                     result = await self._handle_toolbox_info(arguments)
                 elif name == "python_execute":
                     result = await self._handle_python_execute(arguments)
+                    quick_success("Python", f"Execution completed {result}")
                 elif name == "flow_start":
                     result = await self._handle_flow_start(arguments)
                 elif name.startswith("flow_"):
@@ -1282,7 +1294,7 @@ This ToolBoxV2 MCP server provides comprehensive access to a sophisticated devel
                             type="text",
                             text=result[0].text + perf_info
                         )
-
+                quick_info("MCP", f"Tool '{name}' completed in {execution_time:.2f}s")
                 return result
 
             except asyncio.TimeoutError:

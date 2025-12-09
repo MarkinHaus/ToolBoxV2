@@ -53,6 +53,38 @@ from toolboxv2.utils.extras.db.minio_manager import MinIOManager, MinIOConfig, M
 _logger: Optional[logging.Logger] = None
 
 
+def detect_storage_mode() -> "StorageMode":
+    """
+    Detect the appropriate storage mode based on environment.
+
+    - Tauri/Desktop mode → MOBILE (SQLite only, offline-first)
+    - Production/Cloud mode → SERVER (MinIO with server credentials)
+    - Development mode → SERVER (MinIO with dev credentials)
+
+    Returns:
+        StorageMode: The detected storage mode
+    """
+    try:
+        from toolboxv2.utils.workers.config import Environment
+
+        if Environment.is_tauri():
+            # Tauri/Desktop mode - use mobile/offline storage (SQLite)
+            get_logger().info("Detected Tauri environment - using MOBILE storage mode")
+            return StorageMode.MOBILE
+        elif Environment.is_production():
+            # Production/Cloud mode - use server storage with MinIO
+            get_logger().info("Detected Production environment - using SERVER storage mode")
+            return StorageMode.SERVER
+        else:
+            # Development mode - use server storage with dev credentials
+            get_logger().info("Detected Development environment - using SERVER storage mode")
+            return StorageMode.SERVER
+    except ImportError:
+        # Fallback to offline if Environment not available
+        get_logger().warning("Environment detection not available - using OFFLINE storage mode")
+        return StorageMode.OFFLINE
+
+
 def get_logger() -> logging.Logger:
     global _logger
     if _logger is None:
@@ -433,7 +465,7 @@ class BlobStorage:
 
     def __init__(
         self,
-        mode: StorageMode = StorageMode.DESKTOP,
+        mode: Optional[StorageMode] = None,
         # MinIO settings
         minio_endpoint:  Optional[str] = None,
         minio_access_key:  Optional[str] = None,
@@ -457,7 +489,10 @@ class BlobStorage:
         Initialize BlobStorage.
 
         Args:
-            mode: Operating mode (SERVER, DESKTOP, MOBILE, OFFLINE)
+            mode: Operating mode (SERVER, DESKTOP, MOBILE, OFFLINE).
+                  If None, auto-detects based on environment:
+                  - Tauri/Desktop → MOBILE (SQLite only)
+                  - Production/Dev → SERVER (MinIO)
             minio_endpoint: Local MinIO endpoint (for DESKTOP/SERVER)
             minio_access_key: MinIO access key
             minio_secret_key: MinIO secret key
@@ -471,6 +506,10 @@ class BlobStorage:
             auto_sync: Enable automatic sync
             bucket: MinIO bucket name
         """
+        # Auto-detect mode if not specified
+        if mode is None:
+            mode = detect_storage_mode()
+
         self.mode = mode
         self.bucket = bucket
         self.storage_directory = os.path.expanduser(storage_directory)
@@ -501,6 +540,8 @@ class BlobStorage:
             cloud_access_key = cloud_access_key or os.getenv("CLOUD_ACCESS_KEY")
             cloud_secret_key = cloud_secret_key or os.getenv("CLOUD_SECRET_KEY")
 
+        # Only initialize MinIO for SERVER/DESKTOP modes
+        # MOBILE and OFFLINE modes use SQLite only
         if mode in (StorageMode.SERVER, StorageMode.DESKTOP) and HAS_MINIO:
             try:
                 self._local_minio = Minio(
@@ -509,9 +550,21 @@ class BlobStorage:
                     secret_key=minio_secret_key,
                     secure=minio_secure,
                 )
-                self._ensure_bucket(self._local_minio)
+                # Try to ensure bucket exists - if auth fails, fallback to offline
+                if not self._ensure_bucket(self._local_minio):
+                    get_logger().warning(
+                        "MinIO authentication failed - falling back to OFFLINE mode"
+                    )
+                    self._local_minio = None
+                    self.mode = StorageMode.OFFLINE
             except Exception as e:
                 get_logger().warning(f"Local MinIO not available: {e}")
+                self._local_minio = None
+                # Fallback to offline mode if MinIO is not available
+                self.mode = StorageMode.OFFLINE
+        elif mode in (StorageMode.MOBILE, StorageMode.OFFLINE):
+            # Mobile/Offline modes don't use MinIO - SQLite only
+            get_logger().info(f"Using {mode.value} mode - SQLite storage only")
 
         # Cloud MinIO for sync
         if cloud_endpoint and cloud_access_key and cloud_secret_key and HAS_MINIO:
@@ -545,14 +598,36 @@ class BlobStorage:
 
         return hashlib.md5(str(uuid.getnode()).encode()).hexdigest()[:16]
 
-    def _ensure_bucket(self, client: Minio):
-        """Ensure bucket exists"""
+    def _ensure_bucket(self, client: Minio) -> bool:
+        """
+        Ensure bucket exists.
+
+        Returns:
+            bool: True if bucket check/creation succeeded, False if authentication failed
+        """
         try:
             if not client.bucket_exists(self.bucket):
                 client.make_bucket(self.bucket)
                 get_logger().info(f"Created bucket: {self.bucket}")
+            return True
         except Exception as e:
-            get_logger().warning(f"Bucket check failed: {e}")
+            error_str = str(e)
+            # Check for authentication/signature errors
+            if any(auth_err in error_str for auth_err in [
+                "SignatureDoesNotMatch",
+                "InvalidAccessKeyId",
+                "AccessDenied",
+                "InvalidSignature",
+                "AuthorizationHeaderMalformed"
+            ]):
+                get_logger().warning(
+                    f"MinIO authentication failed for bucket '{self.bucket}': {e}"
+                )
+                return False
+            else:
+                # Other errors (network, etc.) - log but don't fail auth
+                get_logger().warning(f"Bucket check failed: {e}")
+                return True  # Don't switch to offline for non-auth errors
 
     def _check_health(self):
         """Check storage health"""
@@ -1139,7 +1214,8 @@ class BlobFile:
 
                 storage = get_app(from_="BlobStorage").root_blob_storage
             except:
-                storage = BlobStorage()
+                # Use auto-detection for storage mode
+                storage = BlobStorage()  # mode=None triggers auto-detection
 
         self.storage = storage
         self.data_buffer = b""
@@ -1408,6 +1484,23 @@ def create_offline_storage(**kwargs) -> BlobStorage:
         auto_sync=False,
         **kwargs
     )
+
+
+def create_auto_storage(**kwargs) -> BlobStorage:
+    """
+    Create storage with automatic mode detection based on environment.
+
+    - Tauri/Desktop environment → MOBILE mode (SQLite only)
+    - Production/Cloud environment → SERVER mode (MinIO)
+    - Development environment → SERVER mode (MinIO with dev credentials)
+
+    If MinIO authentication fails, automatically falls back to OFFLINE mode.
+
+    Returns:
+        BlobStorage: Configured storage instance
+    """
+    # Let BlobStorage auto-detect the mode (mode=None triggers detection)
+    return BlobStorage(mode=None, **kwargs)
 
 
 if __name__ == "__main__":

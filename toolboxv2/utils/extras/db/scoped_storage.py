@@ -462,7 +462,11 @@ class ScopedBlobStorage:
         minio_secret_key = minio_secret_key or os.getenv("minio_secret_key".upper())
 
         if minio_endpoint and minio_access_key and minio_secret_key:
-            self._init_minio(minio_endpoint, minio_access_key, minio_secret_key, minio_secure)
+            if not self._init_minio(minio_endpoint, minio_access_key, minio_secret_key, minio_secure):
+                import logging
+                logging.getLogger("scoped_storage").warning(
+                    "MinIO authentication failed - using local storage only"
+                )
 
         # Local DB für USER_PRIVATE
         self._local_db: Optional[MobileDB] = None
@@ -471,8 +475,13 @@ class ScopedBlobStorage:
 
         self._lock = threading.Lock()
 
-    def _init_minio(self, endpoint: str, access_key: str, secret_key: str, secure: bool):
-        """Initialisiert MinIO Client"""
+    def _init_minio(self, endpoint: str, access_key: str, secret_key: str, secure: bool) -> bool:
+        """
+        Initialisiert MinIO Client.
+
+        Returns:
+            bool: True if initialization succeeded, False if authentication failed
+        """
         if not MINIO_AVAILABLE:
             raise ImportError("minio package not installed")
 
@@ -490,8 +499,19 @@ class ScopedBlobStorage:
                 if not self._minio.bucket_exists(bucket):
                     self._minio.make_bucket(bucket)
             except S3Error as e:
-                if e.code != "BucketAlreadyOwnedByYou":
+                error_code = getattr(e, 'code', str(e))
+                # Check for authentication errors
+                if error_code in ("SignatureDoesNotMatch", "InvalidAccessKeyId",
+                                  "AccessDenied", "InvalidSignature"):
+                    import logging
+                    logging.getLogger("scoped_storage").warning(
+                        f"MinIO authentication failed for bucket '{bucket}': {e}"
+                    )
+                    self._minio = None
+                    return False
+                elif error_code != "BucketAlreadyOwnedByYou":
                     raise
+        return True
 
     # =================== Core Operations ===================
 

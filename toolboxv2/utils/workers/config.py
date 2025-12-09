@@ -175,7 +175,7 @@ class ManagerConfig:
     """Worker manager configuration."""
     web_ui_enabled: bool = True
     web_ui_host: str = "127.0.0.1"
-    web_ui_port: int = 9000
+    web_ui_port: int = 9005
     control_socket: str = ""
     pid_file: str = ""
     log_file: str = ""
