@@ -18,6 +18,13 @@ IS_OFFLINE_DB="false"       # true = nur SQLite
 SERVER_ID="myserver"        # Default: hostname
 DB_CACHE_TTL="60"
 
+NGINX_PATH=
+# NGINX_KEY_PATH= SSL_KEY_PATH=
+# NGINX_CERT_PATH= SSL_CERT_PATH=
+NGINX_CONF_PATH=
+CLUSTER_SECRET=
+TOOLBOX_LOGGING_LEVEL="INFO" # "DEBUG"
+
 MOD_PROVIDER="https://simplecore.app"
 PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 GUI_COMMAND="wt new-tab powershell -NoExit -Command"
@@ -125,3 +132,4 @@ EXTERNAL_PATH_RUNNABLE=""
 CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 CLERK_DOMAIN=your-clerk-instance.clerk.accounts.dev
+

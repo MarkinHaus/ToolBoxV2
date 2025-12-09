@@ -10,6 +10,7 @@ Features:
 - Secure: HMAC-SHA256 signature prevents tampering
 - Expiry: Built-in TTL support
 - Clerk integration: Verify sessions via CloudM.AuthClerk
+- Multi-worker support: All session state in signed cookie
 """
 
 import base64
@@ -19,12 +20,26 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict, dataclass, field
+import uuid
+from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Access Level Constants
+# ============================================================================
+
+
+class AccessLevel:
+    """User access levels for authorization."""
+    ADMIN = -1           # Full access to everything
+    NOT_LOGGED_IN = 0    # Anonymous user, only public endpoints
+    LOGGED_IN = 1        # Authenticated user
+    TRUSTED = 2          # Trusted/verified user
 
 
 # ============================================================================
@@ -36,19 +51,42 @@ logger = logging.getLogger(__name__)
 class SessionData:
     """Session payload stored in signed cookie."""
 
+    # Core identification
     user_id: str = ""
     session_id: str = ""
     user_name: str = "anonymous"
-    level: int = -1  # Permission level (-1 = not authenticated)
+
+    # Authorization
+    level: int = AccessLevel.NOT_LOGGED_IN  # Permission level
     spec: str = ""  # User specification/role
+
+    # Expiration
     exp: float = 0.0  # Expiration timestamp
+
+    # Clerk integration
+    clerk_user_id: str = ""
+
+    # Session state
+    validated: bool = False  # Whether session was validated with Clerk
+    anonymous: bool = True   # Anonymous session flag
+
     # Additional custom data
     extra: Dict[str, Any] = field(default_factory=dict)
+    live_data: Dict[str, Any] = field(default_factory=dict)
+
+    # Tracking
+    _dirty: bool = field(default=False, repr=False, compare=False)
 
     @property
     def is_authenticated(self) -> bool:
         """Check if session represents an authenticated user."""
-        return self.level > 0 and self.user_id != "" and not self.is_expired
+        return (
+            self.validated and
+            not self.anonymous and
+            self.level >= AccessLevel.LOGGED_IN and
+            self.user_id != "" and
+            not self.is_expired
+        )
 
     @property
     def is_expired(self) -> bool:
@@ -57,8 +95,17 @@ class SessionData:
             return False
         return time.time() > self.exp
 
+    def mark_dirty(self):
+        """Mark session as modified (needs to be saved)."""
+        self._dirty = True
+
+    @property
+    def is_dirty(self) -> bool:
+        """Check if session has unsaved changes."""
+        return self._dirty
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary for serialization."""
         return {
             "user_id": self.user_id,
             "session_id": self.session_id,
@@ -66,7 +113,11 @@ class SessionData:
             "level": self.level,
             "spec": self.spec,
             "exp": self.exp,
+            "clerk_user_id": self.clerk_user_id,
+            "validated": self.validated,
+            "anonymous": self.anonymous,
             "extra": self.extra,
+            "live_data": self.live_data,
         }
 
     @classmethod
@@ -76,21 +127,71 @@ class SessionData:
             user_id=data.get("user_id", ""),
             session_id=data.get("session_id", ""),
             user_name=data.get("user_name", "anonymous"),
-            level=data.get("level", -1),
+            level=data.get("level", AccessLevel.NOT_LOGGED_IN),
             spec=data.get("spec", ""),
             exp=data.get("exp", 0.0),
+            clerk_user_id=data.get("clerk_user_id", ""),
+            validated=data.get("validated", False),
+            anonymous=data.get("anonymous", True),
             extra=data.get("extra", {}),
+            live_data=data.get("live_data", {}),
         )
 
     @classmethod
-    def anonymous(cls) -> "SessionData":
+    def anonymous_session(cls, session_id: str = None) -> "SessionData":
         """Create anonymous session."""
         return cls(
             user_id="",
-            session_id=f"anon_{int(time.time() * 1000)}",
+            session_id=session_id or f"anon_{uuid.uuid4().hex[:16]}",
             user_name="anonymous",
-            level=-1,
+            level=AccessLevel.NOT_LOGGED_IN,
+            validated=False,
+            anonymous=True,
         )
+
+    @classmethod
+    def authenticated_session(
+        cls,
+        user_id: str,
+        user_name: str,
+        level: int = AccessLevel.LOGGED_IN,
+        clerk_user_id: str = "",
+        spec: str = "",
+        max_age: int = 604800,
+        **extra
+    ) -> "SessionData":
+        """Create authenticated session."""
+        return cls(
+            user_id=user_id,
+            session_id=str(uuid.uuid4()),
+            user_name=user_name,
+            level=level,
+            spec=spec,
+            exp=time.time() + max_age,
+            clerk_user_id=clerk_user_id,
+            validated=True,
+            anonymous=False,
+            extra=extra,
+            live_data={
+                "clerk_user_id": clerk_user_id,
+                "level": str(level),
+            },
+        )
+
+    def invalidate(self):
+        """Invalidate this session."""
+        self.validated = False
+        self.anonymous = True
+        self.level = AccessLevel.NOT_LOGGED_IN
+        self.user_id = ""
+        self.clerk_user_id = ""
+        self._dirty = True
+
+    # Backwards compatibility
+    @classmethod
+    def anonymous(cls) -> "SessionData":
+        """Alias for anonymous_session."""
+        return cls.anonymous_session()
 
 
 # ============================================================================
@@ -287,7 +388,6 @@ class ClerkSessionVerifier:
             return self._clerk_available
 
         try:
-            # Try to get the module
             if hasattr(self.app, "get_mod"):
                 mod = self.app.get_mod(self.auth_module.split(".")[0])
                 self._clerk_available = mod is not None
@@ -329,14 +429,20 @@ class ClerkSessionVerifier:
             # Convert Clerk response to SessionData
             session = SessionData(
                 user_id=data.get("user_id", ""),
-                session_id=data.get("session_id", ""),
+                session_id=data.get("session_id", str(uuid.uuid4())),
                 user_name=data.get("user_name", data.get("username", "anonymous")),
-                level=data.get("level", 1),
+                level=data.get("level", AccessLevel.LOGGED_IN),
                 spec=data.get("spec", ""),
                 exp=data.get("exp", 0),
+                clerk_user_id=data.get("clerk_user_id", ""),
+                validated=True,
+                anonymous=False,
                 extra={
-                    "clerk_user_id": data.get("clerk_user_id"),
                     "email": data.get("email"),
+                },
+                live_data={
+                    "clerk_user_id": data.get("clerk_user_id", ""),
+                    "level": str(data.get("level", AccessLevel.LOGGED_IN)),
                 },
             )
 
@@ -371,14 +477,20 @@ class ClerkSessionVerifier:
 
             session = SessionData(
                 user_id=data.get("user_id", ""),
-                session_id=data.get("session_id", ""),
+                session_id=data.get("session_id", str(uuid.uuid4())),
                 user_name=data.get("user_name", data.get("username", "anonymous")),
-                level=data.get("level", 1),
+                level=data.get("level", AccessLevel.LOGGED_IN),
                 spec=data.get("spec", ""),
                 exp=data.get("exp", 0),
+                clerk_user_id=data.get("clerk_user_id", ""),
+                validated=True,
+                anonymous=False,
                 extra={
-                    "clerk_user_id": data.get("clerk_user_id"),
                     "email": data.get("email"),
+                },
+                live_data={
+                    "clerk_user_id": data.get("clerk_user_id", ""),
+                    "level": str(data.get("level", AccessLevel.LOGGED_IN)),
                 },
             )
 
@@ -390,17 +502,20 @@ class ClerkSessionVerifier:
 
 
 # ============================================================================
-# Combined Session Manager
+# Combined Session Manager (Multi-Worker Ready)
 # ============================================================================
 
 
 class SessionManager:
     """
     Combined session manager supporting:
-    - Signed cookies (stateless)
+    - Signed cookies (stateless, multi-worker safe)
     - Clerk verification
     - Bearer token auth
     - API key auth
+
+    For multi-worker setup, all session state is in the signed cookie.
+    No server-side storage needed.
     """
 
     def __init__(
@@ -411,6 +526,8 @@ class SessionManager:
         cookie_secure: bool = True,
         cookie_httponly: bool = True,
         cookie_samesite: str = "Lax",
+        cookie_path: str = "/",
+        cookie_domain: Optional[str] = None,
         app=None,
         clerk_enabled: bool = True,
         api_key_header: str = "X-API-Key",
@@ -423,6 +540,8 @@ class SessionManager:
             secure=cookie_secure,
             httponly=cookie_httponly,
             samesite=cookie_samesite,
+            path=cookie_path,
+            domain=cookie_domain,
         )
 
         self.clerk_verifier = None
@@ -431,17 +550,127 @@ class SessionManager:
 
         self.api_key_header = api_key_header
         self.bearer_header = bearer_header
+        self.cookie_max_age = cookie_max_age
 
-        # API key storage (in production, load from config/db)
+        # API key storage (consider using Redis for multi-worker)
         self._api_keys: Dict[str, SessionData] = {}
 
-    def register_api_key(self, api_key: str, session: SessionData):
-        """Register an API key with associated session data."""
-        self._api_keys[api_key] = session
+        # Track sessions that need cookie updates
+        # Key: session_id, Value: SessionData
+        self._pending_updates: Dict[str, SessionData] = {}
 
-    def revoke_api_key(self, api_key: str):
-        """Revoke an API key."""
-        self._api_keys.pop(api_key, None)
+    # =========================================================================
+    # Session Creation
+    # =========================================================================
+
+    def create_session(
+        self,
+        user_id: str = "",
+        user_name: str = "anonymous",
+        level: int = AccessLevel.NOT_LOGGED_IN,
+        spec: str = "",
+        clerk_user_id: str = "",
+        client_ip: str = "",
+        token: str = "",
+        max_age: Optional[int] = None,
+        **extra
+    ) -> str:
+        """
+        Create a new session and return the session ID.
+
+        The session data is stored in a signed cookie, not server-side.
+
+        Returns:
+            session_id: The unique session identifier
+        """
+        if max_age is None:
+            max_age = self.cookie_max_age
+
+        session_id = str(uuid.uuid4())
+
+        # Determine if this is an anonymous or authenticated session
+        is_anonymous = not user_id or level <= AccessLevel.NOT_LOGGED_IN
+
+        session = SessionData(
+            user_id=user_id,
+            session_id=session_id,
+            user_name=user_name,
+            level=level,
+            spec=spec,
+            exp=time.time() + max_age,
+            clerk_user_id=clerk_user_id,
+            validated=not is_anonymous,
+            anonymous=is_anonymous,
+            extra={
+                "client_ip": client_ip,
+                "created_at": time.time(),
+                **extra,
+            },
+            live_data={
+                "clerk_user_id": clerk_user_id,
+                "level": str(level),
+            },
+        )
+
+        # Mark for cookie update
+        session._dirty = True
+        self._pending_updates[session_id] = session
+
+        logger.debug(f"Created session {session_id} for user {user_id or 'anonymous'}")
+
+        return session_id
+
+    def create_authenticated_session(
+        self,
+        user_id: str,
+        user_name: str,
+        level: int = AccessLevel.LOGGED_IN,
+        clerk_user_id: str = "",
+        spec: str = "",
+        max_age: Optional[int] = None,
+        **extra
+    ) -> Tuple[SessionData, str]:
+        """
+        Create an authenticated session and return both session and cookie header.
+
+        Returns:
+            Tuple of (session_data, set_cookie_header)
+        """
+        if max_age is None:
+            max_age = self.cookie_max_age
+
+        session = SessionData.authenticated_session(
+            user_id=user_id,
+            user_name=user_name,
+            level=level,
+            clerk_user_id=clerk_user_id,
+            spec=spec,
+            max_age=max_age,
+            **extra
+        )
+
+        cookie_header = self.cookie_session.create_cookie_header(session, max_age)
+
+        return session, cookie_header
+
+    # =========================================================================
+    # Session Retrieval
+    # =========================================================================
+
+    def get_session(self, session_id: str) -> SessionData:
+        """
+        Get session by ID.
+
+        In stateless mode, this returns from pending updates or creates anonymous.
+        The actual session data comes from the cookie, not server storage.
+        """
+        # Check pending updates first
+        if session_id in self._pending_updates:
+            return self._pending_updates[session_id]
+
+        # In stateless mode, we don't have server-side storage
+        # Return anonymous session as fallback
+        return SessionData.anonymous_session(session_id)
 
     async def get_session_from_request(
         self,
@@ -485,8 +714,12 @@ class SessionManager:
 
         # 3. Check signed cookie
         cookie_session = self.cookie_session.get_from_environ(environ)
-        if cookie_session and cookie_session.is_authenticated:
-            return cookie_session
+        if cookie_session:
+            # Check if there's a pending update for this session
+            if cookie_session.session_id in self._pending_updates:
+                return self._pending_updates[cookie_session.session_id]
+            if cookie_session.is_authenticated or not cookie_session.anonymous:
+                return cookie_session
 
         # 4. Return anonymous
         return SessionData.anonymous()
@@ -525,53 +758,185 @@ class SessionManager:
 
         # 3. Check signed cookie
         cookie_session = self.cookie_session.get_from_environ(environ)
-        if cookie_session and cookie_session.is_authenticated:
-            return cookie_session
+        if cookie_session:
+            # Check if there's a pending update for this session
+            if cookie_session.session_id in self._pending_updates:
+                return self._pending_updates[cookie_session.session_id]
+            if cookie_session.is_authenticated or not cookie_session.anonymous:
+                return cookie_session
 
         # 4. Return anonymous
         return SessionData.anonymous()
 
-    def create_session(
+    # =========================================================================
+    # Session Update
+    # =========================================================================
+
+    def update_session(self, session: SessionData):
+        """
+        Mark session for update.
+
+        In stateless mode, this queues the session for cookie update.
+        """
+        session._dirty = True
+        self._pending_updates[session.session_id] = session
+        logger.debug(f"Session {session.session_id} marked for update")
+
+    def set_session_data(
         self,
-        user_id: str,
-        user_name: str,
-        level: int = 1,
-        spec: str = "",
-        extra: Optional[Dict] = None,
-        max_age: Optional[int] = None,
-    ) -> Tuple[SessionData, str]:
+        session: SessionData,
+        user_id: str = None,
+        user_name: str = None,
+        level: int = None,
+        clerk_user_id: str = None,
+        validated: bool = None,
+        anonymous: bool = None,
+        **extra
+    ) -> SessionData:
         """
-        Create a new session and return Set-Cookie header.
+        Update session fields and mark as dirty.
 
-        Returns:
-            Tuple of (session_data, set_cookie_header)
+        Returns the updated session.
         """
-        import uuid
+        if user_id is not None:
+            session.user_id = user_id
+        if user_name is not None:
+            session.user_name = user_name
+        if level is not None:
+            session.level = level
+            session.live_data["level"] = str(level)
+        if clerk_user_id is not None:
+            session.clerk_user_id = clerk_user_id
+            session.live_data["clerk_user_id"] = clerk_user_id
+        if validated is not None:
+            session.validated = validated
+        if anonymous is not None:
+            session.anonymous = anonymous
 
-        if max_age is None:
-            max_age = self.cookie_session.max_age
+        for key, value in extra.items():
+            session.extra[key] = value
 
-        session = SessionData(
-            user_id=user_id,
-            session_id=str(uuid.uuid4()),
-            user_name=user_name,
-            level=level,
-            spec=spec,
-            exp=time.time() + max_age,
-            extra=extra or {},
-        )
+        session._dirty = True
+        self._pending_updates[session.session_id] = session
 
-        cookie_header = self.cookie_session.create_cookie_header(session, max_age)
-        return session, cookie_header
+        return session
 
-    def invalidate_session(self) -> str:
+    # =========================================================================
+    # Session Deletion
+    # =========================================================================
+
+    def delete_session(self, session_id: str):
+        """
+        Delete/invalidate a session.
+
+        In stateless mode, this marks the session for cookie clearing.
+        """
+        # Remove from pending updates
+        self._pending_updates.pop(session_id, None)
+
+        logger.debug(f"Session {session_id} deleted")
+
+    def invalidate_session(self, session: SessionData = None) -> str:
         """
         Invalidate session and return Set-Cookie header that clears cookie.
 
         Returns:
             Set-Cookie header value
         """
+        if session:
+            session.invalidate()
+            self._pending_updates.pop(session.session_id, None)
+
         return self.cookie_session.create_logout_cookie_header()
+
+    # =========================================================================
+    # Cookie Header Generation
+    # =========================================================================
+
+    def get_set_cookie_header(self, session: SessionData) -> Optional[str]:
+        """
+        Get Set-Cookie header for a session if it needs updating.
+
+        Returns:
+            Set-Cookie header string, or None if no update needed
+        """
+        if not session:
+            return None
+
+        # Check if session needs update
+        if session._dirty or session.session_id in self._pending_updates:
+            # Get the most recent version
+            if session.session_id in self._pending_updates:
+                session = self._pending_updates[session.session_id]
+
+            # Clear from pending
+            self._pending_updates.pop(session.session_id, None)
+            session._dirty = False
+
+            # Generate cookie header
+            return self.cookie_session.create_cookie_header(session)
+
+        return None
+
+    def create_cookie_header_for_session(
+        self,
+        session: SessionData,
+        max_age: Optional[int] = None
+    ) -> str:
+        """
+        Create Set-Cookie header for a specific session.
+
+        Always generates header regardless of dirty state.
+        """
+        if max_age is None:
+            max_age = self.cookie_max_age
+        return self.cookie_session.create_cookie_header(session, max_age)
+
+    def get_logout_cookie_header(self) -> str:
+        """Get Set-Cookie header that clears the session cookie."""
+        return self.cookie_session.create_logout_cookie_header()
+
+    # =========================================================================
+    # API Key Management
+    # =========================================================================
+
+    def register_api_key(self, api_key: str, session: SessionData):
+        """Register an API key with associated session data."""
+        self._api_keys[api_key] = session
+
+    def revoke_api_key(self, api_key: str):
+        """Revoke an API key."""
+        self._api_keys.pop(api_key, None)
+
+    # =========================================================================
+    # Utility Methods
+    # =========================================================================
+
+    def verify_session_token(self, token: str) -> Tuple[bool, Optional[SessionData]]:
+        """
+        Verify a session token (sync).
+
+        Returns:
+            Tuple of (is_valid, session_data)
+        """
+        if self.clerk_verifier:
+            return self.clerk_verifier.verify_session_sync(token)
+        return False, None
+
+    async def verify_session_token_async(self, token: str) -> Tuple[bool, Optional[SessionData]]:
+        """
+        Verify a session token (async).
+
+        Returns:
+            Tuple of (is_valid, session_data)
+        """
+        if self.clerk_verifier:
+            return await self.clerk_verifier.verify_session_async(token)
+        return False, None
+
+    def clear_pending_updates(self):
+        """Clear all pending session updates."""
+        self._pending_updates.clear()
 
 
 # ============================================================================
@@ -580,7 +945,7 @@ class SessionManager:
 
 
 class SessionMiddleware:
-    """WSGI middleware that adds session to environ."""
+    """WSGI middleware that adds session to environ and handles cookie updates."""
 
     def __init__(
         self,
@@ -596,7 +961,15 @@ class SessionMiddleware:
         """Process request and add session to environ."""
         session = self.session_manager.get_session_from_request_sync(environ)
         environ[self.environ_key] = session
-        return self.app(environ, start_response)
+
+        def custom_start_response(status, headers, exc_info=None):
+            # Add Set-Cookie header if session was modified
+            cookie_header = self.session_manager.get_set_cookie_header(session)
+            if cookie_header:
+                headers.append(("Set-Cookie", cookie_header))
+            return start_response(status, headers, exc_info)
+
+        return self.app(environ, custom_start_response)
 
 
 # ============================================================================
@@ -609,7 +982,7 @@ def generate_secret(length: int = 64) -> str:
     return base64.urlsafe_b64encode(os.urandom(length)).decode()
 
 
-def require_auth(min_level: int = 1):
+def require_auth(min_level: int = AccessLevel.LOGGED_IN):
     """Decorator to require authentication for handlers."""
 
     def decorator(func):
@@ -620,7 +993,7 @@ def require_auth(min_level: int = 1):
                     {"Content-Type": "application/json"},
                     b'{"error": "Unauthorized"}',
                 )
-            if session.level < min_level:
+            if session.level < min_level and session.level != AccessLevel.ADMIN:
                 return (
                     403,
                     {"Content-Type": "application/json"},
@@ -631,6 +1004,11 @@ def require_auth(min_level: int = 1):
         return wrapper
 
     return decorator
+
+
+def require_level(level: int):
+    """Decorator to require specific access level."""
+    return require_auth(level)
 
 
 # ============================================================================
@@ -664,13 +1042,11 @@ def main():
         session_mgr = SignedCookieSession(secret=args.secret)
 
         # Create test session
-        session = SessionData(
+        session = SessionData.authenticated_session(
             user_id="test_123",
-            session_id="sess_abc",
             user_name="testuser",
-            level=1,
-            spec="user",
-            exp=time.time() + 3600,
+            level=AccessLevel.LOGGED_IN,
+            clerk_user_id="clerk_abc",
         )
 
         # Encode
@@ -686,6 +1062,7 @@ def main():
         # Verify
         print(f"\nAuthenticated: {decoded.is_authenticated}")
         print(f"Expired: {decoded.is_expired}")
+        print(f"Level: {decoded.level}")
 
     else:
         parser.print_help()

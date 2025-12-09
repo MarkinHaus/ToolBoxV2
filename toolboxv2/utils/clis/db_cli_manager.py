@@ -471,15 +471,17 @@ class MinIOCLIManager:
 
         data_dir = str(self.base_dir / "data" / name)
 
+        endpoint = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9010")
+        host, port = endpoint.split(":")
         config = ClusterConfig(
             name=name,
             mode="desktop",
             data_dir=data_dir,
-            port=9010,
-            console_port=9011,
-            access_key="localadmin",
-            secret_key="LocalSecurePass123",
-            host="127.0.0.1",
+            port=port,
+            console_port=port+1,
+            access_key=os.getenv("MINIO_ACCESS_KEY", "admin"),
+            secret_key=os.getenv("MINIO_SECRET_KEY", "SecurePass123"),
+            host=host,
             cloud_endpoint=cloud_endpoint,
             cloud_access_key=cloud_access_key,
             cloud_secret_key=cloud_secret_key,

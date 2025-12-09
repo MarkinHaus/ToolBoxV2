@@ -170,7 +170,7 @@ const user = {
 
             // Prüfe auf "none" string
             if (configResult.error !== "none" || !configResult.result?.data?.publishable_key) {
-                TB.logger.error('[User] Failed to get Clerk config:', configResult.info?.help_text);
+                TB.logger.error('[User] Failed to get Clerk config:', configResult.info?.help_text, configResult);
                 return false;
             }
 

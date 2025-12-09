@@ -10,6 +10,9 @@ Features:
 - ZeroMQ event integration
 - ToolBoxV2 module routing
 - SSE streaming support
+- WebSocket message handling via ZMQ
+- Auth endpoints (validateSession, IsValidSession, logout, api_user_data)
+- Access Control (open_modules, open* functions, level system)
 """
 
 import asyncio
@@ -24,16 +27,35 @@ import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from http import HTTPStatus
+from typing import Any, Dict, List, Optional, Tuple, Set
 from urllib.parse import parse_qs, unquote
 
-from toolboxv2.utils.workers import ZMQEventManager
+from toolboxv2.utils.workers.event_manager import (
+    ZMQEventManager,
+    Event,
+    EventType,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Access Control Constants
+# ============================================================================
+
+class AccessLevel:
+    """User access levels."""
+    ADMIN = -1
+    NOT_LOGGED_IN = 0
+    LOGGED_IN = 1
+    TRUSTED = 2
+
 
 # ============================================================================
 # Request Parsing
 # ============================================================================
+
 
 @dataclass
 class ParsedRequest:
@@ -48,10 +70,35 @@ class ParsedRequest:
     form_data: Dict[str, Any] | None = None
     json_data: Any | None = None
     session: Any = None
+    client_ip: str = "unknown"
+    client_port: str = "unknown"
 
     @property
     def is_htmx(self) -> bool:
         return self.headers.get("hx-request", "").lower() == "true"
+
+    def get_bearer_token(self) -> Optional[str]:
+        """Extract Bearer token from Authorization header."""
+        auth = self.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            return auth[7:]
+        return None
+
+    def get_session_token(self) -> Optional[str]:
+        """Get session token from body or Authorization header."""
+        # From body (JSON)
+        if self.json_data and isinstance(self.json_data, dict):
+            token = self.json_data.get("session_token") or self.json_data.get("Jwt_claim")
+            if token:
+                return token
+        # From Authorization header
+        return self.get_bearer_token()
+
+    def get_clerk_user_id(self) -> Optional[str]:
+        """Get Clerk user ID from body."""
+        if self.json_data and isinstance(self.json_data, dict):
+            return self.json_data.get("clerk_user_id") or self.json_data.get("Username")
+        return None
 
     def to_toolbox_request(self) -> Dict[str, Any]:
         """Convert to ToolBoxV2 RequestData format."""
@@ -65,9 +112,10 @@ class ParsedRequest:
                                  for k, v in self.query_params.items()},
                 "form_data": self.form_data,
                 "body": self.body.decode("utf-8", errors="replace") if self.body else None,
+                "client_ip": self.client_ip,
             },
             "session": self.session.to_dict() if self.session else {
-                "SiID": "", "level": "-1", "spec": "", "user_name": "anonymous",
+                "SiID": "", "level": "0", "spec": "", "user_name": "anonymous",
             },
             "session_id": self.session.session_id if self.session else "",
         }
@@ -117,17 +165,29 @@ def parse_request(environ: Dict) -> ParsedRequest:
 
     session = environ.get("tb.session")
 
+    # Extract client IP (check X-Forwarded-For for proxy)
+    client_ip = headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = headers.get("x-real-ip", "")
+    if not client_ip:
+        remote_addr = environ.get("REMOTE_ADDR", "unknown")
+        client_ip = remote_addr.split(":")[0] if ":" in remote_addr else remote_addr
+
+    client_port = environ.get("REMOTE_PORT", "unknown")
+
     return ParsedRequest(
         method=method, path=path, query_params=query_params,
         headers=headers, content_type=content_type,
         content_length=content_length, body=body,
         form_data=form_data, json_data=json_data, session=session,
+        client_ip=client_ip, client_port=str(client_port),
     )
 
 
 # ============================================================================
 # Response Helpers
 # ============================================================================
+
 
 def json_response(data: Any, status: int = 200, headers: Dict = None) -> Tuple:
     resp_headers = {"Content-Type": "application/json"}
@@ -152,6 +212,34 @@ def redirect_response(url: str, status: int = 302) -> Tuple:
     return (status, {"Location": url, "Content-Type": "text/plain"}, b"")
 
 
+def api_result_response(
+    error: Optional[str] = None,
+    origin: Optional[List[str]] = None,
+    data: Any = None,
+    data_info: Optional[str] = None,
+    data_type: Optional[str] = None,
+    exec_code: int = 0,
+    help_text: str = "OK",
+    status: int = 200,
+) -> Tuple:
+    """Create a ToolBoxV2-style API result response."""
+    result = {
+        "error": error,
+        "origin": origin,
+        "result": {
+            "data_to": "API",
+            "data_info": data_info,
+            "data": data,
+            "data_type": data_type,
+        } if data is not None or data_info else None,
+        "info": {
+            "exec_code": exec_code,
+            "help_text": help_text,
+        } if exec_code != 0 or help_text != "OK" else None,
+    }
+    return json_response(result, status=status)
+
+
 def format_sse_event(data: Any, event: str = None, event_id: str = None) -> str:
     lines = []
     if event:
@@ -167,14 +255,358 @@ def format_sse_event(data: Any, event: str = None, event_id: str = None) -> str:
 
 
 # ============================================================================
-# ToolBoxV2 Handler
+# Access Control
 # ============================================================================
 
-class ToolBoxHandler:
-    """Handler for ToolBoxV2 module calls."""
 
-    def __init__(self, app, api_prefix: str = "/api"):
+class AccessController:
+    """
+    Controls access to API endpoints based on:
+    - open_modules: Modules that are publicly accessible
+    - Function names: Functions starting with 'open' are public
+    - User level: -1=Admin, 0=not logged in, 1=logged in, 2=trusted
+    """
+
+    def __init__(self, config):
+        self.config = config
+        self._open_modules: Set[str] = set()
+        self._load_config()
+
+    def _load_config(self):
+        """Load open modules from config."""
+        if hasattr(self.config, 'toolbox'):
+            modules = getattr(self.config.toolbox, 'open_modules', [])
+            self._open_modules = set(modules)
+            logger.info(f"Open modules: {self._open_modules}")
+
+    def is_public_endpoint(self, module_name: str, function_name: str) -> bool:
+        """Check if endpoint is publicly accessible (no auth required)."""
+        # Module in open_modules list
+        if module_name in self._open_modules:
+            return True
+
+        # Function starts with 'open'
+        if function_name and function_name.lower().startswith("open"):
+            return True
+
+        return False
+
+    def check_access(
+        self,
+        module_name: str,
+        function_name: str,
+        user_level: int,
+        required_level: int = AccessLevel.LOGGED_IN,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Check if user has access to endpoint.
+
+        Returns:
+            Tuple of (allowed: bool, error_message: Optional[str])
+        """
+        # Public endpoints
+        if self.is_public_endpoint(module_name, function_name):
+            return True, None
+
+        # Not logged in
+        if user_level == AccessLevel.NOT_LOGGED_IN:
+            return False, "Authentication required"
+
+        # Admin has access to everything
+        if user_level == AccessLevel.ADMIN:
+            return True, None
+
+        # Check level requirement
+        if user_level >= required_level:
+            return True, None
+
+        return False, f"Insufficient permissions (level {user_level}, required {required_level})"
+
+    def get_user_level(self, session) -> int:
+        """Extract user level from session."""
+        if not session:
+            return AccessLevel.NOT_LOGGED_IN
+
+        # Try to get level from session
+        level = None
+        if hasattr(session, 'level'):
+            level = session.level
+        elif hasattr(session, 'live_data') and isinstance(session.live_data, dict):
+            level = session.live_data.get('level')
+        elif hasattr(session, 'to_dict'):
+            data = session.to_dict()
+            level = data.get('level')
+
+        if level is None:
+            return AccessLevel.NOT_LOGGED_IN
+
+        try:
+            return int(level)
+        except (ValueError, TypeError):
+            return AccessLevel.NOT_LOGGED_IN
+
+
+# ============================================================================
+# Auth Handlers
+# ============================================================================
+
+
+class AuthHandler:
+    """
+    Handles authentication endpoints equivalent to Rust handlers:
+    - /validateSession (POST)
+    - /IsValidSession (GET)
+    - /web/logoutS (POST)
+    - /api_user_data (GET)
+    """
+
+    def __init__(self, session_manager, app, config):
+        self.session_manager = session_manager
         self.app = app
+        self.config = config
+        self._logger = logging.getLogger(f"{__name__}.AuthHandler")
+
+    async def validate_session(self, request: ParsedRequest) -> Tuple:
+        """
+        Validate session with Clerk token.
+        Equivalent to validate_session_handler in Rust.
+        """
+        client_ip = request.client_ip
+        token = request.get_session_token()
+        clerk_user_id = request.get_clerk_user_id()
+
+        self._logger.info(
+            f"[Session] Validation request - IP: {client_ip}, "
+            f"User: {clerk_user_id}, Has Token: {token is not None}"
+        )
+
+        # Token must be present
+        if not token:
+            self._logger.warning("[Session] No token provided")
+            if request.session:
+                request.session.invalidate()
+            return api_result_response(
+                error="No authentication token provided",
+                status=401,
+            )
+
+        # Get or create session
+        session = request.session
+        session_id = session.session_id if session else None
+
+        if not session_id:
+            self._logger.info("[Session] Creating new session for validation")
+            session_id = self.session_manager.create_session(
+                client_ip=client_ip,
+                token=token,
+                clerk_user_id=clerk_user_id,
+            )
+            session = self.session_manager.get_session(session_id)
+
+        # Verify session with Clerk
+        self._logger.info(f"[Session] Verifying session {session_id} with Clerk")
+        valid, user_data = await self._verify_with_clerk(token)
+
+        if not valid:
+            self._logger.warning(f"[Session] Validation FAILED for session {session_id}")
+            self.session_manager.delete_session(session_id)
+            return api_result_response(
+                error="Invalid or expired session",
+                status=401,
+            )
+
+        self._logger.info(f"[Session] ✓ Validation SUCCESS for session {session_id}")
+
+        # Update session with user data
+        if user_data:
+            session.user_id = user_data.get("user_id", clerk_user_id)
+            session.clerk_user_id = clerk_user_id
+            session.level = user_data.get("level", AccessLevel.LOGGED_IN)
+            session.user_name = user_data.get("user_name", "")
+            session.validated = True
+            session.anonymous = False
+            self.session_manager.update_session(session)
+
+        # Return success response
+        return api_result_response(
+            error="none",
+            data={
+                "authenticated": True,
+                "session_id": session_id,
+                "clerk_user_id": clerk_user_id,
+                "user_name": session.user_name if session else "",
+                "level": session.level if session else AccessLevel.LOGGED_IN,
+            },
+            data_info="Valid Session",
+            exec_code=0,
+            help_text="Valid Session",
+            status=200,
+        )
+
+    async def is_valid_session(self, request: ParsedRequest) -> Tuple:
+        """
+        Check if current session is valid.
+        Equivalent to is_valid_session_handler in Rust.
+        """
+        session = request.session
+
+        if session and session.validated and not session.anonymous:
+            return api_result_response(
+                error="none",
+                data_info="Valid Session",
+                exec_code=0,
+                help_text="Valid Session",
+                status=200,
+            )
+        else:
+            return api_result_response(
+                error="Invalid Auth data.",
+                status=401,
+            )
+
+    async def logout(self, request: ParsedRequest) -> Tuple:
+        """
+        Logout user and invalidate session.
+        Equivalent to logout_handler in Rust.
+        """
+        session = request.session
+
+        if not session or not session.validated:
+            return api_result_response(
+                error="Invalid Auth data.",
+                status=403,
+            )
+
+        session_id = session.session_id
+
+        # Call Clerk sign out if available
+        try:
+            await self._clerk_sign_out(session_id)
+        except Exception as e:
+            self._logger.debug(f"Clerk sign out failed: {e}")
+
+        # Delete session
+        self.session_manager.delete_session(session_id)
+
+        # Redirect to logout page
+        return redirect_response("/web/logout", status=302)
+
+    async def get_user_data(self, request: ParsedRequest) -> Tuple:
+        """
+        Get user data from Clerk.
+        Equivalent to get_user_data_handler in Rust.
+        """
+        session = request.session
+
+        if not session or not session.validated:
+            return api_result_response(
+                error="Unauthorized: Session invalid.",
+                status=401,
+            )
+
+        # Get clerk_user_id
+        clerk_user_id = None
+        if hasattr(session, 'clerk_user_id'):
+            clerk_user_id = session.clerk_user_id
+        elif hasattr(session, 'live_data') and isinstance(session.live_data, dict):
+            clerk_user_id = session.live_data.get('clerk_user_id')
+
+        if not clerk_user_id:
+            return api_result_response(
+                error="No Clerk user ID found in session.",
+                status=400,
+            )
+
+        # Get user data from Clerk
+        user_data = await self._get_clerk_user_data(clerk_user_id)
+
+        if user_data:
+            return api_result_response(
+                error="none",
+                data=user_data,
+                data_info="User data retrieved",
+                data_type="json",
+                exec_code=0,
+                help_text="Success",
+                status=200,
+            )
+        else:
+            return api_result_response(
+                error="User data not found.",
+                status=404,
+            )
+
+    async def _verify_with_clerk(self, token: str) -> Tuple[bool, Optional[Dict]]:
+        """Verify session token with CloudM.AuthClerk."""
+        try:
+            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
+            verify_func = getattr(self.config.toolbox, 'verify_session_func', 'verify_session')
+
+            result = await self.app.a_run_any(
+                (auth_module, verify_func),
+                session_token=token,
+                get_results=True,
+            )
+
+            if hasattr(result, 'is_error') and result.is_error():
+                return False, None
+
+            data = result.get() if hasattr(result, 'get') else result
+            if not data or not data.get('valid', False):
+                return False, None
+
+            return True, data
+
+        except Exception as e:
+            self._logger.error(f"Clerk verification error: {e}")
+            return False, None
+
+    async def _clerk_sign_out(self, session_id: str):
+        """Call Clerk sign out."""
+        try:
+            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
+
+            await self.app.a_run_any(
+                (auth_module, "on_sign_out"),
+                session_id=session_id,
+                get_results=False,
+            )
+        except Exception as e:
+            self._logger.debug(f"Clerk sign out error: {e}")
+
+    async def _get_clerk_user_data(self, clerk_user_id: str) -> Optional[Dict]:
+        """Get user data from Clerk."""
+        try:
+            auth_module = getattr(self.config.toolbox, 'auth_module', 'CloudM.AuthClerk')
+
+            result = await self.app.a_run_any(
+                (auth_module, "get_user_data"),
+                clerk_user_id=clerk_user_id,
+                get_results=True,
+            )
+
+            if hasattr(result, 'is_error') and result.is_error():
+                return None
+
+            return result.get() if hasattr(result, 'get') else result
+
+        except Exception as e:
+            self._logger.error(f"Get user data error: {e}")
+            return None
+
+
+# ============================================================================
+# ToolBoxV2 Handler (with Access Control)
+# ============================================================================
+
+
+class ToolBoxHandler:
+    """Handler for ToolBoxV2 module calls with access control."""
+
+    def __init__(self, app, config, access_controller: AccessController, api_prefix: str = "/api"):
+        self.app = app
+        self.config = config
+        self.access_controller = access_controller
         self.api_prefix = api_prefix
 
     def is_api_request(self, path: str) -> bool:
@@ -194,7 +626,7 @@ class ToolBoxHandler:
         self,
         request: ParsedRequest,
     ) -> Tuple[int, Dict[str, str], bytes]:
-        """Handle API call to ToolBoxV2 module."""
+        """Handle API call to ToolBoxV2 module with access control."""
         module_name, function_name = self.parse_api_path(request.path)
 
         if not module_name:
@@ -202,6 +634,19 @@ class ToolBoxHandler:
 
         if not function_name:
             return error_response("Missing function name", 400, "BadRequest")
+
+        # Access control check
+        user_level = self.access_controller.get_user_level(request.session)
+        allowed, error_msg = self.access_controller.check_access(
+            module_name, function_name, user_level
+        )
+
+        if not allowed:
+            logger.warning(
+                f"Access denied: {module_name}.{function_name} "
+                f"(user_level={user_level}): {error_msg}"
+            )
+            return error_response(error_msg, 401 if user_level == 0 else 403, "Forbidden")
 
         # Build kwargs from request
         kwargs = {}
@@ -225,7 +670,9 @@ class ToolBoxHandler:
                 get_results=True,
                 **kwargs
             )
-            return self._process_result(result, request)
+            # result.print(show=True)
+            data = self._process_result(result, request)
+            return data
         except Exception as e:
             logger.error(f"API call error: {e}")
             traceback.print_exc()
@@ -263,7 +710,6 @@ class ToolBoxHandler:
                 return redirect_response(data, getattr(result.info, "exec_code", 302))
 
             if data_type == "file":
-                # Binary file download
                 import base64
                 file_data = base64.b64decode(data) if isinstance(data, str) else data
                 info = getattr(result.result, "data_info", "")
@@ -278,7 +724,7 @@ class ToolBoxHandler:
                 )
 
             # Default JSON response
-            return json_response(data)
+            return json_response(result.as_dict())
 
         # Plain data
         if isinstance(result, (dict, list)):
@@ -293,11 +739,204 @@ class ToolBoxHandler:
 
 
 # ============================================================================
+# WebSocket Message Handler
+# ============================================================================
+
+
+class WebSocketMessageHandler:
+    """
+    Handles WebSocket messages forwarded from WS workers via ZMQ.
+    Routes messages to registered websocket_handler functions in ToolBoxV2.
+    """
+
+    def __init__(self, app, event_manager: ZMQEventManager, access_controller: AccessController):
+        self.app = app
+        self.event_manager = event_manager
+        self.access_controller = access_controller
+        self._logger = logging.getLogger(f"{__name__}.WSHandler")
+
+    async def handle_ws_connect(self, event: Event):
+        """Handle WebSocket connect event."""
+        conn_id = event.payload.get("conn_id")
+        path = event.payload.get("path", "/ws")
+
+        self._logger.debug(f"WS Connect: {conn_id} on {path}")
+
+        handler_id = self._get_handler_from_path(path)
+        if not handler_id:
+            return
+
+        handler = self.app.websocket_handlers.get(handler_id, {}).get("on_connect")
+        if handler:
+            try:
+                session = {"connection_id": conn_id, "path": path}
+                result = await self._call_handler(handler, session=session, conn_id=conn_id)
+
+                if isinstance(result, dict) and not result.get("accept", True):
+                    self._logger.info(f"Connection {conn_id} rejected by handler")
+
+            except Exception as e:
+                self._logger.error(f"on_connect handler error: {e}", exc_info=True)
+
+    async def handle_ws_message(self, event: Event):
+        """Handle WebSocket message event with access control."""
+        conn_id = event.payload.get("conn_id")
+        user_id = event.payload.get("user_id", "")
+        session_id = event.payload.get("session_id", "")
+        data = event.payload.get("data", "")
+        path = event.payload.get("path", "/ws")
+
+        self._logger.debug(f"WS Message from {conn_id}: {data[:100]}...")
+
+        # Parse JSON message
+        try:
+            payload = json.loads(data) if isinstance(data, str) else data
+        except json.JSONDecodeError:
+            payload = {"raw": data}
+
+        # Determine handler
+        handler_id = self._get_handler_from_path(path)
+        if not handler_id:
+            handler_id = self._get_handler_from_message(payload)
+
+        if not handler_id:
+            self._logger.warning(f"No handler found for path {path}")
+            return
+
+        # Access control for WS handlers
+        # Extract module/function from handler_id (format: Module/handler)
+        parts = handler_id.split("/", 1)
+        if len(parts) == 2:
+            module_name, function_name = parts
+            # Get user level from event payload
+            user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
+            allowed, error_msg = self.access_controller.check_access(
+                module_name, function_name, user_level
+            )
+            if not allowed:
+                self._logger.warning(f"WS access denied: {handler_id}: {error_msg}")
+                try:
+                    await self.app.ws_send(conn_id, {
+                        "type": "error",
+                        "message": error_msg,
+                        "code": "ACCESS_DENIED",
+                    })
+                except Exception:
+                    pass
+                return
+
+        handler = self.app.websocket_handlers.get(handler_id, {}).get("on_message")
+        if handler:
+            try:
+                session = {
+                    "connection_id": conn_id,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "path": path,
+                }
+
+                request = {
+                    "websocket": True,
+                    "conn_id": conn_id,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "path": path,
+                    "data": payload,
+                }
+
+                result = await self._call_handler(
+                    handler,
+                    payload=payload,
+                    session=session,
+                    conn_id=conn_id,
+                    request=request,
+                )
+
+                if result and isinstance(result, dict):
+                    await self.app.ws_send(conn_id, result)
+
+            except Exception as e:
+                self._logger.error(f"on_message handler error: {e}", exc_info=True)
+                try:
+                    await self.app.ws_send(conn_id, {
+                        "type": "error",
+                        "message": str(e),
+                    })
+                except Exception:
+                    pass
+
+    async def handle_ws_disconnect(self, event: Event):
+        """Handle WebSocket disconnect event."""
+        conn_id = event.payload.get("conn_id")
+        user_id = event.payload.get("user_id", "")
+
+        self._logger.debug(f"WS Disconnect: {conn_id}")
+
+        for handler_id, handlers in self.app.websocket_handlers.items():
+            handler = handlers.get("on_disconnect")
+            if handler:
+                try:
+                    session = {"connection_id": conn_id, "user_id": user_id}
+                    await self._call_handler(handler, session=session, conn_id=conn_id)
+                except Exception as e:
+                    self._logger.error(f"on_disconnect handler error: {e}", exc_info=True)
+
+    def _get_handler_from_path(self, path: str) -> str | None:
+        """Extract handler ID from WebSocket path."""
+        path = path.strip("/")
+        parts = path.split("/")
+
+        if len(parts) >= 2 and parts[0] == "ws":
+            if len(parts) >= 3:
+                return f"{parts[1]}/{parts[2]}"
+            else:
+                handler_name = parts[1]
+                for handler_id in self.app.websocket_handlers:
+                    if handler_id.endswith(f"/{handler_name}"):
+                        return handler_id
+
+        if "MinuUI/ui" in self.app.websocket_handlers:
+            return "MinuUI/ui"
+
+        return None
+
+    def _get_handler_from_message(self, payload: dict) -> str | None:
+        """Try to find handler based on message content."""
+        msg_type = payload.get("type", "")
+
+        if msg_type in ("subscribe", "event", "state_update"):
+            if "MinuUI/ui" in self.app.websocket_handlers:
+                return "MinuUI/ui"
+
+        handler = payload.get("handler")
+        if handler and handler in self.app.websocket_handlers:
+            return handler
+
+        return None
+
+    async def _call_handler(self, handler: Callable, **kwargs) -> Any:
+        """Call a handler function (sync or async)."""
+        if asyncio.iscoroutinefunction(handler):
+            return await handler(**kwargs)
+        else:
+            return handler(**kwargs)
+
+
+# ============================================================================
 # HTTP Worker
 # ============================================================================
 
+
 class HTTPWorker:
-    """HTTP Worker with raw WSGI application."""
+    """HTTP Worker with raw WSGI application and auth endpoints."""
+
+    # Auth endpoint paths
+    AUTH_ENDPOINTS = {
+        "/validateSession": "validate_session",
+        "/IsValidSession": "is_valid_session",
+        "/web/logoutS": "logout",
+        "/api_user_data": "get_user_data",
+    }
 
     def __init__(
         self,
@@ -310,6 +949,9 @@ class HTTPWorker:
         self.config = config
         self._app = app
         self._toolbox_handler: ToolBoxHandler | None = None
+        self._auth_handler: AuthHandler | None = None
+        self._access_controller: AccessController | None = None
+        self._ws_handler: WebSocketMessageHandler | None = None
         self._session_manager = None
         self._event_manager: ZMQEventManager | None = None
         self._executor: ThreadPoolExecutor | None = None
@@ -320,6 +962,9 @@ class HTTPWorker:
             "requests_total": 0,
             "requests_success": 0,
             "requests_error": 0,
+            "requests_auth": 0,
+            "requests_denied": 0,
+            "ws_messages_handled": 0,
             "latency_sum": 0.0,
         }
 
@@ -328,9 +973,6 @@ class HTTPWorker:
         if self._app is not None:
             return
 
-        import sys
-
-        # Windows: Use SelectorEventLoop for ZMQ compatibility
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -364,10 +1006,20 @@ class HTTPWorker:
             clerk_enabled=self.config.auth.clerk_enabled,
         )
 
-    async def _init_event_manager(self):
-        """Initialize ZeroMQ event manager."""
-        from toolboxv2.utils.workers.event_manager import ZMQEventManager
+    def _init_access_controller(self):
+        """Initialize access controller."""
+        self._access_controller = AccessController(self.config)
 
+    def _init_auth_handler(self):
+        """Initialize auth handler."""
+        self._auth_handler = AuthHandler(
+            self._session_manager,
+            self._app,
+            self.config,
+        )
+
+    async def _init_event_manager(self):
+        """Initialize ZeroMQ event manager and WS bridge."""
         self._event_manager = ZMQEventManager(
             worker_id=self.worker_id,
             pub_endpoint=self.config.zmq.pub_endpoint,
@@ -379,22 +1031,60 @@ class HTTPWorker:
         )
         await self._event_manager.start()
 
-        # Register event handlers
+        from toolboxv2.utils.workers.ws_bridge import install_ws_bridge
+        install_ws_bridge(self._app, self._event_manager, self.worker_id)
+
+        self._ws_handler = WebSocketMessageHandler(
+            self._app, self._event_manager, self._access_controller
+        )
+
         self._register_event_handlers()
 
     def _register_event_handlers(self):
         """Register ZMQ event handlers."""
-        from toolboxv2.utils.workers.event_manager import EventType
 
         @self._event_manager.on(EventType.CONFIG_RELOAD)
         async def handle_config_reload(event):
             logger.info("Config reload requested")
-            # Reload config if needed
+            self._access_controller._load_config()
 
         @self._event_manager.on(EventType.SHUTDOWN)
         async def handle_shutdown(event):
             logger.info("Shutdown requested")
             self._running = False
+
+        @self._event_manager.on(EventType.WS_CONNECT)
+        async def handle_ws_connect(event: Event):
+            if self._ws_handler:
+                await self._ws_handler.handle_ws_connect(event)
+
+        @self._event_manager.on(EventType.WS_MESSAGE)
+        async def handle_ws_message(event: Event):
+            self._metrics["ws_messages_handled"] += 1
+            if self._ws_handler:
+                await self._ws_handler.handle_ws_message(event)
+
+        @self._event_manager.on(EventType.WS_DISCONNECT)
+        async def handle_ws_disconnect(event: Event):
+            if self._ws_handler:
+                await self._ws_handler.handle_ws_disconnect(event)
+
+    def _is_auth_endpoint(self, path: str) -> bool:
+        """Check if path is an auth endpoint."""
+        return path in self.AUTH_ENDPOINTS
+
+    async def _handle_auth_endpoint(self, request: ParsedRequest) -> Tuple:
+        """Handle auth endpoint request."""
+        handler_name = self.AUTH_ENDPOINTS.get(request.path)
+        if not handler_name:
+            return error_response("Unknown auth endpoint", 404, "NotFound")
+
+        handler = getattr(self._auth_handler, handler_name, None)
+        if not handler:
+            return error_response("Handler not implemented", 501, "NotImplemented")
+
+        self._metrics["requests_auth"] += 1
+        return await handler(request)
 
     def wsgi_app(self, environ: Dict, start_response: Callable) -> List[bytes]:
         """Raw WSGI application entry point."""
@@ -411,8 +1101,13 @@ class HTTPWorker:
             request = parse_request(environ)
 
             # Route request
-            if self._toolbox_handler and self._toolbox_handler.is_api_request(request.path):
-                # API request - run async handler
+            if self._is_auth_endpoint(request.path):
+                # Auth endpoints
+                status, headers, body = self._run_async(
+                    self._handle_auth_endpoint(request)
+                )
+            elif self._toolbox_handler and self._toolbox_handler.is_api_request(request.path):
+                # API endpoints
                 status, headers, body = self._run_async(
                     self._toolbox_handler.handle_api_call(request)
                 )
@@ -422,6 +1117,12 @@ class HTTPWorker:
                 status, headers, body = self._handle_metrics()
             else:
                 status, headers, body = error_response("Not Found", 404, "NotFound")
+
+            # Update session cookie if needed
+            if self._session_manager and request.session:
+                cookie_header = self._session_manager.get_set_cookie_header(request.session)
+                if cookie_header:
+                    headers["Set-Cookie"] = cookie_header
 
             # Build response
             status_line = f"{status} {HTTPStatus(status).phrase}"
@@ -478,13 +1179,21 @@ class HTTPWorker:
         if self._metrics["requests_total"] > 0:
             avg_latency = self._metrics["latency_sum"] / self._metrics["requests_total"]
 
-        return json_response({
+        metrics = {
             "worker_id": self.worker_id,
             "requests_total": self._metrics["requests_total"],
             "requests_success": self._metrics["requests_success"],
             "requests_error": self._metrics["requests_error"],
+            "requests_auth": self._metrics["requests_auth"],
+            "requests_denied": self._metrics["requests_denied"],
+            "ws_messages_handled": self._metrics["ws_messages_handled"],
             "avg_latency_ms": avg_latency * 1000,
-        })
+        }
+
+        if self._event_manager:
+            metrics["zmq"] = self._event_manager.get_metrics()
+
+        return json_response(metrics)
 
     def run(self, host: str = None, port: int = None):
         """Run the HTTP worker."""
@@ -496,17 +1205,28 @@ class HTTPWorker:
         # Initialize components
         self._init_toolbox()
         self._init_session_manager()
-        self._toolbox_handler = ToolBoxHandler(self._app, self.config.toolbox.api_prefix)
+        self._init_access_controller()
+        self._init_auth_handler()
 
-        # Create event loop
+        self._toolbox_handler = ToolBoxHandler(
+            self._app,
+            self.config,
+            self._access_controller,
+            self.config.toolbox.api_prefix,
+        )
 
         # Initialize event manager
         try:
             loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             loop.run_until_complete(self._init_event_manager())
         except Exception as e:
-            print(f"Event manager init failed: {e}")
-            self._app.run_bg_task(self._init_event_manager())
+            logger.warning(f"Event manager init failed: {e}")
+            try:
+                self._app.run_bg_task(self._init_event_manager())
+            except Exception as e2:
+                logger.error(f"Event manager init completely failed: {e2}")
+
         self._running = True
         self._server = None
 
@@ -514,7 +1234,6 @@ class HTTPWorker:
         try:
             from waitress import create_server
 
-            # Use create_server instead of serve for controllable shutdown
             self._server = create_server(
                 self.wsgi_app,
                 host=host,
@@ -525,7 +1244,6 @@ class HTTPWorker:
                 ident="ToolBoxV2",
             )
 
-            # Signal handlers - close server on signal
             def signal_handler(sig, frame):
                 logger.info(f"Received signal {sig}, shutting down...")
                 self._running = False
@@ -539,25 +1257,20 @@ class HTTPWorker:
             self._server.run()
 
         except ImportError:
-            # Fallback to wsgiref with shutdown support
             from wsgiref.simple_server import make_server, WSGIServer
             import threading
-            import selectors
 
             logger.warning("Using wsgiref (dev only), install waitress for production")
 
             class ShutdownableWSGIServer(WSGIServer):
-                """WSGIServer with clean shutdown support."""
-
                 allow_reuse_address = True
-                timeout = 0.5  # Check for shutdown every 0.5s
+                timeout = 0.5
 
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
                     self._shutdown_event = threading.Event()
 
                 def serve_forever(self):
-                    """Handle requests until shutdown."""
                     try:
                         while not self._shutdown_event.is_set():
                             self.handle_request()
@@ -565,7 +1278,6 @@ class HTTPWorker:
                         pass
 
                 def shutdown(self):
-                    """Signal shutdown."""
                     self._shutdown_event.set()
 
             self._server = make_server(
@@ -593,25 +1305,25 @@ class HTTPWorker:
         finally:
             self._cleanup()
 
-
     def _cleanup(self):
         """Cleanup resources."""
         if self._event_manager:
-            self._app.run_bg_task(self._event_manager.stop)
+            try:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(self._event_manager.stop())
+            except Exception:
+                self._app.run_bg_task(self._event_manager.stop())
 
         if self._executor:
             self._executor.shutdown(wait=False)
 
-
         logger.info(f"HTTP worker {self.worker_id} stopped")
 
-
-# Required import for HTTPStatus
-from http import HTTPStatus
 
 # ============================================================================
 # CLI Entry Point
 # ============================================================================
+
 
 def main():
     import argparse
@@ -625,20 +1337,16 @@ def main():
 
     args = parser.parse_args()
 
-    # Setup logging
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     )
 
-    # Load config
     from toolboxv2.utils.workers.config import load_config
     config = load_config(args.config)
 
-    # Worker ID
     worker_id = args.worker_id or f"http_{os.getpid()}"
 
-    # Run worker
     worker = HTTPWorker(worker_id, config)
     worker.run(host=args.host, port=args.port)
 

@@ -11,6 +11,7 @@ Features:
 - Channel/room subscriptions
 - Connection state management
 - Heartbeat/ping-pong
+- Direct PULL socket for HTTP->WS messages (bypass broker for lower latency)
 """
 
 import asyncio
@@ -33,6 +34,14 @@ try:
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
+
+try:
+    import zmq
+    import zmq.asyncio
+
+    ZMQ_AVAILABLE = True
+except ImportError:
+    ZMQ_AVAILABLE = False
 
 from toolboxv2.utils.workers.event_manager import (
     ZMQEventManager,
@@ -212,12 +221,17 @@ class WSWorker:
         self._running = False
         self._server = None
 
+        # Direct PULL socket for HTTP->WS messages (lower latency)
+        self._direct_pull_socket = None
+        self._direct_ctx = None
+
         # Metrics
         self._metrics = {
             "messages_received": 0,
             "messages_sent": 0,
             "connections_total": 0,
             "errors": 0,
+            "direct_messages_received": 0,
         }
 
     async def start(self):
@@ -227,14 +241,18 @@ class WSWorker:
         # Initialize ZMQ event manager
         await self._init_event_manager()
 
+        # Initialize direct PULL socket for HTTP->WS messages
+        await self._init_direct_pull()
+
         # Start WebSocket server
         host = self.config.ws_worker.host
         port = self.config.ws_worker.port
 
         self._running = True
 
-        # Start ping task
+        # Start background tasks
         asyncio.create_task(self._ping_loop())
+        asyncio.create_task(self._direct_pull_loop())
 
         # Start server
         self._server = await ws_serve(
@@ -273,6 +291,12 @@ class WSWorker:
         if self._event_manager:
             await self._event_manager.stop()
 
+        # Close direct PULL socket
+        if self._direct_pull_socket:
+            self._direct_pull_socket.close()
+        if self._direct_ctx:
+            self._direct_ctx.term()
+
         logger.info(f"WS worker {self.worker_id} stopped")
 
     async def _init_event_manager(self):
@@ -288,11 +312,107 @@ class WSWorker:
         )
         await self._event_manager.start()
 
+        # Subscribe to ws_worker channel for targeted messages
+        self._event_manager.subscribe("ws_worker")
+
         # Register event handlers
         self._register_event_handlers()
 
+    async def _init_direct_pull(self):
+        """Initialize direct PULL socket for HTTP->WS messages."""
+        if not ZMQ_AVAILABLE:
+            logger.warning("ZMQ not available, direct PULL disabled")
+            return
+
+        try:
+            self._direct_ctx = zmq.asyncio.Context()
+            self._direct_pull_socket = self._direct_ctx.socket(zmq.PULL)
+            self._direct_pull_socket.setsockopt(zmq.RCVHWM, 10000)
+
+            # Bind to a worker-specific endpoint
+            # This allows HTTP workers to PUSH directly to this WS worker
+            direct_endpoint = self.config.zmq.http_to_ws_endpoint.replace(
+                "5558", f"555{hash(self.worker_id) % 10 + 8}"
+            )
+            # Actually, let's connect to the broker's endpoint instead
+            # The broker will forward messages from HTTP workers
+            self._direct_pull_socket.connect(self.config.zmq.http_to_ws_endpoint)
+
+            logger.info(f"Direct PULL socket connected to {self.config.zmq.http_to_ws_endpoint}")
+        except Exception as e:
+            logger.error(f"Failed to init direct PULL socket: {e}")
+            self._direct_pull_socket = None
+
+    async def _direct_pull_loop(self):
+        """Process messages from direct PULL socket."""
+        if not self._direct_pull_socket:
+            return
+
+        while self._running:
+            try:
+                # Non-blocking receive with timeout
+                if self._direct_pull_socket.poll(100, zmq.POLLIN):
+                    msg = await self._direct_pull_socket.recv()
+                    self._metrics["direct_messages_received"] += 1
+
+                    try:
+                        event = Event.from_bytes(msg)
+                        await self._handle_direct_event(event)
+                    except Exception as e:
+                        logger.error(f"Failed to parse direct event: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Direct PULL loop error: {e}")
+                await asyncio.sleep(0.1)
+
+    async def _handle_direct_event(self, event: Event):
+        """Handle event received via direct PULL socket."""
+        if event.type == EventType.WS_SEND:
+            conn_id = event.payload.get("conn_id")
+            data = event.payload.get("data")
+
+            if conn_id and data:
+                conn = self._conn_manager.get(conn_id)
+                if conn and conn.is_alive:
+                    try:
+                        await conn.websocket.send(data)
+                        self._metrics["messages_sent"] += 1
+                    except Exception as e:
+                        logger.debug(f"Send failed to {conn_id}: {e}")
+
+        elif event.type == EventType.WS_BROADCAST_CHANNEL:
+            channel = event.payload.get("channel")
+            data = event.payload.get("data")
+            exclude = set(event.payload.get("exclude", []))
+
+            if channel and data:
+                connections = self._conn_manager.get_channel_connections(channel)
+                await self._broadcast_to_connections(connections, data, exclude)
+
+        elif event.type == EventType.WS_BROADCAST_ALL:
+            data = event.payload.get("data")
+            exclude = set(event.payload.get("exclude", []))
+
+            if data:
+                connections = self._conn_manager.get_all_connections()
+                await self._broadcast_to_connections(connections, data, exclude)
+
+        elif event.type == EventType.WS_JOIN_CHANNEL:
+            conn_id = event.payload.get("conn_id")
+            channel = event.payload.get("channel")
+            if conn_id and channel:
+                await self._conn_manager.join_channel(conn_id, channel)
+
+        elif event.type == EventType.WS_LEAVE_CHANNEL:
+            conn_id = event.payload.get("conn_id")
+            channel = event.payload.get("channel")
+            if conn_id and channel:
+                await self._conn_manager.leave_channel(conn_id, channel)
+
     def _register_event_handlers(self):
-        """Register handlers for events from HTTP workers."""
+        """Register handlers for events from HTTP workers (via PUB/SUB)."""
 
         @self._event_manager.on(EventType.WS_SEND)
         async def handle_ws_send(event: Event):
@@ -512,6 +632,7 @@ class WSWorker:
                 "messages_received": self._metrics["messages_received"],
                 "messages_sent": self._metrics["messages_sent"],
                 "connections_total": self._metrics["connections_total"],
+                "direct_messages_received": self._metrics["direct_messages_received"],
                 "errors": self._metrics["errors"],
             }
         )
@@ -519,8 +640,6 @@ class WSWorker:
 
     async def run(self):
         """Run the WebSocket worker (blocking)."""
-        import sys
-
         # Windows: Use SelectorEventLoop for ZMQ compatibility
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -528,9 +647,8 @@ class WSWorker:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        # Signal handlers (Unix only, Windows uses different mechanism)
+        # Signal handlers (Unix only)
         if sys.platform != "win32":
-
             def signal_handler():
                 loop.create_task(self.stop())
 
@@ -549,20 +667,16 @@ class WSWorker:
             logger.error(f"WS worker error: {e}")
             await self.stop()
         finally:
-            # Proper cleanup
             try:
-                # Cancel all pending tasks
                 pending = asyncio.all_tasks(loop)
                 for task in pending:
                     task.cancel()
 
-                # Wait for cancellation
                 if pending:
                     loop.run_until_complete(
                         asyncio.gather(*pending, return_exceptions=True)
                     )
 
-                # Shutdown async generators
                 loop.run_until_complete(loop.shutdown_asyncgens())
 
             except Exception as e:
@@ -619,8 +733,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    import sys
-
     # Windows: Use SelectorEventLoop for ZMQ compatibility
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

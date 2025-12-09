@@ -4,6 +4,11 @@ config.py - Configuration Management for ToolBoxV2 Worker System
 
 Handles YAML configuration with environment variable overrides.
 Supports: local development, production server, Tauri desktop app.
+
+Enhanced with:
+- open_modules: List of publicly accessible modules (no auth required)
+- Level system configuration
+- WebSocket authentication options
 """
 
 import os
@@ -17,6 +22,7 @@ import yaml
 # ============================================================================
 # Environment Detection
 # ============================================================================
+
 
 class Environment:
     """Detect runtime environment."""
@@ -48,37 +54,46 @@ class Environment:
 
 
 # ============================================================================
+# Access Level Constants
+# ============================================================================
+
+
+class AccessLevel:
+    """User access levels for authorization."""
+    ADMIN = -1           # Full access to everything
+    NOT_LOGGED_IN = 0    # Anonymous user, only public endpoints
+    LOGGED_IN = 1        # Authenticated user
+    TRUSTED = 2          # Trusted/verified user
+
+
+# ============================================================================
 # Data Classes
 # ============================================================================
+
 
 @dataclass
 class ZMQConfig:
     """ZeroMQ configuration."""
-    # Broker XPUB -> Workers connect with SUB
     pub_endpoint: str = "tcp://127.0.0.1:5555"
-    # Workers connect with PUB -> Broker XSUB
     sub_endpoint: str = "tcp://127.0.0.1:5556"
-    # RPC: Broker ROUTER, Workers DEALER
     req_endpoint: str = "tcp://127.0.0.1:5557"
     rep_endpoint: str = "tcp://127.0.0.1:5557"
-    # HTTP->WS forwarding: Broker PULL, HTTP Workers PUSH
     http_to_ws_endpoint: str = "tcp://127.0.0.1:5558"
     hwm_send: int = 10000
     hwm_recv: int = 10000
-    reconnect_interval: int = 1000  # ms
-    heartbeat_interval: int = 5000  # ms
+    reconnect_interval: int = 1000
+    heartbeat_interval: int = 5000
 
 
 @dataclass
 class SessionConfig:
     """Session/Cookie configuration."""
     cookie_name: str = "tb_session"
-    cookie_secret: str = ""  # Must be set in production!
-    cookie_max_age: int = 86400 * 7  # 7 days
+    cookie_secret: str = ""
+    cookie_max_age: int = 86400 * 7
     cookie_secure: bool = True
     cookie_httponly: bool = True
     cookie_samesite: str = "Lax"
-    # Signed cookie payload fields
     payload_fields: List[str] = field(default_factory=lambda: [
         "user_id", "session_id", "level", "spec", "user_name", "exp"
     ])
@@ -88,12 +103,15 @@ class SessionConfig:
 class AuthConfig:
     """Authentication configuration."""
     clerk_enabled: bool = True
-    clerk_secret_key: str = ""  # From environment
-    clerk_publishable_key: str = ""  # From environment
+    clerk_secret_key: str = ""
+    clerk_publishable_key: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expiry: int = 3600  # 1 hour
+    jwt_expiry: int = 3600
     api_key_header: str = "X-API-Key"
     bearer_header: str = "Authorization"
+    # WebSocket auth requirement
+    ws_require_auth: bool = False
+    ws_allow_anonymous: bool = True
 
 
 @dataclass
@@ -101,12 +119,11 @@ class HTTPWorkerConfig:
     """HTTP worker configuration."""
     host: str = "127.0.0.1"
     port: int = 8000
-    workers: int = 4  # Number of worker processes
-    max_concurrent: int = 100  # Per worker
+    workers: int = 4
+    max_concurrent: int = 100
     timeout: int = 30
     keepalive: int = 65
     backlog: int = 2048
-    # Instance ID prefix
     instance_prefix: str = "http"
 
 
@@ -114,11 +131,11 @@ class HTTPWorkerConfig:
 class WSWorkerConfig:
     """WebSocket worker configuration."""
     host: str = "127.0.0.1"
-    port: int = 8100  # Separated from HTTP range (8000-8099)
+    port: int = 8100
     max_connections: int = 10000
     ping_interval: int = 30
     ping_timeout: int = 10
-    max_message_size: int = 1048576  # 1MB
+    max_message_size: int = 1048576
     compression: bool = True
     instance_prefix: str = "ws"
 
@@ -132,14 +149,12 @@ class NginxConfig:
     pid_file: str = "/run/nginx.pid"
     access_log: str = "/var/log/nginx/toolboxv2_access.log"
     error_log: str = "/var/log/nginx/toolboxv2_error.log"
-    # Server settings
     server_name: str = "localhost"
     listen_port: int = 80
     listen_ssl_port: int = 443
     ssl_enabled: bool = False
     ssl_certificate: str = ""
     ssl_certificate_key: str = ""
-    # Static files
     static_root: str = "./dist"
     static_enabled: bool = True
     # Rate limiting
@@ -147,7 +162,10 @@ class NginxConfig:
     rate_limit_zone: str = "tb_limit"
     rate_limit_rate: str = "10r/s"
     rate_limit_burst: int = 20
-    # Load balancing
+    # Auth endpoint rate limiting (stricter)
+    auth_rate_limit_rate: str = "5r/s"
+    auth_rate_limit_burst: int = 10
+    # Upstreams
     upstream_http: str = "tb_http_backend"
     upstream_ws: str = "tb_ws_backend"
 
@@ -158,7 +176,7 @@ class ManagerConfig:
     web_ui_enabled: bool = True
     web_ui_host: str = "127.0.0.1"
     web_ui_port: int = 9000
-    control_socket: str = ""  # Unix socket path
+    control_socket: str = ""
     pid_file: str = ""
     log_file: str = ""
     health_check_interval: int = 10
@@ -169,7 +187,7 @@ class ManagerConfig:
 
 @dataclass
 class ToolBoxV2Config:
-    """ToolBoxV2 integration configuration."""
+    """ToolBoxV2 integration configuration with access control."""
     instance_id: str = "tbv2_worker"
     modules_preload: List[str] = field(default_factory=list)
     api_prefix: str = "/api"
@@ -177,6 +195,22 @@ class ToolBoxV2Config:
     # CloudM Auth
     auth_module: str = "CloudM.AuthClerk"
     verify_session_func: str = "verify_session"
+
+    # === Access Control ===
+    # Modules that are publicly accessible (no auth required)
+    open_modules: List[str] = field(default_factory=list)
+
+    # Default required level for non-open modules/functions
+    default_required_level: int = AccessLevel.LOGGED_IN
+
+    # Level requirements per module (optional override)
+    level_requirements: Dict[str, int] = field(default_factory=dict)
+
+    # Admin-only modules (require level -1)
+    admin_modules: List[str] = field(default_factory=lambda: [
+        "CloudM.AuthClerk",
+        "ToolBox",
+    ])
 
 
 @dataclass
@@ -191,14 +225,13 @@ class Config:
     manager: ManagerConfig = field(default_factory=ManagerConfig)
     toolbox: ToolBoxV2Config = field(default_factory=ToolBoxV2Config)
 
-    # Runtime
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
     data_dir: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary for serialization (Windows multiprocessing)."""
+        """Convert config to dictionary for serialization."""
         from dataclasses import asdict
         return asdict(self)
 
@@ -211,6 +244,7 @@ class Config:
 # ============================================================================
 # Configuration Loading
 # ============================================================================
+
 
 def _deep_update(base: dict, updates: dict) -> dict:
     """Deep merge dictionaries."""
@@ -250,115 +284,90 @@ def _dict_to_dataclass(cls, data: dict) -> Any:
 
     from dataclasses import fields, is_dataclass
 
+    if not is_dataclass(cls):
+        return data
+
     field_types = {f.name: f.type for f in fields(cls)}
     kwargs = {}
 
-    for field_name, field_type in field_types.items():
-        if field_name in data:
-            value = data[field_name]
-            # Handle nested dataclasses
-            if is_dataclass(field_type) and isinstance(value, dict):
-                kwargs[field_name] = _dict_to_dataclass(field_type, value)
+    for key, value in data.items():
+        if key in field_types:
+            field_type = field_types[key]
+
+            if is_dataclass(field_type):
+                kwargs[key] = _dict_to_dataclass(field_type, value or {})
+            elif hasattr(field_type, '__origin__'):
+                kwargs[key] = value
             else:
-                kwargs[field_name] = value
+                kwargs[key] = value
 
     return cls(**kwargs)
 
 
-def load_config(
-    config_path: str | None = None,
-    env_overrides: bool = True
-) -> Config:
+def load_config(config_path: Optional[str] = None) -> Config:
     """
     Load configuration from YAML file with environment overrides.
-
-    Search order:
-    1. Explicit config_path
-    2. TB_CONFIG environment variable
-    3. ./config.yaml
-    4. ~/.toolboxv2/worker_config.yaml
-    5. /etc/toolboxv2/worker_config.yaml
-
-    Args:
-        config_path: Explicit path to config file
-        env_overrides: Apply environment variable overrides
-
-    Returns:
-        Config dataclass
     """
-    # Find config file
-    search_paths = []
-
-    if config_path:
-        search_paths.append(config_path)
-
-    if os.environ.get("TB_CONFIG"):
-        search_paths.append(os.environ["TB_CONFIG"])
-
-    search_paths.extend([
-        "./config.yaml",
-        "./worker_config.yaml",
-        str(Path.home() / ".toolboxv2" / "worker_config.yaml"),
-        "/etc/toolboxv2/worker_config.yaml",
-    ])
-
     config_data = {}
 
+    search_paths = [
+        config_path,
+        os.environ.get("TB_CONFIG"),
+        Path.cwd() / "config.yaml",
+        Path.cwd() / "config.yml",
+        Path.cwd() / "toolbox.yaml",
+        Path.home() / ".toolboxv2" / "config.yaml",
+        Path("/etc/toolboxv2/config.yaml"),
+    ]
+
+    config_file = None
     for path in search_paths:
-        if os.path.exists(path):
-            with open(path) as f:
-                config_data = yaml.safe_load(f) or {}
+        if path and Path(path).exists():
+            config_file = Path(path)
             break
 
-    # Resolve environment variables in config
-    config_data = _resolve_env_vars(config_data)
+    if config_file:
+        with open(config_file) as f:
+            loaded = yaml.safe_load(f) or {}
+            config_data = _resolve_env_vars(loaded)
 
-    # Apply direct environment overrides
-    if env_overrides:
-        env_mapping = {
-            "TB_ENV": ("environment",),
-            "TB_DEBUG": ("debug",),
-            "TB_LOG_LEVEL": ("log_level",),
-            "TB_DATA_DIR": ("data_dir",),
-            # Session
-            "TB_COOKIE_SECRET": ("session", "cookie_secret"),
-            "TB_COOKIE_NAME": ("session", "cookie_name"),
-            # Auth
-            "CLERK_SECRET_KEY": ("auth", "clerk_secret_key"),
-            "CLERK_PUBLISHABLE_KEY": ("auth", "clerk_publishable_key"),
-            # HTTP Worker
-            "TB_HTTP_HOST": ("http_worker", "host"),
-            "TB_HTTP_PORT": ("http_worker", "port"),
-            "TB_HTTP_WORKERS": ("http_worker", "workers"),
-            # WS Worker
-            "TB_WS_HOST": ("ws_worker", "host"),
-            "TB_WS_PORT": ("ws_worker", "port"),
-            # Nginx
-            "TB_NGINX_SERVER_NAME": ("nginx", "server_name"),
-            "TB_STATIC_ROOT": ("nginx", "static_root"),
-            # ZMQ
-            "TB_ZMQ_PUB": ("zmq", "pub_endpoint"),
-            "TB_ZMQ_SUB": ("zmq", "sub_endpoint"),
-        }
+    env_mapping = {
+        "TB_ENV": ["environment"],
+        "TB_DEBUG": ["debug"],
+        "TB_LOG_LEVEL": ["log_level"],
+        "TB_COOKIE_SECRET": ["session", "cookie_secret"],
+        "CLERK_SECRET_KEY": ["auth", "clerk_secret_key"],
+        "CLERK_PUBLISHABLE_KEY": ["auth", "clerk_publishable_key"],
+        "TB_HTTP_HOST": ["http_worker", "host"],
+        "TB_HTTP_PORT": ["http_worker", "port"],
+        "TB_HTTP_WORKERS": ["http_worker", "workers"],
+        "TB_WS_HOST": ["ws_worker", "host"],
+        "TB_WS_PORT": ["ws_worker", "port"],
+        "TB_NGINX_SERVER_NAME": ["nginx", "server_name"],
+        "TB_STATIC_ROOT": ["nginx", "static_root"],
+        "TB_OPEN_MODULES": ["toolbox", "open_modules"],
+    }
 
-        for env_var, path in env_mapping.items():
-            value = os.environ.get(env_var)
-            if value is not None:
-                # Navigate to nested dict
-                current = config_data
-                for key in path[:-1]:
-                    if key not in current:
-                        current[key] = {}
-                    current = current[key]
-                # Set value with type conversion
-                final_key = path[-1]
-                if final_key in ["port", "workers", "max_concurrent", "timeout"]:
-                    value = int(value)
-                elif final_key in ["debug", "ssl_enabled", "rate_limit_enabled"]:
-                    value = value.lower() in ("true", "1", "yes")
-                current[final_key] = value
+    for env_var, path in env_mapping.items():
+        value = os.environ.get(env_var)
+        if value is not None:
+            current = config_data
+            for key in path[:-1]:
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
 
-    # Set environment-specific defaults
+            final_key = path[-1]
+
+            if final_key in ["port", "workers", "max_concurrent", "timeout"]:
+                value = int(value)
+            elif final_key in ["debug", "ssl_enabled", "rate_limit_enabled", "ws_require_auth"]:
+                value = value.lower() in ("true", "1", "yes")
+            elif final_key in ["open_modules", "admin_modules", "modules_preload"]:
+                value = [v.strip() for v in value.split(",") if v.strip()]
+
+            current[final_key] = value
+
     env_mode = Environment.get_mode()
 
     if env_mode == "development":
@@ -366,25 +375,25 @@ def load_config(
         config_data.setdefault("log_level", "DEBUG")
         config_data.setdefault("nginx", {}).setdefault("enabled", False)
         config_data.setdefault("session", {}).setdefault("cookie_secure", False)
+        config_data.setdefault("auth", {}).setdefault("ws_allow_anonymous", True)
 
     elif env_mode == "tauri":
-        # Tauri desktop app - single-user, local
         config_data.setdefault("debug", False)
         config_data.setdefault("nginx", {}).setdefault("enabled", False)
         config_data.setdefault("http_worker", {}).setdefault("workers", 1)
         config_data.setdefault("http_worker", {}).setdefault("host", "127.0.0.1")
         config_data.setdefault("ws_worker", {}).setdefault("host", "127.0.0.1")
         config_data.setdefault("manager", {}).setdefault("web_ui_enabled", False)
+        config_data.setdefault("auth", {}).setdefault("ws_allow_anonymous", True)
 
     elif env_mode == "production":
         config_data.setdefault("debug", False)
         config_data.setdefault("log_level", "INFO")
         config_data.setdefault("session", {}).setdefault("cookie_secure", True)
-        # Ensure cookie secret is set
+        config_data.setdefault("auth", {}).setdefault("ws_require_auth", True)
         if not config_data.get("session", {}).get("cookie_secret"):
             raise ValueError("TB_COOKIE_SECRET must be set in production!")
 
-    # Set data directory
     if not config_data.get("data_dir"):
         if env_mode == "tauri":
             config_data["data_dir"] = str(Path.home() / ".toolboxv2")
@@ -394,11 +403,9 @@ def load_config(
                 str(Path.home() / ".toolboxv2")
             )
 
-    # Create data directory
     data_dir = Path(config_data["data_dir"])
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Set derived paths
     if not config_data.get("manager", {}).get("control_socket"):
         config_data.setdefault("manager", {})["control_socket"] = str(
             data_dir / "manager.sock"
@@ -414,7 +421,6 @@ def load_config(
             data_dir / "logs" / "manager.log"
         )
 
-    # Convert to dataclass
     return _dict_to_dataclass(Config, config_data)
 
 
@@ -430,23 +436,22 @@ log_level: "INFO"
 data_dir: "${TB_DATA_DIR:}"
 
 # ZeroMQ IPC Configuration
-# WICHTIG: Jeder Socket braucht einen eigenen Port!
 zmq:
-  pub_endpoint: "tcp://127.0.0.1:5555"   # Broker XPUB -> Worker SUB
-  sub_endpoint: "tcp://127.0.0.1:5556"   # Worker PUB -> Broker XSUB
-  req_endpoint: "tcp://127.0.0.1:5557"   # RPC endpoint
-  rep_endpoint: "tcp://127.0.0.1:5557"   # Same as req (ROUTER/DEALER)
-  http_to_ws_endpoint: "tcp://127.0.0.1:5558"  # HTTP->WS forwarding
+  pub_endpoint: "tcp://127.0.0.1:5555"
+  sub_endpoint: "tcp://127.0.0.1:5556"
+  req_endpoint: "tcp://127.0.0.1:5557"
+  rep_endpoint: "tcp://127.0.0.1:5557"
+  http_to_ws_endpoint: "tcp://127.0.0.1:5558"
   hwm_send: 10000
   hwm_recv: 10000
   reconnect_interval: 1000
   heartbeat_interval: 5000
 
-# Session Configuration (Signed Cookies - Stateless)
+# Session Configuration (Signed Cookies)
 session:
   cookie_name: "tb_session"
-  cookie_secret: "${TB_COOKIE_SECRET:}"  # Required in production!
-  cookie_max_age: 604800  # 7 days
+  cookie_secret: "${TB_COOKIE_SECRET:}"
+  cookie_max_age: 604800
   cookie_secure: true
   cookie_httponly: true
   cookie_samesite: "Lax"
@@ -467,13 +472,16 @@ auth:
   jwt_expiry: 3600
   api_key_header: "X-API-Key"
   bearer_header: "Authorization"
+  # WebSocket auth settings
+  ws_require_auth: false
+  ws_allow_anonymous: true
 
 # HTTP Worker Configuration
 http_worker:
   host: "127.0.0.1"
   port: 8000
-  workers: 4  # Number of worker processes
-  max_concurrent: 100  # Max concurrent requests per worker
+  workers: 4
+  max_concurrent: 100
   timeout: 30
   keepalive: 65
   backlog: 2048
@@ -486,7 +494,7 @@ ws_worker:
   max_connections: 10000
   ping_interval: 30
   ping_timeout: 10
-  max_message_size: 1048576  # 1MB
+  max_message_size: 1048576
   compression: true
   instance_prefix: "ws"
 
@@ -501,7 +509,6 @@ nginx:
   ssl_enabled: false
   ssl_certificate: ""
   ssl_certificate_key: ""
-  # Static files
   static_root: "${TB_STATIC_ROOT:./dist}"
   static_enabled: true
   # Rate limiting
@@ -509,6 +516,9 @@ nginx:
   rate_limit_zone: "tb_limit"
   rate_limit_rate: "10r/s"
   rate_limit_burst: 20
+  # Auth endpoint rate limiting (stricter to prevent brute force)
+  auth_rate_limit_rate: "5r/s"
+  auth_rate_limit_burst: 10
   # Upstreams
   upstream_http: "tb_http_backend"
   upstream_ws: "tb_ws_backend"
@@ -526,7 +536,7 @@ manager:
   max_restart_attempts: 5
   rolling_update_delay: 5
 
-# ToolBoxV2 Integration
+# ToolBoxV2 Integration with Access Control
 toolbox:
   instance_id: "tbv2_worker"
   modules_preload: []
@@ -534,12 +544,46 @@ toolbox:
   api_allowed_mods: []
   auth_module: "CloudM.AuthClerk"
   verify_session_func: "verify_session"
+
+  # === Access Control Configuration ===
+  #
+  # Level System:
+  #   -1 = Admin (full access)
+  #    0 = Not logged in (anonymous)
+  #    1 = Logged in (authenticated user)
+  #    2 = Trusted user (verified/premium)
+  #
+  # Access Rules:
+  #   1. Modules in open_modules are fully public
+  #   2. Functions starting with 'open' are always public
+  #   3. Admin modules require level -1
+  #   4. All other endpoints require at least level 1 (logged in)
+
+  # Publicly accessible modules (no auth required)
+  # Example: ["PublicAPI", "WebContent", "Assets"]
+  open_modules: []
+
+  # Default required level for protected endpoints
+  default_required_level: 1
+
+  # Per-module/function level requirements (optional)
+  # Format: "Module": level or "Module.function": level
+  # level_requirements:
+  #   "UserSettings": 1
+  #   "AdminPanel": -1
+  #   "Premium.export": 2
+
+  # Admin-only modules (require level -1)
+  admin_modules:
+    - "CloudM.AuthClerk"
+    - "ToolBox"
 '''
 
 
 # ============================================================================
 # CLI
 # ============================================================================
+
 
 def main():
     """CLI for configuration management."""
@@ -548,15 +592,12 @@ def main():
     parser = argparse.ArgumentParser(description="ToolBoxV2 Config Manager")
     subparsers = parser.add_subparsers(dest="command")
 
-    # Generate default config
     gen_parser = subparsers.add_parser("generate", help="Generate default config")
     gen_parser.add_argument("-o", "--output", default="config.yaml")
 
-    # Validate config
     val_parser = subparsers.add_parser("validate", help="Validate config")
     val_parser.add_argument("-c", "--config", help="Config file path")
 
-    # Show config
     show_parser = subparsers.add_parser("show", help="Show loaded config")
     show_parser.add_argument("-c", "--config", help="Config file path")
 
@@ -574,6 +615,8 @@ def main():
             print(f"  Environment: {config.environment}")
             print(f"  HTTP Workers: {config.http_worker.workers}")
             print(f"  WS Max Connections: {config.ws_worker.max_connections}")
+            print(f"  Open Modules: {config.toolbox.open_modules}")
+            print(f"  Admin Modules: {config.toolbox.admin_modules}")
         except Exception as e:
             print(f"✗ Configuration error: {e}")
             sys.exit(1)

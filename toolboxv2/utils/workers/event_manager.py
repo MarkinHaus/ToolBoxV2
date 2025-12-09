@@ -35,7 +35,8 @@ try:
     import zmq
     import zmq.asyncio
 except ImportError:
-    raise ImportError("pyzmq required: pip install pyzmq")
+    #raise ImportError("pyzmq required: pip install pyzmq")
+    pass
 
 logger = logging.getLogger(__name__)
 

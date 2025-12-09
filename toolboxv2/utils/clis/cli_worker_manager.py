@@ -2,46 +2,72 @@
 """
 cli_worker_manager.py - Complete Worker Manager for ToolBoxV2
 
-Orchestrates:
-- Nginx installation and configuration
+Cross-Platform (Windows/Linux/macOS) Worker Orchestration:
+- Nginx installation and high-performance configuration
 - HTTP and WebSocket worker processes
-- ZeroMQ event broker
+- ZeroMQ event broker with real metrics
 - Zero-downtime rolling updates
-- Health monitoring
+- Cluster mode with remote workers
+- SSL auto-discovery (Let's Encrypt)
+- Health monitoring with active probing
 - Minimal web UI
 - CLI interface
 """
 
 import argparse
 import asyncio
+import http.client
 import json
 import logging
 import os
 import platform
 import shutil
-import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
-from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from multiprocessing import Process
 from pathlib import Path
-from threading import Thread
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import parse_qs, urlparse
+from threading import Lock, Thread
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+# ZMQ optional import
+try:
+    import zmq
+    ZMQ_AVAILABLE = True
+except ImportError:
+    zmq = None
+    ZMQ_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# Constants & OS Detection
+# ============================================================================
 
-# ============================================================================
-# Worker State
-# ============================================================================
+SYSTEM = platform.system().lower()
+IS_WINDOWS = SYSTEM == "windows"
+IS_LINUX = SYSTEM == "linux"
+IS_MACOS = SYSTEM == "darwin"
+
+if IS_WINDOWS:
+    DEFAULT_NGINX_PATHS = [r"C:\nginx\nginx.exe", r"C:\Program Files\nginx\nginx.exe"]
+    DEFAULT_CONF_PATH = r"C:\nginx\conf\nginx.conf"
+    SOCKET_PREFIX = None
+elif IS_MACOS:
+    DEFAULT_NGINX_PATHS = ["/usr/local/bin/nginx", "/opt/homebrew/bin/nginx"]
+    DEFAULT_CONF_PATH = "/usr/local/etc/nginx/nginx.conf"
+    SOCKET_PREFIX = "/tmp"
+else:
+    DEFAULT_NGINX_PATHS = ["/usr/sbin/nginx", "/usr/local/sbin/nginx"]
+    DEFAULT_CONF_PATH = "/etc/nginx/nginx.conf"
+    SOCKET_PREFIX = "/tmp"
+
 
 class WorkerType(str, Enum):
     HTTP = "http"
@@ -59,17 +85,33 @@ class WorkerState(str, Enum):
 
 
 @dataclass
+class WorkerMetrics:
+    requests: int = 0
+    connections: int = 0
+    errors: int = 0
+    bytes_in: int = 0
+    bytes_out: int = 0
+    avg_latency_ms: float = 0.0
+    memory_mb: float = 0.0
+    cpu_percent: float = 0.0
+    last_update: float = 0.0
+
+
+@dataclass
 class WorkerInfo:
-    """Worker process information."""
     worker_id: str
     worker_type: WorkerType
     pid: int
     port: int
+    socket_path: str | None = None
     state: WorkerState = WorkerState.STOPPED
     started_at: float = 0.0
     restart_count: int = 0
     last_health_check: float = 0.0
+    health_latency_ms: float = 0.0
     healthy: bool = False
+    node: str = "local"
+    metrics: WorkerMetrics = field(default_factory=WorkerMetrics)
 
     def to_dict(self) -> Dict:
         return {
@@ -77,13 +119,79 @@ class WorkerInfo:
             "worker_type": self.worker_type.value,
             "pid": self.pid,
             "port": self.port,
+            "socket_path": self.socket_path,
             "state": self.state.value,
             "started_at": self.started_at,
             "restart_count": self.restart_count,
             "last_health_check": self.last_health_check,
+            "health_latency_ms": self.health_latency_ms,
             "healthy": self.healthy,
+            "node": self.node,
             "uptime": time.time() - self.started_at if self.started_at > 0 else 0,
+            "metrics": {
+                "requests": self.metrics.requests,
+                "connections": self.metrics.connections,
+                "errors": self.metrics.errors,
+                "avg_latency_ms": self.metrics.avg_latency_ms,
+                "memory_mb": self.metrics.memory_mb,
+            },
         }
+
+
+@dataclass
+class ClusterNode:
+    node_id: str
+    host: str
+    port: int
+    secret: str
+    healthy: bool = False
+    last_seen: float = 0.0
+    workers: List[Dict] = field(default_factory=list)
+
+
+# ============================================================================
+# SSL Certificate Discovery
+# ============================================================================
+
+class SSLManager:
+    def __init__(self, domain: str = None):
+        self.domain = domain
+        self._cert_path: str | None = None
+        self._key_path: str | None = None
+
+    def discover(self) -> bool:
+        env_cert = os.environ.get("NGINX_CERT_PATH") or os.environ.get("SSL_CERT_PATH")
+        env_key = os.environ.get("NGINX_KEY_PATH") or os.environ.get("SSL_KEY_PATH")
+
+        if env_cert and env_key and os.path.exists(env_cert) and os.path.exists(env_key):
+            self._cert_path, self._key_path = env_cert, env_key
+            return True
+
+        for cert_base in ["/etc/letsencrypt/live"]:
+            if not os.path.isdir(cert_base):
+                continue
+            try:
+                for name in os.listdir(cert_base):
+                    cert = os.path.join(cert_base, name, "fullchain.pem")
+                    key = os.path.join(cert_base, name, "privkey.pem")
+                    if os.path.exists(cert) and os.path.exists(key):
+                        self._cert_path, self._key_path = cert, key
+                        return True
+            except PermissionError:
+                continue
+        return False
+
+    @property
+    def available(self) -> bool:
+        return self._cert_path is not None
+
+    @property
+    def cert_path(self) -> str | None:
+        return self._cert_path
+
+    @property
+    def key_path(self) -> str | None:
+        return self._key_path
 
 
 # ============================================================================
@@ -91,377 +199,1021 @@ class WorkerInfo:
 # ============================================================================
 
 class NginxManager:
-    """Manage Nginx installation and configuration."""
-
     def __init__(self, config):
         self.config = config.nginx
         self._nginx_path = self._find_nginx()
+        self._ssl = SSLManager(getattr(self.config, 'server_name', None))
+        self._ssl.discover()
 
     def _find_nginx(self) -> str | None:
-        """Find nginx binary."""
-        paths = [
-            "/usr/sbin/nginx",
-            "/usr/local/sbin/nginx",
-            "/opt/nginx/sbin/nginx",
-            shutil.which("nginx"),
-        ]
-
-        for path in paths:
-            if path and os.path.exists(path):
+        env_path = os.environ.get("NGINX_PATH")
+        if env_path and os.path.exists(env_path):
+            return env_path
+        found = shutil.which("nginx")
+        if found:
+            return found
+        for path in DEFAULT_NGINX_PATHS:
+            if os.path.exists(path):
                 return path
-
         return None
 
     def is_installed(self) -> bool:
-        """Check if nginx is installed."""
         return self._nginx_path is not None
 
-    def install(self) -> bool:
-        """Install nginx (Linux only)."""
-        system = platform.system().lower()
-
-        if system != "linux":
-            logger.error("Auto-install only supported on Linux")
-            return False
-
+    def get_version(self) -> str | None:
+        if not self._nginx_path:
+            return None
         try:
-            # Detect package manager
-            if shutil.which("apt-get"):
-                subprocess.run(
-                    ["sudo", "apt-get", "update"],
-                    check=True, capture_output=True
-                )
-                subprocess.run(
-                    ["sudo", "apt-get", "install", "-y", "nginx"],
-                    check=True, capture_output=True
-                )
-            elif shutil.which("yum"):
-                subprocess.run(
-                    ["sudo", "yum", "install", "-y", "nginx"],
-                    check=True, capture_output=True
-                )
-            elif shutil.which("dnf"):
-                subprocess.run(
-                    ["sudo", "dnf", "install", "-y", "nginx"],
-                    check=True, capture_output=True
-                )
-            else:
-                logger.error("No supported package manager found")
-                return False
+            result = subprocess.run([self._nginx_path, "-v"], capture_output=True, text=True)
+            return result.stderr.strip()
+        except Exception:
+            return None
 
+    def install(self) -> bool:
+        if IS_WINDOWS:
+            logger.error("Windows: Download nginx from https://nginx.org/en/download.html")
+            return False
+        if IS_MACOS:
+            try:
+                subprocess.run(["brew", "install", "nginx"], check=True, capture_output=True)
+                self._nginx_path = self._find_nginx()
+                return self._nginx_path is not None
+            except Exception:
+                return False
+        try:
+            if shutil.which("apt-get"):
+                subprocess.run(["sudo", "apt-get", "update"], check=True, capture_output=True)
+                subprocess.run(["sudo", "apt-get", "install", "-y", "nginx"], check=True, capture_output=True)
+            elif shutil.which("yum"):
+                subprocess.run(["sudo", "yum", "install", "-y", "nginx"], check=True, capture_output=True)
+            elif shutil.which("dnf"):
+                subprocess.run(["sudo", "dnf", "install", "-y", "nginx"], check=True, capture_output=True)
+            else:
+                return False
             self._nginx_path = self._find_nginx()
             return self._nginx_path is not None
-
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Nginx install failed: {e}")
+        except subprocess.CalledProcessError:
             return False
 
-    def generate_config(self, http_ports: List[int], ws_ports: List[int]) -> str:
-        """Generate nginx configuration."""
+    def generate_config(
+        self,
+        http_ports: List[int],
+        ws_ports: List[int],
+        http_sockets: List[str] = None,
+        ws_sockets: List[str] = None,
+        remote_nodes: List[Tuple[str, int]] = None,
+    ) -> str:
+        """
+        Generate Nginx configuration for ToolBoxV2 worker system.
+
+        Features:
+        - HTTP/WS upstream load balancing
+        - Auth endpoint routing (secured)
+        - API endpoint routing with access control
+        - Unix socket support (Linux/macOS)
+        - Rate limiting (different zones for auth/api)
+        - Static file serving from dist/
+        - SSL/TLS support
+        - Gzip compression
+        - WebSocket proxying with session auth
+        - SSE streaming support
+
+        Args:
+            http_ports: List of HTTP worker ports
+            ws_ports: List of WebSocket worker ports
+            http_sockets: Optional Unix socket paths for HTTP workers
+            ws_sockets: Optional Unix socket paths for WS workers
+            remote_nodes: Optional list of (host, port) tuples for remote backends
+
+        Returns:
+            Complete nginx.conf content as string
+        """
         cfg = self.config
+        remote_nodes = remote_nodes or []
+        http_sockets = http_sockets or []
+        ws_sockets = ws_sockets or []
 
-        # HTTP upstream
-        http_servers = "\n        ".join(
-            f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=30s;"
-            for port in http_ports
+        http_servers, ws_server_list = [], []
+
+        # Unix sockets on Linux/macOS (preferred for performance)
+        if (IS_LINUX or IS_MACOS) and http_sockets:
+            for sock in http_sockets:
+                if sock:
+                    http_servers.append(
+                        f"server unix:{sock} weight=1 max_fails=3 fail_timeout=80s;"
+                    )
+        if (IS_LINUX or IS_MACOS) and ws_sockets:
+            for sock in ws_sockets:
+                if sock:
+                    ws_server_list.append(f"server unix:{sock};")
+
+        # TCP fallback / Windows
+        for port in http_ports:
+            if not http_sockets or IS_WINDOWS:
+                http_servers.append(
+                    f"server 127.0.0.1:{port} weight=1 max_fails=3 fail_timeout=80s;"
+                )
+        for port in ws_ports:
+            if not ws_sockets or IS_WINDOWS:
+                ws_server_list.append(f"server 127.0.0.1:{port};")
+
+        # Remote nodes (backup servers)
+        for host, port in remote_nodes:
+            http_servers.append(f"server {host}:{port} backup;")
+
+        http_upstream = (
+            "\n        ".join(http_servers) if http_servers else "server 127.0.0.1:8000;"
+        )
+        ws_upstream = (
+            "\n        ".join(ws_server_list)
+            if ws_server_list
+            else "server 127.0.0.1:8001;"
         )
 
-        # WS upstream
-        ws_servers = "\n        ".join(
-            f"server 127.0.0.1:{port};"
-            for port in ws_ports
-        )
-
-        # Rate limiting
-        rate_limit_zone = ""
-        rate_limit_directive = ""
-        if cfg.rate_limit_enabled:
-            rate_limit_zone = f"""
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone={cfg.rate_limit_zone}:10m rate={cfg.rate_limit_rate};
-"""
-            rate_limit_directive = f"""
-        limit_req zone={cfg.rate_limit_zone} burst={cfg.rate_limit_burst} nodelay;
-"""
+        # OS-specific optimizations
+        if IS_LINUX:
+            event_use = "epoll"
+            worker_processes = "auto"
+            worker_rlimit = "worker_rlimit_nofile 65535;"
+            worker_connections = "4096"
+        elif IS_MACOS:
+            event_use = "kqueue"
+            worker_processes = "auto"
+            worker_rlimit = "worker_rlimit_nofile 65535;"
+            worker_connections = "4096"
+        else:  # Windows
+            event_use = "select"
+            worker_processes = "1"
+            worker_rlimit = ""
+            worker_connections = "1024"
 
         # SSL configuration
-        ssl_config = ""
-        listen_directive = f"listen {cfg.listen_port};"
-        if cfg.ssl_enabled and cfg.ssl_certificate:
-            listen_directive = f"""listen {cfg.listen_ssl_port} ssl http2;
-        ssl_certificate {cfg.ssl_certificate};
-        ssl_certificate_key {cfg.ssl_certificate_key};
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_prefer_server_ciphers on;"""
+        use_ssl = self._ssl.available and getattr(cfg, "ssl_enabled", False)
+        ssl_block = ""
+        ssl_redirect = ""
+        if use_ssl:
+            ssl_port = getattr(cfg, "listen_ssl_port", 443)
+            ssl_block = f"""
+            listen {ssl_port} ssl http2;
+            ssl_certificate {self._ssl.cert_path};
+            ssl_certificate_key {self._ssl.key_path};
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+            ssl_prefer_server_ciphers off;
+            ssl_session_cache shared:SSL:10m;
+            ssl_session_timeout 1d;
+            ssl_session_tickets off;"""
 
-        # Static files
-        static_location = ""
-        if cfg.static_enabled:
-            static_root = os.path.abspath(cfg.static_root)
-            static_location = f"""
-        # Static files
-        location / {{
-            root {static_root};
-            try_files $uri $uri/ /index.html;
-            expires 1h;
-            add_header Cache-Control "public, immutable";
+            listen_port = getattr(cfg, "listen_port", 80)
+            ssl_redirect = f"""
+        # HTTP to HTTPS redirect
+        server {{
+            listen {listen_port};
+            server_name {getattr(cfg, "server_name", "_")};
+            return 301 https://$host$request_uri;
         }}
-"""
+    """
 
-        config_content = f"""# ToolBoxV2 Nginx Configuration
-# Generated by cli_worker_manager.py
+        listen_port = getattr(cfg, "listen_port", 80)
+        upstream_http = getattr(cfg, "upstream_http", "toolbox_http")
+        upstream_ws = getattr(cfg, "upstream_ws", "toolbox_ws")
+        server_name = getattr(cfg, "server_name", "_")
 
-worker_processes auto;
-error_log {cfg.error_log} warn;
-pid {cfg.pid_file};
+        # Paths based on OS
+        if IS_WINDOWS:
+            mime_include = "include mime.types;"
+            log_path = "logs"
+            pid_directive = ""
+        else:
+            mime_include = "include /etc/nginx/mime.types;"
+            log_path = "/var/log/nginx"
+            pid_directive = "pid /run/nginx.pid;"
 
-events {{
-    worker_connections 10240;
-    use epoll;
-    multi_accept on;
-}}
+        # Rate limiting configuration
+        rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
+        rate_limit_zone = getattr(cfg, "rate_limit_zone", "tb_limit")
+        rate_limit_rate = getattr(cfg, "rate_limit_rate", "10r/s")
+        rate_limit_burst = getattr(cfg, "rate_limit_burst", 20)
 
-http {{
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
+        # Auth rate limit (stricter)
+        auth_rate_limit_rate = getattr(cfg, "auth_rate_limit_rate", "5r/s")
+        auth_rate_limit_burst = getattr(cfg, "auth_rate_limit_burst", 10)
 
-    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                    '$status $body_bytes_sent "$http_referer" '
-                    '"$http_user_agent" "$http_x_forwarded_for" '
-                    'rt=$request_time uct="$upstream_connect_time" '
-                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+        rate_limit_zone_block = ""
+        rate_limit_api_block = ""
+        rate_limit_auth_block = ""
+        if rate_limit_enabled:
+            rate_limit_zone_block = f"""
+        # Rate limiting zones
+        limit_req_zone $binary_remote_addr zone={rate_limit_zone}:10m rate={rate_limit_rate};
+        limit_req_zone $binary_remote_addr zone=tb_auth_limit:10m rate={auth_rate_limit_rate};
+        limit_req_status 429;"""
+            rate_limit_api_block = f"""
+                limit_req zone={rate_limit_zone} burst={rate_limit_burst} nodelay;"""
+            rate_limit_auth_block = f"""
+                limit_req zone=tb_auth_limit burst={auth_rate_limit_burst} nodelay;"""
 
-    access_log {cfg.access_log} main;
+        # Static files configuration
+        static_enabled = getattr(cfg, "static_enabled", True)
+        static_root = getattr(cfg, "static_root", "./dist")
 
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
+        static_block = ""
+        if static_enabled:
+            static_block = f"""
+            # Static files (SPA frontend)
+            location / {{
+                root {static_root};
+                try_files $uri $uri/ /index.html;
 
-    # Gzip
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript
-               application/xml application/xml+rss text/javascript;
-{rate_limit_zone}
-    # HTTP Backend
-    upstream {cfg.upstream_http} {{
-        least_conn;
-        {http_servers}
-        keepalive 32;
+                # Cache static assets
+                location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {{
+                    expires 1h;
+                    add_header Cache-Control "public, immutable";
+                    access_log off;
+                }}
+
+                # Don't cache HTML
+                location ~* \\.html$ {{
+                    expires -1;
+                    add_header Cache-Control "no-store, no-cache, must-revalidate";
+                }}
+            }}"""
+
+        # Main listen directive
+        main_listen = f"listen {listen_port};" if not (use_ssl and ssl_redirect) else ""
+        if use_ssl and not ssl_redirect:
+            main_listen = f"listen {listen_port};"
+
+        # Auth endpoints block
+        auth_endpoints_block = self._generate_auth_endpoints_block(
+            upstream_http, rate_limit_auth_block
+        )
+
+        # API endpoints block with security
+        api_endpoints_block = self._generate_api_endpoints_block(
+            upstream_http, rate_limit_api_block
+        )
+
+        # WebSocket block with session validation
+        ws_endpoints_block = self._generate_ws_endpoints_block(
+            upstream_ws, upstream_http
+        )
+
+        return f"""# ToolBoxV2 Nginx Configuration - {SYSTEM}
+    # Generated automatically - do not edit manually
+    # Regenerate with: tb manager nginx-config
+
+    {pid_directive}
+    worker_processes {worker_processes};
+    {worker_rlimit}
+
+    events {{
+        worker_connections {worker_connections};
+        use {event_use};
+        multi_accept on;
     }}
 
-    # WebSocket Backend
-    upstream {cfg.upstream_ws} {{
-        hash $request_uri consistent;
-        {ws_servers}
+    http {{
+        {mime_include}
+        default_type application/octet-stream;
+
+        # Logging
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for" '
+                        'rt=$request_time uct="$upstream_connect_time" '
+                        'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+        access_log {log_path}/toolboxv2_access.log main;
+        error_log {log_path}/toolboxv2_error.log warn;
+
+        # Performance
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        keepalive_requests 1000;
+        types_hash_max_size 2048;
+
+        # Buffers
+        client_body_buffer_size 128k;
+        client_max_body_size 50M;
+        client_header_buffer_size 1k;
+        large_client_header_buffers 4 16k;
+
+        # Timeouts
+        client_body_timeout 60s;
+        client_header_timeout 60s;
+        send_timeout 60s;
+
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_min_length 1000;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/x-javascript
+            application/xml
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+    {rate_limit_zone_block}
+
+        # HTTP Backend Upstream
+        upstream {upstream_http} {{
+            least_conn;
+            {http_upstream}
+            keepalive 128;
+            keepalive_requests 10000;
+            keepalive_timeout 60s;
+        }}
+
+        # WebSocket Backend Upstream
+        upstream {upstream_ws} {{
+            # Consistent hashing for sticky sessions
+            hash $request_uri consistent;
+            {ws_upstream}
+        }}
+    {ssl_redirect}
+        # Main Server Block
+        server {{
+            {main_listen}{ssl_block}
+            server_name {server_name};
+
+            # Security headers
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    {static_block}
+    {auth_endpoints_block}
+    {api_endpoints_block}
+
+            # SSE / Streaming endpoints
+            location /sse/ {{
+                proxy_pass http://{upstream_http};
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+                # Disable buffering for streaming
+                proxy_buffering off;
+                proxy_cache off;
+                chunked_transfer_encoding on;
+
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }}
+    {ws_endpoints_block}
+
+            # Health check endpoint (no rate limit)
+            location /health {{
+                proxy_pass http://{upstream_http}/health;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                access_log off;
+            }}
+
+            # Metrics endpoint (restricted access recommended)
+            location /metrics {{
+                proxy_pass http://{upstream_http}/metrics;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                # Uncomment to restrict access:
+                # allow 127.0.0.1;
+                # deny all;
+            }}
+
+            # Error pages
+            error_page 500 502 503 504 /50x.html;
+            location = /50x.html {{
+                root {static_root if static_enabled else "/usr/share/nginx/html"};
+                internal;
+            }}
+
+            error_page 429 /429.html;
+            location = /429.html {{
+                default_type application/json;
+                return 429 '{{"error": "TooManyRequests", "message": "Rate limit exceeded"}}';
+            }}
+
+            error_page 401 /401.html;
+            location = /401.html {{
+                default_type application/json;
+                return 401 '{{"error": "Unauthorized", "message": "Authentication required"}}';
+            }}
+
+            error_page 403 /403.html;
+            location = /403.html {{
+                default_type application/json;
+                return 403 '{{"error": "Forbidden", "message": "Access denied"}}';
+            }}
+        }}
     }}
+    """
 
-    server {{
-        {listen_directive}
-        server_name {cfg.server_name};
-{static_location}
-        # API endpoints
-        location /api/ {{
-{rate_limit_directive}
-            proxy_pass http://{cfg.upstream_http};
-            proxy_http_version 1.1;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_connect_timeout 10s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-            proxy_buffering off;
-        }}
+    def _generate_auth_endpoints_block(
+        self, upstream_http: str, rate_limit_block: str
+    ) -> str:
+        """Generate auth endpoint configuration."""
+        return f"""
+            # ============================================================
+            # Auth Endpoints (Clerk Integration)
+            # ============================================================
 
-        # SSE endpoints
-        location /api/stream/ {{
-            proxy_pass http://{cfg.upstream_http};
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_buffering off;
-            proxy_cache off;
-            chunked_transfer_encoding off;
-        }}
+            # Validate session with Clerk token (POST only)
+            location = /validateSession {{
+                limit_except POST {{
+                    deny all;
+                }}
+    {rate_limit_block}
+                proxy_pass http://{upstream_http}/validateSession;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header Content-Type $content_type;
 
-        # WebSocket endpoint
-        location /ws {{
-            proxy_pass http://{cfg.upstream_ws};
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_read_timeout 3600s;
-            proxy_send_timeout 3600s;
-        }}
+                proxy_connect_timeout 10s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+            }}
 
-        # Health check
-        location /health {{
-            proxy_pass http://{cfg.upstream_http}/health;
-            proxy_connect_timeout 2s;
-            proxy_read_timeout 2s;
-        }}
+            # Check if session is valid (GET only)
+            location = /IsValidSession {{
+                limit_except GET {{
+                    deny all;
+                }}
+                proxy_pass http://{upstream_http}/IsValidSession;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header Cookie $http_cookie;
 
-        # Manager UI (internal only)
-        location /manager/ {{
-            allow 127.0.0.1;
-            deny all;
-            proxy_pass http://127.0.0.1:9000/;
-        }}
-    }}
-}}
-"""
-        return config_content
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 10s;
+                proxy_read_timeout 10s;
+            }}
 
-    def write_config(self, http_ports: List[int], ws_ports: List[int]) -> bool:
-        """Write nginx configuration file."""
-        config_content = self.generate_config(http_ports, ws_ports)
+            # Logout endpoint (POST only)
+            location = /web/logoutS {{
+                limit_except POST {{
+                    deny all;
+                }}
+    {rate_limit_block}
+                proxy_pass http://{upstream_http}/web/logoutS;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header Cookie $http_cookie;
 
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 10s;
+                proxy_read_timeout 10s;
+            }}
+
+            # Get user data endpoint (GET only, requires valid session)
+            location = /api_user_data {{
+                limit_except GET {{
+                    deny all;
+                }}
+                proxy_pass http://{upstream_http}/api_user_data;
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header Cookie $http_cookie;
+                proxy_set_header Authorization $http_authorization;
+
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 15s;
+                proxy_read_timeout 15s;
+            }}
+
+            # Logout redirect page (static or handled by frontend)
+            location = /web/logout {{
+                # Can be handled by SPA or redirect
+                try_files $uri /index.html;
+            }}"""
+
+    def _generate_api_endpoints_block(
+        self, upstream_http: str, rate_limit_block: str
+    ) -> str:
+        """Generate API endpoint configuration with security."""
+        return f"""
+            # ============================================================
+            # API Endpoints
+            # Access control is handled by the workers based on:
+            # - open_modules: Publicly accessible modules
+            # - open* functions: Functions starting with 'open' are public
+            # - User level: -1=Admin, 0=not logged in, 1=logged in, 2=trusted
+            # ============================================================
+
+            location /api/ {{
+                proxy_pass http://{upstream_http};
+                proxy_http_version 1.1;
+                proxy_set_header Connection "";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Request-ID $request_id;
+                proxy_set_header Cookie $http_cookie;
+                proxy_set_header Authorization $http_authorization;
+
+                # Pass session cookie for auth validation
+                proxy_pass_header Set-Cookie;
+
+                # Buffering for normal API requests
+                proxy_buffering on;
+                proxy_buffer_size 4k;
+                proxy_buffers 8 16k;
+                proxy_busy_buffers_size 24k;
+
+                proxy_connect_timeout 10s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+    {rate_limit_block}
+            }}"""
+
+    def _generate_ws_endpoints_block(
+        self, upstream_ws: str, upstream_http: str
+    ) -> str:
+        """Generate WebSocket endpoint configuration with auth subrequest."""
+        return f"""
+            # ============================================================
+            # WebSocket Endpoint
+            # Auth validated via subrequest to /IsValidSession
+            # ============================================================
+
+            # Internal auth check endpoint
+            location = /_ws_auth {{
+                internal;
+                proxy_pass http://{upstream_http}/IsValidSession;
+                proxy_pass_request_body off;
+                proxy_set_header Content-Length "";
+                proxy_set_header X-Original-URI $request_uri;
+                proxy_set_header Cookie $http_cookie;
+            }}
+
+            # Main WebSocket endpoint
+            location /ws {{
+                # Optional: Require authentication for WebSocket
+                # Uncomment the following lines to enable auth check:
+                # auth_request /_ws_auth;
+                # auth_request_set $auth_status $upstream_status;
+
+                proxy_pass http://{upstream_ws};
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header Cookie $http_cookie;
+
+                # WebSocket specific timeouts
+                proxy_connect_timeout 10s;
+                proxy_send_timeout 3600s;
+                proxy_read_timeout 3600s;
+
+                # Disable buffering for WebSocket
+                proxy_buffering off;
+            }}
+
+            # WebSocket with explicit path routing (e.g., /ws/Module/handler)
+            location ~ ^/ws/([^/]+)/([^/]+)$ {{
+                # Optional: Require authentication
+                # auth_request /_ws_auth;
+
+                proxy_pass http://{upstream_ws};
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header Cookie $http_cookie;
+
+                proxy_connect_timeout 10s;
+                proxy_send_timeout 3600s;
+                proxy_read_timeout 3600s;
+                proxy_buffering off;
+            }}"""
+
+    def write_config(self, http_ports: List[int], ws_ports: List[int],
+                     http_sockets: List[str] = None, ws_sockets: List[str] = None,
+                     remote_nodes: List[Tuple[str, int]] = None) -> bool:
+        content = self.generate_config(http_ports, ws_ports, http_sockets, ws_sockets, remote_nodes)
+        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
         try:
-            # Write to config path
-            config_path = Path(self.config.config_path)
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-
+            Path(config_path).parent.mkdir(parents=True, exist_ok=True)
             with open(config_path, "w") as f:
-                f.write(config_content)
-
-            # Create symlink
-            symlink_path = Path(self.config.symlink_path)
-            if symlink_path.exists():
-                symlink_path.unlink()
-            symlink_path.symlink_to(config_path)
-
+                f.write(content)
             logger.info(f"Nginx config written to {config_path}")
             return True
-
-        except PermissionError:
-            logger.error("Permission denied writing nginx config. Run with sudo?")
-            return False
         except Exception as e:
             logger.error(f"Failed to write nginx config: {e}")
             return False
 
     def test_config(self) -> bool:
-        """Test nginx configuration."""
         if not self._nginx_path:
             return False
-
+        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
         try:
-            result = subprocess.run(
-                [self._nginx_path, "-t"],
-                capture_output=True, text=True
-            )
+            result = subprocess.run([self._nginx_path, "-t", "-c", str(config_path)], capture_output=True, text=True)
             return result.returncode == 0
-        except Exception as e:
-            logger.error(f"Nginx test failed: {e}")
+        except Exception:
             return False
 
     def reload(self) -> bool:
-        """Reload nginx configuration."""
         if not self._nginx_path:
             return False
-
         try:
-            subprocess.run(
-                [self._nginx_path, "-s", "reload"],
-                check=True, capture_output=True
-            )
+            subprocess.run([self._nginx_path, "-s", "reload"], check=True, capture_output=True)
             logger.info("Nginx reloaded")
             return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Nginx reload failed: {e}")
+        except subprocess.CalledProcessError:
+            return False
+        except Exception:
             return False
 
     def start(self) -> bool:
-        """Start nginx."""
         if not self._nginx_path:
             return False
-
+        config_path = os.environ.get("NGINX_CONF_PATH") or getattr(self.config, 'config_path', DEFAULT_CONF_PATH)
         try:
-            subprocess.run(
-                [self._nginx_path],
-                check=True, capture_output=True
-            )
-            logger.info("Nginx started")
+            subprocess.run([self._nginx_path, "-c", str(config_path)], check=True, capture_output=True)
             return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Nginx start failed: {e}")
+        except subprocess.CalledProcessError:
             return False
 
     def stop(self) -> bool:
-        """Stop nginx."""
         if not self._nginx_path:
             return False
-
         try:
-            subprocess.run(
-                [self._nginx_path, "-s", "stop"],
-                check=True, capture_output=True
-            )
-            logger.info("Nginx stopped")
+            subprocess.run([self._nginx_path, "-s", "stop"], check=True, capture_output=True)
             return True
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Nginx stop failed: {e}")
+        except subprocess.CalledProcessError:
             return False
+
+    @property
+    def ssl_available(self) -> bool:
+        return self._ssl.available
+
+    @property
+    def platform_warning(self) -> str | None:
+        if IS_WINDOWS:
+            return "Nginx on Windows uses select() - expect ~10x slower than Linux"
+        return None
 
 
 # ============================================================================
-# Worker Process Functions (Module-level for Windows multiprocessing)
+# Metrics Collector - HTTP + ZMQ based
+# ============================================================================
+
+class MetricsCollector:
+    """
+    Collect metrics from workers via:
+    - HTTP /metrics endpoint (for HTTP workers)
+    - ZMQ HEALTH_CHECK events (for WS workers)
+    """
+
+    def __init__(self, zmq_pub_endpoint: str = "tcp://127.0.0.1:5555"):
+        self._zmq_pub = zmq_pub_endpoint
+        self._metrics: Dict[str, WorkerMetrics] = {}
+        self._lock = Lock()
+        self._running = False
+        self._thread: Thread | None = None
+        self._workers: Dict[str, WorkerInfo] = {}
+        self._zmq_ctx = None
+        self._zmq_sub = None
+
+    def start(self, workers: Dict[str, 'WorkerInfo']):
+        """Start metrics collection."""
+        self._workers = workers
+        if self._running:
+            return
+        self._running = True
+        self._thread = Thread(target=self._collect_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop metrics collection."""
+        self._running = False
+        if self._zmq_sub:
+            try:
+                self._zmq_sub.close()
+            except Exception:
+                pass
+        if self._zmq_ctx:
+            try:
+                self._zmq_ctx.term()
+            except Exception:
+                pass
+
+    def update_workers(self, workers: Dict[str, 'WorkerInfo']):
+        """Update worker reference."""
+        self._workers = workers
+
+    def _collect_loop(self):
+        """Background loop to collect metrics from workers."""
+        # Setup ZMQ subscriber for WS worker WORKER_HEALTH events
+        zmq_available = False
+        if ZMQ_AVAILABLE:
+            try:
+                self._zmq_ctx = zmq.Context()
+                self._zmq_sub = self._zmq_ctx.socket(zmq.SUB)
+                self._zmq_sub.connect(self._zmq_pub)
+                self._zmq_sub.setsockopt_string(zmq.SUBSCRIBE, "")
+                self._zmq_sub.setsockopt(zmq.RCVTIMEO, 100)
+                zmq_available = True
+            except Exception as e:
+                logger.warning(f"ZMQ setup failed: {e}")
+        else:
+            logger.warning("ZMQ not installed - WS metrics via ZMQ disabled")
+
+        while self._running:
+            # Collect HTTP worker metrics via /metrics endpoint
+            for wid, info in list(self._workers.items()):
+                if info.worker_type == WorkerType.HTTP and info.state == WorkerState.RUNNING:
+                    self._fetch_http_metrics(wid, info)
+
+            # Process ZMQ events for WS worker metrics
+            if zmq_available and self._zmq_sub:
+                self._process_zmq_events()
+
+            time.sleep(60)
+
+    def _fetch_http_metrics(self, worker_id: str, info: 'WorkerInfo'):
+        """Fetch metrics from HTTP worker via /metrics endpoint."""
+        try:
+            # Use socket for Unix socket support
+            if info.socket_path and not IS_WINDOWS and os.path.exists(info.socket_path):
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                sock.connect(info.socket_path)
+                sock.sendall(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                response = b""
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    response += chunk
+                sock.close()
+            else:
+                conn = http.client.HTTPConnection("127.0.0.1", info.port, timeout=2)
+                conn.request("GET", "/metrics")
+                resp = conn.getresponse()
+                response = resp.read()
+                conn.close()
+
+            # Parse JSON from response body
+            body_start = response.find(b"\r\n\r\n")
+            if body_start > 0:
+                json_body = response[body_start + 4:]
+            else:
+                json_body = response
+
+            data = json.loads(json_body.decode())
+
+            with self._lock:
+                self._metrics[worker_id] = WorkerMetrics(
+                    requests=data.get("requests_total", 0),
+                    connections=data.get("requests_success", 0),
+                    errors=data.get("requests_error", 0),
+                    avg_latency_ms=data.get("avg_latency_ms", 0),
+                    last_update=time.time()
+                )
+        except Exception as e:
+            logger.debug(f"Failed to fetch metrics from {worker_id}: {e}")
+
+    def _process_zmq_events(self):
+        """Process ZMQ events for WORKER_HEALTH responses."""
+        if not ZMQ_AVAILABLE or not self._zmq_sub:
+            return
+        try:
+            while True:
+                try:
+                    msg = self._zmq_sub.recv(zmq.NOBLOCK)
+                    data = json.loads(msg.decode())
+
+                    # Check for WORKER_HEALTH event type
+                    if data.get("type") == "worker.health":
+                        payload = data.get("payload", {})
+                        wid = payload.get("worker_id") or data.get("source")
+                        if wid:
+                            with self._lock:
+                                self._metrics[wid] = WorkerMetrics(
+                                    requests=payload.get("messages_received", 0),
+                                    connections=payload.get("total_connections", 0),
+                                    errors=payload.get("errors", 0),
+                                    avg_latency_ms=0,
+                                    last_update=time.time()
+                                )
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+    def get_metrics(self, worker_id: str) -> WorkerMetrics:
+        """Get metrics for a specific worker."""
+        with self._lock:
+            return self._metrics.get(worker_id, WorkerMetrics())
+
+    def get_all_metrics(self) -> Dict[str, WorkerMetrics]:
+        """Get all worker metrics."""
+        with self._lock:
+            return dict(self._metrics)
+
+
+# ============================================================================
+# Health Checker
+# ============================================================================
+
+class HealthChecker:
+    def __init__(self, interval: float = 5.0):
+        self._interval = interval
+        self._running = False
+        self._thread: Thread | None = None
+        self._workers: Dict[str, WorkerInfo] = {}
+
+    def start(self, workers: Dict[str, WorkerInfo]):
+        self._workers = workers
+        if self._running:
+            return
+        self._running = True
+        self._thread = Thread(target=self._check_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def update_workers(self, workers: Dict[str, WorkerInfo]):
+        self._workers = workers
+
+    def _check_loop(self):
+        while self._running:
+            for wid, info in list(self._workers.items()):
+                if info.state != WorkerState.RUNNING:
+                    continue
+                healthy, latency = self._check_worker(info)
+                info.healthy = healthy
+                info.health_latency_ms = latency
+                info.last_health_check = time.time()
+            time.sleep(self._interval)
+
+    def _check_worker(self, info: WorkerInfo) -> Tuple[bool, float]:
+        start = time.perf_counter()
+        try:
+            if info.socket_path and not IS_WINDOWS and os.path.exists(info.socket_path):
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                sock.connect(info.socket_path)
+                sock.sendall(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                resp = sock.recv(1024)
+                sock.close()
+                return b"200" in resp, (time.perf_counter() - start) * 1000
+            else:
+                conn = http.client.HTTPConnection("127.0.0.1", info.port, timeout=2)
+                conn.request("GET", "/health")
+                resp = conn.getresponse()
+                conn.close()
+                return resp.status == 200, (time.perf_counter() - start) * 1000
+        except Exception:
+            return False, 0.0
+
+
+# ============================================================================
+# Cluster Manager
+# ============================================================================
+
+class ClusterManager:
+    def __init__(self, secret: str = None):
+        self._nodes: Dict[str, ClusterNode] = {}
+        self._secret = secret or os.environ.get("CLUSTER_SECRET", uuid.uuid4().hex)
+        self._lock = Lock()
+        self._running = False
+        self._thread: Thread | None = None
+
+    def add_node(self, host: str, port: int, secret: str) -> bool:
+        node_id = f"{host}:{port}"
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=5)
+            conn.request("GET", "/api/cluster/verify", headers={"X-Cluster-Secret": secret})
+            resp = conn.getresponse()
+            conn.close()
+            if resp.status != 200:
+                return False
+        except Exception:
+            return False
+
+        with self._lock:
+            self._nodes[node_id] = ClusterNode(node_id=node_id, host=host, port=port, secret=secret, healthy=True, last_seen=time.time())
+        logger.info(f"Cluster: Added node {node_id}")
+        return True
+
+    def remove_node(self, node_id: str):
+        with self._lock:
+            self._nodes.pop(node_id, None)
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._thread = Thread(target=self._monitor_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def _monitor_loop(self):
+        while self._running:
+            for node_id, node in list(self._nodes.items()):
+                try:
+                    conn = http.client.HTTPConnection(node.host, node.port, timeout=5)
+                    conn.request("GET", "/api/workers", headers={"X-Cluster-Secret": node.secret})
+                    resp = conn.getresponse()
+                    data = json.loads(resp.read().decode())
+                    conn.close()
+                    for w in data:
+                        w["node"] = node_id
+                    with self._lock:
+                        node.workers = data
+                        node.healthy = True
+                        node.last_seen = time.time()
+                except Exception:
+                    with self._lock:
+                        node.healthy = False
+            time.sleep(10)
+
+    def get_all_workers(self) -> List[Dict]:
+        with self._lock:
+            return [w for n in self._nodes.values() if n.healthy for w in n.workers]
+
+    def get_remote_addresses(self) -> List[Tuple[str, int]]:
+        with self._lock:
+            return [(n.host, w["port"]) for n in self._nodes.values() if n.healthy
+                    for w in n.workers if w.get("worker_type") == "http" and w.get("state") == "running"]
+
+    @property
+    def nodes(self) -> Dict[str, ClusterNode]:
+        with self._lock:
+            return dict(self._nodes)
+
+    @property
+    def secret(self) -> str:
+        return self._secret
+
+
+# ============================================================================
+# Worker Process Functions
 # ============================================================================
 
 def _run_broker_process(config_dict: Dict):
-    """Run ZMQ broker in separate process. Must be module-level for Windows."""
-    import asyncio
-    import sys
-
-    # Windows: Use SelectorEventLoop for ZMQ compatibility
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    # Try relative import first, then absolute
     from toolboxv2.utils.workers.config import Config
     from toolboxv2.utils.workers.event_manager import run_broker
-
-    # Reconstruct config from dict
     config = Config.from_dict(config_dict)
     asyncio.run(run_broker(config))
 
 
-def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int):
-    """Run HTTP worker in separate process. Must be module-level for Windows."""
-    # Try relative import first, then absolute
+def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socket_path: str = None):
     from toolboxv2.utils.workers.config import Config
     from toolboxv2.utils.workers.server_worker import HTTPWorker
     config = Config.from_dict(config_dict)
     worker = HTTPWorker(worker_id, config)
-    worker.run(port=port)
+    if socket_path and not IS_WINDOWS:
+        worker.run(socket_path=socket_path)
+    else:
+        worker.run(port=port)
 
 
 def _run_ws_worker_process(worker_id: str, config_dict: Dict, port: int):
-    """Run WS worker in separate process. Must be module-level for Windows."""
-    import asyncio
-    import sys
-
-    # Windows: Use SelectorEventLoop for ZMQ compatibility
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    # Try relative import first, then absolute
     from toolboxv2.utils.workers.config import Config
     from toolboxv2.utils.workers.ws_worker import WSWorker
-
-    import asyncio
     config = Config.from_dict(config_dict)
-    # Override port in config
     config.ws_worker.port = port
     worker = WSWorker(worker_id, config)
     asyncio.run(worker.run())
@@ -472,8 +1224,6 @@ def _run_ws_worker_process(worker_id: str, config_dict: Dict, port: int):
 # ============================================================================
 
 class WorkerManager:
-    """Manages all worker processes."""
-
     def __init__(self, config):
         self.config = config
         self._workers: Dict[str, WorkerInfo] = {}
@@ -481,131 +1231,78 @@ class WorkerManager:
         self._nginx = NginxManager(config)
         self._broker_process: Process | None = None
         self._running = False
-        self._health_task: asyncio.Task | None = None
-
-        # Port allocation - ensure no overlap
-        # HTTP: 8000, 8001, 8002, ...
-        # WS: 8100, 8101, 8102, ... (separate range)
         self._next_http_port = config.http_worker.port
-        # WS port should be well separated from HTTP range
         ws_base = config.ws_worker.port
         if ws_base < config.http_worker.port + 100:
-            ws_base = config.http_worker.port + 100  # Ensure 100 port gap
+            ws_base = config.http_worker.port + 100
         self._next_ws_port = ws_base
 
-    def _allocate_http_port(self) -> int:
-        """Allocate next HTTP port."""
-        port = self._next_http_port
-        self._next_http_port += 1
-        return port
+        # ZMQ endpoints from config
+        zmq_pub = getattr(config.zmq, 'pub_endpoint', 'tcp://127.0.0.1:5555')
+        self._metrics_collector = MetricsCollector(zmq_pub_endpoint=zmq_pub)
+        self._health_checker = HealthChecker()
+        self._cluster = ClusterManager()
 
-    def _allocate_ws_port(self) -> int:
-        """Allocate next WS port."""
-        port = self._next_ws_port
-        self._next_ws_port += 1
-        return port
+    def _get_socket_path(self, worker_id: str) -> str | None:
+        if IS_WINDOWS or not SOCKET_PREFIX:
+            return None
+        return os.path.join(SOCKET_PREFIX, f"tbv2_{worker_id}.sock")
 
     def start_broker(self) -> bool:
-        """Start ZMQ broker process."""
         if self._broker_process and self._broker_process.is_alive():
             return True
-
-        # Serialize config to dict for cross-process transfer
-        config_dict = self.config.to_dict()
-
-        self._broker_process = Process(
-            target=_run_broker_process,
-            args=(config_dict,),
-            name="zmq_broker"
-        )
+        self._broker_process = Process(target=_run_broker_process, args=(self.config.to_dict(),), name="zmq_broker")
         self._broker_process.start()
-
-        time.sleep(0.5)  # Wait for broker to start
-
+        time.sleep(0.5)
         if self._broker_process.is_alive():
             logger.info(f"ZMQ broker started (PID: {self._broker_process.pid})")
             return True
-
-        logger.error("ZMQ broker failed to start")
         return False
 
     def stop_broker(self):
-        """Stop ZMQ broker."""
+        self._metrics_collector.stop()
         if self._broker_process and self._broker_process.is_alive():
             self._broker_process.terminate()
             self._broker_process.join(timeout=5)
             if self._broker_process.is_alive():
                 self._broker_process.kill()
-            logger.info("ZMQ broker stopped")
 
     def start_http_worker(self, worker_id: str = None, port: int = None) -> WorkerInfo | None:
-        """Start an HTTP worker."""
-        if worker_id is None:
+        if not worker_id:
             worker_id = f"http_{uuid.uuid4().hex[:8]}"
+        if not port:
+            port = self._next_http_port
+            self._next_http_port += 1
 
-        if port is None:
-            port = self._allocate_http_port()
-
-        # Serialize config to dict for cross-process transfer
-        config_dict = self.config.to_dict()
-
-        process = Process(
-            target=_run_http_worker_process,
-            args=(worker_id, config_dict, port),
-            name=worker_id
-        )
+        socket_path = self._get_socket_path(worker_id)
+        process = Process(target=_run_http_worker_process, args=(worker_id, self.config.to_dict(), port, socket_path), name=worker_id)
         process.start()
 
-        info = WorkerInfo(
-            worker_id=worker_id,
-            worker_type=WorkerType.HTTP,
-            pid=process.pid,
-            port=port,
-            state=WorkerState.STARTING,
-            started_at=time.time(),
-        )
-
+        info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.HTTP, pid=process.pid, port=port,
+                          socket_path=socket_path, state=WorkerState.STARTING, started_at=time.time())
         self._workers[worker_id] = info
         self._processes[worker_id] = process
 
-        # Wait for startup
         time.sleep(0.5)
         if process.is_alive():
             info.state = WorkerState.RUNNING
             logger.info(f"HTTP worker started: {worker_id} (port {port})")
             return info
-
         info.state = WorkerState.FAILED
-        logger.error(f"HTTP worker failed to start: {worker_id}")
         return None
 
     def start_ws_worker(self, worker_id: str = None, port: int = None) -> WorkerInfo | None:
-        """Start a WebSocket worker."""
-        if worker_id is None:
+        if not worker_id:
             worker_id = f"ws_{uuid.uuid4().hex[:8]}"
+        if not port:
+            port = self._next_ws_port
+            self._next_ws_port += 1
 
-        if port is None:
-            port = self._allocate_ws_port()
-
-        # Serialize config to dict for cross-process transfer
-        config_dict = self.config.to_dict()
-
-        process = Process(
-            target=_run_ws_worker_process,
-            args=(worker_id, config_dict, port),
-            name=worker_id
-        )
+        process = Process(target=_run_ws_worker_process, args=(worker_id, self.config.to_dict(), port), name=worker_id)
         process.start()
 
-        info = WorkerInfo(
-            worker_id=worker_id,
-            worker_type=WorkerType.WS,
-            pid=process.pid,
-            port=port,
-            state=WorkerState.STARTING,
-            started_at=time.time(),
-        )
-
+        info = WorkerInfo(worker_id=worker_id, worker_type=WorkerType.WS, pid=process.pid, port=port,
+                          state=WorkerState.STARTING, started_at=time.time())
         self._workers[worker_id] = info
         self._processes[worker_id] = process
 
@@ -614,1083 +1311,334 @@ class WorkerManager:
             info.state = WorkerState.RUNNING
             logger.info(f"WS worker started: {worker_id} (port {port})")
             return info
-
         info.state = WorkerState.FAILED
-        logger.error(f"WS worker failed to start: {worker_id}")
         return None
 
     def stop_worker(self, worker_id: str, graceful: bool = True) -> bool:
-        """Stop a worker."""
         if worker_id not in self._processes:
             return False
-
         info = self._workers.get(worker_id)
         process = self._processes[worker_id]
-
         if info:
             info.state = WorkerState.STOPPING
-
+            if info.socket_path:
+                try:
+                    if os.path.exists(info.socket_path):
+                        os.unlink(info.socket_path)
+                except Exception:
+                    pass
         if graceful:
             process.terminate()
             process.join(timeout=10)
-
         if process.is_alive():
             process.kill()
             process.join(timeout=5)
-
         if info:
             info.state = WorkerState.STOPPED
-
         del self._processes[worker_id]
         logger.info(f"Worker stopped: {worker_id}")
         return True
 
     def restart_worker(self, worker_id: str) -> WorkerInfo | None:
-        """Restart a worker."""
         if worker_id not in self._workers:
             return None
-
         info = self._workers[worker_id]
-        port = info.port
-        worker_type = info.worker_type
-
+        port, wtype = info.port, info.worker_type
         self.stop_worker(worker_id)
         del self._workers[worker_id]
-
-        if worker_type == WorkerType.HTTP:
+        if wtype == WorkerType.HTTP:
             return self.start_http_worker(worker_id, port)
-        elif worker_type == WorkerType.WS:
-            return self.start_ws_worker(worker_id, port)
+        return self.start_ws_worker(worker_id, port)
 
-        return None
+    def _get_http_ports(self) -> List[int]:
+        return [w.port for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING]
+
+    def _get_ws_ports(self) -> List[int]:
+        return [w.port for w in self._workers.values() if w.worker_type == WorkerType.WS and w.state == WorkerState.RUNNING]
+
+    def _get_http_sockets(self) -> List[str]:
+        return [w.socket_path for w in self._workers.values() if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING and w.socket_path]
 
     def _update_nginx_config(self):
-        """Update nginx configuration with current workers."""
-        http_ports = [
-            w.port for w in self._workers.values()
-            if w.worker_type == WorkerType.HTTP and w.state == WorkerState.RUNNING
-        ]
-        ws_ports = [
-            w.port for w in self._workers.values()
-            if w.worker_type == WorkerType.WS and w.state == WorkerState.RUNNING
-        ]
+        self._nginx.write_config(self._get_http_ports(), self._get_ws_ports(), self._get_http_sockets(), [], self._cluster.get_remote_addresses())
 
-        self._nginx.write_config(http_ports, ws_ports)
-
-    def start_all(self):
-        """Start all workers and nginx."""
+    def start_all(self) -> bool:
         logger.info("Starting all services...")
+        if IS_WINDOWS:
+            logger.warning("Windows: Nginx performance limited (~10x slower than Linux)")
 
-        # Start broker first
         if not self.start_broker():
-            logger.error("Failed to start broker")
             return False
 
-        # Start HTTP workers
-        num_http = self.config.http_worker.workers
-        for i in range(num_http):
+        for _ in range(self.config.http_worker.workers):
             self.start_http_worker()
-
-        # Start WS worker (single instance for now)
         self.start_ws_worker()
 
-        # Configure and start nginx
+        # Start metrics collector and health checker AFTER workers are created
+        self._metrics_collector.start(self._workers)
+        self._health_checker.start(self._workers)
+        self._cluster.start()
+
         if self.config.nginx.enabled:
             self._update_nginx_config()
-
             if not self._nginx.is_installed():
-                logger.warning("Nginx not installed. Attempting to install...")
-                if not self._nginx.install():
-                    logger.error("Nginx installation failed")
-
+                self._nginx.install()
             if self._nginx.test_config():
                 self._nginx.reload()
-            else:
-                logger.error("Nginx config test failed")
 
         self._running = True
         logger.info("All services started")
         return True
 
     def stop_all(self, graceful: bool = True):
-        """Stop all workers and nginx."""
         logger.info("Stopping all services...")
         self._running = False
-
-        # Stop workers
-        for worker_id in list(self._processes.keys()):
-            self.stop_worker(worker_id, graceful=graceful)
-
-        # Stop broker
+        self._health_checker.stop()
+        self._cluster.stop()
+        for wid in list(self._processes.keys()):
+            self.stop_worker(wid, graceful)
         self.stop_broker()
-
         logger.info("All services stopped")
 
     def get_status(self) -> Dict[str, Any]:
-        """Get manager status."""
         return {
             "running": self._running,
+            "platform": SYSTEM,
+            "platform_warning": self._nginx.platform_warning,
             "broker_alive": self._broker_process.is_alive() if self._broker_process else False,
             "workers": {wid: w.to_dict() for wid, w in self._workers.items()},
-            "nginx": {
-                "installed": self._nginx.is_installed(),
-                "enabled": self.config.nginx.enabled,
-            },
+            "nginx": {"installed": self._nginx.is_installed(), "ssl_available": self._nginx.ssl_available, "version": self._nginx.get_version()},
+            "cluster": {"nodes": len(self._cluster.nodes), "healthy_nodes": sum(1 for n in self._cluster.nodes.values() if n.healthy)},
         }
 
     def get_workers(self) -> List[Dict]:
-        """Get all workers."""
-        return [w.to_dict() for w in self._workers.values()]
+        local = [w.to_dict() for w in self._workers.values()]
+        for w in local:
+            m = self._metrics_collector.get_metrics(w["worker_id"])
+            w["metrics"] = {"requests": m.requests, "connections": m.connections, "errors": m.errors, "avg_latency_ms": m.avg_latency_ms}
+        return local + self._cluster.get_all_workers()
 
     def get_metrics(self) -> Dict[str, Any]:
-        """Get aggregated metrics from all workers."""
-        total_requests = 0
-        total_connections = 0
-        total_errors = 0
-        latencies = []
-
-        for worker in self._workers.values():
-            # In real implementation, fetch from workers via ZMQ
-            # For now, return placeholder data
-            pass
-
-        http_count = sum(1 for w in self._workers.values() if w.worker_type == WorkerType.HTTP)
-        ws_count = sum(1 for w in self._workers.values() if w.worker_type == WorkerType.WS)
-
+        all_m = self._metrics_collector.get_all_metrics()
         return {
             "total_workers": len(self._workers),
-            "http_workers": http_count,
-            "ws_workers": ws_count,
-            "total_requests": total_requests,
-            "total_connections": total_connections,
-            "total_errors": total_errors,
-            "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0,
+            "http_workers": sum(1 for w in self._workers.values() if w.worker_type == WorkerType.HTTP),
+            "ws_workers": sum(1 for w in self._workers.values() if w.worker_type == WorkerType.WS),
+            "total_requests": sum(m.requests for m in all_m.values()),
+            "total_connections": sum(m.connections for m in all_m.values()),
+            "total_errors": sum(m.errors for m in all_m.values()),
+            "avg_latency_ms": sum(m.avg_latency_ms for m in all_m.values()) / len(all_m) if all_m else 0,
         }
 
     def get_health(self) -> Dict[str, Any]:
-        """Get health status of all components."""
-        workers_healthy = all(
-            w.state == WorkerState.RUNNING and self._processes.get(w.worker_id, None) and self._processes[w.worker_id].is_alive()
-            for w in self._workers.values()
-        )
-
-        broker_healthy = self._broker_process and self._broker_process.is_alive()
-
         return {
-            "healthy": workers_healthy and broker_healthy,
-            "broker": {
-                "alive": broker_healthy,
-                "pid": self._broker_process.pid if self._broker_process else None,
-            },
-            "workers": {
-                wid: {
-                    "healthy": self._processes.get(wid) and self._processes[wid].is_alive(),
-                    "state": w.state.value,
-                }
-                for wid, w in self._workers.items()
-            },
-            "nginx": {
-                "installed": self._nginx.is_installed(),
-            },
+            "healthy": all(w.healthy for w in self._workers.values()) and (self._broker_process and self._broker_process.is_alive()),
+            "broker": {"alive": self._broker_process.is_alive() if self._broker_process else False},
+            "workers": {wid: {"healthy": w.healthy, "state": w.state.value, "latency_ms": w.health_latency_ms} for wid, w in self._workers.items()},
+            "nginx": {"installed": self._nginx.is_installed(), "ssl": self._nginx.ssl_available},
         }
 
-    def scale_workers(self, worker_type: str, target_count: int) -> Dict[str, Any]:
-        """Scale workers to target count."""
+    def scale_workers(self, worker_type: str, target: int) -> Dict[str, Any]:
         wtype = WorkerType.HTTP if worker_type == "http" else WorkerType.WS
-        current_workers = [w for w in self._workers.values() if w.worker_type == wtype]
-        current_count = len(current_workers)
+        current = [w for w in self._workers.values() if w.worker_type == wtype]
+        started, stopped = [], []
 
-        started = []
-        stopped = []
-
-        if target_count > current_count:
-            # Scale up
-            for _ in range(target_count - current_count):
-                if wtype == WorkerType.HTTP:
-                    info = self.start_http_worker()
-                else:
-                    info = self.start_ws_worker()
+        if target > len(current):
+            for _ in range(target - len(current)):
+                info = self.start_http_worker() if wtype == WorkerType.HTTP else self.start_ws_worker()
                 if info:
                     started.append(info.worker_id)
+        elif target < len(current):
+            for w in current[:len(current) - target]:
+                self.stop_worker(w.worker_id)
+                stopped.append(w.worker_id)
 
-        elif target_count < current_count:
-            # Scale down - stop oldest first
-            to_stop = current_workers[:current_count - target_count]
-            for worker in to_stop:
-                self.stop_worker(worker.worker_id)
-                stopped.append(worker.worker_id)
-
-        # Update nginx config
         if started or stopped:
             self._update_nginx_config()
-            if self._nginx.is_installed():
-                self._nginx.reload()
+            self._health_checker.update_workers(self._workers)
+            self._metrics_collector.update_workers(self._workers)
+            self._nginx.reload()
 
-        return {
-            "status": "ok",
-            "previous_count": current_count,
-            "current_count": target_count,
-            "started": started,
-            "stopped": stopped,
-            "message": f"Scaled {worker_type} from {current_count} to {len([w for w in self._workers.values() if w.worker_type == wtype])}",
-        }
+        return {"status": "ok", "started": started, "stopped": stopped}
 
-    def rolling_update(self, delay: float = None, validate: bool = True):
-        """Perform zero-downtime rolling update with validation."""
-        if delay is None:
-            delay = self.config.manager.rolling_update_delay
-
+    def rolling_update(self, delay: float = 2.0, validate: bool = True):
         logger.info("Starting rolling update...")
-
-        http_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]
-        ws_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.WS]
-
-        # Update HTTP workers one by one
-        for info in list(http_workers):
-            logger.info(f"Rolling update: replacing {info.worker_id}")
-
-            # Start new worker
-            new_info = self.start_http_worker()
-            if not new_info:
-                logger.error(f"Failed to start replacement for {info.worker_id}")
+        for info in [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]:
+            new = self.start_http_worker()
+            if not new:
                 continue
-
-            # Wait for startup
             time.sleep(delay)
-
-            # Validate new worker
-            if validate and not self._validate_worker(new_info):
-                logger.error(f"Validation failed for {new_info.worker_id}, rolling back")
-                self.stop_worker(new_info.worker_id)
-                continue
-
-            logger.info(f"New worker {new_info.worker_id} validated successfully")
-
-            # Update nginx
+            if validate:
+                try:
+                    conn = http.client.HTTPConnection("127.0.0.1", new.port, timeout=2)
+                    conn.request("GET", "/health")
+                    if conn.getresponse().status != 200:
+                        self.stop_worker(new.worker_id)
+                        continue
+                except Exception:
+                    self.stop_worker(new.worker_id)
+                    continue
             self._update_nginx_config()
-            if self._nginx.is_installed():
-                self._nginx.reload()
-
-            # Drain old worker
+            self._nginx.reload()
             info.state = WorkerState.DRAINING
             time.sleep(delay)
-
-            # Stop old worker
             self.stop_worker(info.worker_id)
-            logger.info(f"Replaced {info.worker_id} with {new_info.worker_id}")
-
-        # Update WS workers
-        for info in list(ws_workers):
-            logger.info(f"Rolling update: replacing WS {info.worker_id}")
-
-            new_info = self.start_ws_worker()
-            if not new_info:
-                logger.error(f"Failed to start replacement for {info.worker_id}")
-                continue
-
-            time.sleep(delay)
-
-            if validate and not self._validate_worker(new_info):
-                logger.error(f"Validation failed for {new_info.worker_id}")
-                self.stop_worker(new_info.worker_id)
-                continue
-
-            self._update_nginx_config()
-            if self._nginx.is_installed():
-                self._nginx.reload()
-
-            info.state = WorkerState.DRAINING
-            time.sleep(delay * 2)  # Longer drain for WS
-
-            self.stop_worker(info.worker_id)
-            logger.info(f"Replaced WS {info.worker_id} with {new_info.worker_id}")
-
         logger.info("Rolling update complete")
 
-    def _validate_worker(self, worker_info: WorkerInfo) -> bool:
-        """Validate that a worker is healthy and responding."""
-        import urllib.error
-        import urllib.request
-
-        if worker_info.worker_type == WorkerType.HTTP:
-            url = f"http://127.0.0.1:{worker_info.port}/health"
-            max_retries = 5
-
-            for attempt in range(max_retries):
-                try:
-                    req = urllib.request.Request(url, method='GET')
-                    with urllib.request.urlopen(req, timeout=2) as resp:
-                        if resp.status == 200:
-                            return True
-                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
-                    pass
-                time.sleep(0.5)
-
-            return False
-
-        elif worker_info.worker_type == WorkerType.WS:
-            # For WS, just check if process is alive
-            process = self._processes.get(worker_info.worker_id)
-            return process is not None and process.is_alive()
-
+    def add_cluster_node(self, host: str, port: int, secret: str) -> bool:
+        if self._cluster.add_node(host, port, secret):
+            self._update_nginx_config()
+            self._nginx.reload()
+            return True
         return False
+
+    @property
+    def cluster_secret(self) -> str:
+        return self._cluster.secret
 
 
 # ============================================================================
-# Web UI Handler
+# Web UI
 # ============================================================================
 
 class ManagerWebUI(BaseHTTPRequestHandler):
-    """Minimal web UI for worker manager."""
-
     manager: 'WorkerManager' = None
 
     def log_message(self, format, *args):
-        logger.debug(f"WebUI: {format % args}")
+        pass
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/") or "/"
-
+        path = urlparse(self.path).path.rstrip("/") or "/"
         if path == "/":
             self._serve_dashboard()
         elif path == "/api/status":
-            self._json_response(self.manager.get_status())
+            self._json(self.manager.get_status())
         elif path == "/api/workers":
-            self._json_response(self.manager.get_workers())
+            self._json(self.manager.get_workers())
         elif path == "/api/metrics":
-            self._json_response(self.manager.get_metrics())
+            self._json(self.manager.get_metrics())
         elif path == "/api/health":
-            self._json_response(self.manager.get_health())
+            self._json(self.manager.get_health())
+        elif path == "/api/cluster/verify":
+            secret = self.headers.get("X-Cluster-Secret")
+            if secret == self.manager.cluster_secret:
+                self._json({"status": "ok"})
+            else:
+                self.send_response(403)
+                self.end_headers()
         else:
-            self._not_found()
+            self.send_response(404)
+            self.end_headers()
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length else b""
-
+        path = urlparse(self.path).path.rstrip("/")
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b""
         try:
             data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
+        except Exception:
             data = {}
 
         if path == "/api/workers/start":
-            worker_type = data.get("type", "http")
-            count = data.get("count", 1)
             results = []
-            for _ in range(count):
-                if worker_type == "http":
-                    info = self.manager.start_http_worker()
-                else:
-                    info = self.manager.start_ws_worker()
+            for _ in range(data.get("count", 1)):
+                info = self.manager.start_http_worker() if data.get("type", "http") == "http" else self.manager.start_ws_worker()
                 if info:
                     results.append(info.to_dict())
-            self._json_response({"status": "ok", "workers": results})
-
+            self._json({"status": "ok", "workers": results})
         elif path == "/api/workers/stop":
-            worker_id = data.get("worker_id")
-            graceful = data.get("graceful", True)
-            if worker_id:
-                self.manager.stop_worker(worker_id, graceful=graceful)
-                self._json_response({"status": "ok"})
-            else:
-                self._json_response({"status": "error", "message": "worker_id required"}, 400)
-
+            self.manager.stop_worker(data.get("worker_id"), data.get("graceful", True))
+            self._json({"status": "ok"})
         elif path == "/api/workers/restart":
-            worker_id = data.get("worker_id")
-            if worker_id:
-                info = self.manager.restart_worker(worker_id)
-                self._json_response({"status": "ok", "worker": info.to_dict() if info else None})
-            else:
-                self._json_response({"status": "error"}, 400)
-
+            info = self.manager.restart_worker(data.get("worker_id"))
+            self._json({"status": "ok", "worker": info.to_dict() if info else None})
         elif path == "/api/rolling-update":
-            # Start rolling update in background
-            delay = data.get("delay", self.manager.config.manager.rolling_update_delay)
-            validate = data.get("validate", True)
-            thread = Thread(target=self.manager.rolling_update, args=(delay, validate), daemon=True)
-            thread.start()
-            self._json_response({"status": "ok", "message": "Rolling update started"})
-
+            Thread(target=self.manager.rolling_update, daemon=True).start()
+            self._json({"status": "ok"})
         elif path == "/api/scale":
-            worker_type = data.get("type", "http")
-            target_count = data.get("count", 1)
-            result = self.manager.scale_workers(worker_type, target_count)
-            self._json_response(result)
-
+            self._json(self.manager.scale_workers(data.get("type", "http"), data.get("count", 1)))
         elif path == "/api/shutdown":
-            graceful = data.get("graceful", True)
-            thread = Thread(target=self.manager.stop_all, args=(graceful,), daemon=True)
-            thread.start()
-            self._json_response({"status": "ok", "message": "Shutdown initiated"})
-
+            Thread(target=self.manager.stop_all, daemon=True).start()
+            self._json({"status": "ok"})
         elif path == "/api/nginx/reload":
-            success = self.manager._nginx.reload()
-            self._json_response({"status": "ok" if success else "error"})
-
+            self.manager._update_nginx_config()
+            self._json({"status": "ok" if self.manager._nginx.reload() else "error"})
+        elif path == "/api/cluster/join":
+            self._json({"status": "ok" if self.manager.add_cluster_node(data.get("host"), data.get("port", 9000), data.get("secret")) else "error"})
         else:
-            self._not_found()
+            self.send_response(404)
+            self.end_headers()
 
-    def _json_response(self, data: Any, status: int = 200):
+    def _json(self, data: Any, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data, default=str).encode())
 
-    def _not_found(self):
-        self.send_response(404)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"error": "Not Found"}')
-
     def _serve_dashboard(self):
-        html = """<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ToolBoxV2 Worker Manager</title>
-    <style>
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: #334155;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --success: #22c55e;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --border: #475569;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .header h1::before {
-            content: "⚡";
-        }
-
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 12px;
-            border-radius: 9999px;
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        .status-badge.running { background: rgba(34, 197, 94, 0.2); color: var(--success); }
-        .status-badge.stopped { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
-        .status-badge.warning { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-
-        .status-dot.running { background: var(--success); }
-        .status-dot.stopped { background: var(--danger); }
-        .status-dot.starting { background: var(--warning); }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-
-        .card {
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            padding: 20px;
-            border: 1px solid var(--border);
-        }
-
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-
-        .card-title {
-            font-size: 0.875rem;
-            font-weight: 600;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-        }
-
-        .metric {
-            background: var(--bg-card);
-            padding: 16px;
-            border-radius: 8px;
-        }
-
-        .metric-label {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin-bottom: 4px;
-        }
-
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--accent);
-        }
-
-        .metric-value.success { color: var(--success); }
-        .metric-value.warning { color: var(--warning); }
-        .metric-value.danger { color: var(--danger); }
-
-        .workers-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .worker-item {
-            background: var(--bg-card);
-            padding: 16px;
-            border-radius: 8px;
-            display: grid;
-            grid-template-columns: auto 1fr auto;
-            gap: 12px;
-            align-items: center;
-        }
-
-        .worker-info {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .worker-id {
-            font-family: 'Consolas', monospace;
-            font-size: 0.875rem;
-            color: var(--accent);
-        }
-
-        .worker-meta {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-        }
-
-        .worker-stats {
-            display: flex;
-            gap: 16px;
-            font-size: 0.75rem;
-        }
-
-        .worker-stat {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .worker-stat-value {
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        .worker-stat-label {
-            color: var(--text-secondary);
-        }
-
-        .worker-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .btn {
-            padding: 8px 16px;
-            border-radius: 6px;
-            border: none;
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--accent-hover);
-        }
-
-        .btn-secondary {
-            background: var(--bg-card);
-            color: var(--text-primary);
-            border: 1px solid var(--border);
-        }
-
-        .btn-secondary:hover {
-            background: var(--border);
-        }
-
-        .btn-danger {
-            background: rgba(239, 68, 68, 0.2);
-            color: var(--danger);
-        }
-
-        .btn-danger:hover {
-            background: rgba(239, 68, 68, 0.3);
-        }
-
-        .btn-success {
-            background: rgba(34, 197, 94, 0.2);
-            color: var(--success);
-        }
-
-        .btn-success:hover {
-            background: rgba(34, 197, 94, 0.3);
-        }
-
-        .btn-sm {
-            padding: 4px 8px;
-            font-size: 0.75rem;
-        }
-
-        .actions-bar {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .scale-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--bg-card);
-            padding: 8px 12px;
-            border-radius: 8px;
-        }
-
-        .scale-control input {
-            width: 60px;
-            padding: 4px 8px;
-            border-radius: 4px;
-            border: 1px solid var(--border);
-            background: var(--bg-secondary);
-            color: var(--text-primary);
-            text-align: center;
-        }
-
-        .scale-control label {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
-
-        .log-panel {
-            background: var(--bg-card);
-            border-radius: 8px;
-            padding: 12px;
-            font-family: 'Consolas', monospace;
-            font-size: 0.75rem;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .log-entry {
-            padding: 4px 0;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .log-entry:last-child {
-            border-bottom: none;
-        }
-
-        .log-time {
-            color: var(--text-secondary);
-            margin-right: 8px;
-        }
-
-        .log-info { color: var(--accent); }
-        .log-success { color: var(--success); }
-        .log-warning { color: var(--warning); }
-        .log-error { color: var(--danger); }
-
-        .progress-bar {
-            height: 4px;
-            background: var(--bg-card);
-            border-radius: 2px;
-            overflow: hidden;
-            margin-top: 8px;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--accent);
-            transition: width 0.3s;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-secondary);
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            padding: 12px 20px;
-            border-radius: 8px;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            transform: translateY(100px);
-            opacity: 0;
-            transition: all 0.3s;
-        }
-
-        .toast.show {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        .toast.success { border-color: var(--success); }
-        .toast.error { border-color: var(--danger); }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>ToolBoxV2 Worker Manager</h1>
-        <div id="system-status">
-            <span class="status-badge stopped">
-                <span class="status-dot stopped"></span>
-                Loading...
-            </span>
-        </div>
-    </div>
-
-    <div class="grid">
-        <!-- System Metrics -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">📊 System Metrics</span>
-                <span id="last-update" style="font-size: 0.75rem; color: var(--text-secondary);">--</span>
-            </div>
-            <div class="metrics-grid" id="metrics">
-                <div class="metric">
-                    <div class="metric-label">Total Workers</div>
-                    <div class="metric-value" id="metric-workers">0</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Active Connections</div>
-                    <div class="metric-value" id="metric-connections">0</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Requests/min</div>
-                    <div class="metric-value" id="metric-requests">0</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Avg Latency</div>
-                    <div class="metric-value" id="metric-latency">0ms</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Quick Actions -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-title">⚡ Quick Actions</span>
-            </div>
-            <div class="actions-bar">
-                <button class="btn btn-primary" onclick="startWorker('http')">+ HTTP Worker</button>
-                <button class="btn btn-primary" onclick="startWorker('ws')">+ WS Worker</button>
-                <button class="btn btn-success" onclick="rollingUpdate()">🔄 Rolling Update</button>
-                <button class="btn btn-secondary" onclick="reloadNginx()">🔃 Reload Nginx</button>
-                <button class="btn btn-danger" onclick="shutdownAll()">⏹️ Shutdown All</button>
-            </div>
-            <div style="margin-top: 16px;">
-                <div class="scale-control">
-                    <label>Scale HTTP to:</label>
-                    <input type="number" id="http-scale" value="2" min="0" max="16">
-                    <button class="btn btn-sm btn-secondary" onclick="scaleWorkers('http')">Apply</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Workers List -->
-    <div class="card">
-        <div class="card-header">
-            <span class="card-title">👷 Workers</span>
-            <span id="worker-count" style="font-size: 0.875rem;">0 workers</span>
-        </div>
-        <div class="workers-list" id="workers-list">
-            <div class="empty-state">No workers running</div>
-        </div>
-    </div>
-
-    <!-- Activity Log -->
-    <div class="card" style="margin-top: 20px;">
-        <div class="card-header">
-            <span class="card-title">📜 Activity Log</span>
-            <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
-        </div>
-        <div class="log-panel" id="log-panel"></div>
-    </div>
-
-    <div class="toast" id="toast"></div>
-
-    <script>
-        let logs = [];
-        let previousWorkers = {};
-
-        function addLog(message, type = 'info') {
-            const time = new Date().toLocaleTimeString();
-            logs.unshift({ time, message, type });
-            if (logs.length > 50) logs.pop();
-            renderLogs();
-        }
-
-        function renderLogs() {
-            const panel = document.getElementById('log-panel');
-            panel.innerHTML = logs.map(log => `
-                <div class="log-entry">
-                    <span class="log-time">${log.time}</span>
-                    <span class="log-${log.type}">${log.message}</span>
-                </div>
-            `).join('');
-        }
-
-        function clearLogs() {
-            logs = [];
-            renderLogs();
-        }
-
-        function showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.className = 'toast show ' + type;
-            setTimeout(() => toast.className = 'toast', 3000);
-        }
-
-        function formatUptime(seconds) {
-            if (seconds < 60) return Math.round(seconds) + 's';
-            if (seconds < 3600) return Math.round(seconds / 60) + 'm';
-            return Math.round(seconds / 3600) + 'h ' + Math.round((seconds % 3600) / 60) + 'm';
-        }
-
-        async function fetchStatus() {
-            try {
-                const res = await fetch('/api/status');
-                const data = await res.json();
-
-                // Update system status
-                const statusEl = document.getElementById('system-status');
-                const isRunning = data.running && data.broker_alive;
-                statusEl.innerHTML = `
-                    <span class="status-badge ${isRunning ? 'running' : 'stopped'}">
-                        <span class="status-dot ${isRunning ? 'running' : 'stopped'}"></span>
-                        ${isRunning ? 'Running' : 'Stopped'}
-                    </span>
-                `;
-
-                // Update metrics
-                const workers = Object.values(data.workers || {});
-                const httpWorkers = workers.filter(w => w.worker_type === 'http');
-                const wsWorkers = workers.filter(w => w.worker_type === 'ws');
-
-                document.getElementById('metric-workers').textContent = workers.length;
-                document.getElementById('worker-count').textContent = `${workers.length} workers`;
-                document.getElementById('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-
-                // Render workers
-                renderWorkers(workers);
-
-                // Check for new/removed workers
-                const currentIds = new Set(workers.map(w => w.worker_id));
-                const prevIds = new Set(Object.keys(previousWorkers));
-
-                for (const w of workers) {
-                    if (!prevIds.has(w.worker_id)) {
-                        addLog(`Worker started: ${w.worker_id} (${w.worker_type})`, 'success');
-                    }
-                }
-                for (const id of prevIds) {
-                    if (!currentIds.has(id)) {
-                        addLog(`Worker stopped: ${id}`, 'warning');
-                    }
-                }
-
-                previousWorkers = Object.fromEntries(workers.map(w => [w.worker_id, w]));
-
-            } catch (err) {
-                console.error('Fetch error:', err);
-            }
-        }
-
-        function renderWorkers(workers) {
-            const list = document.getElementById('workers-list');
-
-            if (workers.length === 0) {
-                list.innerHTML = '<div class="empty-state">No workers running</div>';
-                return;
-            }
-
-            list.innerHTML = workers.map(w => `
-                <div class="worker-item">
-                    <span class="status-dot ${w.state}"></span>
-                    <div class="worker-info">
-                        <span class="worker-id">${w.worker_id}</span>
-                        <span class="worker-meta">
-                            ${w.worker_type.toUpperCase()} • Port ${w.port} • PID ${w.pid} •
-                            Uptime: ${formatUptime(w.uptime || 0)}
-                        </span>
-                    </div>
-                    <div class="worker-actions">
-                        <button class="btn btn-sm btn-secondary" onclick="restartWorker('${w.worker_id}')">
-                            🔄 Restart
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="stopWorker('${w.worker_id}')">
-                            ⏹️ Stop
-                        </button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        async function startWorker(type, count = 1) {
-            addLog(`Starting ${count} ${type} worker(s)...`, 'info');
-            const res = await fetch('/api/workers/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type, count })
-            });
-            const data = await res.json();
-            if (data.status === 'ok') {
-                showToast(`Started ${data.workers.length} worker(s)`, 'success');
-            }
-            fetchStatus();
-        }
-
-        async function stopWorker(id) {
-            if (!confirm(`Stop worker ${id}?`)) return;
-            addLog(`Stopping worker: ${id}`, 'warning');
-            await fetch('/api/workers/stop', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ worker_id: id, graceful: true })
-            });
-            fetchStatus();
-        }
-
-        async function restartWorker(id) {
-            addLog(`Restarting worker: ${id}`, 'info');
-            await fetch('/api/workers/restart', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ worker_id: id })
-            });
-            fetchStatus();
-        }
-
-        async function rollingUpdate() {
-            if (!confirm('Start rolling update? This will restart all workers one by one.')) return;
-            addLog('Starting rolling update...', 'info');
-            showToast('Rolling update started', 'success');
-            await fetch('/api/rolling-update', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ validate: true })
-            });
-        }
-
-        async function scaleWorkers(type) {
-            const count = parseInt(document.getElementById(type + '-scale').value);
-            addLog(`Scaling ${type} workers to ${count}`, 'info');
-            const res = await fetch('/api/scale', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type, count })
-            });
-            const data = await res.json();
-            showToast(data.message || 'Scaling complete', data.status === 'ok' ? 'success' : 'error');
-            fetchStatus();
-        }
-
-        async function shutdownAll() {
-            if (!confirm('Shutdown all workers?')) return;
-            addLog('Initiating shutdown...', 'error');
-            await fetch('/api/shutdown', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ graceful: true })
-            });
-        }
-
-        async function reloadNginx() {
-            addLog('Reloading nginx...', 'info');
-            const res = await fetch('/api/nginx/reload', { method: 'POST' });
-            const data = await res.json();
-            showToast(data.status === 'ok' ? 'Nginx reloaded' : 'Nginx reload failed',
-                      data.status === 'ok' ? 'success' : 'error');
-        }
-
-        // Initial load
-        fetchStatus();
-        addLog('Dashboard loaded', 'success');
-
-        // Auto-refresh every 2 seconds
-        setInterval(fetchStatus, 2000);
-    </script>
-</body>
-</html>"""
+        html = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Worker Manager</title>
+<style>:root{--bg:#0f172a;--card:#1e293b;--accent:#3b82f6;--ok:#22c55e;--err:#ef4444;--txt:#f1f5f9;--muted:#94a3b8}
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui;background:var(--bg);color:var(--txt);padding:20px}
+.h{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #475569}
+.badge{padding:4px 12px;border-radius:99px;font-size:.875rem}.ok{background:rgba(34,197,94,.2);color:var(--ok)}
+.err{background:rgba(239,68,68,.2);color:var(--err)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-bottom:20px}
+.card{background:var(--card);border-radius:12px;padding:20px;border:1px solid #475569}.title{font-size:.75rem;color:var(--muted);text-transform:uppercase;margin-bottom:12px}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.m{background:#334155;padding:12px;border-radius:8px}
+.m-v{font-size:1.5rem;font-weight:700;color:var(--accent)}.m-l{font-size:.75rem;color:var(--muted)}
+.btn{padding:8px 16px;border-radius:6px;border:none;font-size:.875rem;cursor:pointer;margin-right:8px;margin-bottom:8px}
+.btn-p{background:var(--accent);color:#fff}.btn-d{background:rgba(239,68,68,.2);color:var(--err)}
+.btn-s{background:#334155;color:var(--txt)}.wl{display:flex;flex-direction:column;gap:12px;max-height:400px;overflow-y:auto}
+.wi{background:#334155;padding:16px;border-radius:8px;display:flex;justify-content:space-between;align-items:center}
+.wi-id{font-family:monospace;color:var(--accent)}.wi-m{font-size:.75rem;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;margin-right:12px;display:inline-block}.dot.running{background:var(--ok)}.dot.stopped{background:var(--err)}
+</style></head><body>
+<div class="h"><h1>⚡ Worker Manager</h1><span class="badge" id="status">Loading...</span></div>
+<div style="margin-bottom:20px">
+<button class="btn btn-p" onclick="start('http')">+ HTTP</button>
+<button class="btn btn-p" onclick="start('ws')">+ WS</button>
+<button class="btn btn-s" onclick="update()">Rolling Update</button>
+<button class="btn btn-s" onclick="reload()">Reload Nginx</button>
+<button class="btn btn-d" onclick="shutdown()">Shutdown</button>
+</div>
+<div class="grid">
+<div class="card"><div class="title">Metrics</div><div class="metrics">
+<div class="m"><div class="m-v" id="reqs">0</div><div class="m-l">Requests</div></div>
+<div class="m"><div class="m-v" id="conns">0</div><div class="m-l">Connections</div></div>
+<div class="m"><div class="m-v" id="http">0</div><div class="m-l">HTTP Workers</div></div>
+<div class="m"><div class="m-v" id="ws">0</div><div class="m-l">WS Workers</div></div>
+</div></div>
+<div class="card"><div class="title">System</div><div class="metrics">
+<div class="m"><div class="m-v" id="nginx">-</div><div class="m-l">Nginx</div></div>
+<div class="m"><div class="m-v" id="broker">-</div><div class="m-l">Broker</div></div>
+<div class="m"><div class="m-v" id="platform">-</div><div class="m-l">Platform</div></div>
+<div class="m"><div class="m-v" id="cluster">0</div><div class="m-l">Cluster</div></div>
+</div></div>
+</div>
+<div class="card"><div class="title">Workers</div><div class="wl" id="workers"></div></div>
+<script>
+async function fetch_data(){try{
+const[s,m,w]=await Promise.all([fetch('/api/status').then(r=>r.json()),fetch('/api/metrics').then(r=>r.json()),fetch('/api/workers').then(r=>r.json())]);
+document.getElementById('status').className='badge '+(s.running?'ok':'err');
+document.getElementById('status').textContent=s.running?'Running':'Stopped';
+document.getElementById('reqs').textContent=m.total_requests;
+document.getElementById('conns').textContent=m.total_connections;
+document.getElementById('http').textContent=m.http_workers;
+document.getElementById('ws').textContent=m.ws_workers;
+document.getElementById('nginx').textContent=s.nginx.installed?'OK':'No';
+document.getElementById('broker').textContent=s.broker_alive?'OK':'Down';
+document.getElementById('platform').textContent=s.platform;
+document.getElementById('cluster').textContent=s.cluster.healthy_nodes;
+document.getElementById('workers').innerHTML=w.map(x=>`<div class="wi"><div><span class="dot ${x.state}"></span><span class="wi-id">${x.worker_id}</span><div class="wi-m">${x.worker_type} | Port ${x.port} | ${x.node||'local'}</div></div><div><button class="btn btn-s" onclick="restart('${x.worker_id}')">Restart</button><button class="btn btn-d" onclick="stop('${x.worker_id}')">Stop</button></div></div>`).join('');
+}catch(e){}}
+async function start(t){await fetch('/api/workers/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:t,count:1})});fetch_data()}
+async function stop(id){await fetch('/api/workers/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
+async function restart(id){await fetch('/api/workers/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker_id:id})});fetch_data()}
+async function update(){await fetch('/api/rolling-update',{method:'POST'})}
+async function reload(){await fetch('/api/nginx/reload',{method:'POST'})}
+async function shutdown(){if(confirm('Shutdown?'))await fetch('/api/shutdown',{method:'POST'})}
+fetch_data();setInterval(fetch_data,2000);
+</script></body></html>'''
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -1698,33 +1646,16 @@ class ManagerWebUI(BaseHTTPRequestHandler):
 
 
 def run_web_ui(manager: WorkerManager, host: str, port: int):
-    """Run the web UI server."""
-
     ManagerWebUI.manager = manager
-
-    # Try to bind, fallback to alternative port if needed
-    max_retries = 5
-    current_port = port
-
-    for attempt in range(max_retries):
+    for _ in range(5):
         try:
-            server = HTTPServer((host, current_port), ManagerWebUI)
+            server = HTTPServer((host, port), ManagerWebUI)
             server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            logger.info(f"Web UI running on http://{host}:{current_port}")
+            logger.info(f"Web UI on http://{host}:{port}")
             server.serve_forever()
             break
-        except PermissionError as e:
-            logger.warning(f"Port {current_port} permission denied, trying {current_port + 1}")
-            current_port += 1
-        except OSError as e:
-            if e.errno == 10048 or "Address already in use" in str(e):  # Windows / Unix
-                logger.warning(f"Port {current_port} in use, trying {current_port + 1}")
-                current_port += 1
-            else:
-                logger.error(f"Web UI failed to start: {e}")
-                break
-    else:
-        logger.error(f"Web UI failed to start after {max_retries} attempts")
+        except OSError:
+            port += 1
 
 
 # ============================================================================
@@ -1732,120 +1663,64 @@ def run_web_ui(manager: WorkerManager, host: str, port: int):
 # ============================================================================
 
 def main():
-    from platform import system
-    if system() == "Windows":
+    if IS_WINDOWS:
         from multiprocessing import freeze_support
         freeze_support()
 
-    parser = argparse.ArgumentParser(
-        description="ToolBoxV2 Worker Manager",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Commands:
-  start         Start all workers and nginx
-  stop          Stop all workers
-  restart       Restart all workers
-  status        Show status
-  update        Zero-downtime rolling update
-  nginx-config  Generate and write nginx config
-  nginx-reload  Reload nginx configuration
-  worker-start  Start a single worker
-  worker-stop   Stop a single worker
-"""
-    )
-
-    parser.add_argument("command", nargs="?", default="start",
-                        choices=["start", "stop", "restart", "status", "update",
-                                 "nginx-config", "nginx-reload", "worker-start", "worker-stop"])
-    parser.add_argument("-c", "--config", help="Config file path")
-    parser.add_argument("-w", "--worker-id", help="Worker ID for worker commands")
-    parser.add_argument("-t", "--type", choices=["http", "ws"], default="http",
-                        help="Worker type for worker-start")
-    parser.add_argument("--no-ui", action="store_true", help="Disable web UI")
+    parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager")
+    parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join"])
+    parser.add_argument("-c", "--config", help="Config file")
+    parser.add_argument("-w", "--worker-id")
+    parser.add_argument("-t", "--type", choices=["http", "ws"], default="http")
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
+    parser.add_argument("--secret")
+    parser.add_argument("--no-ui", action="store_true")
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--daemon", action="store_true", help="Run as daemon")
 
     args = parser.parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    # Setup logging
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
-
-    # Load config
     from toolboxv2.utils.workers.config import load_config
     config = load_config(args.config)
-
-    # Create manager
+    print(config.nginx.static_root)
     manager = WorkerManager(config)
 
-    # Execute command
     if args.command == "start":
         if not manager.start_all():
             sys.exit(1)
-
-        # Start web UI
         if config.manager.web_ui_enabled and not args.no_ui:
-            ui_thread = Thread(
-                target=run_web_ui,
-                args=(manager, config.manager.web_ui_host, config.manager.web_ui_port),
-                daemon=True
-            )
-            ui_thread.start()
-
-        # Wait for shutdown
+            Thread(target=run_web_ui, args=(manager, config.manager.web_ui_host, config.manager.web_ui_port), daemon=True).start()
         try:
             while manager._running:
                 time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("Shutdown requested...")
             manager.stop_all()
-
     elif args.command == "stop":
         manager.stop_all()
-
     elif args.command == "restart":
         manager.stop_all()
         time.sleep(2)
         manager.start_all()
-
     elif args.command == "status":
-        status = manager.get_status()
-        print(json.dumps(status, indent=2))
-
+        print(json.dumps(manager.get_status(), indent=2))
     elif args.command == "update":
         manager.rolling_update()
-
     elif args.command == "nginx-config":
-        http_ports = [config.http_worker.port + i for i in range(config.http_worker.workers)]
-        ws_ports = [config.ws_worker.port]
-
-        nginx = NginxManager(config)
-        content = nginx.generate_config(http_ports, ws_ports)
-        print(content)
-
+        print(manager._nginx.generate_config([config.http_worker.port + i for i in range(config.http_worker.workers)], [config.ws_worker.port]))
     elif args.command == "nginx-reload":
-        nginx = NginxManager(config)
-        nginx.reload()
-
+        manager._update_nginx_config()
+        manager._nginx.reload()
     elif args.command == "worker-start":
-        if args.type == "http":
-            info = manager.start_http_worker(args.worker_id)
-        else:
-            info = manager.start_ws_worker(args.worker_id)
-
-        if info:
-            print(json.dumps(info.to_dict(), indent=2))
-        else:
-            print("Failed to start worker")
-            sys.exit(1)
-
+        info = manager.start_http_worker(args.worker_id) if args.type == "http" else manager.start_ws_worker(args.worker_id)
+        print(json.dumps(info.to_dict() if info else {"error": "failed"}, indent=2))
     elif args.command == "worker-stop":
-        if not args.worker_id:
-            print("--worker-id required")
-            sys.exit(1)
         manager.stop_worker(args.worker_id)
+    elif args.command == "cluster-join":
+        if manager.add_cluster_node(args.host, args.port or 9000, args.secret):
+            print(f"Joined {args.host}:{args.port or 9000}")
+        else:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
