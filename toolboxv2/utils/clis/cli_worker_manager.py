@@ -664,56 +664,6 @@ class WorkerManager:
 
         return None
 
-    def rolling_update(self, delay: float = None):
-        """Perform zero-downtime rolling update."""
-        if delay is None:
-            delay = self.config.manager.rolling_update_delay
-
-        logger.info("Starting rolling update...")
-
-        http_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]
-        ws_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.WS]
-
-        # Update HTTP workers one by one
-        for info in http_workers:
-            logger.info(f"Updating HTTP worker: {info.worker_id}")
-
-            # Start new worker
-            new_info = self.start_http_worker()
-            if new_info:
-                # Wait for new worker to be ready
-                time.sleep(delay)
-
-                # Update nginx
-                self._update_nginx_config()
-                self._nginx.reload()
-
-                # Drain old worker
-                info.state = WorkerState.DRAINING
-                time.sleep(delay)
-
-                # Stop old worker
-                self.stop_worker(info.worker_id)
-            else:
-                logger.error(f"Failed to start replacement worker for {info.worker_id}")
-
-        # Update WS workers
-        for info in ws_workers:
-            logger.info(f"Updating WS worker: {info.worker_id}")
-
-            new_info = self.start_ws_worker()
-            if new_info:
-                time.sleep(delay)
-                self._update_nginx_config()
-                self._nginx.reload()
-
-                info.state = WorkerState.DRAINING
-                time.sleep(delay * 2)  # Longer drain for WS
-
-                self.stop_worker(info.worker_id)
-
-        logger.info("Rolling update complete")
-
     def _update_nginx_config(self):
         """Update nginx configuration with current workers."""
         http_ports = [
@@ -762,14 +712,14 @@ class WorkerManager:
         logger.info("All services started")
         return True
 
-    def stop_all(self):
+    def stop_all(self, graceful: bool = True):
         """Stop all workers and nginx."""
         logger.info("Stopping all services...")
         self._running = False
 
         # Stop workers
         for worker_id in list(self._processes.keys()):
-            self.stop_worker(worker_id)
+            self.stop_worker(worker_id, graceful=graceful)
 
         # Stop broker
         self.stop_broker()
@@ -792,6 +742,199 @@ class WorkerManager:
         """Get all workers."""
         return [w.to_dict() for w in self._workers.values()]
 
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get aggregated metrics from all workers."""
+        total_requests = 0
+        total_connections = 0
+        total_errors = 0
+        latencies = []
+
+        for worker in self._workers.values():
+            # In real implementation, fetch from workers via ZMQ
+            # For now, return placeholder data
+            pass
+
+        http_count = sum(1 for w in self._workers.values() if w.worker_type == WorkerType.HTTP)
+        ws_count = sum(1 for w in self._workers.values() if w.worker_type == WorkerType.WS)
+
+        return {
+            "total_workers": len(self._workers),
+            "http_workers": http_count,
+            "ws_workers": ws_count,
+            "total_requests": total_requests,
+            "total_connections": total_connections,
+            "total_errors": total_errors,
+            "avg_latency_ms": sum(latencies) / len(latencies) if latencies else 0,
+        }
+
+    def get_health(self) -> Dict[str, Any]:
+        """Get health status of all components."""
+        workers_healthy = all(
+            w.state == WorkerState.RUNNING and self._processes.get(w.worker_id, None) and self._processes[w.worker_id].is_alive()
+            for w in self._workers.values()
+        )
+
+        broker_healthy = self._broker_process and self._broker_process.is_alive()
+
+        return {
+            "healthy": workers_healthy and broker_healthy,
+            "broker": {
+                "alive": broker_healthy,
+                "pid": self._broker_process.pid if self._broker_process else None,
+            },
+            "workers": {
+                wid: {
+                    "healthy": self._processes.get(wid) and self._processes[wid].is_alive(),
+                    "state": w.state.value,
+                }
+                for wid, w in self._workers.items()
+            },
+            "nginx": {
+                "installed": self._nginx.is_installed(),
+            },
+        }
+
+    def scale_workers(self, worker_type: str, target_count: int) -> Dict[str, Any]:
+        """Scale workers to target count."""
+        wtype = WorkerType.HTTP if worker_type == "http" else WorkerType.WS
+        current_workers = [w for w in self._workers.values() if w.worker_type == wtype]
+        current_count = len(current_workers)
+
+        started = []
+        stopped = []
+
+        if target_count > current_count:
+            # Scale up
+            for _ in range(target_count - current_count):
+                if wtype == WorkerType.HTTP:
+                    info = self.start_http_worker()
+                else:
+                    info = self.start_ws_worker()
+                if info:
+                    started.append(info.worker_id)
+
+        elif target_count < current_count:
+            # Scale down - stop oldest first
+            to_stop = current_workers[:current_count - target_count]
+            for worker in to_stop:
+                self.stop_worker(worker.worker_id)
+                stopped.append(worker.worker_id)
+
+        # Update nginx config
+        if started or stopped:
+            self._update_nginx_config()
+            if self._nginx.is_installed():
+                self._nginx.reload()
+
+        return {
+            "status": "ok",
+            "previous_count": current_count,
+            "current_count": target_count,
+            "started": started,
+            "stopped": stopped,
+            "message": f"Scaled {worker_type} from {current_count} to {len([w for w in self._workers.values() if w.worker_type == wtype])}",
+        }
+
+    def rolling_update(self, delay: float = None, validate: bool = True):
+        """Perform zero-downtime rolling update with validation."""
+        if delay is None:
+            delay = self.config.manager.rolling_update_delay
+
+        logger.info("Starting rolling update...")
+
+        http_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.HTTP]
+        ws_workers = [w for w in self._workers.values() if w.worker_type == WorkerType.WS]
+
+        # Update HTTP workers one by one
+        for info in list(http_workers):
+            logger.info(f"Rolling update: replacing {info.worker_id}")
+
+            # Start new worker
+            new_info = self.start_http_worker()
+            if not new_info:
+                logger.error(f"Failed to start replacement for {info.worker_id}")
+                continue
+
+            # Wait for startup
+            time.sleep(delay)
+
+            # Validate new worker
+            if validate and not self._validate_worker(new_info):
+                logger.error(f"Validation failed for {new_info.worker_id}, rolling back")
+                self.stop_worker(new_info.worker_id)
+                continue
+
+            logger.info(f"New worker {new_info.worker_id} validated successfully")
+
+            # Update nginx
+            self._update_nginx_config()
+            if self._nginx.is_installed():
+                self._nginx.reload()
+
+            # Drain old worker
+            info.state = WorkerState.DRAINING
+            time.sleep(delay)
+
+            # Stop old worker
+            self.stop_worker(info.worker_id)
+            logger.info(f"Replaced {info.worker_id} with {new_info.worker_id}")
+
+        # Update WS workers
+        for info in list(ws_workers):
+            logger.info(f"Rolling update: replacing WS {info.worker_id}")
+
+            new_info = self.start_ws_worker()
+            if not new_info:
+                logger.error(f"Failed to start replacement for {info.worker_id}")
+                continue
+
+            time.sleep(delay)
+
+            if validate and not self._validate_worker(new_info):
+                logger.error(f"Validation failed for {new_info.worker_id}")
+                self.stop_worker(new_info.worker_id)
+                continue
+
+            self._update_nginx_config()
+            if self._nginx.is_installed():
+                self._nginx.reload()
+
+            info.state = WorkerState.DRAINING
+            time.sleep(delay * 2)  # Longer drain for WS
+
+            self.stop_worker(info.worker_id)
+            logger.info(f"Replaced WS {info.worker_id} with {new_info.worker_id}")
+
+        logger.info("Rolling update complete")
+
+    def _validate_worker(self, worker_info: WorkerInfo) -> bool:
+        """Validate that a worker is healthy and responding."""
+        import urllib.error
+        import urllib.request
+
+        if worker_info.worker_type == WorkerType.HTTP:
+            url = f"http://127.0.0.1:{worker_info.port}/health"
+            max_retries = 5
+
+            for attempt in range(max_retries):
+                try:
+                    req = urllib.request.Request(url, method='GET')
+                    with urllib.request.urlopen(req, timeout=2) as resp:
+                        if resp.status == 200:
+                            return True
+                except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
+                    pass
+                time.sleep(0.5)
+
+            return False
+
+        elif worker_info.worker_type == WorkerType.WS:
+            # For WS, just check if process is alive
+            process = self._processes.get(worker_info.worker_id)
+            return process is not None and process.is_alive()
+
+        return False
+
 
 # ============================================================================
 # Web UI Handler
@@ -800,7 +943,7 @@ class WorkerManager:
 class ManagerWebUI(BaseHTTPRequestHandler):
     """Minimal web UI for worker manager."""
 
-    manager: WorkerManager = None
+    manager: 'WorkerManager' = None
 
     def log_message(self, format, *args):
         logger.debug(f"WebUI: {format % args}")
@@ -815,6 +958,10 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             self._json_response(self.manager.get_status())
         elif path == "/api/workers":
             self._json_response(self.manager.get_workers())
+        elif path == "/api/metrics":
+            self._json_response(self.manager.get_metrics())
+        elif path == "/api/health":
+            self._json_response(self.manager.get_health())
         else:
             self._not_found()
 
@@ -832,20 +979,22 @@ class ManagerWebUI(BaseHTTPRequestHandler):
 
         if path == "/api/workers/start":
             worker_type = data.get("type", "http")
-            if worker_type == "http":
-                info = self.manager.start_http_worker()
-            else:
-                info = self.manager.start_ws_worker()
-
-            if info:
-                self._json_response({"status": "ok", "worker": info.to_dict()})
-            else:
-                self._json_response({"status": "error"}, 500)
+            count = data.get("count", 1)
+            results = []
+            for _ in range(count):
+                if worker_type == "http":
+                    info = self.manager.start_http_worker()
+                else:
+                    info = self.manager.start_ws_worker()
+                if info:
+                    results.append(info.to_dict())
+            self._json_response({"status": "ok", "workers": results})
 
         elif path == "/api/workers/stop":
             worker_id = data.get("worker_id")
+            graceful = data.get("graceful", True)
             if worker_id:
-                self.manager.stop_worker(worker_id)
+                self.manager.stop_worker(worker_id, graceful=graceful)
                 self._json_response({"status": "ok"})
             else:
                 self._json_response({"status": "error", "message": "worker_id required"}, 400)
@@ -858,13 +1007,29 @@ class ManagerWebUI(BaseHTTPRequestHandler):
             else:
                 self._json_response({"status": "error"}, 400)
 
-        elif path == "/api/update":
-            self.manager.rolling_update()
-            self._json_response({"status": "ok"})
+        elif path == "/api/rolling-update":
+            # Start rolling update in background
+            delay = data.get("delay", self.manager.config.manager.rolling_update_delay)
+            validate = data.get("validate", True)
+            thread = Thread(target=self.manager.rolling_update, args=(delay, validate), daemon=True)
+            thread.start()
+            self._json_response({"status": "ok", "message": "Rolling update started"})
+
+        elif path == "/api/scale":
+            worker_type = data.get("type", "http")
+            target_count = data.get("count", 1)
+            result = self.manager.scale_workers(worker_type, target_count)
+            self._json_response(result)
+
+        elif path == "/api/shutdown":
+            graceful = data.get("graceful", True)
+            thread = Thread(target=self.manager.stop_all, args=(graceful,), daemon=True)
+            thread.start()
+            self._json_response({"status": "ok", "message": "Shutdown initiated"})
 
         elif path == "/api/nginx/reload":
-            self.manager._nginx.reload()
-            self._json_response({"status": "ok"})
+            success = self.manager._nginx.reload()
+            self._json_response({"status": "ok" if success else "error"})
 
         else:
             self._not_found()
@@ -872,137 +1037,657 @@ class ManagerWebUI(BaseHTTPRequestHandler):
     def _json_response(self, data: Any, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+        self.wfile.write(json.dumps(data, default=str).encode())
 
     def _not_found(self):
         self.send_response(404)
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
+        self.wfile.write(b'{"error": "Not Found"}')
 
     def _serve_dashboard(self):
         html = """<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ToolBoxV2 Worker Manager</title>
     <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #334155;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #475569;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
-        h1 { color: #00d9ff; margin-bottom: 20px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: #16213e; border-radius: 8px; padding: 20px; }
-        .card h2 { color: #00d9ff; font-size: 1rem; margin-bottom: 10px; }
-        .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
-        .status.running { background: #00ff88; }
-        .status.stopped { background: #ff4444; }
-        .status.starting { background: #ffaa00; }
-        .worker { background: #0f3460; padding: 10px; border-radius: 4px; margin: 8px 0; }
-        .worker-id { font-family: monospace; color: #00d9ff; }
-        .btn { background: #00d9ff; color: #1a1a2e; border: none; padding: 8px 16px;
-               border-radius: 4px; cursor: pointer; margin: 4px; }
-        .btn:hover { background: #00b8d4; }
-        .btn.danger { background: #ff4444; color: white; }
-        .metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px; }
-        .metric { background: #0f3460; padding: 10px; border-radius: 4px; }
-        .metric-value { font-size: 1.5rem; color: #00d9ff; }
-        .actions { margin-top: 20px; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header h1::before {
+            content: "⚡";
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-badge.running { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .status-badge.stopped { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        .status-badge.warning { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.running { background: var(--success); }
+        .status-dot.stopped { background: var(--danger); }
+        .status-dot.starting { background: var(--warning); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .metric {
+            background: var(--bg-card);
+            padding: 16px;
+            border-radius: 8px;
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .metric-value.success { color: var(--success); }
+        .metric-value.warning { color: var(--warning); }
+        .metric-value.danger { color: var(--danger); }
+
+        .workers-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .worker-item {
+            background: var(--bg-card);
+            padding: 16px;
+            border-radius: 8px;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .worker-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .worker-id {
+            font-family: 'Consolas', monospace;
+            font-size: 0.875rem;
+            color: var(--accent);
+        }
+
+        .worker-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .worker-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 0.75rem;
+        }
+
+        .worker-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .worker-stat-value {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .worker-stat-label {
+            color: var(--text-secondary);
+        }
+
+        .worker-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-success {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--success);
+        }
+
+        .btn-success:hover {
+            background: rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 0.75rem;
+        }
+
+        .actions-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .scale-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-card);
+            padding: 8px 12px;
+            border-radius: 8px;
+        }
+
+        .scale-control input {
+            width: 60px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            text-align: center;
+        }
+
+        .scale-control label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .log-panel {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            margin-right: 8px;
+        }
+
+        .log-info { color: var(--accent); }
+        .log-success { color: var(--success); }
+        .log-warning { color: var(--warning); }
+        .log-error { color: var(--danger); }
+
+        .progress-bar {
+            height: 4px;
+            background: var(--bg-card);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success { border-color: var(--success); }
+        .toast.error { border-color: var(--danger); }
     </style>
 </head>
 <body>
-    <h1>ToolBoxV2 Worker Manager</h1>
-
-    <div class="grid">
-        <div class="card">
-            <h2>System Status</h2>
-            <div id="system-status">Loading...</div>
-        </div>
-
-        <div class="card">
-            <h2>Workers</h2>
-            <div id="workers">Loading...</div>
-            <div class="actions">
-                <button class="btn" onclick="startWorker('http')">+ HTTP Worker</button>
-                <button class="btn" onclick="startWorker('ws')">+ WS Worker</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Actions</h2>
-            <button class="btn" onclick="rollingUpdate()">Rolling Update</button>
-            <button class="btn" onclick="reloadNginx()">Reload Nginx</button>
+    <div class="header">
+        <h1>ToolBoxV2 Worker Manager</h1>
+        <div id="system-status">
+            <span class="status-badge stopped">
+                <span class="status-dot stopped"></span>
+                Loading...
+            </span>
         </div>
     </div>
 
+    <div class="grid">
+        <!-- System Metrics -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📊 System Metrics</span>
+                <span id="last-update" style="font-size: 0.75rem; color: var(--text-secondary);">--</span>
+            </div>
+            <div class="metrics-grid" id="metrics">
+                <div class="metric">
+                    <div class="metric-label">Total Workers</div>
+                    <div class="metric-value" id="metric-workers">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Active Connections</div>
+                    <div class="metric-value" id="metric-connections">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Requests/min</div>
+                    <div class="metric-value" id="metric-requests">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Avg Latency</div>
+                    <div class="metric-value" id="metric-latency">0ms</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">⚡ Quick Actions</span>
+            </div>
+            <div class="actions-bar">
+                <button class="btn btn-primary" onclick="startWorker('http')">+ HTTP Worker</button>
+                <button class="btn btn-primary" onclick="startWorker('ws')">+ WS Worker</button>
+                <button class="btn btn-success" onclick="rollingUpdate()">🔄 Rolling Update</button>
+                <button class="btn btn-secondary" onclick="reloadNginx()">🔃 Reload Nginx</button>
+                <button class="btn btn-danger" onclick="shutdownAll()">⏹️ Shutdown All</button>
+            </div>
+            <div style="margin-top: 16px;">
+                <div class="scale-control">
+                    <label>Scale HTTP to:</label>
+                    <input type="number" id="http-scale" value="2" min="0" max="16">
+                    <button class="btn btn-sm btn-secondary" onclick="scaleWorkers('http')">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workers List -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">👷 Workers</span>
+            <span id="worker-count" style="font-size: 0.875rem;">0 workers</span>
+        </div>
+        <div class="workers-list" id="workers-list">
+            <div class="empty-state">No workers running</div>
+        </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+            <span class="card-title">📜 Activity Log</span>
+            <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
+        </div>
+        <div class="log-panel" id="log-panel"></div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
     <script>
-        async function fetchStatus() {
-            const res = await fetch('/api/status');
-            const data = await res.json();
+        let logs = [];
+        let previousWorkers = {};
 
-            document.getElementById('system-status').innerHTML = `
-                <div class="metric">
-                    <span class="status ${data.running ? 'running' : 'stopped'}"></span>
-                    Manager: ${data.running ? 'Running' : 'Stopped'}
-                </div>
-                <div class="metric">
-                    <span class="status ${data.broker_alive ? 'running' : 'stopped'}"></span>
-                    ZMQ Broker: ${data.broker_alive ? 'Running' : 'Stopped'}
-                </div>
-                <div class="metric">
-                    <span class="status ${data.nginx?.installed ? 'running' : 'stopped'}"></span>
-                    Nginx: ${data.nginx?.installed ? 'Installed' : 'Not Installed'}
-                </div>
-            `;
-
-            const workers = Object.values(data.workers);
-            document.getElementById('workers').innerHTML = workers.map(w => `
-                <div class="worker">
-                    <span class="status ${w.state}"></span>
-                    <span class="worker-id">${w.worker_id}</span>
-                    <br>Type: ${w.worker_type} | Port: ${w.port} | PID: ${w.pid}
-                    <br>
-                    <button class="btn" onclick="restartWorker('${w.worker_id}')">Restart</button>
-                    <button class="btn danger" onclick="stopWorker('${w.worker_id}')">Stop</button>
-                </div>
-            `).join('') || 'No workers running';
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            logs.unshift({ time, message, type });
+            if (logs.length > 50) logs.pop();
+            renderLogs();
         }
 
-        async function startWorker(type) {
-            await fetch('/api/workers/start', {
+        function renderLogs() {
+            const panel = document.getElementById('log-panel');
+            panel.innerHTML = logs.map(log => `
+                <div class="log-entry">
+                    <span class="log-time">${log.time}</span>
+                    <span class="log-${log.type}">${log.message}</span>
+                </div>
+            `).join('');
+        }
+
+        function clearLogs() {
+            logs = [];
+            renderLogs();
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast show ' + type;
+            setTimeout(() => toast.className = 'toast', 3000);
+        }
+
+        function formatUptime(seconds) {
+            if (seconds < 60) return Math.round(seconds) + 's';
+            if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+            return Math.round(seconds / 3600) + 'h ' + Math.round((seconds % 3600) / 60) + 'm';
+        }
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+
+                // Update system status
+                const statusEl = document.getElementById('system-status');
+                const isRunning = data.running && data.broker_alive;
+                statusEl.innerHTML = `
+                    <span class="status-badge ${isRunning ? 'running' : 'stopped'}">
+                        <span class="status-dot ${isRunning ? 'running' : 'stopped'}"></span>
+                        ${isRunning ? 'Running' : 'Stopped'}
+                    </span>
+                `;
+
+                // Update metrics
+                const workers = Object.values(data.workers || {});
+                const httpWorkers = workers.filter(w => w.worker_type === 'http');
+                const wsWorkers = workers.filter(w => w.worker_type === 'ws');
+
+                document.getElementById('metric-workers').textContent = workers.length;
+                document.getElementById('worker-count').textContent = `${workers.length} workers`;
+                document.getElementById('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+                // Render workers
+                renderWorkers(workers);
+
+                // Check for new/removed workers
+                const currentIds = new Set(workers.map(w => w.worker_id));
+                const prevIds = new Set(Object.keys(previousWorkers));
+
+                for (const w of workers) {
+                    if (!prevIds.has(w.worker_id)) {
+                        addLog(`Worker started: ${w.worker_id} (${w.worker_type})`, 'success');
+                    }
+                }
+                for (const id of prevIds) {
+                    if (!currentIds.has(id)) {
+                        addLog(`Worker stopped: ${id}`, 'warning');
+                    }
+                }
+
+                previousWorkers = Object.fromEntries(workers.map(w => [w.worker_id, w]));
+
+            } catch (err) {
+                console.error('Fetch error:', err);
+            }
+        }
+
+        function renderWorkers(workers) {
+            const list = document.getElementById('workers-list');
+
+            if (workers.length === 0) {
+                list.innerHTML = '<div class="empty-state">No workers running</div>';
+                return;
+            }
+
+            list.innerHTML = workers.map(w => `
+                <div class="worker-item">
+                    <span class="status-dot ${w.state}"></span>
+                    <div class="worker-info">
+                        <span class="worker-id">${w.worker_id}</span>
+                        <span class="worker-meta">
+                            ${w.worker_type.toUpperCase()} • Port ${w.port} • PID ${w.pid} •
+                            Uptime: ${formatUptime(w.uptime || 0)}
+                        </span>
+                    </div>
+                    <div class="worker-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="restartWorker('${w.worker_id}')">
+                            🔄 Restart
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="stopWorker('${w.worker_id}')">
+                            ⏹️ Stop
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function startWorker(type, count = 1) {
+            addLog(`Starting ${count} ${type} worker(s)...`, 'info');
+            const res = await fetch('/api/workers/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({type})
+                body: JSON.stringify({ type, count })
             });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                showToast(`Started ${data.workers.length} worker(s)`, 'success');
+            }
             fetchStatus();
         }
 
         async function stopWorker(id) {
+            if (!confirm(`Stop worker ${id}?`)) return;
+            addLog(`Stopping worker: ${id}`, 'warning');
             await fetch('/api/workers/stop', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({worker_id: id})
+                body: JSON.stringify({ worker_id: id, graceful: true })
             });
             fetchStatus();
         }
 
         async function restartWorker(id) {
+            addLog(`Restarting worker: ${id}`, 'info');
             await fetch('/api/workers/restart', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({worker_id: id})
+                body: JSON.stringify({ worker_id: id })
             });
             fetchStatus();
         }
 
         async function rollingUpdate() {
-            await fetch('/api/update', {method: 'POST'});
+            if (!confirm('Start rolling update? This will restart all workers one by one.')) return;
+            addLog('Starting rolling update...', 'info');
+            showToast('Rolling update started', 'success');
+            await fetch('/api/rolling-update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ validate: true })
+            });
+        }
+
+        async function scaleWorkers(type) {
+            const count = parseInt(document.getElementById(type + '-scale').value);
+            addLog(`Scaling ${type} workers to ${count}`, 'info');
+            const res = await fetch('/api/scale', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ type, count })
+            });
+            const data = await res.json();
+            showToast(data.message || 'Scaling complete', data.status === 'ok' ? 'success' : 'error');
             fetchStatus();
         }
 
-        async function reloadNginx() {
-            await fetch('/api/nginx/reload', {method: 'POST'});
+        async function shutdownAll() {
+            if (!confirm('Shutdown all workers?')) return;
+            addLog('Initiating shutdown...', 'error');
+            await fetch('/api/shutdown', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ graceful: true })
+            });
         }
 
+        async function reloadNginx() {
+            addLog('Reloading nginx...', 'info');
+            const res = await fetch('/api/nginx/reload', { method: 'POST' });
+            const data = await res.json();
+            showToast(data.status === 'ok' ? 'Nginx reloaded' : 'Nginx reload failed',
+                      data.status === 'ok' ? 'success' : 'error');
+        }
+
+        // Initial load
         fetchStatus();
-        setInterval(fetchStatus, 5000);
+        addLog('Dashboard loaded', 'success');
+
+        // Auto-refresh every 2 seconds
+        setInterval(fetchStatus, 2000);
     </script>
 </body>
 </html>"""
@@ -1164,8 +1849,4 @@ Commands:
 
 
 if __name__ == "__main__":
-    # Required for Windows multiprocessing
-    from multiprocessing import freeze_support
-    freeze_support()
-
     main()

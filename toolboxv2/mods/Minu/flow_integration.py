@@ -441,7 +441,7 @@ def scan_and_register_flows(app, only_custom_ui: bool = True) -> str:
             )
 
             # Registrieren
-            from toolboxv2.mods.minu import register_view
+            from toolboxv2.mods.Minu import register_view
             register_view(flow_name, DynamicView)
 
             # Card für Dashboard
@@ -574,7 +574,7 @@ def render_unified_dashboard(app, user_authenticated: bool = False) -> str:
             {"__init__": make_init(flow_name, run_func, custom_ui)}
         )
 
-        from toolboxv2.mods.minu import register_view
+        from toolboxv2.mods.Minu import register_view
         register_view(flow_name, DynamicView)
 
         doc = (run_func.__doc__ or "").strip().split('\n')[0][:100]

@@ -24,8 +24,8 @@ from functools import wraps
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
 from toolboxv2 import RequestData, get_app
-from toolboxv2.mods.minu.shared import SharedSection
-from toolboxv2.mods.minu.user import AuthenticatedUserWrapper, AnonymousUser
+from toolboxv2.mods.Minu.shared import SharedSection
+from toolboxv2.mods.Minu.user import AuthenticatedUserWrapper, AnonymousUser
 
 # Type definitions
 T = TypeVar("T")

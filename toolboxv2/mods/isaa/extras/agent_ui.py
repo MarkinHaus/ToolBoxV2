@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 # Minu Imports
-from toolboxv2.mods.minu import (
+from toolboxv2.mods.Minu import (
     MinuView,
     MinuSession,
     State,

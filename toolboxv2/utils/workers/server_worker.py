@@ -452,7 +452,16 @@ class HTTPWorker:
 
     def _run_async(self, coro) -> Any:
         """Run async coroutine from sync context."""
-        return self._app.run_bg_task(coro)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        except Exception as e:
+            logger.error(f"Async run error: {e}")
+            return self._app.run_bg_task(coro)
 
     def _handle_health(self) -> Tuple:
         """Health check endpoint."""

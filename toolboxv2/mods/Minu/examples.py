@@ -359,7 +359,7 @@ class DataTableView(MinuView):
 @export(mod_name=Name, name="initialize", initial=True)
 def initialize(app: App, **kwargs) -> Result:
     """Initialize module and register all views"""
-    from toolboxv2.mods.minu import register_view
+    from toolboxv2.mods.Minu import register_view
 
     # Register all example views
     register_view("counter", CounterView)
