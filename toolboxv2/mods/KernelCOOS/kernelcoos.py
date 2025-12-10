@@ -1195,8 +1195,10 @@ def get_kernel_ui(app: App) -> Result:
 
 
 @export(mod_name=Name, version=VERSION, initial=True)
-def init_kernel_coos(app: App):
+def init_kernel_coos(app: App = None):
     """Initialize the COOS Kernel module"""
+    if app is None:
+        app = get_app()
     app.run_any(("CloudM", "add_ui"),
                 name=Name,
                 title="COOS Kernel",

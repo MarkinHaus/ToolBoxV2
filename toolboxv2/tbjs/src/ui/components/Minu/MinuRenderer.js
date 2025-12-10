@@ -126,6 +126,7 @@ class MinuRenderer {
 
     _send(data) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            TB.logger.debug('[Minu] Sending:', data);
             this.ws.send(JSON.stringify(data));
         } else {
             TB.logger.warn('[Minu] WebSocket not connected, queuing message');

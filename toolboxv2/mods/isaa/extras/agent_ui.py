@@ -1633,7 +1633,7 @@ def initialize(app: App, **kwargs) -> Result:
         ("CloudM", "add_ui"),
         name="AgentChat",
         title="FlowAgent Chat",
-        path="/api/Minu/render?view=agent_chat&ssr=true",
+        path="/api/Minu/render?view=agent_ui&ssr=true",
         description="Elegante Chat-Oberfläche für FlowAgent",
         icon="chat",
         auth=True,

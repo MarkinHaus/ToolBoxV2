@@ -10,8 +10,6 @@ except ImportError:
     MCP_AVAILABLE = False
     ClientSession = object
     print("MCP not available, skipping MCP session manager")
-    import traceback
-    traceback.print_exc()
 
 AGENT_VERBOSE = os.environ.get("AGENT_VERBOSE", "false").lower() == "true"
 eprint = print if AGENT_VERBOSE else lambda *a, **k: None
