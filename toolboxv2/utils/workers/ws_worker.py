@@ -61,6 +61,7 @@ from toolboxv2.utils.workers.event_manager import (
     create_ws_send_event,
     create_ws_broadcast_event,
 )
+from toolboxv2.utils.workers.session import SignedCookieSession, SessionData
 
 logger = get_logger()
 
@@ -78,6 +79,7 @@ class WSConnection:
     websocket: Any
     user_id: str = ""
     session_id: str = ""
+    level: int = 0  # User access level (0=not logged in, 1=logged in, -1=admin)
     channels: Set[str] = field(default_factory=set)
     connected_at: float = field(default_factory=time.time)
     last_ping: float = field(default_factory=time.time)
@@ -596,14 +598,76 @@ class WSWorker:
         except Exception as e:
             logger.error(f"[WS] Event publish failed: {e}", exc_info=True)
 
+    def _extract_session_from_websocket(self, websocket) -> Optional[SessionData]:
+        """Extract session data from WebSocket connection cookies.
+
+        This allows WebSocket connections to inherit the user's authentication
+        state from their HTTP session cookie.
+        """
+        try:
+            # Get cookie header from websocket request
+            cookie_header = None
+
+            # New API (websockets >= 13.0)
+            if hasattr(websocket, 'request') and websocket.request:
+                headers = getattr(websocket.request, 'headers', None)
+                if headers:
+                    cookie_header = headers.get('Cookie') or headers.get('cookie')
+
+            # Legacy API
+            if not cookie_header and hasattr(websocket, 'request_headers'):
+                cookie_header = websocket.request_headers.get('Cookie') or websocket.request_headers.get('cookie')
+
+            if not cookie_header:
+                logger.debug("[WS] No cookie header found in WebSocket request")
+                return None
+
+            # Use the cookie secret from config
+            secret = None
+            if hasattr(self.config, 'session') and self.config.session:
+                secret = getattr(self.config.session, 'cookie_secret', None)
+
+            if not secret:
+                # Try environment variable
+                secret = os.environ.get('TB_COOKIE_SECRET')
+
+            if not secret or len(secret) < 32:
+                logger.debug("[WS] No valid cookie secret configured, cannot verify session")
+                return None
+
+            # Parse the session cookie
+            session_handler = SignedCookieSession(secret=secret)
+            session = session_handler.get_from_cookie_header(cookie_header)
+
+            if session:
+                logger.info(f"[WS] Extracted session: user_id={session.user_id}, level={session.level}, authenticated={session.is_authenticated}")
+                return session
+            else:
+                logger.debug("[WS] No valid session found in cookie")
+                return None
+
+        except Exception as e:
+            logger.warning(f"[WS] Failed to extract session from cookie: {e}")
+            return None
+
     async def _handle_connection_impl(self, websocket, path: str):
         """Internal connection handler implementation."""
         conn_id = str(uuid.uuid4())
+
+        # Extract session from cookie for authentication
+        session_data = self._extract_session_from_websocket(websocket)
+
         conn = WSConnection(
             conn_id=conn_id,
             websocket=websocket,
+            user_id=session_data.user_id if session_data else "",
+            session_id=session_data.session_id if session_data else "",
+            level=session_data.level if session_data else 0,
+            authenticated=session_data.is_authenticated if session_data else False,
             metadata={"path": path},
         )
+
+        logger.info(f"[WS] Connection {conn_id}: user_id={conn.user_id}, level={conn.level}, authenticated={conn.authenticated}")
 
         # Check connection limit
         if not await self._conn_manager.add(conn):
@@ -622,7 +686,14 @@ class WSWorker:
                 type=EventType.WS_CONNECT,
                 source=self.worker_id,
                 target="*",
-                payload={"conn_id": conn_id, "path": path},
+                payload={
+                    "conn_id": conn_id,
+                    "path": path,
+                    "user_id": conn.user_id,
+                    "session_id": conn.session_id,
+                    "level": conn.level,
+                    "authenticated": conn.authenticated,
+                },
             )
         )
 
@@ -658,6 +729,8 @@ class WSWorker:
                         "conn_id": conn_id,
                         "user_id": conn.user_id,
                         "session_id": conn.session_id,
+                        "level": conn.level,
+                        "authenticated": conn.authenticated,
                         "data": message,
                         "path": path,
                     },

@@ -824,9 +824,17 @@ class WebSocketMessageHandler:
             module_name, function_name = parts
             # Get user level from event payload
             user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
+            authenticated = event.payload.get("authenticated", False)
+
+            self._logger.info(f"WS Access check: handler={handler_id}, user_level={user_level}, authenticated={authenticated}")
+            self._logger.info(f"WS Access check: open_modules={self.access_controller._open_modules}")
+
             allowed, error_msg = self.access_controller.check_access(
                 module_name, function_name, user_level
             )
+
+            self._logger.info(f"WS Access result: allowed={allowed}, error={error_msg}")
+
             if not allowed:
                 self._logger.warning(f"WS access denied: {handler_id}: {error_msg}")
                 try:
