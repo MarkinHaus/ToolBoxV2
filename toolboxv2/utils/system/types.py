@@ -258,26 +258,97 @@ class Request:
 
 @dataclass
 class Session:
-    """Class representing a session."""
-    SiID: str
-    level: str
-    spec: str
-    user_name: str
-    # Allow for additional fields
+    """Class representing a session.
+
+    This class is compatible with both legacy session format and the new
+    SessionData format from the worker system.
+
+    Legacy fields (for backwards compatibility):
+        - SiID: Session ID (alias for session_id)
+        - level: Permission level (can be str or int)
+        - spec: User specification/role
+        - user_name: Username
+        - extra_data: Additional data
+
+    New fields (from SessionData):
+        - user_id: User identifier
+        - session_id: Session identifier
+        - clerk_user_id: Clerk user ID
+        - validated: Whether session was validated
+        - anonymous: Whether session is anonymous
+    """
+    # Legacy fields
+    SiID: str = "#0"
+    level: Any = -1  # Can be str or int for compatibility
+    spec: str = "app"
+    user_name: str = "anonymous"
     extra_data: dict[str, Any] = field(default_factory=dict)
+
+    # New fields from SessionData (for worker compatibility)
+    user_id: str = ""
+    session_id: str = ""
+    clerk_user_id: str = ""
+    validated: bool = False
+    anonymous: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'Session':
         """Create a Session instance from a dictionary with default values."""
+        # Handle both legacy and new field names
+        session_id = data.get('session_id', data.get('SiID', '#0'))
+
         known_fields = {
-            'SiID': data.get('SiID', '#0'),
+            'SiID': session_id,
             'level': data.get('level', -1),
             'spec': data.get('spec', 'app'),
             'user_name': data.get('user_name', 'anonymous'),
+            'user_id': data.get('user_id', ''),
+            'session_id': session_id,
+            'clerk_user_id': data.get('clerk_user_id', ''),
+            'validated': data.get('validated', False),
+            'anonymous': data.get('anonymous', True),
         }
 
-        extra_data = {k: v for k, v in data.items() if k not in known_fields}
+        # Collect extra data (fields not in known_fields)
+        extra_keys = {'SiID', 'level', 'spec', 'user_name', 'user_id', 'session_id',
+                      'clerk_user_id', 'validated', 'anonymous', 'extra_data', 'extra'}
+        extra_data = {k: v for k, v in data.items() if k not in extra_keys}
+
+        # Merge with existing extra/extra_data
+        if 'extra' in data and isinstance(data['extra'], dict):
+            extra_data.update(data['extra'])
+        if 'extra_data' in data and isinstance(data['extra_data'], dict):
+            extra_data.update(data['extra_data'])
+
         return cls(**known_fields, extra_data=extra_data)
+
+    @classmethod
+    def from_session_data(cls, session_data) -> 'Session':
+        """Create a Session from a SessionData object (from worker system).
+
+        This allows seamless conversion from the worker's SessionData to
+        the legacy Session format used by modules.
+        """
+        if session_data is None:
+            return cls()
+
+        # Handle dict input
+        if isinstance(session_data, dict):
+            return cls.from_dict(session_data)
+
+        # Handle SessionData object
+        return cls(
+            SiID=getattr(session_data, 'session_id', '#0'),
+            level=getattr(session_data, 'level', -1),
+            spec=getattr(session_data, 'spec', 'app'),
+            user_name=getattr(session_data, 'user_name', 'anonymous'),
+            user_id=getattr(session_data, 'user_id', ''),
+            session_id=getattr(session_data, 'session_id', ''),
+            clerk_user_id=getattr(session_data, 'clerk_user_id', ''),
+            validated=getattr(session_data, 'validated', False),
+            anonymous=getattr(session_data, 'anonymous', True),
+            extra_data=getattr(session_data, 'extra', {}) or {},
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the Session object back to a dictionary."""
@@ -286,6 +357,11 @@ class Session:
             'level': self.level,
             'spec': self.spec,
             'user_name': self.user_name,
+            'user_id': self.user_id,
+            'session_id': self.session_id,
+            'clerk_user_id': self.clerk_user_id,
+            'validated': self.validated,
+            'anonymous': self.anonymous,
         }
 
         # Add extra data
@@ -295,7 +371,16 @@ class Session:
 
     @property
     def valid(self):
-        return int(self.level) > 0
+        """Check if session is valid (level > 0 or validated)."""
+        try:
+            return int(self.level) > 0 or self.validated
+        except (ValueError, TypeError):
+            return self.validated
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Check if session represents an authenticated user (compatible with SessionData)."""
+        return self.validated and not self.anonymous and self.user_id != ""
 
     def get(self, key, default=None):
         return self.to_dict().get(key, default)

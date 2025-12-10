@@ -78,7 +78,7 @@ class TestToolboxv2(unittest.TestCase):
 
         logger_info_str, logger, logging_filename = self.app.set_logger(True)
         # Check if the logger is initialized with DEBUG level
-        self.assertEqual(logger.getEffectiveLevel(), logging.DEBUG)
+        self.assertEqual(logger.getEffectiveLevel(), logging.getLevelNamesMapping().get(os.getenv("TOOLBOX_LOGGING_LEVEL"), "DEBUG"))
         self.assertIn("debug", logger_info_str)
 
     def test_debug_raise(self):

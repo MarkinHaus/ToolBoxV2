@@ -1602,7 +1602,7 @@ class App(AppType, metaclass=Singleton):
                     f"Function Exec code: {formatted_result.info.exec_code} Info's: {formatted_result.info.help_text}")
             else:
                 self.logger.info(
-                    f"Function Exec data: {formatted_result}")
+                    f"Function Exec data: {formatted_result}".encode("uft-8").decode("uft-8"))
         except Exception as e:
             self.logger.error(
                 Style.YELLOW(Style.Bold(

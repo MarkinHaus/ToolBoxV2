@@ -491,6 +491,6 @@ async def run(app: App, public_agent_id: str, request: RequestData):
 @export(mod_name=Name, api=True, version="1", api_methods=['GET'])
 async def ui(app: App, public_agent_id: str = None):
     """Serve the interactive 3-panel agent UI."""
-    from ..isaa.ui import get_agent_ui_html
-    html_content = get_agent_ui_html()
-    return Result.html(data=html_content, row=True)
+    # from ..isaa.ui import get_agent_ui_html
+    # html_content = get_agent_ui_html()
+    return Result.html(data="html_content", row=True)

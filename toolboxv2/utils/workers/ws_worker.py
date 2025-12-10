@@ -80,6 +80,7 @@ class WSConnection:
     user_id: str = ""
     session_id: str = ""
     level: int = 0  # User access level (0=not logged in, 1=logged in, -1=admin)
+    clerk_user_id: str = ""  # Clerk user ID for authentication
     channels: Set[str] = field(default_factory=set)
     connected_at: float = field(default_factory=time.time)
     last_ping: float = field(default_factory=time.time)
@@ -663,11 +664,12 @@ class WSWorker:
             user_id=session_data.user_id if session_data else "",
             session_id=session_data.session_id if session_data else "",
             level=session_data.level if session_data else 0,
+            clerk_user_id=session_data.clerk_user_id if session_data else "",
             authenticated=session_data.is_authenticated if session_data else False,
             metadata={"path": path},
         )
 
-        logger.info(f"[WS] Connection {conn_id}: user_id={conn.user_id}, level={conn.level}, authenticated={conn.authenticated}")
+        logger.info(f"[WS] Connection {conn_id}: user_id={conn.user_id}, clerk_user_id={conn.clerk_user_id}, level={conn.level}, authenticated={conn.authenticated}")
 
         # Check connection limit
         if not await self._conn_manager.add(conn):
@@ -692,6 +694,7 @@ class WSWorker:
                     "user_id": conn.user_id,
                     "session_id": conn.session_id,
                     "level": conn.level,
+                    "clerk_user_id": conn.clerk_user_id,
                     "authenticated": conn.authenticated,
                 },
             )
@@ -730,6 +733,7 @@ class WSWorker:
                         "user_id": conn.user_id,
                         "session_id": conn.session_id,
                         "level": conn.level,
+                        "clerk_user_id": conn.clerk_user_id,
                         "authenticated": conn.authenticated,
                         "data": message,
                         "path": path,

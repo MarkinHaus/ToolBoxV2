@@ -36,6 +36,7 @@ from toolboxv2.utils.workers.event_manager import (
     Event,
     EventType,
 )
+from toolboxv2.utils.system.types import RequestData
 
 logger = logging.getLogger(__name__)
 
@@ -670,8 +671,9 @@ class ToolBoxHandler:
         if request.json_data and isinstance(request.json_data, dict):
             kwargs.update(request.json_data)
 
-        # Add request context
-        kwargs["request"] = request.to_toolbox_request()
+        # Add request context - convert to RequestData object for modules
+        request_dict = request.to_toolbox_request()
+        kwargs["request"] = RequestData.from_dict(request_dict)
 
         try:
             result = await self.app.a_run_any(
@@ -857,14 +859,36 @@ class WebSocketMessageHandler:
                     "path": path,
                 }
 
-                request = {
-                    "websocket": True,
-                    "conn_id": conn_id,
-                    "user_id": user_id,
+                # Build RequestData object for WebSocket handlers
+                # Extract additional session info from event payload
+                user_level = int(event.payload.get("level", AccessLevel.NOT_LOGGED_IN))
+                authenticated = event.payload.get("authenticated", False)
+                clerk_user_id = event.payload.get("clerk_user_id", "")
+
+                request_dict = {
+                    "request": {
+                        "content_type": "application/json",
+                        "headers": {},
+                        "method": "WEBSOCKET",
+                        "path": path,
+                        "query_params": {},
+                        "form_data": None,
+                        "body": None,
+                    },
+                    "session": {
+                        "SiID": session_id,
+                        "level": user_level,
+                        "spec": "ws",
+                        "user_name": user_id or "anonymous",
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "clerk_user_id": clerk_user_id,
+                        "validated": authenticated,
+                        "anonymous": not authenticated,
+                    },
                     "session_id": session_id,
-                    "path": path,
-                    "data": payload,
                 }
+                request = RequestData.from_dict(request_dict)
 
                 result = await self._call_handler(
                     handler,

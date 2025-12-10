@@ -1689,13 +1689,13 @@ async def get_my_active_instances(app: App, request: RequestData):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def add_module_to_instance(app: App, request: RequestData, data: dict):
+async def add_module_to_instance(app: App, request: RequestData, data: dict, module_name=None):
     """Modul zur Benutzer-Instanz hinzufügen und laden"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    module_name = data.get("module_name")
+    module_name = module_name or data.get("module_name")
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
@@ -1760,13 +1760,13 @@ async def remove_module_from_instance(app: App, request: RequestData, data: dict
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def add_module_to_saved(app: App, request: RequestData, data: dict):
+async def add_module_to_saved(app: App, request: RequestData, data: dict, module_name=Name):
     """Modul zu den gespeicherten Modulen hinzufügen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
 
-    module_name = data.get("module_name")
+    module_name = module_name or data.get("module_name")
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
 
