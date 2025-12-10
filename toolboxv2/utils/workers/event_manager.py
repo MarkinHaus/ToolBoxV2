@@ -850,8 +850,10 @@ async def run_broker(config):
             loop.add_signal_handler(sig, signal_handler)
         except NotImplementedError:
             pass  # Windows
-
-    await shutdown_event.wait()
+    try:
+        await shutdown_event.wait()
+    except asyncio.exceptions.CancelledError:
+        pass
     await broker.stop()
 
 

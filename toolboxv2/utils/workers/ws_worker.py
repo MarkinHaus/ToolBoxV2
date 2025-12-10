@@ -26,14 +26,25 @@ import weakref
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from toolboxv2 import get_logger
+
 try:
     import websockets
-    from websockets.server import serve as ws_serve
-    from websockets.exceptions import ConnectionClosed
+    # Try new asyncio API first (websockets >= 13.0)
+    try:
+        from websockets.asyncio.server import serve as ws_serve
+        from websockets.exceptions import ConnectionClosed
+        WEBSOCKETS_NEW_API = True
+    except ImportError:
+        # Fall back to legacy API (websockets < 13.0)
+        from websockets.server import serve as ws_serve
+        from websockets.exceptions import ConnectionClosed
+        WEBSOCKETS_NEW_API = False
 
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
+    WEBSOCKETS_NEW_API = False
 
 try:
     import zmq
@@ -51,7 +62,7 @@ from toolboxv2.utils.workers.event_manager import (
     create_ws_broadcast_event,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
 # ============================================================================
@@ -234,6 +245,45 @@ class WSWorker:
             "direct_messages_received": 0,
         }
 
+    def _process_request_new_api(self, connection, request):
+        """Process HTTP request before WebSocket handshake (new API >= 14.0).
+
+        This handles non-WebSocket requests like health checks.
+        Returns None to proceed with WebSocket handshake, or a Response to send.
+
+        Note: This is a regular function, not a coroutine, in the new API.
+        """
+        from http import HTTPStatus
+        path = request.path if hasattr(request, 'path') else "/"
+
+        # Handle health check requests (non-WebSocket)
+        if path == "/health":
+            return connection.respond(HTTPStatus.OK, "OK\n")
+
+        # For all other paths, proceed with WebSocket handshake
+        return None
+
+    async def _process_request_legacy(self, path, request_headers):
+        """Process HTTP request before WebSocket handshake (legacy API < 13.0).
+
+        This handles non-WebSocket requests like health checks.
+        Returns None to proceed with WebSocket handshake, or a tuple
+        (status, headers, body) to send an HTTP response instead.
+
+        Note: This is a coroutine in the legacy API.
+        """
+        from http import HTTPStatus
+        # Handle health check requests (non-WebSocket)
+        if path == "/health":
+            return (
+                HTTPStatus.OK,
+                [("Content-Type", "text/plain")],
+                b"OK",
+            )
+
+        # For all other paths, proceed with WebSocket handshake
+        return None
+
     async def start(self):
         """Start the WebSocket worker."""
         logger.info(f"Starting WS worker {self.worker_id}")
@@ -254,21 +304,39 @@ class WSWorker:
         asyncio.create_task(self._ping_loop())
         asyncio.create_task(self._direct_pull_loop())
 
+        # Build serve kwargs - new API doesn't support 'compression' the same way
+        serve_kwargs = {
+            "ping_interval": self.config.ws_worker.ping_interval,
+            "ping_timeout": self.config.ws_worker.ping_timeout,
+            "max_size": self.config.ws_worker.max_message_size,
+        }
+
+        # Select handler and process_request based on API version
+        if WEBSOCKETS_NEW_API:
+            handler = self._handle_connection_new_api
+            serve_kwargs["process_request"] = self._process_request_new_api
+            logger.info(f"Using new websockets API (>= 13.0)")
+        else:
+            handler = self._handle_connection_legacy
+            serve_kwargs["process_request"] = self._process_request_legacy
+            serve_kwargs["compression"] = "deflate" if self.config.ws_worker.compression else None
+            logger.info(f"Using legacy websockets API")
+
         # Start server
         self._server = await ws_serve(
-            self._handle_connection,
+            handler,
             host,
             port,
-            ping_interval=self.config.ws_worker.ping_interval,
-            ping_timeout=self.config.ws_worker.ping_timeout,
-            max_size=self.config.ws_worker.max_message_size,
-            compression="deflate" if self.config.ws_worker.compression else None,
+            **serve_kwargs,
         )
 
         logger.info(f"WS worker listening on {host}:{port}")
 
-        # Keep running
-        await self._server.wait_closed()
+        # Keep running - use serve_forever for new API, wait_closed for legacy
+        if WEBSOCKETS_NEW_API:
+            await self._server.serve_forever()
+        else:
+            await self._server.wait_closed()
 
     async def stop(self):
         """Stop the WebSocket worker."""
@@ -516,8 +584,16 @@ class WSWorker:
         except Exception as e:
             logger.debug(f"Send failed to {conn.conn_id}: {e}")
 
-    async def _handle_connection(self, websocket, path: str):
-        """Handle new WebSocket connection."""
+    async def _safe_publish(self, event: Event):
+        """Safely publish an event, ignoring errors if event manager is not ready."""
+        try:
+            if self._event_manager and self._event_manager._running:
+                await self._event_manager.publish(event)
+        except Exception as e:
+            logger.debug(f"Event publish failed (non-critical): {e}")
+
+    async def _handle_connection_impl(self, websocket, path: str):
+        """Internal connection handler implementation."""
         conn_id = str(uuid.uuid4())
         conn = WSConnection(
             conn_id=conn_id,
@@ -533,11 +609,11 @@ class WSWorker:
         self._metrics["connections_total"] += 1
 
         logger.debug(
-            f"New connection: {conn_id} (total: {self._conn_manager.connection_count})"
+            f"New connection: {conn_id} path={path} (total: {self._conn_manager.connection_count})"
         )
 
-        # Publish connect event
-        await self._event_manager.publish(
+        # Publish connect event (non-blocking, errors ignored)
+        await self._safe_publish(
             Event(
                 type=EventType.WS_CONNECT,
                 source=self.worker_id,
@@ -563,7 +639,7 @@ class WSWorker:
 
                 # Forward ALL messages to HTTP workers via ZeroMQ
                 # NO processing here - just forward
-                await self._event_manager.publish(
+                await self._safe_publish(
                     Event(
                         type=EventType.WS_MESSAGE,
                         source=self.worker_id,
@@ -587,8 +663,8 @@ class WSWorker:
             # Clean up
             await self._conn_manager.remove(conn_id)
 
-            # Publish disconnect event
-            await self._event_manager.publish(
+            # Publish disconnect event (non-blocking, errors ignored)
+            await self._safe_publish(
                 Event(
                     type=EventType.WS_DISCONNECT,
                     source=self.worker_id,
@@ -603,6 +679,21 @@ class WSWorker:
             logger.debug(
                 f"Connection removed: {conn_id} (total: {self._conn_manager.connection_count})"
             )
+
+    async def _handle_connection_new_api(self, websocket):
+        """Handler for new websockets API (>= 13.0) - single argument."""
+        # Extract path from request
+        if hasattr(websocket, 'request') and websocket.request:
+            path = websocket.request.path
+        elif hasattr(websocket, 'path'):
+            path = websocket.path
+        else:
+            path = "/"
+        await self._handle_connection_impl(websocket, path)
+
+    async def _handle_connection_legacy(self, websocket, path: str):
+        """Handler for legacy websockets API (< 13.0) - two arguments."""
+        await self._handle_connection_impl(websocket, path)
 
     async def _ping_loop(self):
         """Periodic ping to check dead connections."""
@@ -639,16 +730,21 @@ class WSWorker:
         return stats
 
     async def run(self):
-        """Run the WebSocket worker (blocking)."""
-        # Windows: Use SelectorEventLoop for ZMQ compatibility
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        """Run the WebSocket worker (blocking).
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
+        This method can be called:
+        - With asyncio.run() for standalone execution
+        - Within an existing event loop as a coroutine
+        """
+        global logger
+        from toolboxv2 import get_app
+        print("WS_WORKER:: ",get_app().set_logger(True, self.worker_id))
+        get_logger().info("WS_WORKER:: ")
+        logger = get_logger()
         # Signal handlers (Unix only)
         if sys.platform != "win32":
+            loop = asyncio.get_running_loop()
+
             def signal_handler():
                 loop.create_task(self.stop())
 
@@ -659,31 +755,35 @@ class WSWorker:
                     pass
 
         try:
+            print("Starting WS worker...")
             await self.start()
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
             await self.stop()
         except Exception as e:
             logger.error(f"WS worker error: {e}")
+            import traceback
+            traceback.print_exc()
             await self.stop()
-        finally:
-            try:
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
 
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.gather(*pending, return_exceptions=True)
-                    )
+    def run_sync(self):
+        """Run the WebSocket worker synchronously (creates new event loop).
 
-                loop.run_until_complete(loop.shutdown_asyncgens())
+        Use this method when calling from a non-async context.
+        For async contexts, use `await worker.run()` instead.
+        """
+        # Windows: Use SelectorEventLoop for ZMQ compatibility
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-            except Exception as e:
-                logger.debug(f"Cleanup error: {e}")
-            finally:
-                if not loop.is_closed():
-                    loop.close()
+        try:
+            asyncio.run(self.run())
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received")
+        except Exception as e:
+            logger.error(f"WS worker error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 # ============================================================================

@@ -1870,7 +1870,7 @@ class AppType:
     async def disconnect(*args, **kwargs):
         """proxi attr"""
 
-    def set_logger(self, debug=False):
+    def set_logger(self, debug=False, logger_prefix=None):
         """proxi attr"""
 
     @property

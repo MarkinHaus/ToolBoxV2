@@ -28,7 +28,7 @@ from .singelton_class import Singleton
 from .system.cache import FileCache, MemoryCache
 from .system.file_handler import FileHandler
 from .system.getting_and_closing_app import get_app
-from .system.tb_logger import get_logger, setup_logging
+from .system.tb_logger import get_logger, setup_logging, loggerNameOfToolboxv2
 from .system.types import (
     ApiResult,
     AppArgs,
@@ -243,6 +243,8 @@ class App(AppType, metaclass=Singleton):
         """proxi attr"""
 
     def set_logger(self, debug=False, logger_prefix=None):
+        # remove existing logger
+        logging.getLogger(loggerNameOfToolboxv2).handlers.clear()
         if debug is None and os.getenv("TOOLBOX_LOGGING_LEVEL") is not None:
             debug = True
         if logger_prefix is None:

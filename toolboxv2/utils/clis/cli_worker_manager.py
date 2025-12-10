@@ -328,7 +328,7 @@ class NginxManager:
         ws_upstream = (
             "\n        ".join(ws_server_list)
             if ws_server_list
-            else "server 127.0.0.1:8001;"
+            else "server 127.0.0.1:8100;"
         )
 
         # OS-specific optimizations
@@ -880,8 +880,8 @@ class NginxManager:
                     {auth_basic}
 
                     # Admin static files (außerhalb static_root!)
-                    root {admin_root}/index.html;
-                    try_files $uri $uri/ /;
+                    root {admin_root};
+                    try_files $uri $uri/ /admin/index.html;
                 }}
 
                 # Proxy zu DB auf Port 9000 (nur mit Auth)
@@ -1753,6 +1753,11 @@ class HealthChecker:
     def _check_worker(self, info: WorkerInfo) -> Tuple[bool, float]:
         start = time.perf_counter()
         try:
+            # WebSocket workers need a different health check
+            if info.worker_type == WorkerType.WS:
+                return self._check_ws_worker(info, start)
+
+            # HTTP workers use standard HTTP health check
             if info.socket_path and not IS_WINDOWS and os.path.exists(info.socket_path):
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 sock.settimeout(2)
@@ -1767,6 +1772,44 @@ class HealthChecker:
                 resp = conn.getresponse()
                 conn.close()
                 return resp.status == 200, (time.perf_counter() - start) * 1000
+        except Exception:
+            return False, 0.0
+
+    def _check_ws_worker(self, info: WorkerInfo, start: float) -> Tuple[bool, float]:
+        """Check WebSocket worker health using HTTP request to /health endpoint.
+
+        The WS worker has a process_request handler that responds to /health
+        with HTTP 200 OK without performing a WebSocket handshake.
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect(("127.0.0.1", info.port))
+
+            # Send HTTP/1.1 request to /health endpoint
+            # The WS worker's process_request handler will respond with 200 OK
+            request = (
+                b"GET /health HTTP/1.1\r\n"
+                b"Host: localhost\r\n"
+                b"Connection: close\r\n"
+                b"\r\n"
+            )
+            sock.sendall(request)
+
+            # Read response
+            try:
+                response = sock.recv(512)
+                sock.close()
+
+                # Check for HTTP 200 response
+                response_str = response.decode('utf-8', errors='ignore')
+                if "200" in response_str or "OK" in response_str:
+                    return True, (time.perf_counter() - start) * 1000
+                # Any response means server is alive, even if not 200
+                return True, (time.perf_counter() - start) * 1000
+            except socket.timeout:
+                sock.close()
+                return False, 0.0
         except Exception:
             return False, 0.0
 
@@ -1863,7 +1906,10 @@ def _run_broker_process(config_dict: Dict):
     from toolboxv2.utils.workers.config import Config
     from toolboxv2.utils.workers.event_manager import run_broker
     config = Config.from_dict(config_dict)
-    asyncio.run(run_broker(config))
+    try:
+        asyncio.run(run_broker(config))
+    except KeyboardInterrupt:
+        pass
 
 
 def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socket_path: str = None):
@@ -1878,14 +1924,14 @@ def _run_http_worker_process(worker_id: str, config_dict: Dict, port: int, socke
 
 
 def _run_ws_worker_process(worker_id: str, config_dict: Dict, port: int):
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    """Run WebSocket worker in a separate process."""
     from toolboxv2.utils.workers.config import Config
     from toolboxv2.utils.workers.ws_worker import WSWorker
     config = Config.from_dict(config_dict)
     config.ws_worker.port = port
     worker = WSWorker(worker_id, config)
-    asyncio.run(worker.run())
+    # Use run_sync which handles event loop creation properly
+    worker.run_sync()
 
 
 # ============================================================================
