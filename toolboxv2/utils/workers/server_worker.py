@@ -769,12 +769,15 @@ class WebSocketMessageHandler:
         conn_id = event.payload.get("conn_id")
         path = event.payload.get("path", "/ws")
 
-        self._logger.debug(f"WS Connect: {conn_id} on {path}")
+        self._logger.info(f"WS Connect: {conn_id} on {path}")
+        self._logger.info(f"Available WS handlers: {list(self.app.websocket_handlers.keys())}")
 
         handler_id = self._get_handler_from_path(path)
         if not handler_id:
+            self._logger.warning(f"No handler found for path: {path}")
             return
 
+        self._logger.info(f"Found handler: {handler_id}")
         handler = self.app.websocket_handlers.get(handler_id, {}).get("on_connect")
         if handler:
             try:
@@ -795,7 +798,7 @@ class WebSocketMessageHandler:
         data = event.payload.get("data", "")
         path = event.payload.get("path", "/ws")
 
-        self._logger.debug(f"WS Message from {conn_id}: {data[:100]}...")
+        self._logger.info(f"WS Message from {conn_id} on path {path}: {data[:200] if isinstance(data, str) else str(data)[:200]}...")
 
         # Parse JSON message
         try:
@@ -805,11 +808,13 @@ class WebSocketMessageHandler:
 
         # Determine handler
         handler_id = self._get_handler_from_path(path)
+        self._logger.info(f"Handler from path: {handler_id}")
         if not handler_id:
             handler_id = self._get_handler_from_message(payload)
+            self._logger.info(f"Handler from message: {handler_id}")
 
         if not handler_id:
-            self._logger.warning(f"No handler found for path {path}")
+            self._logger.warning(f"No handler found for path {path}, available handlers: {list(self.app.websocket_handlers.keys())}")
             return
 
         # Access control for WS handlers
@@ -891,32 +896,39 @@ class WebSocketMessageHandler:
                     self._logger.error(f"on_disconnect handler error: {e}", exc_info=True)
 
     def _get_handler_from_path(self, path: str) -> str | None:
-        """Extract handler ID from WebSocket path."""
+        """Extract handler ID from WebSocket path.
+
+        Supports paths like:
+        - /ws/ModuleName/handler_name -> "ModuleName/handler_name"
+        - /ws/handler_name -> searches for "*/{handler_name}" in registered handlers
+        """
         path = path.strip("/")
         parts = path.split("/")
 
         if len(parts) >= 2 and parts[0] == "ws":
             if len(parts) >= 3:
-                return f"{parts[1]}/{parts[2]}"
+                # Full path: /ws/ModuleName/handler_name
+                handler_id = f"{parts[1]}/{parts[2]}"
+                if handler_id in self.app.websocket_handlers:
+                    return handler_id
+                # Also try case-insensitive match
+                for registered_id in self.app.websocket_handlers:
+                    if registered_id.lower() == handler_id.lower():
+                        return registered_id
             else:
+                # Short path: /ws/handler_name - search for matching handler
                 handler_name = parts[1]
                 for handler_id in self.app.websocket_handlers:
                     if handler_id.endswith(f"/{handler_name}"):
                         return handler_id
 
-        if "MinuUI/ui" in self.app.websocket_handlers:
-            return "MinuUI/ui"
-
         return None
 
     def _get_handler_from_message(self, payload: dict) -> str | None:
-        """Try to find handler based on message content."""
-        msg_type = payload.get("type", "")
+        """Try to find handler based on message content.
 
-        if msg_type in ("subscribe", "event", "state_update"):
-            if "MinuUI/ui" in self.app.websocket_handlers:
-                return "MinuUI/ui"
-
+        Looks for 'handler' field in the payload that specifies which handler to use.
+        """
         handler = payload.get("handler")
         if handler and handler in self.app.websocket_handlers:
             return handler
@@ -965,6 +977,8 @@ class HTTPWorker:
         self._event_manager: ZMQEventManager | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._running = False
+        self._event_loop = None
+        self._event_loop_thread = None
 
         # Request metrics
         self._metrics = {
@@ -1029,6 +1043,7 @@ class HTTPWorker:
 
     async def _init_event_manager(self):
         """Initialize ZeroMQ event manager and WS bridge."""
+        await self._app.load_all_mods_in_file()
         self._event_manager = ZMQEventManager(
             worker_id=self.worker_id,
             pub_endpoint=self.config.zmq.pub_endpoint,
@@ -1064,19 +1079,28 @@ class HTTPWorker:
 
         @self._event_manager.on(EventType.WS_CONNECT)
         async def handle_ws_connect(event: Event):
+            logger.info(f"[HTTP] Received WS_CONNECT event: conn_id={event.payload.get('conn_id')}, path={event.payload.get('path')}")
             if self._ws_handler:
                 await self._ws_handler.handle_ws_connect(event)
+            else:
+                logger.warning("[HTTP] No WS handler configured!")
 
         @self._event_manager.on(EventType.WS_MESSAGE)
         async def handle_ws_message(event: Event):
+            logger.info(f"[HTTP] Received WS_MESSAGE event: conn_id={event.payload.get('conn_id')}, data={str(event.payload.get('data', ''))[:100]}...")
             self._metrics["ws_messages_handled"] += 1
             if self._ws_handler:
                 await self._ws_handler.handle_ws_message(event)
+            else:
+                logger.warning("[HTTP] No WS handler configured!")
 
         @self._event_manager.on(EventType.WS_DISCONNECT)
         async def handle_ws_disconnect(event: Event):
+            logger.info(f"[HTTP] Received WS_DISCONNECT event: conn_id={event.payload.get('conn_id')}")
             if self._ws_handler:
                 await self._ws_handler.handle_ws_disconnect(event)
+            else:
+                logger.warning("[HTTP] No WS handler configured!")
 
     def _is_auth_endpoint(self, path: str) -> bool:
         """Check if path is an auth endpoint."""
@@ -1224,17 +1248,37 @@ class HTTPWorker:
             self.config.toolbox.api_prefix,
         )
 
-        # Initialize event manager
-        try:
+        # Initialize event manager in a background thread with its own event loop
+        def run_event_loop():
+            """Run the event loop in a background thread."""
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._init_event_manager())
-        except Exception as e:
-            logger.warning(f"Event manager init failed: {e}")
+            self._event_loop = loop
+
             try:
-                self._app.run_bg_task(self._init_event_manager())
-            except Exception as e2:
-                logger.error(f"Event manager init completely failed: {e2}")
+                # Initialize event manager
+                loop.run_until_complete(self._init_event_manager())
+                logger.info(f"[HTTP] Event manager initialized, starting event loop")
+
+                # Keep the event loop running to process events
+                loop.run_forever()
+            except Exception as e:
+                logger.error(f"Event loop error: {e}", exc_info=True)
+            finally:
+                loop.close()
+                logger.info("[HTTP] Event loop stopped")
+
+        try:
+            import threading
+            self._event_loop_thread = threading.Thread(target=run_event_loop, daemon=True, name="event-loop")
+            self._event_loop_thread.start()
+
+            # Wait a bit for the event manager to initialize
+            import time
+            time.sleep(0.5)
+            logger.info(f"[HTTP] Event loop thread started: {self._event_loop_thread.is_alive()}")
+        except Exception as e:
+            logger.error(f"Event manager init failed: {e}", exc_info=True)
 
         self._running = True
         self._server = None
@@ -1316,12 +1360,24 @@ class HTTPWorker:
 
     def _cleanup(self):
         """Cleanup resources."""
-        if self._event_manager:
+        # Stop the event loop and event manager
+        if self._event_loop and self._event_manager:
             try:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(self._event_manager.stop())
-            except Exception:
-                self._app.run_bg_task(self._event_manager.stop())
+                # Schedule stop on the event loop
+                async def stop_manager():
+                    await self._event_manager.stop()
+
+                if self._event_loop.is_running():
+                    # Schedule the stop coroutine
+                    asyncio.run_coroutine_threadsafe(stop_manager(), self._event_loop)
+                    # Stop the event loop
+                    self._event_loop.call_soon_threadsafe(self._event_loop.stop)
+
+                    # Wait for the thread to finish
+                    if self._event_loop_thread and self._event_loop_thread.is_alive():
+                        self._event_loop_thread.join(timeout=2.0)
+            except Exception as e:
+                logger.warning(f"Error stopping event manager: {e}")
 
         if self._executor:
             self._executor.shutdown(wait=False)

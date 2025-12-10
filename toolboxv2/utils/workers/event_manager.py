@@ -398,6 +398,9 @@ class ZMQEventManager:
         poller.register(self._xpub_socket, zmq.POLLIN)
         poller.register(self._xsub_socket, zmq.POLLIN)
 
+        logger.info("[Broker] Starting XPUB/XSUB proxy loop")
+        msg_count = 0
+
         while self._running:
             try:
                 events = dict(await poller.poll(timeout=100))
@@ -405,11 +408,25 @@ class ZMQEventManager:
                 # Forward subscriptions from XPUB to XSUB
                 if self._xpub_socket in events:
                     msg = await self._xpub_socket.recv()
+                    # Log subscription messages (start with \x01 for subscribe, \x00 for unsubscribe)
+                    if msg and len(msg) > 0:
+                        if msg[0] == 1:
+                            logger.info(f"[Broker] New subscription: {msg[1:].decode('utf-8', errors='ignore')[:50]}")
+                        elif msg[0] == 0:
+                            logger.info(f"[Broker] Unsubscription: {msg[1:].decode('utf-8', errors='ignore')[:50]}")
                     await self._xsub_socket.send(msg)
 
                 # Forward messages from XSUB to XPUB
                 if self._xsub_socket in events:
                     msg = await self._xsub_socket.recv()
+                    msg_count += 1
+                    # Try to parse and log event type
+                    try:
+                        event = Event.from_bytes(msg)
+                        if event.type.startswith("ws."):
+                            logger.info(f"[Broker] Forwarding #{msg_count}: {event.type} from {event.source} to {event.target}")
+                    except Exception:
+                        logger.debug(f"[Broker] Forwarding #{msg_count}: raw message ({len(msg)} bytes)")
                     await self._xpub_socket.send(msg)
 
             except asyncio.CancelledError:
@@ -520,6 +537,7 @@ class ZMQEventManager:
     async def _sub_loop(self):
         """Process incoming subscription messages."""
         socket = self._sub_socket if not self.is_broker else self._xpub_socket
+        logger.info(f"[EventManager] Starting sub loop for worker {self.worker_id}, is_broker={self.is_broker}")
 
         while self._running:
             try:
@@ -533,24 +551,33 @@ class ZMQEventManager:
 
                 try:
                     event = Event.from_bytes(msg)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"[EventManager] Failed to parse event: {e}")
                     continue
+
+                # Log all WS events for debugging
+                if event.type.startswith("ws."):
+                    logger.info(f"[EventManager] Received {event.type} from {event.source} to {event.target}")
 
                 # Skip expired events
                 if event.is_expired():
+                    logger.debug(f"[EventManager] Skipping expired event: {event.type}")
                     continue
 
                 # Skip our own events
                 if event.source == self.worker_id:
+                    logger.debug(f"[EventManager] Skipping own event: {event.type}")
                     continue
 
                 # Check if event is for us
                 if event.target not in ("*", self.worker_id):
                     # Check channel subscriptions
                     if not event.target.encode() in self._subscriptions:
+                        logger.debug(f"[EventManager] Skipping event not for us: {event.type} target={event.target}")
                         continue
 
                 # Dispatch to handlers
+                logger.debug(f"[EventManager] Dispatching event: {event.type}")
                 await self._dispatch_event(event)
 
             except asyncio.CancelledError:
@@ -562,6 +589,9 @@ class ZMQEventManager:
     async def _dispatch_event(self, event: Event):
         """Dispatch event to registered handlers."""
         handlers = self._registry.get_handlers(event.type)
+
+        if event.type.startswith("ws."):
+            logger.info(f"[EventManager] Dispatching {event.type} to {len(handlers)} handlers")
 
         for handler in handlers:
             if handler.filter_func and not handler.filter_func(event):
@@ -579,7 +609,7 @@ class ZMQEventManager:
                 handler._called = True
 
             except Exception as e:
-                logger.error(f"Event handler error: {e}")
+                logger.error(f"Event handler error for {event.type}: {e}", exc_info=True)
                 self._metrics["errors"] += 1
 
     # ========================================================================

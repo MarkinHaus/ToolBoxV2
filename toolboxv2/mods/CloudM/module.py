@@ -73,6 +73,8 @@ class Tools(MainTool, FileHandler):
     async def load_open_file(self):
         self.logger.info("Starting cloudM")
         self.load_file_handler()
+        from toolboxv2.mods.Minu.examples import initialize
+        initialize(self.app)
         await self.app.session.login()
 
     def s_version(self):

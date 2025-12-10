@@ -588,9 +588,13 @@ class WSWorker:
         """Safely publish an event, ignoring errors if event manager is not ready."""
         try:
             if self._event_manager and self._event_manager._running:
+                logger.info(f"[WS] Publishing event: type={event.type}, source={event.source}, target={event.target}")
                 await self._event_manager.publish(event)
+                logger.info(f"[WS] Event published successfully: {event.type}")
+            else:
+                logger.warning(f"[WS] Event manager not ready: manager={self._event_manager is not None}, running={getattr(self._event_manager, '_running', False) if self._event_manager else False}")
         except Exception as e:
-            logger.debug(f"Event publish failed (non-critical): {e}")
+            logger.error(f"[WS] Event publish failed: {e}", exc_info=True)
 
     async def _handle_connection_impl(self, websocket, path: str):
         """Internal connection handler implementation."""
@@ -632,27 +636,37 @@ class WSWorker:
                     }
                 )
             )
+            logger.info(f"[WS] Sent 'connected' message to {conn_id}")
 
             # Message loop - MINIMAL PROCESSING
+            logger.info(f"[WS] Starting message loop for {conn_id} on path {path}")
+            logger.info(f"[WS] WebSocket state: open={getattr(websocket, 'open', 'unknown')}, closed={getattr(websocket, 'closed', 'unknown')}")
+
+            message_count = 0
             async for message in websocket:
+                message_count += 1
                 self._metrics["messages_received"] += 1
+                logger.info(f"[WS] Message #{message_count} received from {conn_id}: {message[:200] if len(message) > 200 else message}")
 
                 # Forward ALL messages to HTTP workers via ZeroMQ
                 # NO processing here - just forward
-                await self._safe_publish(
-                    Event(
-                        type=EventType.WS_MESSAGE,
-                        source=self.worker_id,
-                        target="*",
-                        payload={
-                            "conn_id": conn_id,
-                            "user_id": conn.user_id,
-                            "session_id": conn.session_id,
-                            "data": message,
-                            "path": path,
-                        },
-                    )
+                event = Event(
+                    type=EventType.WS_MESSAGE,
+                    source=self.worker_id,
+                    target="*",
+                    payload={
+                        "conn_id": conn_id,
+                        "user_id": conn.user_id,
+                        "session_id": conn.session_id,
+                        "data": message,
+                        "path": path,
+                    },
                 )
+                logger.info(f"[WS] Publishing WS_MESSAGE event for {conn_id}")
+                await self._safe_publish(event)
+                logger.info(f"[WS] Message #{message_count} forwarded for {conn_id}")
+
+            logger.info(f"[WS] Message loop ended for {conn_id} after {message_count} messages")
 
         except ConnectionClosed as e:
             logger.debug(f"Connection closed: {conn_id} ({e.code})")

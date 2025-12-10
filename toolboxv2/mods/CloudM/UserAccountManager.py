@@ -36,9 +36,9 @@ async def get_current_user_from_request(app: App, request: RequestData):
 
     # Clerk User ID prüfen
     if hasattr(request.session, 'clerk_user_id') and request.session.clerk_user_id:
-        user_identifier = request.session.clerk_user_id
+        clerk_user_id = request.session.clerk_user_id
     elif hasattr(request.session, 'user_id') and request.session.user_id:
-        user_identifier = request.session.user_id
+        clerk_user_id = request.session.user_id
     elif hasattr(request.session, 'user_name') and request.session.user_name:
         clerk_user_id = request.session.extra_data.get('clerk_user_id')
         username = request.session.user_name

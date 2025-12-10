@@ -48,14 +48,16 @@ class MinuRenderer {
 
         this._injectStyles();
         // Connect WebSocket
-        await this._connectWs();
+        await this._connectWs(()=>{
+            console.log("Subscribing to view:", viewName);
+            this._send({
+                type: 'subscribe',
+                viewName: viewName,
+                props: props
+            });
+        });
 
         // Subscribe to view
-        this._send({
-            type: 'subscribe',
-            viewName: viewName,
-            props: props
-        });
 
         return this;
     }
@@ -86,7 +88,7 @@ class MinuRenderer {
         return `${protocol}//${window.location.host}/ws/Minu/ui`;
     }
 
-    async _connectWs() {
+    async _connectWs(callback=null) {
         return new Promise((resolve, reject) => {
             this.ws = new WebSocket(this.wsUrl);
 
@@ -94,6 +96,9 @@ class MinuRenderer {
                 TB.logger.info('[Minu] WebSocket connected');
                 this.reconnectAttempts = 0;
                 this.onConnect();
+                if (callback) {
+                    callback();
+                }
                 resolve();
             };
 
@@ -126,15 +131,15 @@ class MinuRenderer {
 
     _send(data) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            TB.logger.debug('[Minu] Sending:', data);
+            TB.logger.info('[Minu] Sending:', data);
             this.ws.send(JSON.stringify(data));
         } else {
-            TB.logger.warn('[Minu] WebSocket not connected, queuing message');
+            TB.logger.warn('[Minu] WebSocket not connected, queuing message. readyState:', this.ws?.readyState);
         }
     }
 
     _handleMessage(data) {
-        TB.logger.debug('[Minu] Received:', data);
+        TB.logger.info('[Minu] Received:', data);
 
         switch (data.type) {
             case 'connected':
