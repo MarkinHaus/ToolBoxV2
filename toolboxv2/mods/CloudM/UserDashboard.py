@@ -2714,11 +2714,19 @@ async def list_user_files(app: App, request: RequestData, data: dict = None):
         storage = _get_user_storage(uid, getattr(current_user, 'username', ''))
         blobs = storage.list(prefix="", scope=Scope.USER_PRIVATE, recursive=True)
 
+        # User-Prefix der aus dem Pfad entfernt werden muss
+        # build_path erstellt: {uid}/{path} - wir müssen {uid}/ entfernen
+        user_prefix = f"{uid}/"
+
         files = []
         for blob in blobs:
-            # blob ist BlobMetadata
+            # Entferne User-Prefix aus dem Pfad für das Frontend
+            relative_path = blob.path
+            if relative_path.startswith(user_prefix):
+                relative_path = relative_path[len(user_prefix):]
+
             files.append({
-                "path": blob.path,
+                "path": relative_path,
                 "size": blob.size,
                 "content_type": blob.content_type,
                 "created_at": blob.created_at if isinstance(blob.created_at, str) else None,
@@ -2819,12 +2827,32 @@ async def download_user_file(app: App, request: RequestData, data: dict = None, 
         content_b64 = base64.b64encode(file_bytes).decode('utf-8')
 
         # Versuche content_type aus der Liste zu bekommen
-        blobs = storage.list(prefix=file_path, scope=Scope.USER_PRIVATE, recursive=False)
+        # Liste alle Dateien und finde die passende
+        blobs = storage.list(prefix="", scope=Scope.USER_PRIVATE, recursive=True)
         content_type = "application/octet-stream"
         for blob in blobs:
-            if blob.path.endswith(file_path) or file_path in blob.path:
-                content_type = blob.content_type
+            # blob.path enthält den vollen Pfad (z.B. users/{uid}/private/filename.png)
+            # file_path ist nur der relative Pfad (z.B. filename.png)
+            if blob.path.endswith("/" + file_path) or blob.path.endswith(file_path):
+                content_type = blob.content_type or "application/octet-stream"
                 break
+
+        # Fallback: Bestimme content_type aus Dateiendung
+        if content_type == "application/octet-stream":
+            ext = file_path.rsplit('.', 1)[-1].lower() if '.' in file_path else ''
+            mime_map = {
+                'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                'gif': 'image/gif', 'webp': 'image/webp', 'svg': 'image/svg+xml',
+                'bmp': 'image/bmp', 'ico': 'image/x-icon',
+                'pdf': 'application/pdf', 'json': 'application/json',
+                'txt': 'text/plain', 'html': 'text/html', 'css': 'text/css',
+                'js': 'text/javascript', 'xml': 'text/xml', 'csv': 'text/csv',
+                'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'ogg': 'audio/ogg',
+                'mp4': 'video/mp4', 'webm': 'video/webm', 'avi': 'video/x-msvideo',
+                'zip': 'application/zip', 'tar': 'application/x-tar',
+                'gz': 'application/gzip', '7z': 'application/x-7z-compressed',
+            }
+            content_type = mime_map.get(ext, 'application/octet-stream')
 
         return Result.ok(data={
             "path": file_path,
@@ -2835,6 +2863,8 @@ async def download_user_file(app: App, request: RequestData, data: dict = None, 
     except ImportError:
         return Result.default_internal_error("Speichersystem nicht verfügbar")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return Result.default_internal_error(f"Fehler beim Herunterladen: {e}")
 
 

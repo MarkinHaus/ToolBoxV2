@@ -277,11 +277,11 @@ class ScopedCryptoLayer:
         # Fallback XOR (NICHT SICHER - nur für Tests!)
         return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
 
-    def decrypt(self, data: bytes) -> bytes:
+    def decrypt(self, data: bytes, row=True) -> bytes:
         """Entschlüsselt Daten mit User-Key"""
         key = self._get_user_key()
         if TOOLBOX_AVAILABLE:
-            return Code.decrypt_symmetric(data, key)
+            return Code.decrypt_symmetric(data, key, to_str=not row)
 
         # Fallback XOR
         return bytes([b ^ key[i % len(key)] for i, b in enumerate(data)])
