@@ -47,10 +47,37 @@ async def get_user_dashboard_main_page(app: App, request: RequestData):
    User Dashboard Styles (nutzen TBJS v2 Variablen)
    ============================================================ */
 
+/* Override main-content constraints for dashboard */
+.content-wrapper:has(.dashboard) {
+    padding: var(--space-4);
+    padding-block-start: var(--space-8);
+}
+
+/* Fallback for browsers without :has() support */
+.dashboard.main-content {
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-5);
+    overflow: visible;
+    box-sizing: border-box;
+}
+
 .dashboard {
     max-width: 1200px;
     margin: 0 auto;
     padding: var(--space-6) var(--space-5);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Ensure content is not clipped */
+#dashboard-content {
+    overflow: visible;
+}
+
+.content-section {
+    overflow: visible;
 }
 
 /* ========== Header ========== */
@@ -644,10 +671,31 @@ input:checked + .toggle-slider::before {
     to { transform: rotate(360deg); }
 }
 
-/* ========== Responsive ========== */
+/* ========== Responsive - Tablet ========== */
+@media screen and (max-width: 1024px) {
+    .content-wrapper:has(.dashboard) {
+        padding: var(--space-3);
+        padding-block-start: var(--space-6);
+    }
+
+    .dashboard.main-content {
+        max-width: 100%;
+        padding: var(--space-5) var(--space-4);
+    }
+}
+
+/* ========== Responsive - Mobile ========== */
 @media screen and (max-width: 767px) {
+    .content-wrapper:has(.dashboard) {
+        padding: var(--space-2);
+        padding-block-start: var(--space-4);
+    }
+
+    .dashboard.main-content,
     .dashboard {
         padding: var(--space-4) var(--space-3);
+        border-radius: var(--radius-md);
+        max-width: 100%;
     }
 
     .dashboard-header {
@@ -656,8 +704,20 @@ input:checked + .toggle-slider::before {
         gap: var(--space-3);
     }
 
+    .dashboard-title {
+        flex-direction: column;
+        text-align: center;
+        gap: var(--space-2);
+    }
+
     .dashboard-title h1 {
-        font-size: var(--text-2xl);
+        font-size: var(--text-xl);
+    }
+
+    .user-avatar {
+        width: 40px;
+        height: 40px;
+        font-size: var(--text-base);
     }
 
     .header-actions {
@@ -670,28 +730,55 @@ input:checked + .toggle-slider::before {
         padding-left: var(--space-3);
         padding-right: var(--space-3);
         position: relative;
+        gap: var(--space-1);
     }
 
     .tab-btn {
-        padding: var(--space-2) var(--space-3);
+        padding: var(--space-2);
+        min-width: 44px;
+        justify-content: center;
     }
 
     .tab-btn span:not(.material-symbols-outlined) {
         display: none;
     }
 
+    .tab-btn .material-symbols-outlined {
+        font-size: 18px;
+    }
+
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-2);
+    }
+
+    .stat-card {
+        padding: var(--space-3);
+    }
+
+    .stat-value {
+        font-size: var(--text-2xl);
+    }
+
+    .dashboard-card {
+        padding: var(--space-4);
+        margin-bottom: var(--space-3);
+    }
+
+    .dashboard-card h3 {
+        font-size: var(--text-base);
     }
 
     .module-grid {
         grid-template-columns: 1fr;
+        gap: var(--space-2);
     }
 
     .setting-item {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--space-3);
+        padding: var(--space-3);
     }
 
     .toggle-switch {
@@ -700,6 +787,7 @@ input:checked + .toggle-slider::before {
 
     .quick-actions {
         flex-direction: column;
+        gap: var(--space-2);
     }
 
     .quick-actions .tb-btn {
@@ -708,6 +796,283 @@ input:checked + .toggle-slider::before {
 
     .theme-grid {
         grid-template-columns: repeat(3, 1fr);
+        gap: var(--space-2);
+    }
+
+    .theme-option {
+        padding: var(--space-3);
+    }
+
+    .theme-option .material-symbols-outlined {
+        font-size: 24px;
+    }
+
+    .info-table td {
+        padding: var(--space-2);
+        font-size: var(--text-sm);
+    }
+
+    .info-table td:first-child {
+        width: 35%;
+    }
+
+    /* Hide logout text on mobile */
+    .logout-text {
+        display: none;
+    }
+}
+
+/* ========== Color Settings ========== */
+.color-settings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.color-control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.color-value {
+    min-width: 50px;
+    text-align: right;
+    font-family: monospace;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+@media screen and (max-width: 767px) {
+    .color-control {
+        flex-direction: column;
+        align-items: flex-end;
+        gap: var(--space-2);
+    }
+
+    .color-control input[type="range"] {
+        width: 100px !important;
+    }
+
+    .color-value {
+        min-width: auto;
+    }
+}
+
+/* ========== File Tree ========== */
+.file-tree {
+    font-size: var(--text-sm);
+    user-select: none;
+}
+
+.file-tree-item {
+    display: flex;
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-default);
+    gap: var(--space-2);
+}
+
+.file-tree-item:hover {
+    background: var(--interactive-muted);
+}
+
+.file-tree-item.selected {
+    background: oklch(from var(--interactive) l c h / 0.15);
+}
+
+.file-tree-item .material-symbols-outlined {
+    font-size: 18px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.file-tree-item.folder .material-symbols-outlined {
+    color: var(--color-warning);
+}
+
+.file-tree-item.file .material-symbols-outlined {
+    color: var(--interactive);
+}
+
+.file-tree-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-tree-size {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.file-tree-children {
+    margin-left: var(--space-5);
+    border-left: 1px solid var(--border-subtle);
+    padding-left: var(--space-2);
+}
+
+.file-tree-children.collapsed {
+    display: none;
+}
+
+/* File Actions */
+.file-actions {
+    display: flex;
+    gap: var(--space-2);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-default);
+}
+
+.file-tree-item:hover .file-actions {
+    opacity: 1;
+}
+
+.file-action-btn {
+    padding: var(--space-1);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.file-action-btn:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+.file-action-btn .material-symbols-outlined {
+    font-size: 16px;
+}
+
+/* Upload Zone */
+.upload-zone {
+    border: 2px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-6);
+    text-align: center;
+    transition: all var(--duration-fast) var(--ease-default);
+    cursor: pointer;
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+    border-color: var(--interactive);
+    background: oklch(from var(--interactive) l c h / 0.05);
+}
+
+.upload-zone .material-symbols-outlined {
+    font-size: 48px;
+    color: var(--text-muted);
+    margin-bottom: var(--space-3);
+}
+
+.upload-zone.dragover .material-symbols-outlined {
+    color: var(--interactive);
+}
+
+/* Data Tabs */
+.data-tabs {
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
+    border-bottom: var(--border-width) solid var(--border-subtle);
+    padding-bottom: var(--space-2);
+}
+
+.data-tab {
+    padding: var(--space-2) var(--space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    cursor: pointer;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.data-tab:hover {
+    color: var(--text-primary);
+    background: var(--interactive-muted);
+}
+
+.data-tab.active {
+    color: var(--interactive);
+    border-bottom: 2px solid var(--interactive);
+    margin-bottom: -2px;
+}
+
+.data-panel {
+    display: none;
+}
+
+.data-panel.active {
+    display: block;
+}
+
+/* Config Display */
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: var(--space-3);
+}
+
+.config-item {
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+}
+
+.config-key {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--space-1);
+}
+
+.config-value {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.config-value.boolean-true {
+    color: var(--color-success);
+}
+
+.config-value.boolean-false {
+    color: var(--color-error);
+}
+
+@media screen and (max-width: 767px) {
+    .file-actions {
+        opacity: 1;
+    }
+
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .data-tabs {
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .data-tab {
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 }
 
@@ -1213,10 +1578,14 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         }
     };
 
-    // ========== Mod-Daten ==========
+    // ========== Daten-Tab ==========
+    let userFilesCache = [];
+    let currentDataTab = 'settings';
+
     async function loadModData() {
         const content = document.getElementById('mod-data-content');
 
+        // Load mod data
         try {
             const res = await TB.api.request('CloudM.UserDashboard', 'get_all_mod_data', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
@@ -1224,61 +1593,386 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             }
         } catch(e) {}
 
+        // Load user files
+        try {
+            const filesRes = await TB.api.request('CloudM.UserDashboard', 'list_user_files', null, 'GET');
+            if (filesRes.error === TB.ToolBoxError.none) {
+                userFilesCache = filesRes.get() || [];
+            }
+        } catch(e) {
+            userFilesCache = [];
+        }
+
+        const settings = currentUser?.settings || {};
         const modNames = Object.keys(modDataCache);
 
         content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>
-                <p class="text-sm text-muted" style="margin:0;">
-                    Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese einsehen und bearbeiten.
-                </p>
+            <div class="data-tabs">
+                <button class="data-tab ${currentDataTab === 'settings' ? 'active' : ''}" onclick="switchDataTab('settings')">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">settings</span>
+                    Einstellungen
+                </button>
+                <button class="data-tab ${currentDataTab === 'files' ? 'active' : ''}" onclick="switchDataTab('files')">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">folder</span>
+                    Dateien
+                </button>
+                <button class="data-tab ${currentDataTab === 'mods' ? 'active' : ''}" onclick="switchDataTab('mods')">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">extension</span>
+                    Mod-Daten
+                </button>
             </div>
 
-            ${modNames.length > 0 ? modNames.map(modName => {
-                const data = modDataCache[modName] || {};
-                const entries = Object.entries(data);
-                return `
-                    <div class="mod-data-panel">
-                        <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.expand-icon').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
-                            <span class="flex items-center gap-2">
-                                <span class="material-symbols-outlined">extension</span>
-                                ${TB.utils.escapeHtml(modName)}
-                            </span>
-                            <span class="material-symbols-outlined expand-icon">expand_more</span>
-                        </div>
-                        <div class="mod-data-content">
-                            ${entries.length > 0 ? entries.map(([key, value]) => `
-                                <div class="mod-data-item">
-                                    <span class="mod-data-key">${TB.utils.escapeHtml(key)}</span>
-                                    <span class="mod-data-value">
-                                        ${typeof value === 'boolean' ?
-                                            `<span class="${value ? 'text-success' : 'text-error'}">${value ? 'Ja' : 'Nein'}</span>` :
-                                            TB.utils.escapeHtml(String(value).substring(0, 100))}
-                                    </span>
+            <!-- Settings Panel -->
+            <div id="data-panel-settings" class="data-panel ${currentDataTab === 'settings' ? 'active' : ''}">
+                <div class="dashboard-card">
+                    <h3><span class="material-symbols-outlined">tune</span>Gespeicherte Einstellungen</h3>
+                    <p class="text-sm text-muted mb-4">Ihre persönlichen Einstellungen, die von Modulen gelesen werden können.</p>
+
+                    ${Object.keys(settings).length > 0 ? `
+                        <div class="config-grid">
+                            ${Object.entries(settings).map(([key, value]) => `
+                                <div class="config-item">
+                                    <div class="config-key">${TB.utils.escapeHtml(key.replace(/_/g, ' '))}</div>
+                                    <div class="config-value ${typeof value === 'boolean' ? (value ? 'boolean-true' : 'boolean-false') : ''}">
+                                        ${typeof value === 'boolean' ? (value ? '✓ Aktiviert' : '✗ Deaktiviert') :
+                                          typeof value === 'object' ? JSON.stringify(value) :
+                                          TB.utils.escapeHtml(String(value))}
+                                    </div>
                                 </div>
-                            `).join('') : '<p class="text-muted text-sm">Keine Daten gespeichert.</p>'}
-                            <div class="mt-4 flex gap-2">
-                                <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="editModData('${TB.utils.escapeHtml(modName)}')">
-                                    <span class="material-symbols-outlined">edit</span>
-                                    Bearbeiten
-                                </button>
-                                <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="clearModData('${TB.utils.escapeHtml(modName)}')">
-                                    <span class="material-symbols-outlined">delete</span>
-                                    Löschen
-                                </button>
+                            `).join('')}
+                        </div>
+                    ` : `
+                        <div class="empty-state" style="padding:var(--space-6);">
+                            <span class="material-symbols-outlined">settings_suggest</span>
+                            <p class="text-muted">Noch keine Einstellungen gespeichert.</p>
+                        </div>
+                    `}
+                </div>
+            </div>
+
+            <!-- Files Panel -->
+            <div id="data-panel-files" class="data-panel ${currentDataTab === 'files' ? 'active' : ''}">
+                <div class="dashboard-card">
+                    <h3><span class="material-symbols-outlined">cloud_upload</span>Datei hochladen</h3>
+                    <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+                        <span class="material-symbols-outlined">upload_file</span>
+                        <p class="text-muted mb-2">Dateien hierher ziehen oder klicken</p>
+                        <p class="text-sm text-muted">Max. 10 MB pro Datei</p>
+                    </div>
+                    <input type="file" id="file-input" style="display:none;" multiple onchange="handleFileUpload(this.files)">
+                </div>
+
+                <div class="dashboard-card">
+                    <h3><span class="material-symbols-outlined">folder_open</span>Meine Dateien</h3>
+                    <div id="file-tree-container">
+                        ${renderFileTree(userFilesCache)}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mod Data Panel -->
+            <div id="data-panel-mods" class="data-panel ${currentDataTab === 'mods' ? 'active' : ''}">
+                <div class="dashboard-card">
+                    <h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>
+                    <p class="text-sm text-muted" style="margin:0;">
+                        Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese einsehen und bearbeiten.
+                    </p>
+                </div>
+
+                ${modNames.length > 0 ? modNames.map(modName => {
+                    const data = modDataCache[modName] || {};
+                    const entries = Object.entries(data);
+                    return `
+                        <div class="mod-data-panel">
+                            <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.expand-icon').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
+                                <span class="flex items-center gap-2">
+                                    <span class="material-symbols-outlined">extension</span>
+                                    ${TB.utils.escapeHtml(modName)}
+                                </span>
+                                <span class="material-symbols-outlined expand-icon">expand_more</span>
+                            </div>
+                            <div class="mod-data-content">
+                                ${entries.length > 0 ? entries.map(([key, value]) => {
+                                    const valStr = typeof value === 'boolean'
+                                        ? '<span class="' + (value ? 'text-success' : 'text-error') + '">' + (value ? 'Ja' : 'Nein') + '</span>'
+                                        : TB.utils.escapeHtml(String(value).substring(0, 100));
+                                    return '<div class="mod-data-item"><span class="mod-data-key">' + TB.utils.escapeHtml(key) + '</span><span class="mod-data-value">' + valStr + '</span></div>';
+                                }).join('') : '<p class="text-muted text-sm">Keine Daten gespeichert.</p>'}
+                                <div class="mt-4 flex gap-2">
+                                    <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="editModData('${TB.utils.escapeHtml(modName)}')">
+                                        <span class="material-symbols-outlined">edit</span>
+                                        Bearbeiten
+                                    </button>
+                                    <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="clearModData('${TB.utils.escapeHtml(modName)}')">
+                                        <span class="material-symbols-outlined">delete</span>
+                                        Löschen
+                                    </button>
+                                </div>
                             </div>
                         </div>
+                    `;
+                }).join('') : `
+                    <div class="empty-state">
+                        <span class="material-symbols-outlined">folder_off</span>
+                        <p>Noch keine Mod-Daten vorhanden.</p>
+                        <p class="text-sm text-muted mt-2">Module speichern hier automatisch Ihre Einstellungen.</p>
                     </div>
-                `;
-            }).join('') : `
-                <div class="empty-state">
-                    <span class="material-symbols-outlined">folder_off</span>
-                    <p>Noch keine Mod-Daten vorhanden.</p>
-                    <p class="text-sm text-muted mt-2">Module speichern hier automatisch Ihre Einstellungen.</p>
-                </div>
-            `}
+                `}
+            </div>
         `;
+
+        // Setup drag & drop
+        setupUploadZone();
     }
+
+    function renderFileTree(files) {
+        if (!files || files.length === 0) {
+            return '<div class="empty-state" style="padding:var(--space-6);"><span class="material-symbols-outlined">folder_off</span><p class="text-muted">Keine Dateien vorhanden.</p></div>';
+        }
+
+        // Build tree structure from flat file list
+        const tree = {};
+        files.forEach(file => {
+            const parts = file.path.split('/').filter(p => p);
+            let current = tree;
+            parts.forEach((part, i) => {
+                if (!current[part]) {
+                    current[part] = i === parts.length - 1 ? { _file: file } : {};
+                }
+                current = current[part];
+            });
+        });
+
+        return '<div class="file-tree">' + renderTreeNode(tree, '') + '</div>';
+    }
+
+    function renderTreeNode(node, path) {
+        let html = '';
+        const entries = Object.entries(node).sort(([a, aVal], [b, bVal]) => {
+            const aIsFile = aVal._file;
+            const bIsFile = bVal._file;
+            if (aIsFile && !bIsFile) return 1;
+            if (!aIsFile && bIsFile) return -1;
+            return a.localeCompare(b);
+        });
+
+        for (const [name, value] of entries) {
+            if (name === '_file') continue;
+
+            const fullPath = path ? path + '/' + name : name;
+            const isFile = value._file;
+
+            if (isFile) {
+                const file = value._file;
+                const icon = getFileIcon(file.content_type || file.type || '');
+                const size = formatFileSize(file.size || 0);
+                const escapedPath = TB.utils.escapeHtml(file.path);
+                const escapedName = TB.utils.escapeHtml(name);
+                html += '<div class="file-tree-item file" data-path="' + escapedPath + '">' +
+                    '<span class="material-symbols-outlined">' + icon + '</span>' +
+                    '<span class="file-tree-name">' + escapedName + '</span>' +
+                    '<span class="file-tree-size">' + size + '</span>' +
+                    '<div class="file-actions">' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); previewFile(' + escapedPath + ')" title="Vorschau"><span class="material-symbols-outlined">visibility</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(' + escapedPath + ')" title="Download"><span class="material-symbols-outlined">download</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(' + escapedPath + ')" title="Löschen"><span class="material-symbols-outlined">delete</span></button>' +
+                    '</div></div>';
+            } else {
+                const childCount = Object.keys(value).filter(k => k !== '_file').length;
+                const escapedName = TB.utils.escapeHtml(name);
+                html += '<div class="file-tree-item folder" onclick="this.nextElementSibling.classList.toggle(\\'collapsed\\'); this.querySelector(\\'.folder-icon\\').textContent = this.nextElementSibling.classList.contains(\\'collapsed\\') ? \\'folder\\' : \\'folder_open\\';">' +
+                    '<span class="material-symbols-outlined folder-icon">folder_open</span>' +
+                    '<span class="file-tree-name">' + escapedName + '</span>' +
+                    '<span class="file-tree-size">' + childCount + ' Elemente</span>' +
+                    '</div><div class="file-tree-children">' + renderTreeNode(value, fullPath) + '</div>';
+            }
+        }
+        return html;
+    }
+
+    function getFileIcon(contentType) {
+        if (contentType.startsWith('image/')) return 'image';
+        if (contentType.startsWith('video/')) return 'movie';
+        if (contentType.startsWith('audio/')) return 'audio_file';
+        if (contentType.includes('pdf')) return 'picture_as_pdf';
+        if (contentType.includes('text') || contentType.includes('json')) return 'description';
+        if (contentType.includes('zip') || contentType.includes('archive')) return 'folder_zip';
+        return 'insert_drive_file';
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    window.switchDataTab = function(tab) {
+        currentDataTab = tab;
+        document.querySelectorAll('.data-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.data-panel').forEach(p => p.classList.remove('active'));
+        const tabIndex = tab === 'settings' ? 1 : tab === 'files' ? 2 : 3;
+        document.querySelector('.data-tab:nth-child(' + tabIndex + ')').classList.add('active');
+        document.getElementById('data-panel-' + tab).classList.add('active');
+    };
+
+    function setupUploadZone() {
+        const zone = document.getElementById('upload-zone');
+        if (!zone) return;
+
+        zone.addEventListener('dragover', e => {
+            e.preventDefault();
+            zone.classList.add('dragover');
+        });
+
+        zone.addEventListener('dragleave', e => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+        });
+
+        zone.addEventListener('drop', e => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            handleFileUpload(e.dataTransfer.files);
+        });
+    }
+
+    window.handleFileUpload = async function(files) {
+        if (!files || files.length === 0) return;
+
+        for (const file of files) {
+            if (file.size > 10 * 1024 * 1024) {
+                TB.ui.Toast.showError(`\${file.name} ist zu groß (max. 10 MB)`);
+                continue;
+            }
+
+            TB.ui.Loader.show('Lade ' + file.name + ' hoch...');
+
+            try {
+                // Read file as base64
+                const base64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+
+                const res = await TB.api.request('CloudM.UserDashboard', 'upload_user_file', {
+                    file: base64,
+                    path: file.name,
+                    content_type: file.type || 'application/octet-stream'
+                }, 'POST');
+
+                if (res.error === TB.ToolBoxError.none) {
+                    TB.ui.Toast.showSuccess(file.name + ' hochgeladen');
+                } else {
+                    TB.ui.Toast.showError('Fehler: ' + (res.info?.help_text || 'Upload fehlgeschlagen'));
+                }
+            } catch(e) {
+                console.error('Upload error:', e);
+                TB.ui.Toast.showError('Fehler beim Hochladen von ' + file.name);
+            }
+        }
+
+        TB.ui.Loader.hide();
+        await loadModData();
+    };
+
+    window.downloadFile = async function(path) {
+        TB.ui.Loader.show('Download wird vorbereitet...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+            TB.ui.Loader.hide();
+
+            if (res.error === TB.ToolBoxError.none) {
+                const data = res.get();
+                // Convert base64 to binary
+                const binaryString = atob(data.content);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: data.content_type || 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = path.split('/').pop();
+                a.click();
+                URL.revokeObjectURL(url);
+            } else {
+                TB.ui.Toast.showError('Download fehlgeschlagen');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
+
+    window.previewFile = async function(path) {
+        const file = userFilesCache.find(f => f.path === path);
+        if (!file) return;
+
+        const contentType = file.content_type || file.type || '';
+
+        if (contentType.startsWith('image/')) {
+            TB.ui.Loader.show('Lade Vorschau...');
+            try {
+                const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+                TB.ui.Loader.hide();
+                if (res.error === TB.ToolBoxError.none) {
+                    const data = res.get();
+                    TB.ui.Modal.show({
+                        title: path.split('/').pop(),
+                        content: '<img src="data:' + contentType + ';base64,' + data.content + '" style="max-width:100%; max-height:70vh; border-radius:var(--radius-md);">',
+                        buttons: [{ text: 'Schließen', action: m => m.close() }]
+                    });
+                }
+            } catch(e) {
+                TB.ui.Loader.hide();
+                TB.ui.Toast.showError('Vorschau fehlgeschlagen');
+            }
+        } else if (contentType.startsWith('text/') || contentType.includes('json')) {
+            TB.ui.Loader.show('Lade Vorschau...');
+            try {
+                const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+                TB.ui.Loader.hide();
+                if (res.error === TB.ToolBoxError.none) {
+                    const data = res.get();
+                    const text = atob(data.content);
+                    TB.ui.Modal.show({
+                        title: path.split('/').pop(),
+                        content: '<pre style="max-height:60vh; overflow:auto; padding:var(--space-4); background:var(--bg-sunken); border-radius:var(--radius-md); font-size:var(--text-sm);">' + TB.utils.escapeHtml(text) + '</pre>',
+                        buttons: [{ text: 'Schließen', action: m => m.close() }]
+                    });
+                }
+            } catch(e) {
+                TB.ui.Loader.hide();
+                TB.ui.Toast.showError('Vorschau fehlgeschlagen');
+            }
+        } else {
+            TB.ui.Toast.showInfo('Vorschau für diesen Dateityp nicht verfügbar');
+        }
+    };
+
+    window.deleteFile = async function(path) {
+        if (!confirm('Möchten Sie "' + path.split('/').pop() + '" wirklich löschen?')) return;
+
+        TB.ui.Loader.show('Lösche...');
+        try {
+            const res = await TB.api.request('CloudM.UserDashboard', 'delete_user_file', { path }, 'POST');
+            TB.ui.Loader.hide();
+            if (res.error === TB.ToolBoxError.none) {
+                TB.ui.Toast.showSuccess('Datei gelöscht');
+                await loadModData();
+            } else {
+                TB.ui.Toast.showError('Löschen fehlgeschlagen');
+            }
+        } catch(e) {
+            TB.ui.Loader.hide();
+            TB.ui.Toast.showError('Netzwerkfehler');
+        }
+    };
 
     window.editModData = async function(modName) {
         const data = modDataCache[modName] || {};
@@ -1451,6 +2145,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         const content = document.getElementById('appearance-content');
         const themePreference = TB.ui.theme?.getPreference() || 'system';
 
+        // Get current CSS variable values
+        const rootStyles = getComputedStyle(document.documentElement);
+        const currentHue = currentUser?.settings?.hue_primary || parseInt(rootStyles.getPropertyValue('--hue-primary')) || 230;
+        const currentChroma = currentUser?.settings?.chroma_primary || parseFloat(rootStyles.getPropertyValue('--chroma-primary')) || 0.18;
+        const currentBgSun = currentUser?.settings?.theme_bg_sun || '#ffffff';
+        const currentBgLight = currentUser?.settings?.theme_bg_light || '#537FE7';
+
         content.innerHTML = `
             <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">contrast</span>Farbschema</h3>
@@ -1473,6 +2174,81 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             </div>
 
             <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">palette</span>Primärfarbe</h3>
+                <p class="text-sm text-muted mb-4">Passen Sie die Hauptfarbe des Designs an.</p>
+
+                <div class="color-settings">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Farbton (Hue)</div>
+                            <div class="setting-description">0° = Rot, 120° = Grün, 230° = Blau</div>
+                        </div>
+                        <div class="color-control">
+                            <input type="range" id="hue-slider" min="0" max="360" value="${currentHue}"
+                                   style="width:120px; accent-color:oklch(65% 0.2 ${currentHue});"
+                                   oninput="updateHue(this.value)">
+                            <span id="hue-value" class="color-value">${currentHue}°</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Sättigung (Chroma)</div>
+                            <div class="setting-description">0 = Grau, 0.18 = Normal, 0.3 = Kräftig</div>
+                        </div>
+                        <div class="color-control">
+                            <input type="range" id="chroma-slider" min="0" max="30" value="${Math.round(currentChroma * 100)}"
+                                   style="width:120px; accent-color:var(--interactive);"
+                                   oninput="updateChroma(this.value / 100)">
+                            <span id="chroma-value" class="color-value">${currentChroma.toFixed(2)}</span>
+                        </div>
+                    </div>
+
+                    <div class="color-preview" id="color-preview" style="
+                        height: 60px;
+                        border-radius: var(--radius-md);
+                        background: linear-gradient(135deg, oklch(65% ${currentChroma} ${currentHue}), oklch(50% ${currentChroma} ${currentHue}));
+                        margin-top: var(--space-4);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: white;
+                        font-weight: var(--weight-semibold);
+                        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+                    ">
+                        Vorschau
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">wallpaper</span>Hintergrundfarben</h3>
+                <p class="text-sm text-muted mb-4">Passen Sie die Hintergrundfarben an.</p>
+
+                <div class="color-settings">
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Heller Hintergrund</div>
+                            <div class="setting-description">Haupthintergrund im hellen Modus</div>
+                        </div>
+                        <input type="color" id="bg-sun-picker" value="${currentBgSun}"
+                               style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);"
+                               onchange="updateBgColor('theme_bg_sun', this.value)">
+                    </div>
+
+                    <div class="setting-item">
+                        <div class="setting-info">
+                            <div class="setting-label">Akzent-Hintergrund</div>
+                            <div class="setting-description">Sekundärer Hintergrund / Akzent</div>
+                        </div>
+                        <input type="color" id="bg-light-picker" value="${currentBgLight}"
+                               style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);"
+                               onchange="updateBgColor('theme_bg_light', this.value)">
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-card">
                 <h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>
                 <p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße an.</p>
 
@@ -1484,13 +2260,103 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     <span style="font-size:1.25em;">A</span>
                 </div>
             </div>
+
+            <div class="dashboard-card">
+                <h3><span class="material-symbols-outlined">restart_alt</span>Zurücksetzen</h3>
+                <p class="text-sm text-muted mb-4">Alle Theme-Einstellungen auf Standard zurücksetzen.</p>
+
+                <button class="tb-btn tb-btn-secondary" onclick="resetThemeSettings()">
+                    <span class="material-symbols-outlined">refresh</span>
+                    Auf Standard zurücksetzen
+                </button>
+            </div>
         `;
     }
+
+    window.updateHue = function(value) {
+        const hue = parseInt(value);
+        document.documentElement.style.setProperty('--hue-primary', hue);
+        document.getElementById('hue-value').textContent = hue + '°';
+
+        // Update preview
+        const chroma = parseFloat(document.getElementById('chroma-slider').value) / 100;
+        document.getElementById('color-preview').style.background =
+            `linear-gradient(135deg, oklch(65% ${chroma} ${hue}), oklch(50% ${chroma} ${hue}))`;
+
+        // Update slider accent color
+        document.getElementById('hue-slider').style.accentColor = `oklch(65% 0.2 ${hue})`;
+
+        // Save setting
+        updateSetting('hue_primary', hue);
+
+        // Refresh Clerk theme if available
+        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+    };
+
+    window.updateChroma = function(value) {
+        const chroma = parseFloat(value).toFixed(2);
+        document.documentElement.style.setProperty('--chroma-primary', chroma);
+        document.getElementById('chroma-value').textContent = chroma;
+
+        // Update preview
+        const hue = parseInt(document.getElementById('hue-slider').value);
+        document.getElementById('color-preview').style.background =
+            `linear-gradient(135deg, oklch(65% ${chroma} ${hue}), oklch(50% ${chroma} ${hue}))`;
+
+        // Save setting
+        updateSetting('chroma_primary', chroma);
+
+        // Refresh Clerk theme if available
+        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+    };
+
+    window.updateBgColor = function(key, value) {
+        if (key === 'theme_bg_sun') {
+            document.documentElement.style.setProperty('--theme-bg-sun', value);
+        } else if (key === 'theme_bg_light') {
+            document.documentElement.style.setProperty('--theme-bg-light', value);
+        }
+        updateSetting(key, value);
+    };
+
+    window.resetThemeSettings = async function() {
+        // Reset to defaults
+        const defaults = {
+            hue_primary: 230,
+            chroma_primary: 0.18,
+            theme_bg_sun: '#ffffff',
+            theme_bg_light: '#537FE7',
+            font_scale: 100
+        };
+
+        // Apply defaults
+        document.documentElement.style.setProperty('--hue-primary', defaults.hue_primary);
+        document.documentElement.style.setProperty('--chroma-primary', defaults.chroma_primary);
+        document.documentElement.style.setProperty('--theme-bg-sun', defaults.theme_bg_sun);
+        document.documentElement.style.setProperty('--theme-bg-light', defaults.theme_bg_light);
+        document.documentElement.style.fontSize = defaults.font_scale + '%';
+
+        // Save all defaults
+        for (const [key, value] of Object.entries(defaults)) {
+            await updateSetting(key, value);
+        }
+
+        // Refresh Clerk theme if available
+        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+
+        // Reload appearance section
+        loadAppearance();
+        TB.ui.Toast.showSuccess('Theme-Einstellungen zurückgesetzt');
+    };
 
     window.setTheme = function(theme) {
         if (TB.ui.theme?.setPreference) {
             TB.ui.theme.setPreference(theme);
             TB.ui.Toast.showSuccess(`Theme: ${theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell'}`);
+
+            // Refresh Clerk theme if available
+            if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+
             loadAppearance();
         }
     };
@@ -1689,12 +2555,13 @@ async def get_my_active_instances(app: App, request: RequestData):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def add_module_to_instance(app: App, request: RequestData, data: dict, module_name=None):
+async def add_module_to_instance(app: App, request: RequestData, data: dict=None, module_name=Name):
     """Modul zur Benutzer-Instanz hinzufügen und laden"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
-
+    if data is None:
+        data = {}
     module_name = module_name or data.get("module_name")
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
@@ -1727,12 +2594,13 @@ async def add_module_to_instance(app: App, request: RequestData, data: dict, mod
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def remove_module_from_instance(app: App, request: RequestData, data: dict):
+async def remove_module_from_instance(app: App, request: RequestData, data: dict=None, module_name=Name):
     """Modul aus Benutzer-Instanz entladen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
-
+    if data is None:
+        data = {}
     module_name = data.get("module_name")
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
@@ -1760,12 +2628,13 @@ async def remove_module_from_instance(app: App, request: RequestData, data: dict
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def add_module_to_saved(app: App, request: RequestData, data: dict, module_name=Name):
+async def add_module_to_saved(app: App, request: RequestData, data: dict=None, module_name=Name):
     """Modul zu den gespeicherten Modulen hinzufügen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
-
+    if data is None:
+        data = {}
     module_name = module_name or data.get("module_name")
     if not module_name:
         return Result.default_user_error(info="Modulname erforderlich")
@@ -1921,3 +2790,200 @@ async def close_cli_session(app: App, request: RequestData, data: dict):
 
     result = close_cli_session_internal(cli_session_id)
     return Result.ok(info=result)
+
+
+# =================== User File Management ===================
+
+def _get_user_storage(uid: str, username: str = ""):
+    """Erstellt ScopedBlobStorage für einen Benutzer"""
+    from toolboxv2.utils.extras.db.scoped_storage import ScopedBlobStorage, UserContext
+    import os
+    from pathlib import Path
+
+    user_context = UserContext(
+        user_id=uid,
+        username=username or uid,
+        is_authenticated=True
+    )
+
+    # Prüfe ob MinIO secure sein soll (Standard: False für lokale Entwicklung)
+    minio_secure = os.getenv("MINIO_SECURE", "false").lower() in ("true", "1", "yes")
+
+    # Lokale DB für USER_PRIVATE Dateien
+    local_db_path = os.getenv("TB_USER_FILES_DB", str(Path.home() / ".tb_user_files" / f"{uid}.db"))
+
+    return ScopedBlobStorage(
+        user_context,
+        minio_secure=minio_secure,
+        local_db_path=local_db_path
+    )
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
+async def list_user_files(app: App, request: RequestData, data: dict = None):
+    """Liste alle Dateien des Benutzers auf"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not uid:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    try:
+        from toolboxv2.utils.extras.db.scoped_storage import Scope
+
+        storage = _get_user_storage(uid, getattr(current_user, 'username', ''))
+        blobs = storage.list(prefix="", scope=Scope.USER_PRIVATE, recursive=True)
+
+        files = []
+        for blob in blobs:
+            # blob ist BlobMetadata
+            files.append({
+                "path": blob.path,
+                "size": blob.size,
+                "content_type": blob.content_type,
+                "created_at": blob.created_at if isinstance(blob.created_at, str) else None,
+                "updated_at": blob.updated_at if isinstance(blob.updated_at, str) else None,
+            })
+
+        return Result.ok(data=files)
+    except ImportError:
+        # Fallback: Use simple file storage
+        return Result.ok(data=[])
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler beim Auflisten: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def upload_user_file(app: App, request: RequestData, data: dict = None, **kwargs):
+    """Datei für Benutzer hochladen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not uid:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    if data is None:
+        data = kwargs
+    # Get file data from request
+    file_data = data.get("file") if data else None
+    file_path = data.get("path", "uploaded_file") if data else "uploaded_file"
+    content_type = data.get("content_type", "application/octet-stream") if data else "application/octet-stream"
+
+    if not file_data:
+        return Result.default_user_error(info="Keine Datei angegeben")
+
+    try:
+        from toolboxv2.utils.extras.db.scoped_storage import Scope
+        import base64
+
+        # Decode base64 if needed
+        if isinstance(file_data, str):
+            file_bytes = base64.b64decode(file_data)
+        else:
+            file_bytes = file_data
+
+        # Check file size (max 10 MB)
+        if len(file_bytes) > 10 * 1024 * 1024:
+            return Result.default_user_error(info="Datei zu groß (max. 10 MB)")
+
+        storage = _get_user_storage(uid, getattr(current_user, 'username', ''))
+        blob = storage.write(
+            path=file_path,
+            data=file_bytes,
+            scope=Scope.USER_PRIVATE,
+            content_type=content_type
+        )
+
+        return Result.ok(info="Datei hochgeladen", data={
+            "path": blob.path,
+            "size": blob.size,
+            "content_type": blob.content_type
+        })
+    except ImportError:
+        return Result.default_internal_error("Speichersystem nicht verfügbar")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler beim Hochladen: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
+async def download_user_file(app: App, request: RequestData, data: dict = None):
+    """Datei für Benutzer herunterladen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not uid:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    file_path = data.get("path") if data else None
+    if not file_path:
+        return Result.default_user_error(info="Dateipfad erforderlich")
+
+    try:
+        from toolboxv2.utils.extras.db.scoped_storage import Scope
+        import base64
+
+        storage = _get_user_storage(uid, getattr(current_user, 'username', ''))
+        # read() gibt bytes zurück, nicht ein Objekt
+        file_bytes = storage.read(path=file_path, scope=Scope.USER_PRIVATE)
+
+        if file_bytes is None:
+            return Result.default_user_error(info="Datei nicht gefunden", exec_code=404)
+
+        # Return base64 encoded content
+        content_b64 = base64.b64encode(file_bytes).decode('utf-8')
+
+        # Versuche content_type aus der Liste zu bekommen
+        blobs = storage.list(prefix=file_path, scope=Scope.USER_PRIVATE, recursive=False)
+        content_type = "application/octet-stream"
+        for blob in blobs:
+            if blob.path.endswith(file_path) or file_path in blob.path:
+                content_type = blob.content_type
+                break
+
+        return Result.ok(data={
+            "path": file_path,
+            "content": content_b64,
+            "content_type": content_type,
+            "size": len(file_bytes)
+        })
+    except ImportError:
+        return Result.default_internal_error("Speichersystem nicht verfügbar")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler beim Herunterladen: {e}")
+
+
+@export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
+async def delete_user_file(app: App, request: RequestData, data: dict = None):
+    """Datei für Benutzer löschen"""
+    current_user = await get_current_user_from_request(app, request)
+    if not current_user:
+        return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+
+    uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
+    if not uid:
+        return Result.default_user_error(info="Benutzer-ID nicht gefunden")
+
+    file_path = data.get("path") if data else None
+    if not file_path:
+        return Result.default_user_error(info="Dateipfad erforderlich")
+
+    try:
+        from toolboxv2.utils.extras.db.scoped_storage import Scope
+
+        storage = _get_user_storage(uid, getattr(current_user, 'username', ''))
+        success = storage.delete(path=file_path, scope=Scope.USER_PRIVATE)
+
+        if success:
+            return Result.ok(info="Datei gelöscht")
+        else:
+            return Result.default_user_error(info="Datei nicht gefunden oder konnte nicht gelöscht werden")
+    except ImportError:
+        return Result.default_internal_error("Speichersystem nicht verfügbar")
+    except Exception as e:
+        return Result.default_internal_error(f"Fehler beim Löschen: {e}")

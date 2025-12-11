@@ -485,6 +485,9 @@ class ScopedBlobStorage:
         if not MINIO_AVAILABLE:
             raise ImportError("minio package not installed")
 
+        import logging
+        logger = logging.getLogger("scoped_storage")
+
         self._minio = Minio(
             endpoint,
             access_key=access_key,
@@ -498,19 +501,26 @@ class ScopedBlobStorage:
             try:
                 if not self._minio.bucket_exists(bucket):
                     self._minio.make_bucket(bucket)
+                    logger.info(f"Created bucket '{bucket}'")
             except S3Error as e:
                 error_code = getattr(e, 'code', str(e))
                 # Check for authentication errors
                 if error_code in ("SignatureDoesNotMatch", "InvalidAccessKeyId",
                                   "AccessDenied", "InvalidSignature"):
-                    import logging
-                    logging.getLogger("scoped_storage").warning(
-                        f"MinIO authentication failed for bucket '{bucket}': {e}"
-                    )
+                    logger.warning(f"MinIO authentication failed for bucket '{bucket}': {e}")
                     self._minio = None
                     return False
                 elif error_code != "BucketAlreadyOwnedByYou":
-                    raise
+                    logger.warning(f"MinIO error for bucket '{bucket}': {e}")
+                    # Continue with other buckets instead of raising
+            except Exception as e:
+                # Catch SSL errors and other connection issues
+                error_str = str(e).lower()
+                if "ssl" in error_str or "connection" in error_str or "timeout" in error_str:
+                    logger.warning(f"MinIO connection error: {e}")
+                    self._minio = None
+                    return False
+                logger.warning(f"Unexpected error creating bucket '{bucket}': {e}")
         return True
 
     # =================== Core Operations ===================
@@ -776,21 +786,47 @@ class ScopedBlobStorage:
 
         results = []
 
+        # Zuerst lokale DB prüfen (für USER_PRIVATE)
+        if scope == Scope.USER_PRIVATE and self._local_db:
+            try:
+                # MobileDB.list() gibt List[BlobMetadata] zurück (aus mobile_db)
+                local_blobs = self._local_db.list(full_prefix)
+                for local_blob in local_blobs:
+                    # Konvertiere mobile_db.BlobMetadata zu scoped_storage.BlobMetadata
+                    results.append(BlobMetadata(
+                        path=local_blob.path,
+                        scope=scope,
+                        owner_id=effective_owner,
+                        size=local_blob.size,
+                        checksum=local_blob.checksum or "",
+                        content_type=local_blob.content_type or "application/octet-stream",
+                        updated_at=local_blob.local_updated_at or 0
+                    ))
+            except Exception as e:
+                import logging
+                logging.getLogger("scoped_storage").debug(f"Local DB list error: {e}")
+
+        # Dann MinIO prüfen
         if self._minio:
             try:
                 bucket = self.policy.get_bucket_name(scope)
                 objects = self._minio.list_objects(bucket, prefix=full_prefix, recursive=recursive)
 
                 for obj in objects:
-                    results.append(BlobMetadata(
-                        path=obj.object_name,
-                        scope=scope,
-                        owner_id=effective_owner,
-                        size=obj.size or 0,
-                        checksum=obj.etag or "",
-                        updated_at=obj.last_modified.timestamp() if obj.last_modified else 0
-                    ))
+                    # Prüfe ob bereits in results (von lokaler DB)
+                    if not any(r.path == obj.object_name for r in results):
+                        results.append(BlobMetadata(
+                            path=obj.object_name,
+                            scope=scope,
+                            owner_id=effective_owner,
+                            size=obj.size or 0,
+                            checksum=obj.etag or "",
+                            updated_at=obj.last_modified.timestamp() if obj.last_modified else 0
+                        ))
             except S3Error:
+                pass
+            except Exception:
+                # Catch connection errors silently
                 pass
 
         return results
@@ -804,23 +840,32 @@ class ScopedBlobStorage:
         data: bytes,
         content_type: str,
         metadata: Dict[str, str] = None
-    ):
-        """Schreibt Daten direkt in MinIO"""
+    ) -> bool:
+        """Schreibt Daten direkt in MinIO. Gibt True bei Erfolg zurück."""
         from io import BytesIO
+        import logging
 
-        bucket = self.policy.get_bucket_name(scope)
+        try:
+            bucket = self.policy.get_bucket_name(scope)
 
-        if isinstance(data, str):
-            data = data.encode()
+            if isinstance(data, str):
+                data = data.encode()
 
-        self._minio.put_object(
-            bucket,
-            path,
-            BytesIO(data),
-            len(data),
-            content_type=content_type,
-            metadata=metadata
-        )
+            self._minio.put_object(
+                bucket,
+                path,
+                BytesIO(data),
+                len(data),
+                content_type=content_type,
+                metadata=metadata
+            )
+            return True
+        except S3Error as e:
+            logging.getLogger("scoped_storage").warning(f"MinIO write error: {e}")
+            return False
+        except Exception as e:
+            logging.getLogger("scoped_storage").warning(f"MinIO connection error: {e}")
+            return False
 
     def _read_from_minio(self, scope: Scope, path: str) -> Optional[bytes]:
         """Liest Daten direkt aus MinIO"""
@@ -832,6 +877,9 @@ class ScopedBlobStorage:
             response.release_conn()
             return data
         except S3Error:
+            return None
+        except Exception:
+            # Catch connection errors
             return None
 
     # =================== Sync ===================
