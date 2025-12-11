@@ -1835,30 +1835,7 @@ def start_ipython_session(argv):
 def runner_setup():
 
     def helper_gui():
-        name_with_ext = "simple-core.exe" if system() == "Windows" else "simple-core"
-        # Look in a dedicated 'bin' folder first, then cargo's default
-        from pathlib import Path
-        search_paths = [
-            tb_root_dir / "bin" / name_with_ext,
-            tb_root_dir / "simple-core" / "src-tauri" / "bin" / name_with_ext,
-            tb_root_dir / "simple-core" / "src-tauri" / "target" / "release" / name_with_ext,
-            tb_root_dir / "simple-core" / "src-tauri" / name_with_ext,
-
-        ]
-        gui_exe = ""
-        for path in search_paths:
-            if path.is_file():
-                gui_exe = path.resolve()
-                break
-        if not gui_exe:
-            get_app().logger.info(f"Executable '{name_with_ext}' not found in standard locations. Build or download")
-            return
-        if not 'bin' in str(gui_exe) and gui_exe:
-            bin_dir = tb_root_dir / "bin"
-            bin_dir.mkdir(exist_ok=True)
-            shutil.copy(gui_exe, bin_dir / Path(gui_exe).name)
-            get_app().logger.info(f"Copied executable to '{bin_dir.resolve()}'")
-        run_executable_in_background(gui_exe)
+        __import__('toolboxv2.utils.clis.tauri_cli', fromlist=['main']).main()
 
     async def status_helper():
         print("🔍 ToolBoxV2 System Status")

@@ -45,13 +45,28 @@ class TauriWorkerManager:
         if self._config:
             return self._config
 
-        from config import load_config
-
         # Set Tauri environment
         os.environ["TAURI_ENV"] = "true"
         os.environ["TB_ENV"] = "tauri"
 
-        return load_config()
+        try:
+            from toolboxv2.utils.system.getting_and_closing_app import get_app
+            app = get_app()
+            return app.config
+        except ImportError:
+            logger.warning("ToolBoxV2 config not available, using defaults")
+            return self._create_default_config()
+
+    def _create_default_config(self):
+        """Create default configuration for standalone mode."""
+        class DefaultConfig:
+            class http_worker:
+                host = "127.0.0.1"
+                port = 8000
+            class ws_worker:
+                host = "127.0.0.1"
+                port = 8001
+        return DefaultConfig()
 
     def _init_app(self):
         """Initialize ToolBoxV2 app."""
@@ -59,9 +74,8 @@ class TauriWorkerManager:
             return self._app
 
         try:
-            from toolbox_integration import get_toolbox_app
-
-            self._app = get_toolbox_app(instance_id="tauri_desktop")
+            from toolboxv2.utils.system.getting_and_closing_app import get_app
+            self._app = get_app()
             return self._app
         except ImportError:
             logger.warning("ToolBoxV2 not available, running in standalone mode")
@@ -75,8 +89,8 @@ class TauriWorkerManager:
         self._init_app()
 
         # Import workers
-        from server_worker import HTTPWorker
-        from ws_worker import WSWorker
+        from toolboxv2.utils.workers.server_worker import HTTPWorker
+        from toolboxv2.utils.workers.ws_worker import WSWorker
 
         # Create workers
         http_worker = HTTPWorker("tauri_http", config, app=self._app)

@@ -2385,7 +2385,7 @@ def main():
         from multiprocessing import freeze_support
         freeze_support()
 
-    parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager")
+    parser = argparse.ArgumentParser(description="ToolBoxV2 Worker Manager", dprog="tb workers")
     parser.add_argument("command", nargs="?", default="start", choices=["start", "stop", "restart", "status", "update", "nginx-config", "nginx-reload", "worker-start", "worker-stop", "cluster-join"])
     parser.add_argument("-c", "--config", help="Config file")
     parser.add_argument("-w", "--worker-id")

@@ -126,150 +126,6 @@ jobs:
                   path: release-artifacts/*
 
   # ============================================================================
-  # RUST SERVER BUILD
-  # ============================================================================
-
-  build-rust-server:
-    name: Rust Server Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: simple-core-server-linux-x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: simple-core-server-linux-arm64
-            cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: simple-core-server-windows-x64.exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: simple-core-server-macos-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: simple-core-server-macos-arm64
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross (for cross-compilation)
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build with cross
-        if: matrix.cross
-        working-directory: ./toolboxv2/src-core
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Build native
-        if: ${{ !matrix.cross }}
-        working-directory: ./toolboxv2/src-core
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Run tests
-        if: ${{ !matrix.cross }}
-        working-directory: ./toolboxv2/src-core
-        run: cargo test --release
-
-      - name: Package artifact
-        shell: bash
-        run: |
-          mkdir -p release-artifacts/bin
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp ./toolboxv2/src-core/target/${{ matrix.target }}/release/simple-core-server.exe release-artifacts/bin/${{ matrix.artifact_name }}
-          else
-            cp ./toolboxv2/src-core/target/${{ matrix.target }}/release/simple-core-server release-artifacts/bin/${{ matrix.artifact_name }}
-            chmod +x release-artifacts/bin/${{ matrix.artifact_name }}
-          fi
-
-      - name: Upload Rust server artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-server-${{ matrix.target }}
-          path: release-artifacts/bin/*
-
-  # ============================================================================
-  # RUST SERVER BUILD
-  # ============================================================================
-
-  build-blob_db-server:
-    name: Rust BlobDB Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: simple-core-server-linux-x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: simple-core-server-linux-arm64
-            cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: simple-core-server-windows-x64.exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: simple-core-server-macos-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: simple-core-server-macos-arm64
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross (for cross-compilation)
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build with cross
-        if: matrix.cross
-        working-directory: ./toolboxv2/r_blob_db
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Build native
-        if: ${{ !matrix.cross }}
-        working-directory: ./toolboxv2/r_blob_db
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Run tests
-        if: ${{ !matrix.cross }}
-        working-directory: ./toolboxv2/r_blob_db
-        run: cargo test --release
-
-      - name: Package artifact
-        shell: bash
-        run: |
-          mkdir -p release-artifacts/bin
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp ./toolboxv2/r_blob_db/target/${{ matrix.target }}/release/r_blob_db.exe release-artifacts/bin/${{ matrix.artifact_name }}
-          else
-            cp ./toolboxv2/r_blob_dbe/target/${{ matrix.target }}/release/r_blob_db release-artifacts/bin/${{ matrix.artifact_name }}
-            chmod +x release-artifacts/bin/${{ matrix.artifact_name }}
-          fi
-
-      - name: Upload Rust blob db artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-server-${{ matrix.target }}
-          path: release-artifacts/bin/*
-
-  # ============================================================================
   # TBLANG COMPILER BUILD (from toolboxv2/tb-exc/src)
   # ============================================================================
 
@@ -576,7 +432,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
       - name: Install frontend dependencies
         working-directory: ./toolboxv2/web
@@ -594,7 +450,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: ./toolboxv2/simple-core
-          distPath: ./toolboxv2/dist
+          tauriScript: npx tauri
           tagName: simple-v__VERSION__
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
@@ -635,7 +491,12 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
 
       - name: Install frontend dependencies
         working-directory: ./toolboxv2/web
@@ -690,7 +551,7 @@ jobs:
           targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: cargo install tauri-cli --version "^2"
 
       - name: Install frontend dependencies
         working-directory: ./toolboxv2/web
@@ -879,8 +740,6 @@ jobs:
     needs:
       - build-python
       - build-python-nuitka
-      - build-rust-server
-      - build-blob_db-server
       - build-tblang
       - build-zile
       - build-browser-extension
@@ -910,13 +769,6 @@ jobs:
 
           # Nuitka builds
           for dir in all-artifacts/nuitka-*; do
-            if [ -d "$dir" ]; then
-              cp "$dir"/* release-upload/ 2>/dev/null || true
-            fi
-          done
-
-          # Rust server
-          for dir in all-artifacts/rust-server-*; do
             if [ -d "$dir" ]; then
               cp "$dir"/* release-upload/ 2>/dev/null || true
             fi

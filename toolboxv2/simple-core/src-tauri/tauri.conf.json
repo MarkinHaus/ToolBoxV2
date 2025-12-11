@@ -5,25 +5,33 @@
   "identifier": "com.simple-core.app",
   "build": {
     "devUrl": "http://localhost:8080/",
-    "frontendDist": "https://simplecore.app/"
+    "frontendDist": "../../dist"
   },
   "app": {
       "withGlobalTauri": true,
     "windows": [
       {
-        "title": "simple-core",
-        "width": 800,
-        "height": 600
+        "title": "SimpleCore - ToolBoxV2",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true,
+        "decorations": true,
+        "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:* ws://localhost:* https://simplecore.app https://*.simplecore.app wss://*.simplecore.app"
     }
   },
-    "plugins": {
+  "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NjMyM0YyMzQ0RUVEQgpSV1RiN2tRalB6SldEcmZKVHUvbkdaMlZQZHZSelVlWnhvKzVNdmZYaGxDTlpXbHZEU0JyT1JSeQo=",
-      "endpoints": ["https://my.app.updater/{{target}}/{{current_version}}"]
+      "endpoints": ["https://simplecore.app/api/updater/{{target}}/{{current_version}}"]
+    },
+    "shell": {
+      "open": true
     }
   },
   "bundle": {
@@ -35,13 +43,17 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ], "resources": [
+    ],
+    "resources": [
       "setup.html",
       "starting.html"
     ],
-      "android": {
-          "versionCode": 100,
-          "minSdkVersion": 28
-      }
+    "externalBin": [
+      "binaries/tb-worker"
+    ],
+    "android": {
+      "versionCode": 100,
+      "minSdkVersion": 28
+    }
   }
 }
