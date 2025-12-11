@@ -1677,13 +1677,13 @@ async def list_modules_admin(app: App, request: RequestData):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def update_user_admin(app: App, request: RequestData, data: dict):
+async def update_user_admin(app: App, request: RequestData, data: dict=None, uid=None, name=None):
     admin_user = await _is_admin(app, request)
     if not admin_user:
         return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    uid_to_update = data.get("uid")
-    name_to_update = data.get("name")
+    uid_to_update = uid or data.get("uid")
+    name_to_update = name or data.get("name")
     if not uid_to_update:
         return Result.default_user_error(info="User UID is required.")
 
