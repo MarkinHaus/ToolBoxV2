@@ -63,7 +63,7 @@ async def get_dashboard_main_page(app: App, request: RequestData):
    ============================================================ */
 
 .dashboard {
-    max-width: 1400px;
+    max-width: 100%;
     margin: 0 auto;
     padding: var(--space-6) var(--space-5);
 }
@@ -288,6 +288,42 @@ async def get_dashboard_main_page(app: App, request: RequestData):
 
 .table-wrapper .admin-table th:first-child {
     background: var(--bg-sunken);
+}
+
+/* ========== Stats Grid ========== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.stat-card {
+    background: var(--bg-surface);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    text-align: center;
+    box-shadow: var(--highlight-subtle), var(--shadow-sm);
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--highlight-subtle), var(--shadow-md);
+}
+
+.stat-value {
+    font-size: var(--text-3xl);
+    font-weight: var(--weight-bold);
+    color: var(--interactive);
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    margin-top: var(--space-1);
 }
 
 /* ========== Status Indicators ========== */
@@ -602,83 +638,395 @@ async def get_dashboard_main_page(app: App, request: RequestData):
     min-width: 200px;
 }
 
-/* ========== Responsive ========== */
+/* ========== Module Cards ========== */
+.module-card {
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.module-card:hover {
+    border-color: var(--border-strong);
+}
+
+.module-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.module-name {
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+}
+
+.module-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+/* ========== SPP Cards ========== */
+.spp-card {
+    background: var(--bg-elevated);
+    border: var(--border-width) solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    margin-bottom: var(--space-3);
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.spp-card:hover {
+    border-color: var(--border-strong);
+}
+
+.spp-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.spp-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.spp-title {
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
+}
+
+.spp-path {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
+.spp-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-shrink: 0;
+}
+
+/* ========== Empty State ========== */
+.empty-state {
+    text-align: center;
+    padding: var(--space-8);
+    color: var(--text-muted);
+}
+
+.empty-state .material-symbols-outlined {
+    font-size: 64px;
+    margin-bottom: var(--space-4);
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: var(--text-lg);
+}
+
+/* ========== Responsive - Tablet ========== */
+@media screen and (max-width: 1024px) {
+    .dashboard {
+        padding: var(--space-5) var(--space-4);
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .admin-table {
+        font-size: var(--text-sm);
+    }
+
+    .dashboard-card {
+        padding: var(--space-4);
+    }
+}
+
+/* ========== Responsive - Mobile ========== */
 @media screen and (max-width: 767px) {
     .dashboard {
-        padding: var(--space-4) var(--space-3);
+        padding: var(--space-3) var(--space-2);
     }
 
     .dashboard-header {
         flex-direction: column;
         align-items: stretch;
         gap: var(--space-3);
+        padding-bottom: var(--space-3);
+    }
+
+    .dashboard-title {
+        text-align: center;
     }
 
     .dashboard-title h1 {
-        font-size: var(--text-2xl);
+        font-size: var(--text-xl);
+    }
+
+    .dashboard-title p {
+        font-size: var(--text-xs);
     }
 
     .header-actions {
         justify-content: center;
+        flex-wrap: wrap;
+        gap: var(--space-2);
     }
 
+    .header-actions .tb-btn {
+        flex: 1;
+        min-width: 120px;
+        justify-content: center;
+    }
+
+    /* Tab Navigation - Horizontal Scroll */
     .tab-navigation {
-        margin-left: calc(var(--space-3) * -1);
-        margin-right: calc(var(--space-3) * -1);
-        padding-left: var(--space-3);
-        padding-right: var(--space-3);
+        margin-left: calc(var(--space-2) * -1);
+        margin-right: calc(var(--space-2) * -1);
+        padding-left: var(--space-2);
+        padding-right: var(--space-2);
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .tab-navigation::-webkit-scrollbar {
+        display: none;
     }
 
     .tab-btn {
         padding: var(--space-2) var(--space-3);
+        flex-shrink: 0;
+        min-width: auto;
     }
 
     .tab-btn span:not(.material-symbols-outlined) {
         display: none;
     }
 
+    .tab-btn .material-symbols-outlined {
+        margin-right: 0;
+    }
+
+    /* Section Headers */
+    .section-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-3);
+    }
+
     .section-header h2 {
+        font-size: var(--text-lg);
+        text-align: center;
+    }
+
+    .section-header .tb-input {
+        width: 100%;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-2);
+    }
+
+    .stat-card {
+        padding: var(--space-3);
+    }
+
+    .stat-value {
         font-size: var(--text-xl);
+    }
+
+    .stat-label {
+        font-size: var(--text-xs);
+    }
+
+    /* Dashboard Cards */
+    .dashboard-card {
+        padding: var(--space-3);
+        margin-bottom: var(--space-3);
+    }
+
+    .dashboard-card h3 {
+        font-size: var(--text-base);
+    }
+
+    /* Tables - Responsive */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 calc(var(--space-3) * -1);
+        padding: 0 var(--space-3);
     }
 
     .admin-table {
         font-size: var(--text-xs);
+        min-width: 500px;
     }
 
     .admin-table th,
     .admin-table td {
-        padding: var(--space-2) var(--space-3);
+        padding: var(--space-2);
+        white-space: nowrap;
     }
 
+    .admin-table th:first-child,
+    .admin-table td:first-child {
+        position: sticky;
+        left: 0;
+        background: var(--bg-surface);
+        z-index: 1;
+    }
+
+    /* Action Buttons */
     .action-group {
         flex-direction: column;
+        gap: var(--space-2);
     }
 
     .action-btn {
         width: 100%;
         justify-content: center;
+        padding: var(--space-2) var(--space-3);
     }
 
+    /* Settings Items */
     .setting-item {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
         gap: var(--space-3);
+        padding: var(--space-3);
     }
 
+    .setting-info {
+        text-align: left;
+    }
+
+    /* Quick Actions */
     .quick-actions {
         flex-direction: column;
+        gap: var(--space-2);
     }
 
     .quick-actions .tb-btn {
         width: 100%;
+        justify-content: center;
     }
 
+    /* Forms */
     .form-row {
         flex-direction: column;
+        gap: var(--space-3);
     }
 
     .form-row > * {
         min-width: 100%;
+    }
+
+    /* Level Badges */
+    .level-badge {
+        font-size: var(--text-xs);
+        padding: 2px 6px;
+    }
+
+    /* Module Cards */
+    .module-card {
+        padding: var(--space-3);
+    }
+
+    .module-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-2);
+    }
+
+    .module-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .module-actions .tb-btn {
+        flex: 1;
+        min-width: calc(50% - var(--space-1));
+    }
+
+    /* SPP Cards */
+    .spp-card {
+        padding: var(--space-3);
+    }
+
+    .spp-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-2);
+    }
+
+    .spp-actions {
+        width: 100%;
+    }
+
+    .spp-actions .tb-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Empty State */
+    .empty-state {
+        padding: var(--space-6) var(--space-3);
+    }
+
+    .empty-state .material-symbols-outlined {
+        font-size: 48px;
+    }
+}
+
+/* ========== Responsive - Small Mobile ========== */
+@media screen and (max-width: 480px) {
+    .dashboard {
+        padding: var(--space-2);
+    }
+
+    .dashboard-title h1 {
+        font-size: var(--text-lg);
+    }
+
+    .stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-2);
+    }
+
+    .stat-card {
+        padding: var(--space-2);
+    }
+
+    .stat-value {
+        font-size: var(--text-lg);
+    }
+
+    .tab-btn {
+        padding: var(--space-2);
+    }
+
+    .admin-table {
+        min-width: 400px;
+    }
+
+    .header-actions .tb-btn {
+        font-size: var(--text-xs);
+        padding: var(--space-2) var(--space-3);
+    }
+
+    .header-actions .tb-btn span:not(.material-symbols-outlined) {
+        display: none;
     }
 }
 
@@ -821,7 +1169,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 } else {
     console.log('TB object found. Initializing Admin Dashboard v3...');
 
-    let currentAdminUser = null;
+    var currentAdminUser = null;
 
     // ========== Initialization ==========
     async function initializeAdminDashboard() {
@@ -832,13 +1180,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         setupEventDelegation();
 
         try {
-            const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
+            var userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
             if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
                 currentAdminUser = userRes.get();
                 updateHeader();
                 await showSection('system-status');
             } else {
-                console.error("Failed to load admin user:", userRes.info.help_text);
+                console.error("Failed to load admin user:", userRes.info && userRes.info.help_text ? userRes.info.help_text : 'Unknown error');
                 showAccessDenied();
             }
         } catch (e) {
@@ -985,8 +1333,8 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             }
             // SPP Open Link
             else if (target.dataset.path && target.classList.contains('btn-open-link')) {
-                const path = target.dataset.path;
-                if (path.startsWith("http") || path.startsWith("/api/")) {
+                var path = target.dataset.path;
+                if (path.indexOf("http") === 0 || path.indexOf("/api/") === 0) {
                     window.open(path, '_blank');
                 } else {
                     TB.router.navigateTo(path);
@@ -998,8 +1346,8 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
     // ========== Section Loading ==========
     async function showSection(sectionId) {
         console.log('Showing section: ' + sectionId);
-        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        const section = document.getElementById(sectionId + '-section');
+        document.querySelectorAll('.content-section').forEach(function(s) { s.classList.remove('active'); });
+        var section = document.getElementById(sectionId + '-section');
 
         if (section) {
             section.classList.add('active');
@@ -1049,7 +1397,43 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             return;
         }
 
-        var html = '<div class="dashboard-card">' +
+        // Count services by status
+        var serviceKeys = Object.keys(data);
+        var totalServices = serviceKeys.length;
+        var runningServices = 0;
+        var stoppedServices = 0;
+
+        serviceKeys.forEach(function(name) {
+            var info = data[name];
+            if (info.status_indicator === '🟢') {
+                runningServices++;
+            } else if (info.status_indicator === '🔴') {
+                stoppedServices++;
+            }
+        });
+
+        // Stats Grid
+        var html = '<div class="stats-grid">' +
+            '<div class="stat-card">' +
+                '<div class="stat-value">' + totalServices + '</div>' +
+                '<div class="stat-label">Total Services</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-success);">' + runningServices + '</div>' +
+                '<div class="stat-label">Running</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-error);">' + stoppedServices + '</div>' +
+                '<div class="stat-label">Stopped</div>' +
+            '</div>' +
+            '<div class="stat-card">' +
+                '<div class="stat-value" style="color:var(--color-warning);">' + (totalServices - runningServices - stoppedServices) + '</div>' +
+                '<div class="stat-label">Other</div>' +
+            '</div>' +
+        '</div>';
+
+        // Services Table
+        html += '<div class="dashboard-card">' +
             '<h3><span class="material-symbols-outlined">dns</span>Running Services</h3>' +
             '<div class="table-wrapper">' +
                 '<table class="admin-table">' +
@@ -1061,7 +1445,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                     '</tr></thead>' +
                     '<tbody>';
 
-        Object.keys(data).forEach(function(name) {
+        serviceKeys.forEach(function(name) {
             var info = data[name];
             var statusClass = info.status_indicator === '🟢' ? 'green' :
                              (info.status_indicator === '🔴' ? 'red' : 'yellow');
@@ -1073,7 +1457,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                         info.status_indicator +
                     '</span>' +
                 '</td>' +
-                '<td class="text-muted">' + TB.utils.escapeHtml(info.pid) + '</td>' +
+                '<td class="text-muted">' + TB.utils.escapeHtml(info.pid || 'N/A') + '</td>' +
                 '<td>' +
                     '<button class="action-btn btn-restart" data-service="' + TB.utils.escapeHtml(name) + '">' +
                         '<span class="material-symbols-outlined">restart_alt</span>' +
@@ -1487,46 +1871,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
     window.showSection = showSection;
 
     // ========== Toggle Switch Style (reuse from UserDashboard) ==========
-    const style = document.createElement('style');
-    style.textContent = `
-        .toggle-switch {
-            position: relative;
-            width: 48px;
-            height: 26px;
-            flex-shrink: 0;
-        }
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        .toggle-slider {
-            position: absolute;
-            cursor: pointer;
-            inset: 0;
-            background-color: var(--border-default);
-            transition: var(--duration-fast) var(--ease-default);
-            border-radius: var(--radius-full);
-        }
-        .toggle-slider::before {
-            position: absolute;
-            content: "";
-            height: 20px;
-            width: 20px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: var(--duration-fast) var(--ease-default);
-            border-radius: var(--radius-full);
-            box-shadow: var(--shadow-xs);
-        }
-        input:checked + .toggle-slider {
-            background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600));
-        }
-        input:checked + .toggle-slider::before {
-            transform: translateX(22px);
-        }
-    `;
+    var style = document.createElement('style');
+    style.textContent = '.toggle-switch { position: relative; width: 48px; height: 26px; flex-shrink: 0; } ' +
+        '.toggle-switch input { opacity: 0; width: 0; height: 0; } ' +
+        '.toggle-slider { position: absolute; cursor: pointer; inset: 0; background-color: var(--border-default); ' +
+            'transition: var(--duration-fast) var(--ease-default); border-radius: var(--radius-full); } ' +
+        '.toggle-slider::before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; ' +
+            'background-color: white; transition: var(--duration-fast) var(--ease-default); border-radius: var(--radius-full); box-shadow: var(--shadow-xs); } ' +
+        'input:checked + .toggle-slider { background: linear-gradient(135deg, var(--color-primary-400), var(--color-primary-600)); } ' +
+        'input:checked + .toggle-slider::before { transform: translateX(22px); }';
     document.head.appendChild(style);
 
     // ========== Start ==========
@@ -1677,13 +2030,14 @@ async def list_modules_admin(app: App, request: RequestData):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def update_user_admin(app: App, request: RequestData, data: dict=None, uid=None, name=None):
+async def update_user_admin(app: App, request: RequestData, data: dict=None, **kwargs):
     admin_user = await _is_admin(app, request)
     if not admin_user:
         return Result.default_user_error(info="Permission denied", exec_code=403)
-
-    uid_to_update = uid or data.get("uid")
-    name_to_update = name or data.get("name")
+    if data is None:
+        data = kwargs
+    uid_to_update = data.get("uid")
+    name_to_update = data.get("name")
     if not uid_to_update:
         return Result.default_user_error(info="User UID is required.")
 

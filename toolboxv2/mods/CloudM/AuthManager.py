@@ -90,24 +90,106 @@ async def get_magic_link_email(app: App, username=None):
 
 @export(mod_name=Name, state=True, test=False, interface=ToolBoxInterfaces.future)
 def get_user_by_name(app: App, username: str, uid: str = '*') -> Result:
-
+    """
+    Get user by name - supports both Legacy and Clerk users.
+    First tries Legacy database (USER::), then Clerk database (CLERK_USER::).
+    """
     if app is None:
         app = get_app(Name + '.get_user_by_name')
 
-    if not db_helper_test_exist(app, username):
-        return Result.default_user_error(info=f"get_user_by_name failed username '{username}' not registered")
+    # Try Legacy user first
+    if db_helper_test_exist(app, username):
+        user_data = db_helper_get_user(app, username, uid)
+        if not isinstance(user_data, str) and not user_data.is_error():
+            if '*' in uid:
+                user_data = user_data.get(list(user_data.get().keys())[0])
+            else:
+                user_data = user_data.get()
 
-    user_data = db_helper_get_user(app, username, uid)
-    if isinstance(user_data, str) or user_data.is_error():
-        return Result.default_internal_error(info="get_user_by_name failed no User data found is_error")
+            if isinstance(user_data, str):
+                return Result.ok(data=User(**eval(user_data)))
 
+    # Try Clerk user - search by username in CLERK_USER entries
+    try:
+        # Scan all Clerk users
+        clerk_result = app.run_any(TBEF.DB.GET, query="CLERK_USER::*", get_results=True)
+        if not clerk_result.is_error():
+            clerk_data = clerk_result.get()
+            if isinstance(clerk_data, dict):
+                for clerk_id, user_info in clerk_data.items():
+                    if isinstance(user_info, bytes):
+                        user_info = user_info.decode()
+                    if isinstance(user_info, str):
+                        try:
+                            user_info = eval(user_info)
+                        except:
+                            continue
+                    if isinstance(user_info, dict):
+                        # Check if username matches
+                        if user_info.get('username') == username or user_info.get('name') == username:
+                            # Convert Clerk user to Legacy User format for compatibility
+                            legacy_user = User(
+                                name=user_info.get('username', username),
+                                email=user_info.get('email', ''),
+                                uid=user_info.get('clerk_user_id', clerk_id.replace('CLERK_USER::', '')),
+                                user_pass_sync='',
+                                challenge='',
+                                level=user_info.get('level', 1)
+                            )
+                            return Result.ok(data=legacy_user)
+            elif isinstance(clerk_data, list):
+                for item in clerk_data:
+                    if isinstance(item, bytes):
+                        item = item.decode()
+                    if isinstance(item, str):
+                        try:
+                            user_info = eval(item)
+                        except:
+                            continue
+                    else:
+                        user_info = item
+                    if isinstance(user_info, dict):
+                        if user_info.get('username') == username or user_info.get('name') == username:
+                            legacy_user = User(
+                                name=user_info.get('username', username),
+                                email=user_info.get('email', ''),
+                                uid=user_info.get('clerk_user_id', ''),
+                                user_pass_sync='',
+                                challenge='',
+                                level=user_info.get('level', 1)
+                            )
+                            return Result.ok(data=legacy_user)
+    except Exception as e:
+        get_logger().warning(f"[{Name}] Error searching Clerk users: {e}")
 
-    if '*' in uid:
-        user_data = user_data.get(list(user_data.get().keys())[0])
-    else:
-        user_data = user_data.get()
+    # Also try searching by UID if it looks like a Clerk user ID
+    if uid != '*' and uid.startswith('user_'):
+        try:
+            clerk_result = app.run_any(TBEF.DB.GET, query=f"CLERK_USER::{uid}", get_results=True)
+            if not clerk_result.is_error():
+                user_info = clerk_result.get()
+                if isinstance(user_info, list) and len(user_info) > 0:
+                    user_info = user_info[0]
+                if isinstance(user_info, bytes):
+                    user_info = user_info.decode()
+                if isinstance(user_info, str):
+                    try:
+                        user_info = eval(user_info)
+                    except:
+                        pass
+                if isinstance(user_info, dict):
+                    legacy_user = User(
+                        name=user_info.get('username', username),
+                        email=user_info.get('email', ''),
+                        uid=user_info.get('clerk_user_id', uid),
+                        user_pass_sync='',
+                        challenge='',
+                        level=user_info.get('level', 1)
+                    )
+                    return Result.ok(data=legacy_user)
+        except Exception as e:
+            get_logger().warning(f"[{Name}] Error fetching Clerk user by ID: {e}")
 
-    if isinstance(user_data, str):
-        return Result.ok(data=User(**eval(user_data)))
-    else:
-        return Result.default_internal_error(info="get_user_by_name failed no User data found", exec_code=2351)
+    return Result.default_user_error(
+        info=f"User {username} (UID: {uid}) not found. to use calrk and legay users loock up."
+    )

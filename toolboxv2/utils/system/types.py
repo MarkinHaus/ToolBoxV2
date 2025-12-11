@@ -1649,6 +1649,7 @@ class AppType:
 
     interface_type: ToolBoxInterfaces
     REFIX: str
+    logger_prefix:str
 
     alive: bool
     called_exit: tuple[bool, float]

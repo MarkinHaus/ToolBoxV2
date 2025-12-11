@@ -1194,10 +1194,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 } else {
     console.log('TB object found. Initializing User Dashboard v3...');
 
-    let currentUser = null;
-    let allModules = [];
-    let userInstance = null;
-    let modDataCache = {};
+    var currentUser = null;
+    var allModules = [];
+    var userInstance = null;
+    var modDataCache = {};
 
     // ========== Initialization ==========
     async function initDashboard() {
@@ -1207,18 +1207,18 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         setupLogout();
 
         try {
-            const userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user', null, 'GET');
+            var userRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user', null, 'GET');
             if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
                 currentUser = userRes.get();
                 updateHeader();
 
-                const modulesRes = await TB.api.request('CloudM.UserDashboard', 'get_all_available_modules', null, 'GET');
+                var modulesRes = await TB.api.request('CloudM.UserDashboard', 'get_all_available_modules', null, 'GET');
                 if (modulesRes.error === TB.ToolBoxError.none) {
                     allModules = modulesRes.get() || [];
                 }
 
-                const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
-                if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
+                var instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
+                if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get() && instanceRes.get().length > 0) {
                     userInstance = instanceRes.get()[0];
                 }
 
@@ -1233,49 +1233,45 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     }
 
     function updateHeader() {
-        const avatarEl = document.getElementById('user-avatar');
-        const welcomeEl = document.getElementById('welcome-text');
-        const emailEl = document.getElementById('user-email');
+        var avatarEl = document.getElementById('user-avatar');
+        var welcomeEl = document.getElementById('welcome-text');
+        var emailEl = document.getElementById('user-email');
 
         if (currentUser) {
-            const name = currentUser.username || currentUser.name || 'Benutzer';
-            const initial = name.charAt(0).toUpperCase();
+            var name = currentUser.username || currentUser.name || 'Benutzer';
+            var initial = name.charAt(0).toUpperCase();
 
             if (avatarEl) avatarEl.textContent = initial;
-            if (welcomeEl) welcomeEl.textContent = `Hallo, ${name}!`;
+            if (welcomeEl) welcomeEl.textContent = 'Hallo, ' + name + '!';
             if (emailEl) emailEl.textContent = currentUser.email || '';
         }
     }
 
     function showNotAuthenticated() {
-        document.getElementById('dashboard-content').innerHTML = `
-            <div class="empty-state">
-                <span class="material-symbols-outlined">login</span>
-                <h3 style="margin-top:var(--space-4);">Nicht angemeldet</h3>
-                <p class="text-muted">Bitte melden Sie sich an, um fortzufahren.</p>
-                <button onclick="TB.router.navigateTo('/web/assets/login.html')" class="tb-btn tb-btn-primary mt-4">
-                    <span class="material-symbols-outlined">login</span>
-                    Anmelden
-                </button>
-            </div>
-        `;
+        document.getElementById('dashboard-content').innerHTML = '<div class="empty-state">' +
+            '<span class="material-symbols-outlined">login</span>' +
+            '<h3 style="margin-top:var(--space-4);">Nicht angemeldet</h3>' +
+            '<p class="text-muted">Bitte melden Sie sich an, um fortzufahren.</p>' +
+            '<button onclick="TB.router.navigateTo(\\'/web/assets/login.html\\')" class="tb-btn tb-btn-primary mt-4">' +
+                '<span class="material-symbols-outlined">login</span>' +
+                'Anmelden' +
+            '</button>' +
+        '</div>';
     }
 
     function showConnectionError() {
-        document.getElementById('dashboard-content').innerHTML = `
-            <div class="empty-state">
-                <span class="material-symbols-outlined">cloud_off</span>
-                <h3 style="margin-top:var(--space-4);">Verbindungsfehler</h3>
-                <p class="text-muted">Die Verbindung zum Server konnte nicht hergestellt werden.</p>
-            </div>
-        `;
+        document.getElementById('dashboard-content').innerHTML = '<div class="empty-state">' +
+            '<span class="material-symbols-outlined">cloud_off</span>' +
+            '<h3 style="margin-top:var(--space-4);">Verbindungsfehler</h3>' +
+            '<p class="text-muted">Die Verbindung zum Server konnte nicht hergestellt werden.</p>' +
+        '</div>';
     }
 
     // ========== Navigation ==========
     function setupNavigation() {
-        document.querySelectorAll('#tab-navigation .tab-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                document.querySelectorAll('#tab-navigation .tab-btn').forEach(b => {
+        document.querySelectorAll('#tab-navigation .tab-btn').forEach(function(btn) {
+            btn.addEventListener('click', async function() {
+                document.querySelectorAll('#tab-navigation .tab-btn').forEach(function(b) {
                     b.classList.remove('active');
                     b.setAttribute('aria-selected', 'false');
                 });
@@ -1287,7 +1283,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     }
 
     function setupLogout() {
-        document.getElementById('logoutButtonUser').addEventListener('click', async () => {
+        document.getElementById('logoutButtonUser').addEventListener('click', async function() {
             TB.ui.Loader.show("Abmelden...");
             await TB.user.logout();
             window.location.href = '/';
@@ -1296,8 +1292,8 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     // ========== Section Loading ==========
     async function showSection(sectionId) {
-        document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        const section = document.getElementById(`${sectionId}-section`);
+        document.querySelectorAll('.content-section').forEach(function(s) { s.classList.remove('active'); });
+        var section = document.getElementById(sectionId + '-section');
         if (section) {
             section.classList.add('active');
 
@@ -1314,208 +1310,181 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     // ========== Übersicht ==========
     async function loadOverview() {
-        const content = document.getElementById('overview-content');
-        const loadedModsCount = userInstance?.live_modules?.length || 0;
-        const savedModsCount = userInstance?.saved_modules?.length || 0;
-        const cliSessions = userInstance?.active_cli_sessions || 0;
+        var content = document.getElementById('overview-content');
+        var loadedModsCount = (userInstance && userInstance.live_modules) ? userInstance.live_modules.length : 0;
+        var savedModsCount = (userInstance && userInstance.saved_modules) ? userInstance.saved_modules.length : 0;
+        var cliSessions = (userInstance && userInstance.active_cli_sessions) ? userInstance.active_cli_sessions : 0;
+        var userLevel = (currentUser && currentUser.level) ? currentUser.level : 1;
+        var userName = (currentUser && (currentUser.username || currentUser.name)) ? (currentUser.username || currentUser.name) : '-';
+        var userEmail = (currentUser && currentUser.email) ? currentUser.email : 'Nicht angegeben';
 
-        content.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value">${loadedModsCount}</div>
-                    <div class="stat-label">Aktive Module</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${savedModsCount}</div>
-                    <div class="stat-label">Gespeichert</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${cliSessions}</div>
-                    <div class="stat-label">CLI Sitzungen</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${currentUser?.level || 1}</div>
-                    <div class="stat-label">Level</div>
-                </div>
-            </div>
+        var html = '<div class="stats-grid">' +
+            '<div class="stat-card"><div class="stat-value">' + loadedModsCount + '</div><div class="stat-label">Aktive Module</div></div>' +
+            '<div class="stat-card"><div class="stat-value">' + savedModsCount + '</div><div class="stat-label">Gespeichert</div></div>' +
+            '<div class="stat-card"><div class="stat-value">' + cliSessions + '</div><div class="stat-label">CLI Sitzungen</div></div>' +
+            '<div class="stat-card"><div class="stat-value">' + userLevel + '</div><div class="stat-label">Level</div></div>' +
+        '</div>' +
+        '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">bolt</span>Schnellzugriff</h3>' +
+            '<div class="quick-actions">' +
+                '<button class="tb-btn tb-btn-primary" onclick="showSection(\\'my-modules\\')">' +
+                    '<span class="material-symbols-outlined">extension</span>Module verwalten</button>' +
+                '<button class="tb-btn tb-btn-secondary" onclick="showSection(\\'settings\\')">' +
+                    '<span class="material-symbols-outlined">settings</span>Einstellungen</button>' +
+                '<button class="tb-btn tb-btn-secondary" onclick="showSection(\\'appearance\\')">' +
+                    '<span class="material-symbols-outlined">palette</span>Theme ändern</button>' +
+            '</div>' +
+        '</div>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">bolt</span>Schnellzugriff</h3>
-                <div class="quick-actions">
-                    <button class="tb-btn tb-btn-primary" onclick="showSection('my-modules')">
-                        <span class="material-symbols-outlined">extension</span>
-                        Module verwalten
-                    </button>
-                    <button class="tb-btn tb-btn-secondary" onclick="showSection('settings')">
-                        <span class="material-symbols-outlined">settings</span>
-                        Einstellungen
-                    </button>
-                    <button class="tb-btn tb-btn-secondary" onclick="showSection('appearance')">
-                        <span class="material-symbols-outlined">palette</span>
-                        Theme ändern
-                    </button>
-                </div>
-            </div>
+        if (userInstance && userInstance.live_modules && userInstance.live_modules.length > 0) {
+            html += '<div class="dashboard-card">' +
+                '<h3><span class="material-symbols-outlined">play_circle</span>Aktive Module</h3>' +
+                '<div class="module-grid">';
+            userInstance.live_modules.forEach(function(mod) {
+                html += '<div class="module-card active"><div class="module-header">' +
+                    '<span class="module-name">' + TB.utils.escapeHtml(mod.name) + '</span>' +
+                    '<span class="module-status loaded">Aktiv</span></div></div>';
+            });
+            html += '</div></div>';
+        }
 
-            ${userInstance?.live_modules?.length > 0 ? `
-                <div class="dashboard-card">
-                    <h3><span class="material-symbols-outlined">play_circle</span>Aktive Module</h3>
-                    <div class="module-grid">
-                        ${userInstance.live_modules.map(mod => `
-                            <div class="module-card active">
-                                <div class="module-header">
-                                    <span class="module-name">${TB.utils.escapeHtml(mod.name)}</span>
-                                    <span class="module-status loaded">Aktiv</span>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            ` : ''}
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">account_circle</span>Konto-Info</h3>' +
+            '<table class="info-table">' +
+                '<tr><td>Benutzername</td><td><strong>' + TB.utils.escapeHtml(userName) + '</strong></td></tr>' +
+                '<tr><td>E-Mail</td><td>' + TB.utils.escapeHtml(userEmail) + '</td></tr>' +
+                '<tr><td>Level</td><td>' + userLevel + '</td></tr>' +
+            '</table></div>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">account_circle</span>Konto-Info</h3>
-                <table class="info-table">
-                    <tr><td>Benutzername</td><td><strong>${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</strong></td></tr>
-                    <tr><td>E-Mail</td><td>${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</td></tr>
-                    <tr><td>Level</td><td>${currentUser?.level || 1}</td></tr>
-                </table>
-            </div>
-        `;
+        content.innerHTML = html;
     }
 
     // ========== Module ==========
     async function loadModules() {
-        const content = document.getElementById('my-modules-content');
+        var content = document.getElementById('my-modules-content');
 
         try {
-            const instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
-            if (instanceRes.error === TB.ToolBoxError.none && instanceRes.get()?.length > 0) {
-                userInstance = instanceRes.get()[0];
+            var instanceRes = await TB.api.request('CloudM.UserDashboard', 'get_my_active_instances', null, 'GET');
+            var resData = instanceRes.get();
+            if (instanceRes.error === TB.ToolBoxError.none && resData && resData.length > 0) {
+                userInstance = resData[0];
             }
         } catch(e) {}
 
-        const liveModNames = (userInstance?.live_modules || []).map(m => m.name);
-        const savedModNames = userInstance?.saved_modules || [];
+        var liveModNames = [];
+        if (userInstance && userInstance.live_modules) {
+            userInstance.live_modules.forEach(function(m) { liveModNames.push(m.name); });
+        }
+        var savedModNames = (userInstance && userInstance.saved_modules) ? userInstance.saved_modules : [];
 
-        const categories = {};
-        allModules.forEach(mod => {
-            const category = mod.split('.')[0] || 'Andere';
+        var categories = {};
+        allModules.forEach(function(mod) {
+            var category = mod.split('.')[0] || 'Andere';
             if (!categories[category]) categories[category] = [];
             categories[category].push(mod);
         });
 
-        content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">info</span>Hinweis</h3>
-                <p class="text-sm text-muted" style="margin:0;">
-                    Aktivieren oder deaktivieren Sie Module nach Bedarf. Gespeicherte Module werden beim nächsten Login automatisch geladen.
-                </p>
-            </div>
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">info</span>Hinweis</h3>' +
+            '<p class="text-sm text-muted" style="margin:0;">Aktivieren oder deaktivieren Sie Module nach Bedarf. Gespeicherte Module werden beim nächsten Login automatisch geladen.</p>' +
+        '</div>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">bookmark</span>Gespeicherte Module (${savedModNames.length})</h3>
-                ${savedModNames.length > 0 ? `
-                    <div class="module-grid">
-                        ${savedModNames.map(modName => {
-                            const isLive = liveModNames.includes(modName);
-                            return `
-                                <div class="module-card ${isLive ? 'active' : ''}">
-                                    <div class="module-header">
-                                        <span class="module-name">${TB.utils.escapeHtml(modName)}</span>
-                                        <span class="module-status ${isLive ? 'loaded' : 'available'}">${isLive ? 'Aktiv' : 'Gespeichert'}</span>
-                                    </div>
-                                    <div class="module-actions">
-                                        ${!isLive ? `
-                                            <button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule('${TB.utils.escapeHtml(modName)}')">
-                                                <span class="material-symbols-outlined">play_arrow</span>
-                                                Laden
-                                            </button>
-                                        ` : `
-                                            <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule('${TB.utils.escapeHtml(modName)}')">
-                                                <span class="material-symbols-outlined">stop</span>
-                                                Entladen
-                                            </button>
-                                        `}
-                                        <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="removeFromSaved('${TB.utils.escapeHtml(modName)}')">
-                                            <span class="material-symbols-outlined">delete</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                ` : '<p class="text-muted">Keine Module gespeichert.</p>'}
-            </div>
+        // Saved modules section
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">bookmark</span>Gespeicherte Module (' + savedModNames.length + ')</h3>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">apps</span>Verfügbare Module (${allModules.length})</h3>
-                <div class="mb-4">
-                    <input type="text" id="module-search" class="tb-input" placeholder="Module durchsuchen..." oninput="filterModules(this.value)">
-                </div>
-                <div id="module-categories">
-                    ${Object.entries(categories).map(([cat, mods]) => `
-                        <details class="mb-4" ${cat === 'CloudM' ? 'open' : ''}>
-                            <summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">
-                                <span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>
-                                ${TB.utils.escapeHtml(cat)} (${mods.length})
-                            </summary>
-                            <div class="module-grid" style="margin-top:var(--space-3);">
-                                ${mods.map(modName => {
-                                    const isLive = liveModNames.includes(modName);
-                                    const isSaved = savedModNames.includes(modName);
-                                    return `
-                                        <div class="module-card module-item ${isLive ? 'active' : ''}" data-name="${modName.toLowerCase()}">
-                                            <div class="module-header">
-                                                <span class="module-name">${TB.utils.escapeHtml(modName)}</span>
-                                                ${isLive ? '<span class="module-status loaded">Aktiv</span>' :
-                                                  isSaved ? '<span class="module-status available">Gespeichert</span>' : ''}
-                                            </div>
-                                            <div class="module-actions">
-                                                ${!isSaved ? `
-                                                    <button class="tb-btn tb-btn-primary tb-btn-sm" onclick="addToSaved('${TB.utils.escapeHtml(modName)}')">
-                                                        <span class="material-symbols-outlined">bookmark_add</span>
-                                                        Speichern
-                                                    </button>
-                                                ` : ''}
-                                                ${!isLive ? `
-                                                    <button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule('${TB.utils.escapeHtml(modName)}')">
-                                                        <span class="material-symbols-outlined">play_arrow</span>
-                                                        Laden
-                                                    </button>
-                                                ` : `
-                                                    <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule('${TB.utils.escapeHtml(modName)}')">
-                                                        <span class="material-symbols-outlined">stop</span>
-                                                        Entladen
-                                                    </button>
-                                                `}
-                                            </div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </details>
-                    `).join('')}
-                </div>
-            </div>
-        `;
+        if (savedModNames.length > 0) {
+            html += '<div class="module-grid">';
+            savedModNames.forEach(function(modName) {
+                var isLive = liveModNames.indexOf(modName) !== -1;
+                var escapedName = TB.utils.escapeHtml(modName);
+                html += '<div class="module-card ' + (isLive ? 'active' : '') + '">' +
+                    '<div class="module-header">' +
+                        '<span class="module-name">' + escapedName + '</span>' +
+                        '<span class="module-status ' + (isLive ? 'loaded' : 'available') + '">' + (isLive ? 'Aktiv' : 'Gespeichert') + '</span>' +
+                    '</div>' +
+                    '<div class="module-actions">';
+                if (!isLive) {
+                    html += '<button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule(\\'' + escapedName + '\\')">' +
+                        '<span class="material-symbols-outlined">play_arrow</span>Laden</button>';
+                } else {
+                    html += '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule(\\'' + escapedName + '\\')">' +
+                        '<span class="material-symbols-outlined">stop</span>Entladen</button>';
+                }
+                html += '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="removeFromSaved(\\'' + escapedName + '\\')">' +
+                    '<span class="material-symbols-outlined">delete</span></button>' +
+                    '</div></div>';
+            });
+            html += '</div>';
+        } else {
+            html += '<p class="text-muted">Keine Module gespeichert.</p>';
+        }
+        html += '</div>';
+
+        // Available modules section
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">apps</span>Verfügbare Module (' + allModules.length + ')</h3>' +
+            '<div class="mb-4"><input type="text" id="module-search" class="tb-input" placeholder="Module durchsuchen..." oninput="filterModules(this.value)"></div>' +
+            '<div id="module-categories">';
+
+        Object.keys(categories).forEach(function(cat) {
+            var mods = categories[cat];
+            var isOpen = cat === 'CloudM' ? ' open' : '';
+            html += '<details class="mb-4"' + isOpen + '>' +
+                '<summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">' +
+                    '<span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>' +
+                    TB.utils.escapeHtml(cat) + ' (' + mods.length + ')' +
+                '</summary>' +
+                '<div class="module-grid" style="margin-top:var(--space-3);">';
+
+            mods.forEach(function(modName) {
+                var isLive = liveModNames.indexOf(modName) !== -1;
+                var isSaved = savedModNames.indexOf(modName) !== -1;
+                var escapedName = TB.utils.escapeHtml(modName);
+                var statusHtml = isLive ? '<span class="module-status loaded">Aktiv</span>' :
+                                 isSaved ? '<span class="module-status available">Gespeichert</span>' : '';
+
+                html += '<div class="module-card module-item ' + (isLive ? 'active' : '') + '" data-name="' + modName.toLowerCase() + '">' +
+                    '<div class="module-header">' +
+                        '<span class="module-name">' + escapedName + '</span>' + statusHtml +
+                    '</div>' +
+                    '<div class="module-actions">';
+                if (!isSaved) {
+                    html += '<button class="tb-btn tb-btn-primary tb-btn-sm" onclick="addToSaved(\\'' + escapedName + '\\')">' +
+                        '<span class="material-symbols-outlined">bookmark_add</span>Speichern</button>';
+                }
+                if (!isLive) {
+                    html += '<button class="tb-btn tb-btn-success tb-btn-sm" onclick="loadModule(\\'' + escapedName + '\\')">' +
+                        '<span class="material-symbols-outlined">play_arrow</span>Laden</button>';
+                } else {
+                    html += '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="unloadModule(\\'' + escapedName + '\\')">' +
+                        '<span class="material-symbols-outlined">stop</span>Entladen</button>';
+                }
+                html += '</div></div>';
+            });
+
+            html += '</div></details>';
+        });
+
+        html += '</div></div>';
+        content.innerHTML = html;
     }
 
     window.filterModules = function(query) {
-        const q = query.toLowerCase();
-        document.querySelectorAll('.module-item').forEach(item => {
-            const name = item.dataset.name;
-            item.style.display = name.includes(q) ? '' : 'none';
+        var q = query.toLowerCase();
+        document.querySelectorAll('.module-item').forEach(function(item) {
+            var name = item.dataset.name;
+            item.style.display = name.indexOf(q) !== -1 ? '' : 'none';
         });
     };
 
     window.loadModule = async function(modName) {
-        TB.ui.Loader.show(`Lade ${modName}...`);
+        TB.ui.Loader.show('Lade ' + modName + '...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_instance', {module_name: modName}, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_instance', {module_name: modName}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
-                TB.ui.Toast.showSuccess(`${modName} wurde geladen`);
+                TB.ui.Toast.showSuccess(modName + ' wurde geladen');
                 await loadModules();
             } else {
                 TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Laden');
@@ -1527,12 +1496,12 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.unloadModule = async function(modName) {
-        TB.ui.Loader.show(`Entlade ${modName}...`);
+        TB.ui.Loader.show('Entlade ' + modName + '...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_instance', {module_name: modName}, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_instance', {module_name: modName}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
-                TB.ui.Toast.showSuccess(`${modName} wurde entladen`);
+                TB.ui.Toast.showSuccess(modName + ' wurde entladen');
                 await loadModules();
             } else {
                 TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Entladen');
@@ -1546,10 +1515,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     window.addToSaved = async function(modName) {
         TB.ui.Loader.show('Speichere...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_saved', {module_name: modName}, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'add_module_to_saved', {module_name: modName}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
-                TB.ui.Toast.showSuccess(`${modName} gespeichert`);
+                TB.ui.Toast.showSuccess(modName + ' gespeichert');
                 await loadModules();
             } else {
                 TB.ui.Toast.showError(res.info.help_text || 'Fehler');
@@ -1561,13 +1530,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.removeFromSaved = async function(modName) {
-        if (!confirm(`Möchten Sie "${modName}" wirklich aus den gespeicherten Modulen entfernen?`)) return;
+        if (!confirm('Möchten Sie "' + modName + '" wirklich aus den gespeicherten Modulen entfernen?')) return;
         TB.ui.Loader.show('Entferne...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_saved', {module_name: modName}, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'remove_module_from_saved', {module_name: modName}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
-                TB.ui.Toast.showSuccess(`${modName} entfernt`);
+                TB.ui.Toast.showSuccess(modName + ' entfernt');
                 await loadModules();
             } else {
                 TB.ui.Toast.showError(res.info.help_text || 'Fehler');
@@ -1579,15 +1548,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     // ========== Daten-Tab ==========
-    let userFilesCache = [];
-    let currentDataTab = 'settings';
+    var userFilesCache = [];
+    var currentDataTab = 'settings';
 
     async function loadModData() {
-        const content = document.getElementById('mod-data-content');
+        var content = document.getElementById('mod-data-content');
 
         // Load mod data
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'get_all_mod_data', null, 'GET');
+            var res = await TB.api.request('CloudM.UserDashboard', 'get_all_mod_data', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 modDataCache = res.get() || {};
             }
@@ -1595,7 +1564,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
         // Load user files
         try {
-            const filesRes = await TB.api.request('CloudM.UserDashboard', 'list_user_files', null, 'GET');
+            var filesRes = await TB.api.request('CloudM.UserDashboard', 'list_user_files', null, 'GET');
             if (filesRes.error === TB.ToolBoxError.none) {
                 userFilesCache = filesRes.get() || [];
             }
@@ -1603,123 +1572,108 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
             userFilesCache = [];
         }
 
-        const settings = currentUser?.settings || {};
-        const modNames = Object.keys(modDataCache);
+        var settings = (currentUser && currentUser.settings) ? currentUser.settings : {};
+        var modNames = Object.keys(modDataCache);
 
-        content.innerHTML = `
-            <div class="data-tabs">
-                <button class="data-tab ${currentDataTab === 'settings' ? 'active' : ''}" onclick="switchDataTab('settings')">
-                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">settings</span>
-                    Einstellungen
-                </button>
-                <button class="data-tab ${currentDataTab === 'files' ? 'active' : ''}" onclick="switchDataTab('files')">
-                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">folder</span>
-                    Dateien
-                </button>
-                <button class="data-tab ${currentDataTab === 'mods' ? 'active' : ''}" onclick="switchDataTab('mods')">
-                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">extension</span>
-                    Mod-Daten
-                </button>
-            </div>
+        // Build HTML with string concatenation
+        var html = '<div class="data-tabs">' +
+            '<button class="data-tab ' + (currentDataTab === 'settings' ? 'active' : '') + '" onclick="switchDataTab(\\'settings\\')">' +
+                '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">settings</span>Einstellungen</button>' +
+            '<button class="data-tab ' + (currentDataTab === 'files' ? 'active' : '') + '" onclick="switchDataTab(\\'files\\')">' +
+                '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">folder</span>Dateien</button>' +
+            '<button class="data-tab ' + (currentDataTab === 'mods' ? 'active' : '') + '" onclick="switchDataTab(\\'mods\\')">' +
+                '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">extension</span>Mod-Daten</button>' +
+        '</div>';
 
-            <!-- Settings Panel -->
-            <div id="data-panel-settings" class="data-panel ${currentDataTab === 'settings' ? 'active' : ''}">
-                <div class="dashboard-card">
-                    <h3><span class="material-symbols-outlined">tune</span>Gespeicherte Einstellungen</h3>
-                    <p class="text-sm text-muted mb-4">Ihre persönlichen Einstellungen, die von Modulen gelesen werden können.</p>
+        // Settings Panel
+        html += '<div id="data-panel-settings" class="data-panel ' + (currentDataTab === 'settings' ? 'active' : '') + '">' +
+            '<div class="dashboard-card">' +
+                '<h3><span class="material-symbols-outlined">tune</span>Gespeicherte Einstellungen</h3>' +
+                '<p class="text-sm text-muted mb-4">Ihre persönlichen Einstellungen, die von Modulen gelesen werden können.</p>';
 
-                    ${Object.keys(settings).length > 0 ? `
-                        <div class="config-grid">
-                            ${Object.entries(settings).map(([key, value]) => `
-                                <div class="config-item">
-                                    <div class="config-key">${TB.utils.escapeHtml(key.replace(/_/g, ' '))}</div>
-                                    <div class="config-value ${typeof value === 'boolean' ? (value ? 'boolean-true' : 'boolean-false') : ''}">
-                                        ${typeof value === 'boolean' ? (value ? '✓ Aktiviert' : '✗ Deaktiviert') :
-                                          typeof value === 'object' ? JSON.stringify(value) :
-                                          TB.utils.escapeHtml(String(value))}
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    ` : `
-                        <div class="empty-state" style="padding:var(--space-6);">
-                            <span class="material-symbols-outlined">settings_suggest</span>
-                            <p class="text-muted">Noch keine Einstellungen gespeichert.</p>
-                        </div>
-                    `}
-                </div>
-            </div>
+        var settingsKeys = Object.keys(settings);
+        if (settingsKeys.length > 0) {
+            html += '<div class="config-grid">';
+            settingsKeys.forEach(function(key) {
+                var value = settings[key];
+                var valueClass = typeof value === 'boolean' ? (value ? 'boolean-true' : 'boolean-false') : '';
+                var valueStr = typeof value === 'boolean' ? (value ? '✓ Aktiviert' : '✗ Deaktiviert') :
+                              typeof value === 'object' ? JSON.stringify(value) : TB.utils.escapeHtml(String(value));
+                html += '<div class="config-item">' +
+                    '<div class="config-key">' + TB.utils.escapeHtml(key.replace(/_/g, ' ')) + '</div>' +
+                    '<div class="config-value ' + valueClass + '">' + valueStr + '</div></div>';
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="empty-state" style="padding:var(--space-6);"><span class="material-symbols-outlined">settings_suggest</span>' +
+                '<p class="text-muted">Noch keine Einstellungen gespeichert.</p></div>';
+        }
+        html += '</div></div>';
 
-            <!-- Files Panel -->
-            <div id="data-panel-files" class="data-panel ${currentDataTab === 'files' ? 'active' : ''}">
-                <div class="dashboard-card">
-                    <h3><span class="material-symbols-outlined">cloud_upload</span>Datei hochladen</h3>
-                    <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
-                        <span class="material-symbols-outlined">upload_file</span>
-                        <p class="text-muted mb-2">Dateien hierher ziehen oder klicken</p>
-                        <p class="text-sm text-muted">Max. 10 MB pro Datei</p>
-                    </div>
-                    <input type="file" id="file-input" style="display:none;" multiple onchange="handleFileUpload(this.files)">
-                </div>
+        // Files Panel
+        html += '<div id="data-panel-files" class="data-panel ' + (currentDataTab === 'files' ? 'active' : '') + '">' +
+            '<div class="dashboard-card">' +
+                '<h3><span class="material-symbols-outlined">cloud_upload</span>Datei hochladen</h3>' +
+                '<div class="upload-zone" id="upload-zone" onclick="document.getElementById(\\'file-input\\').click()">' +
+                    '<span class="material-symbols-outlined">upload_file</span>' +
+                    '<p class="text-muted mb-2">Dateien hierher ziehen oder klicken</p>' +
+                    '<p class="text-sm text-muted">Max. 10 MB pro Datei</p>' +
+                '</div>' +
+                '<input type="file" id="file-input" style="display:none;" multiple onchange="handleFileUpload(this.files)">' +
+            '</div>' +
+            '<div class="dashboard-card">' +
+                '<h3><span class="material-symbols-outlined">folder_open</span>Meine Dateien</h3>' +
+                '<div id="file-tree-container">' + renderFileTree(userFilesCache) + '</div>' +
+            '</div></div>';
 
-                <div class="dashboard-card">
-                    <h3><span class="material-symbols-outlined">folder_open</span>Meine Dateien</h3>
-                    <div id="file-tree-container">
-                        ${renderFileTree(userFilesCache)}
-                    </div>
-                </div>
-            </div>
+        // Mod Data Panel
+        html += '<div id="data-panel-mods" class="data-panel ' + (currentDataTab === 'mods' ? 'active' : '') + '">' +
+            '<div class="dashboard-card">' +
+                '<h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>' +
+                '<p class="text-sm text-muted" style="margin:0;">Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese einsehen und bearbeiten.</p>' +
+            '</div>';
 
-            <!-- Mod Data Panel -->
-            <div id="data-panel-mods" class="data-panel ${currentDataTab === 'mods' ? 'active' : ''}">
-                <div class="dashboard-card">
-                    <h3><span class="material-symbols-outlined">info</span>Was sind Mod-Daten?</h3>
-                    <p class="text-sm text-muted" style="margin:0;">
-                        Jedes Modul kann eigene Daten für Sie speichern. Hier können Sie diese einsehen und bearbeiten.
-                    </p>
-                </div>
+        if (modNames.length > 0) {
+            modNames.forEach(function(modName) {
+                var data = modDataCache[modName] || {};
+                var entries = Object.entries(data);
+                var escapedModName = TB.utils.escapeHtml(modName);
 
-                ${modNames.length > 0 ? modNames.map(modName => {
-                    const data = modDataCache[modName] || {};
-                    const entries = Object.entries(data);
-                    return `
-                        <div class="mod-data-panel">
-                            <div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle('open'); this.querySelector('.expand-icon').textContent = this.nextElementSibling.classList.contains('open') ? 'expand_less' : 'expand_more';">
-                                <span class="flex items-center gap-2">
-                                    <span class="material-symbols-outlined">extension</span>
-                                    ${TB.utils.escapeHtml(modName)}
-                                </span>
-                                <span class="material-symbols-outlined expand-icon">expand_more</span>
-                            </div>
-                            <div class="mod-data-content">
-                                ${entries.length > 0 ? entries.map(([key, value]) => {
-                                    const valStr = typeof value === 'boolean'
-                                        ? '<span class="' + (value ? 'text-success' : 'text-error') + '">' + (value ? 'Ja' : 'Nein') + '</span>'
-                                        : TB.utils.escapeHtml(String(value).substring(0, 100));
-                                    return '<div class="mod-data-item"><span class="mod-data-key">' + TB.utils.escapeHtml(key) + '</span><span class="mod-data-value">' + valStr + '</span></div>';
-                                }).join('') : '<p class="text-muted text-sm">Keine Daten gespeichert.</p>'}
-                                <div class="mt-4 flex gap-2">
-                                    <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="editModData('${TB.utils.escapeHtml(modName)}')">
-                                        <span class="material-symbols-outlined">edit</span>
-                                        Bearbeiten
-                                    </button>
-                                    <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="clearModData('${TB.utils.escapeHtml(modName)}')">
-                                        <span class="material-symbols-outlined">delete</span>
-                                        Löschen
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }).join('') : `
-                    <div class="empty-state">
-                        <span class="material-symbols-outlined">folder_off</span>
-                        <p>Noch keine Mod-Daten vorhanden.</p>
-                        <p class="text-sm text-muted mt-2">Module speichern hier automatisch Ihre Einstellungen.</p>
-                    </div>
-                `}
-            </div>
-        `;
+                html += '<div class="mod-data-panel">' +
+                    '<div class="mod-data-header" onclick="this.nextElementSibling.classList.toggle(\\'open\\'); this.querySelector(\\'.expand-icon\\').textContent = this.nextElementSibling.classList.contains(\\'open\\') ? \\'expand_less\\' : \\'expand_more\\';">' +
+                        '<span class="flex items-center gap-2"><span class="material-symbols-outlined">extension</span>' + escapedModName + '</span>' +
+                        '<span class="material-symbols-outlined expand-icon">expand_more</span>' +
+                    '</div>' +
+                    '<div class="mod-data-content">';
+
+                if (entries.length > 0) {
+                    entries.forEach(function(entry) {
+                        var key = entry[0];
+                        var value = entry[1];
+                        var valStr = typeof value === 'boolean'
+                            ? '<span class="' + (value ? 'text-success' : 'text-error') + '">' + (value ? 'Ja' : 'Nein') + '</span>'
+                            : TB.utils.escapeHtml(String(value).substring(0, 100));
+                        html += '<div class="mod-data-item"><span class="mod-data-key">' + TB.utils.escapeHtml(key) + '</span><span class="mod-data-value">' + valStr + '</span></div>';
+                    });
+                } else {
+                    html += '<p class="text-muted text-sm">Keine Daten gespeichert.</p>';
+                }
+
+                html += '<div class="mt-4 flex gap-2">' +
+                    '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="editModData(\\'' + escapedModName + '\\')">' +
+                        '<span class="material-symbols-outlined">edit</span>Bearbeiten</button>' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="clearModData(\\'' + escapedModName + '\\')">' +
+                        '<span class="material-symbols-outlined">delete</span>Löschen</button>' +
+                '</div></div></div>';
+            });
+        } else {
+            html += '<div class="empty-state"><span class="material-symbols-outlined">folder_off</span>' +
+                '<p>Noch keine Mod-Daten vorhanden.</p>' +
+                '<p class="text-sm text-muted mt-2">Module speichern hier automatisch Ihre Einstellungen.</p></div>';
+        }
+        html += '</div>';
+
+        content.innerHTML = html;
 
         // Setup drag & drop
         setupUploadZone();
@@ -1731,11 +1685,11 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         }
 
         // Build tree structure from flat file list
-        const tree = {};
-        files.forEach(file => {
-            const parts = file.path.split('/').filter(p => p);
-            let current = tree;
-            parts.forEach((part, i) => {
+        var tree = {};
+        files.forEach(function(file) {
+            var parts = file.path.split('/').filter(function(p) { return p; });
+            var current = tree;
+            parts.forEach(function(part, i) {
                 if (!current[part]) {
                     current[part] = i === parts.length - 1 ? { _file: file } : {};
                 }
@@ -1747,39 +1701,42 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     }
 
     function renderTreeNode(node, path) {
-        let html = '';
-        const entries = Object.entries(node).sort(([a, aVal], [b, bVal]) => {
-            const aIsFile = aVal._file;
-            const bIsFile = bVal._file;
+        var html = '';
+        var entries = Object.entries(node).sort(function(a, b) {
+            var aIsFile = a[1]._file;
+            var bIsFile = b[1]._file;
             if (aIsFile && !bIsFile) return 1;
             if (!aIsFile && bIsFile) return -1;
-            return a.localeCompare(b);
+            return a[0].localeCompare(b[0]);
         });
 
-        for (const [name, value] of entries) {
+        for (var i = 0; i < entries.length; i++) {
+            var name = entries[i][0];
+            var value = entries[i][1];
             if (name === '_file') continue;
 
-            const fullPath = path ? path + '/' + name : name;
-            const isFile = value._file;
+            var fullPath = path ? path + '/' + name : name;
+            var isFile = value._file;
 
             if (isFile) {
-                const file = value._file;
-                const icon = getFileIcon(file.content_type || file.type || '');
-                const size = formatFileSize(file.size || 0);
-                const escapedPath = TB.utils.escapeHtml(file.path);
-                const escapedName = TB.utils.escapeHtml(name);
+                var file = value._file;
+                var icon = getFileIcon(file.content_type || file.type || '');
+                var size = formatFileSize(file.size || 0);
+                var escapedPath = TB.utils.escapeHtml(file.path);
+                var escapedName = TB.utils.escapeHtml(name);
+                var quotedPath = "\\'" + escapedPath.replace(/'/g, "\\\\'") + "\\'";
                 html += '<div class="file-tree-item file" data-path="' + escapedPath + '">' +
                     '<span class="material-symbols-outlined">' + icon + '</span>' +
                     '<span class="file-tree-name">' + escapedName + '</span>' +
                     '<span class="file-tree-size">' + size + '</span>' +
                     '<div class="file-actions">' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); previewFile( ${escapedPath}  )" title="Vorschau"><span class="material-symbols-outlined">visibility</span></button>' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(  ${escapedPath}  )" title="Download"><span class="material-symbols-outlined">download</span></button>' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(  ${escapedPath}  )" title="Löschen"><span class="material-symbols-outlined">delete</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); previewFile(' + quotedPath + ')" title="Vorschau"><span class="material-symbols-outlined">visibility</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(' + quotedPath + ')" title="Download"><span class="material-symbols-outlined">download</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(' + quotedPath + ')" title="Löschen"><span class="material-symbols-outlined">delete</span></button>' +
                     '</div></div>';
             } else {
-                const childCount = Object.keys(value).filter(k => k !== '_file').length;
-                const escapedName = TB.utils.escapeHtml(name);
+                var childCount = Object.keys(value).filter(function(k) { return k !== '_file'; }).length;
+                var escapedName = TB.utils.escapeHtml(name);
                 html += '<div class="file-tree-item folder" onclick="this.nextElementSibling.classList.toggle(\\'collapsed\\'); this.querySelector(\\'.folder-icon\\').textContent = this.nextElementSibling.classList.contains(\\'collapsed\\') ? \\'folder\\' : \\'folder_open\\';">' +
                     '<span class="material-symbols-outlined folder-icon">folder_open</span>' +
                     '<span class="file-tree-name">' + escapedName + '</span>' +
@@ -1841,9 +1798,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     window.handleFileUpload = async function(files) {
         if (!files || files.length === 0) return;
 
-        for (const file of files) {
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
             if (file.size > 10 * 1024 * 1024) {
-                TB.ui.Toast.showError(`\${file.name} ist zu groß (max. 10 MB)`);
+                TB.ui.Toast.showError(file.name + ' ist zu groß (max. 10 MB)');
                 continue;
             }
 
@@ -1851,14 +1809,14 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
             try {
                 // Read file as base64
-                const base64 = await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result.split(',')[1]);
+                var base64 = await new Promise(function(resolve, reject) {
+                    var reader = new FileReader();
+                    reader.onload = function() { resolve(reader.result.split(',')[1]); };
                     reader.onerror = reject;
                     reader.readAsDataURL(file);
                 });
 
-                const res = await TB.api.request('CloudM.UserDashboard', 'upload_user_file', {
+                var res = await TB.api.request('CloudM.UserDashboard', 'upload_user_file', {
                     file: base64,
                     path: file.name,
                     content_type: file.type || 'application/octet-stream'
@@ -1867,7 +1825,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 if (res.error === TB.ToolBoxError.none) {
                     TB.ui.Toast.showSuccess(file.name + ' hochgeladen');
                 } else {
-                    TB.ui.Toast.showError('Fehler: ' + (res.info?.help_text || 'Upload fehlgeschlagen'));
+                    TB.ui.Toast.showError('Fehler: ' + ((res.info && res.info.help_text) ? res.info.help_text : 'Upload fehlgeschlagen'));
                 }
             } catch(e) {
                 console.error('Upload error:', e);
@@ -1882,20 +1840,20 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     window.downloadFile = async function(path) {
         TB.ui.Loader.show('Download wird vorbereitet...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+            var res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path: path }, 'GET');
             TB.ui.Loader.hide();
 
             if (res.error === TB.ToolBoxError.none) {
-                const data = res.get();
+                var data = res.get();
                 // Convert base64 to binary
-                const binaryString = atob(data.content);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
+                var binaryString = atob(data.content);
+                var bytes = new Uint8Array(binaryString.length);
+                for (var i = 0; i < binaryString.length; i++) {
                     bytes[i] = binaryString.charCodeAt(i);
                 }
-                const blob = new Blob([bytes], { type: data.content_type || 'application/octet-stream' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
+                var blob = new Blob([bytes], { type: data.content_type || 'application/octet-stream' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
                 a.href = url;
                 a.download = path.split('/').pop();
                 a.click();
@@ -1910,40 +1868,61 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.previewFile = async function(path) {
-        const file = userFilesCache.find(f => f.path === path);
+        var file = userFilesCache.find(function(f) { return f.path === path; });
         if (!file) return;
 
-        const contentType = file.content_type || file.type || '';
+        var contentType = file.content_type || file.type || '';
+        var ext = path.split('.').pop().toLowerCase();
 
-        if (contentType.startsWith('image/')) {
+        // Fallback: Detect image by extension if content-type is generic
+        var isImage = contentType.indexOf('image/') === 0 ||
+                      (contentType === 'application/octet-stream' &&
+                       ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].indexOf(ext) !== -1);
+
+        // Correct content-type for images if needed
+        if (isImage && contentType === 'application/octet-stream') {
+            var typeMap = {
+                'png': 'image/png',
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'gif': 'image/gif',
+                'webp': 'image/webp',
+                'svg': 'image/svg+xml',
+                'bmp': 'image/bmp',
+                'ico': 'image/x-icon'
+            };
+            contentType = typeMap[ext] || 'image/png';
+        }
+
+        if (isImage) {
             TB.ui.Loader.show('Lade Vorschau...');
             try {
-                const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+                var res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path: path }, 'GET');
                 TB.ui.Loader.hide();
                 if (res.error === TB.ToolBoxError.none) {
-                    const data = res.get();
+                    var data = res.get();
                     TB.ui.Modal.show({
                         title: path.split('/').pop(),
                         content: '<img src="data:' + contentType + ';base64,' + data.content + '" style="max-width:100%; max-height:70vh; border-radius:var(--radius-md);">',
-                        buttons: [{ text: 'Schließen', action: m => m.close() }]
+                        buttons: [{ text: 'Schließen', action: function(m) { m.close(); } }]
                     });
                 }
             } catch(e) {
                 TB.ui.Loader.hide();
                 TB.ui.Toast.showError('Vorschau fehlgeschlagen');
             }
-        } else if (contentType.startsWith('text/') || contentType.includes('json')) {
+        } else if (contentType.indexOf('text/') === 0 || contentType.indexOf('json') !== -1) {
             TB.ui.Loader.show('Lade Vorschau...');
             try {
-                const res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path }, 'GET');
+                var res = await TB.api.request('CloudM.UserDashboard', 'download_user_file', { path: path }, 'GET');
                 TB.ui.Loader.hide();
                 if (res.error === TB.ToolBoxError.none) {
-                    const data = res.get();
-                    const text = atob(data.content);
+                    var data = res.get();
+                    var text = atob(data.content);
                     TB.ui.Modal.show({
                         title: path.split('/').pop(),
                         content: '<pre style="max-height:60vh; overflow:auto; padding:var(--space-4); background:var(--bg-sunken); border-radius:var(--radius-md); font-size:var(--text-sm);">' + TB.utils.escapeHtml(text) + '</pre>',
-                        buttons: [{ text: 'Schließen', action: m => m.close() }]
+                        buttons: [{ text: 'Schließen', action: function(m) { m.close(); } }]
                     });
                 }
             } catch(e) {
@@ -1951,7 +1930,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                 TB.ui.Toast.showError('Vorschau fehlgeschlagen');
             }
         } else {
-            TB.ui.Toast.showInfo('Vorschau für diesen Dateityp nicht verfügbar');
+            TB.ui.Toast.showInfo('Vorschau für diesen Dateityp nicht verfügbar: ' + contentType);
         }
     };
 
@@ -1960,7 +1939,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
         TB.ui.Loader.show('Lösche...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'delete_user_file', { path }, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'delete_user_file', { path: path }, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
                 TB.ui.Toast.showSuccess('Datei gelöscht');
@@ -1975,25 +1954,23 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.editModData = async function(modName) {
-        const data = modDataCache[modName] || {};
-        const json = JSON.stringify(data, null, 2);
+        var data = modDataCache[modName] || {};
+        var json = JSON.stringify(data, null, 2);
 
         TB.ui.Modal.show({
-            title: `${modName} - Daten bearbeiten`,
-            content: `
-                <p class="text-sm text-muted mb-4">Vorsicht: Änderungen können die Funktionalität des Moduls beeinflussen.</p>
-                <textarea id="mod-data-editor" style="width:100%; height:200px; font-family:var(--font-mono); padding:var(--space-3); border:var(--border-width) solid var(--border-default); border-radius:var(--radius-md); background:var(--input-bg); color:var(--text-primary);">${TB.utils.escapeHtml(json)}</textarea>
-            `,
+            title: modName + ' - Daten bearbeiten',
+            content: '<p class="text-sm text-muted mb-4">Vorsicht: Änderungen können die Funktionalität des Moduls beeinflussen.</p>' +
+                '<textarea id="mod-data-editor" style="width:100%; height:200px; font-family:var(--font-mono); padding:var(--space-3); border:var(--border-width) solid var(--border-default); border-radius:var(--radius-md); background:var(--input-bg); color:var(--text-primary);">' + TB.utils.escapeHtml(json) + '</textarea>',
             buttons: [
-                { text: 'Abbrechen', action: m => m.close(), variant: 'secondary' },
+                { text: 'Abbrechen', action: function(m) { m.close(); }, variant: 'secondary' },
                 {
                     text: 'Speichern',
                     variant: 'primary',
-                    action: async m => {
+                    action: async function(m) {
                         try {
-                            const newData = JSON.parse(document.getElementById('mod-data-editor').value);
+                            var newData = JSON.parse(document.getElementById('mod-data-editor').value);
                             TB.ui.Loader.show('Speichere...');
-                            const res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: newData}, 'POST');
+                            var res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: newData}, 'POST');
                             TB.ui.Loader.hide();
                             if (res.error === TB.ToolBoxError.none) {
                                 TB.ui.Toast.showSuccess('Daten gespeichert');
@@ -2013,10 +1990,10 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.clearModData = async function(modName) {
-        if (!confirm(`Möchten Sie wirklich alle Daten von "${modName}" löschen?`)) return;
+        if (!confirm('Möchten Sie wirklich alle Daten von "' + modName + '" löschen?')) return;
         TB.ui.Loader.show('Lösche...');
         try {
-            const res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: {}}, 'POST');
+            var res = await TB.api.request('CloudM.UserAccountManager', 'update_mod_data', {mod_name: modName, data: {}}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
                 TB.ui.Toast.showSuccess('Daten gelöscht');
@@ -2033,98 +2010,58 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     // ========== Einstellungen ==========
     async function loadSettings() {
-        const content = document.getElementById('settings-content');
-        const settings = currentUser?.settings || {};
+        var content = document.getElementById('settings-content');
+        var settings = (currentUser && currentUser.settings) ? currentUser.settings : {};
 
-        content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">tune</span>Allgemeine Einstellungen</h3>
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">tune</span>Allgemeine Einstellungen</h3>' +
+            '<div class="settings-section">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Experimentelle Funktionen</div>' +
+                    '<div class="setting-description">Aktiviert neue Funktionen in der Testphase</div></div>' +
+                    '<label class="toggle-switch"><input type="checkbox" ' + (settings.experimental_features ? 'checked' : '') +
+                    ' onchange="updateSetting(\\'experimental_features\\', this.checked)"><span class="toggle-slider"></span></label></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Benachrichtigungen</div>' +
+                    '<div class="setting-description">Benachrichtigungen über wichtige Ereignisse</div></div>' +
+                    '<label class="toggle-switch"><input type="checkbox" ' + (settings.notifications !== false ? 'checked' : '') +
+                    ' onchange="updateSetting(\\'notifications\\', this.checked)"><span class="toggle-slider"></span></label></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Auto-Laden von Modulen</div>' +
+                    '<div class="setting-description">Gespeicherte Module beim Login automatisch laden</div></div>' +
+                    '<label class="toggle-switch"><input type="checkbox" ' + (settings.auto_load_modules !== false ? 'checked' : '') +
+                    ' onchange="updateSetting(\\'auto_load_modules\\', this.checked)"><span class="toggle-slider"></span></label></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Detaillierte Protokolle</div>' +
+                    '<div class="setting-description">Ausführliche Protokollierung für Fehlerbehebung</div></div>' +
+                    '<label class="toggle-switch"><input type="checkbox" ' + (settings.verbose_logging ? 'checked' : '') +
+                    ' onchange="updateSetting(\\'verbose_logging\\', this.checked)"><span class="toggle-slider"></span></label></div>' +
+            '</div></div>';
 
-                <div class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Experimentelle Funktionen</div>
-                            <div class="setting-description">Aktiviert neue Funktionen in der Testphase</div>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${settings.experimental_features ? 'checked' : ''}
-                                   onchange="updateSetting('experimental_features', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">language</span>Sprache & Region</h3>' +
+            '<div class="setting-item"><div class="setting-info">' +
+                '<div class="setting-label">Sprache</div>' +
+                '<div class="setting-description">Bevorzugte Sprache</div></div>' +
+                '<select class="tb-input" style="width:auto; margin-bottom:0;" onchange="updateSetting(\\'language\\', this.value)">' +
+                    '<option value="de" ' + (settings.language === 'de' || !settings.language ? 'selected' : '') + '>Deutsch</option>' +
+                    '<option value="en" ' + (settings.language === 'en' ? 'selected' : '') + '>English</option>' +
+                '</select></div></div>';
 
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Benachrichtigungen</div>
-                            <div class="setting-description">Benachrichtigungen über wichtige Ereignisse</div>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${settings.notifications !== false ? 'checked' : ''}
-                                   onchange="updateSetting('notifications', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">security</span>Datenschutz</h3>' +
+            '<div class="setting-item"><div class="setting-info">' +
+                '<div class="setting-label">Nutzungsstatistiken</div>' +
+                '<div class="setting-description">Anonyme Statistiken zur Verbesserung senden</div></div>' +
+                '<label class="toggle-switch"><input type="checkbox" ' + (settings.analytics !== false ? 'checked' : '') +
+                ' onchange="updateSetting(\\'analytics\\', this.checked)"><span class="toggle-slider"></span></label></div></div>';
 
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Auto-Laden von Modulen</div>
-                            <div class="setting-description">Gespeicherte Module beim Login automatisch laden</div>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${settings.auto_load_modules !== false ? 'checked' : ''}
-                                   onchange="updateSetting('auto_load_modules', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Detaillierte Protokolle</div>
-                            <div class="setting-description">Ausführliche Protokollierung für Fehlerbehebung</div>
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${settings.verbose_logging ? 'checked' : ''}
-                                   onchange="updateSetting('verbose_logging', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">language</span>Sprache & Region</h3>
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <div class="setting-label">Sprache</div>
-                        <div class="setting-description">Bevorzugte Sprache</div>
-                    </div>
-                    <select class="tb-input" style="width:auto; margin-bottom:0;" onchange="updateSetting('language', this.value)">
-                        <option value="de" ${settings.language === 'de' || !settings.language ? 'selected' : ''}>Deutsch</option>
-                        <option value="en" ${settings.language === 'en' ? 'selected' : ''}>English</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">security</span>Datenschutz</h3>
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <div class="setting-label">Nutzungsstatistiken</div>
-                        <div class="setting-description">Anonyme Statistiken zur Verbesserung senden</div>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" ${settings.analytics !== false ? 'checked' : ''}
-                               onchange="updateSetting('analytics', this.checked)">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-        `;
+        content.innerHTML = html;
     }
 
     window.updateSetting = async function(key, value) {
         try {
-            const res = await TB.api.request('CloudM.UserAccountManager', 'update_setting', {
+            var res = await TB.api.request('CloudM.UserAccountManager', 'update_setting', {
                 setting_key: key,
                 setting_value: String(value)
             }, 'POST');
@@ -2142,172 +2079,126 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     // ========== Erscheinungsbild ==========
     async function loadAppearance() {
-        const content = document.getElementById('appearance-content');
-        const themePreference = TB.ui.theme?.getPreference() || 'system';
+        var content = document.getElementById('appearance-content');
+        var themePreference = (TB.ui.theme && TB.ui.theme.getPreference) ? TB.ui.theme.getPreference() : 'system';
 
         // Get current CSS variable values
-        const rootStyles = getComputedStyle(document.documentElement);
-        const currentHue = currentUser?.settings?.hue_primary || parseInt(rootStyles.getPropertyValue('--hue-primary')) || 230;
-        const currentChroma = currentUser?.settings?.chroma_primary || parseFloat(rootStyles.getPropertyValue('--chroma-primary')) || 0.18;
-        const currentBgSun = currentUser?.settings?.theme_bg_sun || '#ffffff';
-        const currentBgLight = currentUser?.settings?.theme_bg_light || '#537FE7';
+        var rootStyles = getComputedStyle(document.documentElement);
+        var currentHue = (currentUser && currentUser.settings && currentUser.settings.hue_primary) ? currentUser.settings.hue_primary : (parseInt(rootStyles.getPropertyValue('--hue-primary')) || 230);
+        var currentChroma = (currentUser && currentUser.settings && currentUser.settings.chroma_primary) ? currentUser.settings.chroma_primary : (parseFloat(rootStyles.getPropertyValue('--chroma-primary')) || 0.18);
+        var currentBgSun = (currentUser && currentUser.settings && currentUser.settings.theme_bg_sun) ? currentUser.settings.theme_bg_sun : '#ffffff';
+        var currentBgLight = (currentUser && currentUser.settings && currentUser.settings.theme_bg_light) ? currentUser.settings.theme_bg_light : '#537FE7';
 
-        content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">contrast</span>Farbschema</h3>
-                <p class="text-sm text-muted mb-4">Wählen Sie Ihr bevorzugtes Farbschema.</p>
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">contrast</span>Farbschema</h3>' +
+            '<p class="text-sm text-muted mb-4">Wählen Sie Ihr bevorzugtes Farbschema.</p>' +
+            '<div class="theme-grid">' +
+                '<button class="theme-option ' + (themePreference === 'light' ? 'active' : '') + '" onclick="setTheme(\\'light\\')">' +
+                    '<span class="material-symbols-outlined">light_mode</span><span>Hell</span></button>' +
+                '<button class="theme-option ' + (themePreference === 'dark' ? 'active' : '') + '" onclick="setTheme(\\'dark\\')">' +
+                    '<span class="material-symbols-outlined">dark_mode</span><span>Dunkel</span></button>' +
+                '<button class="theme-option ' + (themePreference === 'system' ? 'active' : '') + '" onclick="setTheme(\\'system\\')">' +
+                    '<span class="material-symbols-outlined">computer</span><span>System</span></button>' +
+            '</div></div>';
 
-                <div class="theme-grid">
-                    <button class="theme-option ${themePreference === 'light' ? 'active' : ''}" onclick="setTheme('light')">
-                        <span class="material-symbols-outlined">light_mode</span>
-                        <span>Hell</span>
-                    </button>
-                    <button class="theme-option ${themePreference === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">
-                        <span class="material-symbols-outlined">dark_mode</span>
-                        <span>Dunkel</span>
-                    </button>
-                    <button class="theme-option ${themePreference === 'system' ? 'active' : ''}" onclick="setTheme('system')">
-                        <span class="material-symbols-outlined">computer</span>
-                        <span>System</span>
-                    </button>
-                </div>
-            </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">palette</span>Primärfarbe</h3>' +
+            '<p class="text-sm text-muted mb-4">Passen Sie die Hauptfarbe des Designs an.</p>' +
+            '<div class="color-settings">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Farbton (Hue)</div>' +
+                    '<div class="setting-description">0° = Rot, 120° = Grün, 230° = Blau</div></div>' +
+                    '<div class="color-control">' +
+                        '<input type="range" id="hue-slider" min="0" max="360" value="' + currentHue + '" ' +
+                            'style="width:120px; accent-color:oklch(65% 0.2 ' + currentHue + ');" oninput="updateHue(this.value)">' +
+                        '<span id="hue-value" class="color-value">' + currentHue + '°</span></div></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Sättigung (Chroma)</div>' +
+                    '<div class="setting-description">0 = Grau, 0.18 = Normal, 0.3 = Kräftig</div></div>' +
+                    '<div class="color-control">' +
+                        '<input type="range" id="chroma-slider" min="0" max="30" value="' + Math.round(currentChroma * 100) + '" ' +
+                            'style="width:120px; accent-color:var(--interactive);" oninput="updateChroma(this.value / 100)">' +
+                        '<span id="chroma-value" class="color-value">' + currentChroma.toFixed(2) + '</span></div></div>' +
+                '<div class="color-preview" id="color-preview" style="height:60px; border-radius:var(--radius-md); ' +
+                    'background:linear-gradient(135deg, oklch(65% ' + currentChroma + ' ' + currentHue + '), oklch(50% ' + currentChroma + ' ' + currentHue + ')); ' +
+                    'margin-top:var(--space-4); display:flex; align-items:center; justify-content:center; color:white; ' +
+                    'font-weight:var(--weight-semibold); text-shadow:0 1px 2px rgba(0,0,0,0.3);">Vorschau</div>' +
+            '</div></div>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">palette</span>Primärfarbe</h3>
-                <p class="text-sm text-muted mb-4">Passen Sie die Hauptfarbe des Designs an.</p>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">wallpaper</span>Hintergrundfarben</h3>' +
+            '<p class="text-sm text-muted mb-4">Passen Sie die Hintergrundfarben an.</p>' +
+            '<div class="color-settings">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Heller Hintergrund</div>' +
+                    '<div class="setting-description">Haupthintergrund im hellen Modus</div></div>' +
+                    '<input type="color" id="bg-sun-picker" value="' + currentBgSun + '" ' +
+                        'style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);" ' +
+                        'onchange="updateBgColor(\\'theme_bg_sun\\', this.value)"></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Akzent-Hintergrund</div>' +
+                    '<div class="setting-description">Sekundärer Hintergrund / Akzent</div></div>' +
+                    '<input type="color" id="bg-light-picker" value="' + currentBgLight + '" ' +
+                        'style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);" ' +
+                        'onchange="updateBgColor(\\'theme_bg_light\\', this.value)"></div>' +
+            '</div></div>';
 
-                <div class="color-settings">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Farbton (Hue)</div>
-                            <div class="setting-description">0° = Rot, 120° = Grün, 230° = Blau</div>
-                        </div>
-                        <div class="color-control">
-                            <input type="range" id="hue-slider" min="0" max="360" value="${currentHue}"
-                                   style="width:120px; accent-color:oklch(65% 0.2 ${currentHue});"
-                                   oninput="updateHue(this.value)">
-                            <span id="hue-value" class="color-value">${currentHue}°</span>
-                        </div>
-                    </div>
+        var fontScale = (currentUser && currentUser.settings && currentUser.settings.font_scale) ? currentUser.settings.font_scale : 100;
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>' +
+            '<p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße an.</p>' +
+            '<div class="flex items-center gap-4">' +
+                '<span class="text-sm">A</span>' +
+                '<input type="range" min="80" max="120" value="' + fontScale + '" ' +
+                    'style="flex:1; accent-color:var(--interactive);" ' +
+                    'onchange="updateSetting(\\'font_scale\\', this.value); document.documentElement.style.fontSize = this.value + \\'%\\';">' +
+                '<span style="font-size:1.25em;">A</span>' +
+            '</div></div>';
 
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Sättigung (Chroma)</div>
-                            <div class="setting-description">0 = Grau, 0.18 = Normal, 0.3 = Kräftig</div>
-                        </div>
-                        <div class="color-control">
-                            <input type="range" id="chroma-slider" min="0" max="30" value="${Math.round(currentChroma * 100)}"
-                                   style="width:120px; accent-color:var(--interactive);"
-                                   oninput="updateChroma(this.value / 100)">
-                            <span id="chroma-value" class="color-value">${currentChroma.toFixed(2)}</span>
-                        </div>
-                    </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">restart_alt</span>Zurücksetzen</h3>' +
+            '<p class="text-sm text-muted mb-4">Alle Theme-Einstellungen auf Standard zurücksetzen.</p>' +
+            '<button class="tb-btn tb-btn-secondary" onclick="resetThemeSettings()">' +
+                '<span class="material-symbols-outlined">refresh</span>Auf Standard zurücksetzen</button></div>';
 
-                    <div class="color-preview" id="color-preview" style="
-                        height: 60px;
-                        border-radius: var(--radius-md);
-                        background: linear-gradient(135deg, oklch(65% ${currentChroma} ${currentHue}), oklch(50% ${currentChroma} ${currentHue}));
-                        margin-top: var(--space-4);
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        color: white;
-                        font-weight: var(--weight-semibold);
-                        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-                    ">
-                        Vorschau
-                    </div>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">wallpaper</span>Hintergrundfarben</h3>
-                <p class="text-sm text-muted mb-4">Passen Sie die Hintergrundfarben an.</p>
-
-                <div class="color-settings">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Heller Hintergrund</div>
-                            <div class="setting-description">Haupthintergrund im hellen Modus</div>
-                        </div>
-                        <input type="color" id="bg-sun-picker" value="${currentBgSun}"
-                               style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);"
-                               onchange="updateBgColor('theme_bg_sun', this.value)">
-                    </div>
-
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Akzent-Hintergrund</div>
-                            <div class="setting-description">Sekundärer Hintergrund / Akzent</div>
-                        </div>
-                        <input type="color" id="bg-light-picker" value="${currentBgLight}"
-                               style="width:50px; height:36px; border:none; cursor:pointer; border-radius:var(--radius-sm);"
-                               onchange="updateBgColor('theme_bg_light', this.value)">
-                    </div>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">format_size</span>Schriftgröße</h3>
-                <p class="text-sm text-muted mb-4">Passen Sie die Schriftgröße an.</p>
-
-                <div class="flex items-center gap-4">
-                    <span class="text-sm">A</span>
-                    <input type="range" min="80" max="120" value="${currentUser?.settings?.font_scale || 100}"
-                           style="flex:1; accent-color:var(--interactive);"
-                           onchange="updateSetting('font_scale', this.value); document.documentElement.style.fontSize = this.value + '%';">
-                    <span style="font-size:1.25em;">A</span>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">restart_alt</span>Zurücksetzen</h3>
-                <p class="text-sm text-muted mb-4">Alle Theme-Einstellungen auf Standard zurücksetzen.</p>
-
-                <button class="tb-btn tb-btn-secondary" onclick="resetThemeSettings()">
-                    <span class="material-symbols-outlined">refresh</span>
-                    Auf Standard zurücksetzen
-                </button>
-            </div>
-        `;
+        content.innerHTML = html;
     }
 
     window.updateHue = function(value) {
-        const hue = parseInt(value);
+        var hue = parseInt(value);
         document.documentElement.style.setProperty('--hue-primary', hue);
         document.getElementById('hue-value').textContent = hue + '°';
 
         // Update preview
-        const chroma = parseFloat(document.getElementById('chroma-slider').value) / 100;
+        var chroma = parseFloat(document.getElementById('chroma-slider').value) / 100;
         document.getElementById('color-preview').style.background =
-            `linear-gradient(135deg, oklch(65% ${chroma} ${hue}), oklch(50% ${chroma} ${hue}))`;
+            'linear-gradient(135deg, oklch(65% ' + chroma + ' ' + hue + '), oklch(50% ' + chroma + ' ' + hue + '))';
 
         // Update slider accent color
-        document.getElementById('hue-slider').style.accentColor = `oklch(65% 0.2 ${hue})`;
+        document.getElementById('hue-slider').style.accentColor = 'oklch(65% 0.2 ' + hue + ')';
 
         // Save setting
         updateSetting('hue_primary', hue);
 
         // Refresh Clerk theme if available
-        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+        if (TB.user && TB.user.refreshClerkTheme) TB.user.refreshClerkTheme();
     };
 
     window.updateChroma = function(value) {
-        const chroma = parseFloat(value).toFixed(2);
+        var chroma = parseFloat(value).toFixed(2);
         document.documentElement.style.setProperty('--chroma-primary', chroma);
         document.getElementById('chroma-value').textContent = chroma;
 
         // Update preview
-        const hue = parseInt(document.getElementById('hue-slider').value);
+        var hue = parseInt(document.getElementById('hue-slider').value);
         document.getElementById('color-preview').style.background =
-            `linear-gradient(135deg, oklch(65% ${chroma} ${hue}), oklch(50% ${chroma} ${hue}))`;
+            'linear-gradient(135deg, oklch(65% ' + chroma + ' ' + hue + '), oklch(50% ' + chroma + ' ' + hue + '))';
 
         // Save setting
         updateSetting('chroma_primary', chroma);
 
         // Refresh Clerk theme if available
-        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+        if (TB.user && TB.user.refreshClerkTheme) TB.user.refreshClerkTheme();
     };
 
     window.updateBgColor = function(key, value) {
@@ -2321,7 +2212,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     window.resetThemeSettings = async function() {
         // Reset to defaults
-        const defaults = {
+        var defaults = {
             hue_primary: 230,
             chroma_primary: 0.18,
             theme_bg_sun: '#ffffff',
@@ -2337,12 +2228,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         document.documentElement.style.fontSize = defaults.font_scale + '%';
 
         // Save all defaults
-        for (const [key, value] of Object.entries(defaults)) {
-            await updateSetting(key, value);
+        var keys = Object.keys(defaults);
+        for (var i = 0; i < keys.length; i++) {
+            await updateSetting(keys[i], defaults[keys[i]]);
         }
 
         // Refresh Clerk theme if available
-        if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+        if (TB.user && TB.user.refreshClerkTheme) TB.user.refreshClerkTheme();
 
         // Reload appearance section
         loadAppearance();
@@ -2350,12 +2242,13 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
     };
 
     window.setTheme = function(theme) {
-        if (TB.ui.theme?.setPreference) {
+        if (TB.ui.theme && TB.ui.theme.setPreference) {
             TB.ui.theme.setPreference(theme);
-            TB.ui.Toast.showSuccess(`Theme: ${theme === 'system' ? 'System' : theme === 'dark' ? 'Dunkel' : 'Hell'}`);
+            var themeName = theme === 'system' ? 'System' : (theme === 'dark' ? 'Dunkel' : 'Hell');
+            TB.ui.Toast.showSuccess('Theme: ' + themeName);
 
             // Refresh Clerk theme if available
-            if (TB.user?.refreshClerkTheme) TB.user.refreshClerkTheme();
+            if (TB.user && TB.user.refreshClerkTheme) TB.user.refreshClerkTheme();
 
             loadAppearance();
         }
@@ -2363,101 +2256,86 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
 
     // ========== Profil ==========
     async function loadProfile() {
-        const content = document.getElementById('profile-content');
+        var content = document.getElementById('profile-content');
+        var userName = (currentUser && (currentUser.username || currentUser.name)) ? (currentUser.username || currentUser.name) : '-';
+        var userEmail = (currentUser && currentUser.email) ? currentUser.email : 'Nicht angegeben';
+        var userLevel = (currentUser && currentUser.level) ? currentUser.level : 1;
+        var deviceType = navigator.userAgent.indexOf('Mobile') !== -1 ? 'Mobiles Gerät' : 'Desktop-Browser';
 
-        content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">account_circle</span>Profil-Informationen</h3>
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">account_circle</span>Profil-Informationen</h3>' +
+            '<div class="settings-section">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Benutzername</div>' +
+                    '<div class="setting-description">' + TB.utils.escapeHtml(userName) + '</div></div></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">E-Mail-Adresse</div>' +
+                    '<div class="setting-description">' + TB.utils.escapeHtml(userEmail) + '</div></div>' +
+                    '<button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="openClerkProfile()">' +
+                        '<span class="material-symbols-outlined">edit</span>Ändern</button></div>' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Benutzer-Level</div>' +
+                    '<div class="setting-description">Level ' + userLevel + '</div></div></div>' +
+            '</div></div>';
 
-                <div class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Benutzername</div>
-                            <div class="setting-description">${TB.utils.escapeHtml(currentUser?.username || currentUser?.name || '-')}</div>
-                        </div>
-                    </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">key</span>Sicherheit</h3>' +
+            '<div class="quick-actions">' +
+                '<button class="tb-btn tb-btn-secondary" onclick="requestMagicLink()">' +
+                    '<span class="material-symbols-outlined">link</span>Magic Link anfordern</button>' +
+                '<button class="tb-btn tb-btn-secondary" onclick="openClerkProfile()">' +
+                    '<span class="material-symbols-outlined">security</span>Sicherheitseinstellungen</button>' +
+            '</div></div>';
 
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">E-Mail-Adresse</div>
-                            <div class="setting-description">${TB.utils.escapeHtml(currentUser?.email || 'Nicht angegeben')}</div>
-                        </div>
-                        <button class="tb-btn tb-btn-secondary tb-btn-sm" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.() || TB.ui.Toast.showInfo('Profil wird geladen...')">
-                            <span class="material-symbols-outlined">edit</span>
-                            Ändern
-                        </button>
-                    </div>
+        html += '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">devices</span>Aktive Sitzungen</h3>' +
+            '<p class="text-sm text-muted mb-4">Ihre aktuell angemeldeten Geräte.</p>' +
+            '<div id="sessions-list">' +
+                '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">Diese Sitzung</div>' +
+                    '<div class="setting-description">' + deviceType + '</div></div>' +
+                    '<span class="module-status loaded">Aktiv</span></div>';
 
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Benutzer-Level</div>
-                            <div class="setting-description">Level ${currentUser?.level || 1}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        if (userInstance && userInstance.cli_sessions && userInstance.cli_sessions.length > 0) {
+            userInstance.cli_sessions.forEach(function(s) {
+                var createdAt = new Date(s.created_at * 1000).toLocaleString();
+                html += '<div class="setting-item"><div class="setting-info">' +
+                    '<div class="setting-label">CLI Sitzung</div>' +
+                    '<div class="setting-description">Gestartet: ' + createdAt + '</div></div>' +
+                    '<button class="tb-btn tb-btn-danger tb-btn-sm" onclick="closeCLISession(\\'' + s.cli_session_id + '\\')">' +
+                        '<span class="material-symbols-outlined">close</span></button></div>';
+            });
+        }
+        html += '</div></div>';
 
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">key</span>Sicherheit</h3>
+        html += '<div class="dashboard-card" style="border-color:var(--color-error);">' +
+            '<h3 style="color:var(--color-error);"><span class="material-symbols-outlined">warning</span>Gefahrenzone</h3>' +
+            '<button class="tb-btn tb-btn-danger" onclick="TB.user.logout().then(function() { window.location.href = \\'/\\'; })">' +
+                '<span class="material-symbols-outlined">logout</span>Abmelden</button></div>';
 
-                <div class="quick-actions">
-                    <button class="tb-btn tb-btn-secondary" onclick="requestMagicLink()">
-                        <span class="material-symbols-outlined">link</span>
-                        Magic Link anfordern
-                    </button>
-                    <button class="tb-btn tb-btn-secondary" onclick="TB.user?.getClerkInstance?.()?.openUserProfile?.()">
-                        <span class="material-symbols-outlined">security</span>
-                        Sicherheitseinstellungen
-                    </button>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">devices</span>Aktive Sitzungen</h3>
-                <p class="text-sm text-muted mb-4">Ihre aktuell angemeldeten Geräte.</p>
-
-                <div id="sessions-list">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Diese Sitzung</div>
-                            <div class="setting-description">${navigator.userAgent.includes('Mobile') ? 'Mobiles Gerät' : 'Desktop-Browser'}</div>
-                        </div>
-                        <span class="module-status loaded">Aktiv</span>
-                    </div>
-                    ${userInstance?.cli_sessions?.length > 0 ? userInstance.cli_sessions.map(s => `
-                        <div class="setting-item">
-                            <div class="setting-info">
-                                <div class="setting-label">CLI Sitzung</div>
-                                <div class="setting-description">Gestartet: ${new Date(s.created_at * 1000).toLocaleString()}</div>
-                            </div>
-                            <button class="tb-btn tb-btn-danger tb-btn-sm" onclick="closeCLISession('${s.cli_session_id}')">
-                                <span class="material-symbols-outlined">close</span>
-                            </button>
-                        </div>
-                    `).join('') : ''}
-                </div>
-            </div>
-
-            <div class="dashboard-card" style="border-color:var(--color-error);">
-                <h3 style="color:var(--color-error);"><span class="material-symbols-outlined">warning</span>Gefahrenzone</h3>
-
-                <button class="tb-btn tb-btn-danger" onclick="TB.user.logout().then(() => window.location.href = '/')">
-                    <span class="material-symbols-outlined">logout</span>
-                    Abmelden
-                </button>
-            </div>
-        `;
+        content.innerHTML = html;
     }
+
+    window.openClerkProfile = function() {
+        if (TB.user && TB.user.getClerkInstance) {
+            var clerk = TB.user.getClerkInstance();
+            if (clerk && clerk.openUserProfile) {
+                clerk.openUserProfile();
+                return;
+            }
+        }
+        TB.ui.Toast.showInfo('Profil wird geladen...');
+    };
 
     window.requestMagicLink = async function() {
         TB.ui.Loader.show('Magic Link wird angefordert...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'request_my_magic_link', null, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'request_my_magic_link', null, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
                 TB.ui.Toast.showSuccess('Magic Link wurde an Ihre E-Mail gesendet');
             } else {
-                TB.ui.Toast.showError(res.info.help_text || 'Fehler beim Anfordern');
+                TB.ui.Toast.showError((res.info && res.info.help_text) ? res.info.help_text : 'Fehler beim Anfordern');
             }
         } catch(e) {
             TB.ui.Loader.hide();
@@ -2469,7 +2347,7 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
         if (!confirm('Möchten Sie diese CLI-Sitzung wirklich beenden?')) return;
         TB.ui.Loader.show('Beende Sitzung...');
         try {
-            const res = await TB.api.request('CloudM.UserDashboard', 'close_cli_session', {cli_session_id: sessionId}, 'POST');
+            var res = await TB.api.request('CloudM.UserDashboard', 'close_cli_session', {cli_session_id: sessionId}, 'POST');
             TB.ui.Loader.hide();
             if (res.error === TB.ToolBoxError.none) {
                 TB.ui.Toast.showSuccess('Sitzung beendet');
@@ -2910,11 +2788,13 @@ async def upload_user_file(app: App, request: RequestData, data: dict = None, **
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['GET'])
-async def download_user_file(app: App, request: RequestData, data: dict = None):
+async def download_user_file(app: App, request: RequestData, data: dict = None, **kwargs):
     """Datei für Benutzer herunterladen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return Result.default_user_error(info="Nicht authentifiziert", exec_code=401)
+    if data is None:
+        data = kwargs
 
     uid = getattr(current_user, 'uid', None) or getattr(current_user, 'clerk_user_id', None)
     if not uid:
@@ -2959,7 +2839,7 @@ async def download_user_file(app: App, request: RequestData, data: dict = None):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def delete_user_file(app: App, request: RequestData, data: dict = None):
+async def delete_user_file(app: App, request: RequestData, data: dict = None, path=None):
     """Datei für Benutzer löschen"""
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
@@ -2969,7 +2849,7 @@ async def delete_user_file(app: App, request: RequestData, data: dict = None):
     if not uid:
         return Result.default_user_error(info="Benutzer-ID nicht gefunden")
 
-    file_path = data.get("path") if data else None
+    file_path = path or data.get("path") if data else path
     if not file_path:
         return Result.default_user_error(info="Dateipfad erforderlich")
 

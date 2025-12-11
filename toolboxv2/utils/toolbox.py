@@ -47,7 +47,7 @@ class App(AppType, metaclass=Singleton):
 
     def __init__(self, prefix: str = "", args=AppArgs().default()):
         if "test" not in prefix:
-            self.logger_prefix = prefix
+            self.logger_prefix = self.REFIX = prefix
             prefix = "main"
         super().__init__(prefix, args)
         self._web_context = None
@@ -134,6 +134,11 @@ class App(AppType, metaclass=Singleton):
             os.makedirs(self.info_dir, exist_ok=True)
 
         self.print(f"Starting ToolBox as {prefix} from :", Style.Bold(Style.CYAN(f"{os.getcwd()}")))
+
+        pid_file = f"{self.start_dir}\\.info\\{args.modi}-{self.REFIX}.pid"
+        app_pid = str(os.getpid())
+        with open(pid_file, "w", encoding="utf8") as f:
+            f.write(app_pid)
 
         logger_info_str, self.logger, self.logging_filename = self.set_logger(args.debug, self.logger_prefix)
 

@@ -81,6 +81,11 @@ async def a_save_closing_app():
     app = registered_apps[0]
     if app.start_dir != "test":
         os.chdir(app.start_dir)
+
+    pid_file = f"{app.start_dir}\\.info\\{app.args_sto.modi}-{app.REFIX}.pid"
+    if os.path.exists(pid_file):
+        os.remove(pid_file)
+
     if not app.alive:
         await app.a_exit()
         app.print(Style.Bold(Style.ITALIC("- end -")))

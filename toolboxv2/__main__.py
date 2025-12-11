@@ -1402,15 +1402,9 @@ async def setup_app(ov_name=None, App=TbApp):
 
     abspath = os.path.dirname(os.path.abspath(__file__))
     info_folder = abspath + '\\.info\\'
-    pid_file = f"{info_folder}{args.modi}-{args.name}.pid"
-    app_pid = str(os.getpid())
-
-    with open(pid_file, "w", encoding="utf8") as f:
-        f.write(app_pid)
     if not args.sysPrint and not (args.debug or args.background_application_runner or args.install or args.kill):
         TbApp.sprint = lambda text, *_args, **kwargs: False
     tb_app = get_app(from_="InitialStartUp", name=args.name, args=args, app_con=TbApp)
-
 
     tb_app.loop = asyncio.get_running_loop()
 
