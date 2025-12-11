@@ -1752,12 +1752,12 @@ async def update_user_admin(app: App, request: RequestData, data: dict=None, uid
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def delete_user_admin(app: App, request: RequestData, data: dict):
+async def delete_user_admin(app: App, request: RequestData, data: dict=None, uid=None):
     admin_user = await _is_admin(app, request)
     if not admin_user:
         return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    uid_to_delete = data.get("uid")
+    uid_to_delete = uid or data.get("uid")
     if not uid_to_delete:
         return Result.default_user_error(info="User UID is required.")
 
@@ -1825,10 +1825,10 @@ async def delete_user_admin(app: App, request: RequestData, data: dict):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def reload_module_admin(app: App, request: RequestData, data: dict):
+async def reload_module_admin(app: App, request: RequestData, data: dict=None, module_name=None):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.redirect("/web/core0/index.html")
-    module_name = data.get("module_name")
+    module_name = module_name or data.get("module_name")
     if not module_name: return Result.default_user_error(info="Module name is required.")
     app.print("Admin request to reload module: " + str(module_name))
     try:
@@ -1867,10 +1867,10 @@ async def get_waiting_list_users_admin(app: App, request: RequestData):
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def remove_from_waiting_list_admin(app: App, request: RequestData, data: dict):
+async def remove_from_waiting_list_admin(app: App, request: RequestData, data: dict=None, email=None):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.redirect("/web/core0/index.html")
-    email_to_remove = data.get("email")
+    email_to_remove = email or data.get("email")
     if not email_to_remove: return Result.default_user_error(info="Email is required.")
     waiting_list_res = await app.a_run_any(TBEF.DB.GET, query="email_waiting_list", get_results=True)
     updated_list = []
@@ -1892,11 +1892,11 @@ async def remove_from_waiting_list_admin(app: App, request: RequestData, data: d
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
-async def send_invite_to_waiting_list_user_admin(app: App, request: RequestData, data: dict):
+async def send_invite_to_waiting_list_user_admin(app: App, request: RequestData, data: dict, email=None, username=None):
     admin_user = await _is_admin(app, request)
     if not admin_user: return Result.redirect("/web/core0/index.html")
-    email_to_invite = data.get("email")
-    proposed_username = data.get("username")
+    email_to_invite = email or data.get("email")
+    proposed_username = username or data.get("username")
     if not email_to_invite or not proposed_username: return Result.default_user_error(
         info="Email and proposed username are required.")
 
