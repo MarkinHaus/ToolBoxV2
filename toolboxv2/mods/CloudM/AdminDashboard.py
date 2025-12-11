@@ -29,8 +29,13 @@ async def _is_admin(app: App, request: RequestData) -> User | None:
     current_user = await get_current_user_from_request(app, request)
     if not current_user:
         return None
+
+    # Get username from either attribute (Clerk uses 'username', legacy uses 'name')
+    username = getattr(current_user, 'username', None) or getattr(current_user, 'name', None)
+    level = getattr(current_user, 'level', 1)
+
     # Admin check: level -1 OR special usernames
-    if current_user.level == -1 or current_user.username == 'root' or current_user.username == 'loot':
+    if level == -1 or username == 'root' or username == 'loot':
         return current_user
     return None
 
@@ -843,39 +848,35 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
     }
 
     function updateHeader() {
-        if (currentAdminUser?.name) {
-            const titleEl = document.getElementById('admin-title-text');
+        if (currentAdminUser && currentAdminUser.name) {
+            var titleEl = document.getElementById('admin-title-text');
             if (titleEl) {
-                titleEl.textContent = `Admin (${currentAdminUser.name})`;
+                titleEl.textContent = 'Admin (' + currentAdminUser.name + ')';
             }
         }
     }
 
     function showAccessDenied() {
-        document.getElementById('admin-content').innerHTML = `
-            <div class="empty-state">
-                <span class="material-symbols-outlined">block</span>
-                <h3 style="margin-top:var(--space-4);">Access Denied</h3>
-                <p class="text-muted">Could not verify admin privileges. Please login.</p>
-            </div>
-        `;
+        document.getElementById('admin-content').innerHTML = '<div class="empty-state">' +
+            '<span class="material-symbols-outlined">block</span>' +
+            '<h3 style="margin-top:var(--space-4);">Access Denied</h3>' +
+            '<p class="text-muted">Could not verify admin privileges. Please login.</p>' +
+        '</div>';
     }
 
     function showConnectionError() {
-        document.getElementById('admin-content').innerHTML = `
-            <div class="empty-state">
-                <span class="material-symbols-outlined">cloud_off</span>
-                <h3 style="margin-top:var(--space-4);">Connection Error</h3>
-                <p class="text-muted">Could not connect to server.</p>
-            </div>
-        `;
+        document.getElementById('admin-content').innerHTML = '<div class="empty-state">' +
+            '<span class="material-symbols-outlined">cloud_off</span>' +
+            '<h3 style="margin-top:var(--space-4);">Connection Error</h3>' +
+            '<p class="text-muted">Could not connect to server.</p>' +
+        '</div>';
     }
 
     // ========== Navigation ==========
     function setupNavigation() {
-        document.querySelectorAll('#tab-navigation .tab-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                document.querySelectorAll('#tab-navigation .tab-btn').forEach(b => {
+        document.querySelectorAll('#tab-navigation .tab-btn').forEach(function(btn) {
+            btn.addEventListener('click', async function() {
+                document.querySelectorAll('#tab-navigation .tab-btn').forEach(function(b) {
                     b.classList.remove('active');
                     b.setAttribute('aria-selected', 'false');
                 });
@@ -887,26 +888,36 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
     }
 
     function setupLogout() {
-        document.getElementById('logoutButton')?.addEventListener('click', async () => {
-            TB.ui.Loader.show("Logging out...");
-            await TB.user.logout();
-            window.location.href = '/';
-        });
+        var logoutBtn = document.getElementById('logoutButton');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async function() {
+                TB.ui.Loader.show("Logging out...");
+                await TB.user.logout();
+                window.location.href = '/';
+            });
+        }
     }
 
     // ========== Event Delegation ==========
     function setupEventDelegation() {
         document.getElementById('admin-content').addEventListener('click', async function(event) {
-            const target = event.target.closest('button.action-btn');
+            var target = event.target.closest('button.action-btn');
             if (!target) return;
 
             // System Status Restart
             if (target.classList.contains('btn-restart') && target.dataset.service) {
-                TB.ui.Toast.showInfo(`Restart for ${target.dataset.service} (placeholder).`);
+                TB.ui.Toast.showInfo('Restart for ' + target.dataset.service + ' (placeholder).');
             }
             // User Edit
             else if (target.dataset.uid && target.classList.contains('btn-edit')) {
-                const usersData = JSON.parse(target.closest('.table-wrapper')?.querySelector('table')?.dataset.users || '[]');
+                var tableEl = target.closest('.table-wrapper');
+                var usersData = [];
+                if (tableEl) {
+                    var tbl = tableEl.querySelector('table');
+                    if (tbl && tbl.dataset.users) {
+                        try { usersData = JSON.parse(tbl.dataset.users); } catch(e) {}
+                    }
+                }
                 showUserEditModal(target.dataset.uid, usersData);
             }
             // User Delete
@@ -915,20 +926,20 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             }
             // Waiting List Send Invite
             else if (target.dataset.email && target.classList.contains('btn-send-invite')) {
-                const email = target.dataset.email;
-                const proposedUsername = prompt(`Enter username for ${email}:`, email.split('@')[0]);
+                var email = target.dataset.email;
+                var proposedUsername = prompt('Enter username for ' + email + ':', email.split('@')[0]);
                 if (!proposedUsername) { TB.ui.Toast.showWarning("Username required."); return; }
 
-                TB.ui.Loader.show(`Sending invite...`);
+                TB.ui.Loader.show('Sending invite...');
                 try {
-                    const res = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin',
-                        { email, username: proposedUsername }, 'POST');
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'send_invite_to_waiting_list_user_admin',
+                        { email: email, username: proposedUsername }, 'POST');
                     TB.ui.Loader.hide();
                     if (res.error === TB.ToolBoxError.none) {
-                        TB.ui.Toast.showSuccess(res.info.help_text || `Invite sent.`);
+                        TB.ui.Toast.showSuccess(res.info.help_text || 'Invite sent.');
                         await loadWaitingListUsers();
                     } else {
-                        TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                        TB.ui.Toast.showError('Failed: ' + TB.utils.escapeHtml(res.info.help_text));
                     }
                 } catch (e) {
                     TB.ui.Loader.hide();
@@ -937,18 +948,18 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             }
             // Waiting List Remove
             else if (target.dataset.email && target.classList.contains('btn-delete')) {
-                const email = target.dataset.email;
-                if (!confirm(`Remove ${email} from waiting list?`)) return;
+                var emailToRemove = target.dataset.email;
+                if (!confirm('Remove ' + emailToRemove + ' from waiting list?')) return;
 
-                TB.ui.Loader.show(`Removing...`);
+                TB.ui.Loader.show('Removing...');
                 try {
-                    const res = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email }, 'POST');
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'remove_from_waiting_list_admin', { email: emailToRemove }, 'POST');
                     TB.ui.Loader.hide();
                     if (res.error === TB.ToolBoxError.none) {
-                        TB.ui.Toast.showSuccess(`${email} removed.`);
+                        TB.ui.Toast.showSuccess(emailToRemove + ' removed.');
                         await loadWaitingListUsers();
                     } else {
-                        TB.ui.Toast.showError(`Failed: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                        TB.ui.Toast.showError('Failed: ' + TB.utils.escapeHtml(res.info.help_text));
                     }
                 } catch (e) {
                     TB.ui.Loader.hide();
@@ -957,15 +968,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             }
             // Module Reload
             else if (target.dataset.module && target.classList.contains('btn-restart')) {
-                const modName = target.dataset.module;
-                TB.ui.Loader.show(`Reloading ${modName}...`);
+                var modName = target.dataset.module;
+                TB.ui.Loader.show('Reloading ' + modName + '...');
                 try {
-                    const res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
+                    var res = await TB.api.request('CloudM.AdminDashboard', 'reload_module_admin', { module_name: modName }, 'POST');
                     TB.ui.Loader.hide();
                     if (res.error === TB.ToolBoxError.none) {
-                        TB.ui.Toast.showSuccess(`${modName}: ${TB.utils.escapeHtml(res.get() || 'OK')}`);
+                        TB.ui.Toast.showSuccess(modName + ': ' + TB.utils.escapeHtml(res.get() || 'OK'));
                     } else {
-                        TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                        TB.ui.Toast.showError('Error: ' + TB.utils.escapeHtml(res.info.help_text));
                     }
                 } catch (e) {
                     TB.ui.Loader.hide();
@@ -1013,15 +1024,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     // ========== System Status ==========
     async function loadSystemStatus() {
-        const content = document.getElementById('system-status-content');
+        var content = document.getElementById('system-status-content');
         if (!content) return;
 
         try {
-            const res = await TB.api.request('CloudM.AdminDashboard', 'get_system_status', null, 'GET');
+            var res = await TB.api.request('CloudM.AdminDashboard', 'get_system_status', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 renderSystemStatus(res.get(), content);
             } else {
-                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
             }
         } catch (e) {
             content.innerHTML = '<p class="text-error">Network error.</p>';
@@ -1031,53 +1042,46 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     function renderSystemStatus(data, content) {
         if (!data || Object.keys(data).length === 0) {
-            content.innerHTML = `
-                <div class="empty-state">
-                    <span class="material-symbols-outlined">dns</span>
-                    <p>No services found or status unavailable.</p>
-                </div>
-            `;
+            content.innerHTML = '<div class="empty-state">' +
+                '<span class="material-symbols-outlined">dns</span>' +
+                '<p>No services found or status unavailable.</p>' +
+            '</div>';
             return;
         }
 
-        let html = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">dns</span>Running Services</h3>
-                <div class="table-wrapper">
-                    <table class="admin-table">
-                        <thead>
-                            <tr>
-                                <th>Service</th>
-                                <th>Status</th>
-                                <th>PID</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-        `;
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">dns</span>Running Services</h3>' +
+            '<div class="table-wrapper">' +
+                '<table class="admin-table">' +
+                    '<thead><tr>' +
+                        '<th>Service</th>' +
+                        '<th>Status</th>' +
+                        '<th>PID</th>' +
+                        '<th>Actions</th>' +
+                    '</tr></thead>' +
+                    '<tbody>';
 
-        for (const [name, info] of Object.entries(data)) {
-            const statusClass = info.status_indicator === '🟢' ? 'green' :
-                               (info.status_indicator === '🔴' ? 'red' : 'yellow');
-            html += `
-                <tr>
-                    <td><strong>${TB.utils.escapeHtml(name)}</strong></td>
-                    <td>
-                        <span class="status-indicator">
-                            <span class="status-dot ${statusClass}"></span>
-                            ${info.status_indicator}
-                        </span>
-                    </td>
-                    <td class="text-muted">${TB.utils.escapeHtml(info.pid)}</td>
-                    <td>
-                        <button class="action-btn btn-restart" data-service="${TB.utils.escapeHtml(name)}">
-                            <span class="material-symbols-outlined">restart_alt</span>
-                            Restart
-                        </button>
-                    </td>
-                </tr>
-            `;
-        }
+        Object.keys(data).forEach(function(name) {
+            var info = data[name];
+            var statusClass = info.status_indicator === '🟢' ? 'green' :
+                             (info.status_indicator === '🔴' ? 'red' : 'yellow');
+            html += '<tr>' +
+                '<td><strong>' + TB.utils.escapeHtml(name) + '</strong></td>' +
+                '<td>' +
+                    '<span class="status-indicator">' +
+                        '<span class="status-dot ' + statusClass + '"></span>' +
+                        info.status_indicator +
+                    '</span>' +
+                '</td>' +
+                '<td class="text-muted">' + TB.utils.escapeHtml(info.pid) + '</td>' +
+                '<td>' +
+                    '<button class="action-btn btn-restart" data-service="' + TB.utils.escapeHtml(name) + '">' +
+                        '<span class="material-symbols-outlined">restart_alt</span>' +
+                        'Restart' +
+                    '</button>' +
+                '</td>' +
+            '</tr>';
+        });
 
         html += '</tbody></table></div></div>';
         content.innerHTML = html;
@@ -1085,15 +1089,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     // ========== User Management ==========
     async function loadUserManagement() {
-        const content = document.getElementById('user-management-content-main');
+        var content = document.getElementById('user-management-content-main');
         if (!content) return;
 
         try {
-            const res = await TB.api.request('CloudM.AdminDashboard', 'list_users_admin', null, 'GET');
+            var res = await TB.api.request('CloudM.AdminDashboard', 'list_users_admin', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 renderUserManagement(res.get(), content);
             } else {
-                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
             }
         } catch (e) {
             content.innerHTML = '<p class="text-error">Network error.</p>';
@@ -1114,19 +1118,21 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     function renderUserManagement(users, content) {
         if (!users || users.length === 0) {
-            content.innerHTML = '<p class="text-muted">No users found.</p>';
+            content.innerHTML = '<p class="text-muted">No users found. Users will appear here after they sign in via Clerk.</p>';
             return;
         }
 
+        var usersJson = TB.utils.escapeHtml(JSON.stringify(users));
         var html = '<div class="dashboard-card">' +
             '<h3><span class="material-symbols-outlined">group</span>All Users (' + users.length + ')</h3>' +
             '<input type="text" id="user-search-admin" class="tb-input mb-4" placeholder="Search users..." oninput="filterAdminUsers(this.value)">' +
             '<div class="table-wrapper">' +
-            '<table class="admin-table" data-users=\\' + TB.utils.escapeHtml(JSON.stringify(users)) + \\'>' +
+            '<table class="admin-table" data-users="' + usersJson + '">' +
             '<thead><tr>' +
             '<th>Name</th>' +
             '<th>Email</th>' +
             '<th>Level</th>' +
+            '<th>Source</th>' +
             '<th>UID</th>' +
             '<th>Actions</th>' +
             '</tr></thead><tbody>';
@@ -1134,23 +1140,26 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         users.forEach(function(user) {
             var levelInfo = getLevelInfo(user.level);
             var canDelete = currentAdminUser && currentAdminUser.uid !== user.uid;
+            var sourceLabel = user.source === 'clerk' ? 'Clerk DB' : (user.source === 'clerk_api' ? 'Clerk API' : 'Legacy');
+            var sourceColor = user.source === 'clerk' || user.source === 'clerk_api' ? 'var(--color-info)' : 'var(--text-muted)';
 
             html += '<tr class="user-row-admin" data-name="' + (user.name || '').toLowerCase() + '" data-email="' + (user.email || '').toLowerCase() + '">' +
-                '<td><strong>' + TB.utils.escapeHtml(user.name) + '</strong></td>' +
+                '<td><strong>' + TB.utils.escapeHtml(user.name || 'N/A') + '</strong></td>' +
                 '<td class="text-muted">' + TB.utils.escapeHtml(user.email || 'N/A') + '</td>' +
                 '<td>' +
                     '<span class="level-badge ' + levelInfo.badge + '" style="background:oklch(from ' + levelInfo.color + ' l c h / 0.2); color:' + levelInfo.color + ';">' +
                         levelInfo.name +
                     '</span>' +
                 '</td>' +
-                '<td class="text-xs text-muted">' + TB.utils.escapeHtml(user.uid) + '</td>' +
+                '<td><span class="text-xs" style="color:' + sourceColor + ';">' + sourceLabel + '</span></td>' +
+                '<td class="text-xs text-muted">' + TB.utils.escapeHtml(user.uid || 'N/A') + '</td>' +
                 '<td>' +
                     '<div class="action-group">' +
                         '<button class="action-btn btn-edit" data-uid="' + user.uid + '">' +
                             '<span class="material-symbols-outlined">edit</span>' +
                             'Edit' +
                         '</button>' +
-                        (canDelete ? '<button class="action-btn btn-delete" data-uid="' + user.uid + '" data-name="' + TB.utils.escapeHtml(user.name) + '">' +
+                        (canDelete ? '<button class="action-btn btn-delete" data-uid="' + user.uid + '" data-name="' + TB.utils.escapeHtml(user.name || 'N/A') + '">' +
                             '<span class="material-symbols-outlined">delete</span>' +
                             'Delete' +
                         '</button>' : '') +
@@ -1246,29 +1255,31 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
     }
 
     async function handleDeleteUser(userId, userName) {
-        if (currentAdminUser?.uid === userId) {
+        if (currentAdminUser && currentAdminUser.uid === userId) {
             TB.ui.Toast.showError("Cannot delete your own account.");
             return;
         }
 
+        var modalContent = '<p>Delete user <strong>' + TB.utils.escapeHtml(userName) + '</strong>?<br><span class="text-sm text-muted">This action cannot be undone.</span></p>';
+
         TB.ui.Modal.show({
             title: 'Confirm Deletion',
-            content: `<p>Delete user <strong>${TB.utils.escapeHtml(userName)}</strong>?<br><span class="text-sm text-muted">This action cannot be undone.</span></p>`,
+            content: modalContent,
             buttons: [
-                { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
+                { text: 'Cancel', action: function(m) { m.close(); }, variant: 'secondary' },
                 {
                     text: 'Delete User',
                     variant: 'danger',
-                    action: async m => {
+                    action: async function(m) {
                         TB.ui.Loader.show('Deleting...');
                         try {
-                            const res = await TB.api.request('CloudM.AdminDashboard', 'delete_user_admin', { uid: userId }, 'POST');
+                            var res = await TB.api.request('CloudM.AdminDashboard', 'delete_user_admin', { uid: userId }, 'POST');
                             TB.ui.Loader.hide();
                             if (res.error === TB.ToolBoxError.none) {
                                 TB.ui.Toast.showSuccess('User deleted!');
                                 await loadUserManagement();
                             } else {
-                                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                                TB.ui.Toast.showError('Error: ' + TB.utils.escapeHtml(res.info.help_text));
                             }
                         } catch (e) {
                             TB.ui.Loader.hide();
@@ -1283,15 +1294,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     // ========== Waiting List ==========
     async function loadWaitingListUsers() {
-        const content = document.getElementById('user-waiting-list-content');
+        var content = document.getElementById('user-waiting-list-content');
         if (!content) return;
 
         try {
-            const res = await TB.api.request('CloudM.AdminDashboard', 'get_waiting_list_users_admin', null, 'GET');
+            var res = await TB.api.request('CloudM.AdminDashboard', 'get_waiting_list_users_admin', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 renderWaitingList(res.get(), content);
             } else {
-                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
             }
         } catch (e) {
             content.innerHTML = '<p class="text-error">Network error.</p>';
@@ -1305,37 +1316,29 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             return;
         }
 
-        let html = `
-            <div class="table-wrapper">
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>Email</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-        `;
+        var html = '<div class="table-wrapper">' +
+            '<table class="admin-table">' +
+            '<thead><tr><th>Email</th><th>Actions</th></tr></thead>' +
+            '<tbody>';
 
-        waitingUsers.forEach(entry => {
-            const email = typeof entry === 'string' ? entry : (entry.email || 'Invalid');
-            html += `
-                <tr>
-                    <td>${TB.utils.escapeHtml(email)}</td>
-                    <td>
-                        <div class="action-group">
-                            <button class="action-btn btn-send-invite" data-email="${TB.utils.escapeHtml(email)}">
-                                <span class="material-symbols-outlined">outgoing_mail</span>
-                                Invite
-                            </button>
-                            <button class="action-btn btn-delete" data-email="${TB.utils.escapeHtml(email)}">
-                                <span class="material-symbols-outlined">person_remove</span>
-                                Remove
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
+        waitingUsers.forEach(function(entry) {
+            var email = typeof entry === 'string' ? entry : (entry.email || 'Invalid');
+            var escapedEmail = TB.utils.escapeHtml(email);
+            html += '<tr>' +
+                '<td>' + escapedEmail + '</td>' +
+                '<td>' +
+                    '<div class="action-group">' +
+                        '<button class="action-btn btn-send-invite" data-email="' + escapedEmail + '">' +
+                            '<span class="material-symbols-outlined">outgoing_mail</span>' +
+                            'Invite' +
+                        '</button>' +
+                        '<button class="action-btn btn-delete" data-email="' + escapedEmail + '">' +
+                            '<span class="material-symbols-outlined">person_remove</span>' +
+                            'Remove' +
+                        '</button>' +
+                    '</div>' +
+                '</td>' +
+            '</tr>';
         });
 
         html += '</tbody></table></div>';
@@ -1344,15 +1347,15 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     // ========== Module Management ==========
     async function loadModuleManagement() {
-        const content = document.getElementById('module-management-content');
+        var content = document.getElementById('module-management-content');
         if (!content) return;
 
         try {
-            const res = await TB.api.request('CloudM.AdminDashboard', 'list_modules_admin', null, 'GET');
+            var res = await TB.api.request('CloudM.AdminDashboard', 'list_modules_admin', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 renderModuleManagement(res.get(), content);
             } else {
-                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
             }
         } catch (e) {
             content.innerHTML = '<p class="text-error">Network error.</p>';
@@ -1362,81 +1365,75 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     function renderModuleManagement(modules, content) {
         if (!modules || modules.length === 0) {
-            content.innerHTML = `
-                <div class="empty-state">
-                    <span class="material-symbols-outlined">extension_off</span>
-                    <p>No modules loaded.</p>
-                </div>
-            `;
+            content.innerHTML = '<div class="empty-state">' +
+                '<span class="material-symbols-outlined">extension_off</span>' +
+                '<p>No modules loaded.</p>' +
+            '</div>';
             return;
         }
 
         // Group modules by prefix
-        const groups = {};
-        modules.forEach(mod => {
-            const prefix = mod.split('.')[0] || 'Other';
+        var groups = {};
+        modules.forEach(function(mod) {
+            var prefix = mod.split('.')[0] || 'Other';
             if (!groups[prefix]) groups[prefix] = [];
             groups[prefix].push(mod);
         });
 
-        let html = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">inventory_2</span>Loaded Modules (${modules.length})</h3>
-                <input type="text" id="module-search-admin" class="tb-input mb-4" placeholder="Search modules..." oninput="filterAdminModules(this.value)">
-        `;
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">inventory_2</span>Loaded Modules (' + modules.length + ')</h3>' +
+            '<input type="text" id="module-search-admin" class="tb-input mb-4" placeholder="Search modules..." oninput="filterAdminModules(this.value)">';
 
-        for (const [group, mods] of Object.entries(groups)) {
-            html += `
-                <details class="mb-4" ${group === 'CloudM' ? 'open' : ''}>
-                    <summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">
-                        <span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>
-                        ${TB.utils.escapeHtml(group)} (${mods.length})
-                    </summary>
-                    <div class="table-wrapper" style="margin-top:var(--space-2);">
-                        <table class="admin-table">
-                            <thead><tr><th>Module Name</th><th>Actions</th></tr></thead>
-                            <tbody>
-            `;
+        Object.keys(groups).forEach(function(group) {
+            var mods = groups[group];
+            var isOpen = group === 'CloudM' ? ' open' : '';
+            html += '<details class="mb-4"' + isOpen + '>' +
+                '<summary style="cursor:pointer; font-weight:var(--weight-semibold); padding:var(--space-3) 0; color:var(--text-primary);">' +
+                    '<span class="material-symbols-outlined" style="vertical-align:middle; margin-right:var(--space-2);">folder</span>' +
+                    TB.utils.escapeHtml(group) + ' (' + mods.length + ')' +
+                '</summary>' +
+                '<div class="table-wrapper" style="margin-top:var(--space-2);">' +
+                    '<table class="admin-table">' +
+                        '<thead><tr><th>Module Name</th><th>Actions</th></tr></thead>' +
+                        '<tbody>';
 
-            mods.forEach(modName => {
-                html += `
-                    <tr class="module-row-admin" data-name="${modName.toLowerCase()}">
-                        <td>${TB.utils.escapeHtml(modName)}</td>
-                        <td>
-                            <button class="action-btn btn-restart" data-module="${TB.utils.escapeHtml(modName)}">
-                                <span class="material-symbols-outlined">refresh</span>
-                                Reload
-                            </button>
-                        </td>
-                    </tr>
-                `;
+            mods.forEach(function(modName) {
+                html += '<tr class="module-row-admin" data-name="' + modName.toLowerCase() + '">' +
+                    '<td>' + TB.utils.escapeHtml(modName) + '</td>' +
+                    '<td>' +
+                        '<button class="action-btn btn-restart" data-module="' + TB.utils.escapeHtml(modName) + '">' +
+                            '<span class="material-symbols-outlined">refresh</span>' +
+                            'Reload' +
+                        '</button>' +
+                    '</td>' +
+                '</tr>';
             });
 
             html += '</tbody></table></div></details>';
-        }
+        });
 
         html += '</div>';
         content.innerHTML = html;
     }
 
     window.filterAdminModules = function(query) {
-        const q = query.toLowerCase();
-        document.querySelectorAll('.module-row-admin').forEach(row => {
+        var q = query.toLowerCase();
+        document.querySelectorAll('.module-row-admin').forEach(function(row) {
             row.style.display = row.dataset.name.includes(q) ? '' : 'none';
         });
     };
 
     // ========== SPP Management ==========
     async function loadSppManagement() {
-        const content = document.getElementById('spp-management-content');
+        var content = document.getElementById('spp-management-content');
         if (!content) return;
 
         try {
-            const res = await TB.api.request('CloudM.AdminDashboard', 'list_spps_admin', null, 'GET');
+            var res = await TB.api.request('CloudM.AdminDashboard', 'list_spps_admin', null, 'GET');
             if (res.error === TB.ToolBoxError.none) {
                 renderSppManagement(res.get(), content);
             } else {
-                content.innerHTML = `<p class="text-error">Error: ${TB.utils.escapeHtml(res.info.help_text)}</p>`;
+                content.innerHTML = '<p class="text-error">Error: ' + TB.utils.escapeHtml(res.info.help_text) + '</p>';
             }
         } catch (e) {
             content.innerHTML = '<p class="text-error">Network error.</p>';
@@ -1446,51 +1443,40 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     function renderSppManagement(spps, content) {
         if (!spps || spps.length === 0) {
-            content.innerHTML = `
-                <div class="empty-state">
-                    <span class="material-symbols-outlined">web_asset_off</span>
-                    <p>No SPPs registered.</p>
-                </div>
-            `;
+            content.innerHTML = '<div class="empty-state">' +
+                '<span class="material-symbols-outlined">web_asset_off</span>' +
+                '<p>No SPPs registered.</p>' +
+            '</div>';
             return;
         }
 
-        let html = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">web</span>UI Panels (${spps.length})</h3>
-                <div class="table-wrapper">
-                    <table class="admin-table">
-                        <thead>
-                            <tr>
-                                <th>Title</th>
-                                <th>Name</th>
-                                <th>Path</th>
-                                <th>Auth</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-        `;
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">web</span>UI Panels (' + spps.length + ')</h3>' +
+            '<div class="table-wrapper">' +
+                '<table class="admin-table">' +
+                    '<thead><tr>' +
+                        '<th>Title</th>' +
+                        '<th>Name</th>' +
+                        '<th>Path</th>' +
+                        '<th>Auth</th>' +
+                        '<th>Actions</th>' +
+                    '</tr></thead>' +
+                    '<tbody>';
 
-        spps.forEach(spp => {
-            html += `
-                <tr>
-                    <td><strong>${TB.utils.escapeHtml(spp.title)}</strong></td>
-                    <td class="text-muted text-sm">${TB.utils.escapeHtml(spp.name || spp.title)}</td>
-                    <td class="text-xs text-muted">${TB.utils.escapeHtml(spp.path)}</td>
-                    <td>
-                        ${spp.auth ?
-                            '<span class="text-success">Yes</span>' :
-                            '<span class="text-muted">No</span>'}
-                    </td>
-                    <td>
-                        <button class="action-btn btn-open-link" data-path="${TB.utils.escapeHtml(spp.path)}">
-                            <span class="material-symbols-outlined">open_in_new</span>
-                            Open
-                        </button>
-                    </td>
-                </tr>
-            `;
+        spps.forEach(function(spp) {
+            var authLabel = spp.auth ? '<span class="text-success">Yes</span>' : '<span class="text-muted">No</span>';
+            html += '<tr>' +
+                '<td><strong>' + TB.utils.escapeHtml(spp.title) + '</strong></td>' +
+                '<td class="text-muted text-sm">' + TB.utils.escapeHtml(spp.name || spp.title) + '</td>' +
+                '<td class="text-xs text-muted">' + TB.utils.escapeHtml(spp.path) + '</td>' +
+                '<td>' + authLabel + '</td>' +
+                '<td>' +
+                    '<button class="action-btn btn-open-link" data-path="' + TB.utils.escapeHtml(spp.path) + '">' +
+                        '<span class="material-symbols-outlined">open_in_new</span>' +
+                        'Open' +
+                    '</button>' +
+                '</td>' +
+            '</tr>';
         });
 
         html += '</tbody></table></div></div>';
@@ -1594,36 +1580,90 @@ async def get_system_status(app: App, request: RequestData):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True)
 async def list_users_admin(app: App, request: RequestData):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
-    all_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
-    if all_users_result.is_error():
-        return Result.default_internal_error(info="Failed to fetch users: " + str(all_users_result.info))
-    users_data = []
-    user_list_raw = all_users_result.get()
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
 
-    def helper(user_bytes):
-        try:
-            user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-            user_dict = {}
-            try:
-                user_dict = json.loads(user_str)
-            except json.JSONDecodeError:
-                app.print("Warning: User data (admin list) not valid JSON, falling back to eval: " + str(
-                    user_str[:100]) + "...", "WARNING")
-                user_dict = eval(user_str)
-            users_data.append({"uid": user_dict.get("uid", "N/A"), "name": user_dict.get("name", "N/A"),
-                               "email": user_dict.get("email"), "level": user_dict.get("level", -1),
-                               "is_persona": user_dict.get("is_persona", False),
-                               "settings": user_dict.get("settings", {})})
-        except Exception as e:
-            app.print("Error parsing user data for admin list: " + str(user_bytes[:100]) + "... - Error: " + str(e),
-                      "ERROR")
-    if user_list_raw:
-        if isinstance(user_list_raw, list):
-            for user_bytes_ in user_list_raw:
-                helper(user_bytes_)
-        else:
-            helper(user_list_raw)
+    users_data = []
+    seen_ids = set()
+
+    # 1. Clerk-Benutzer aus Datenbank laden (CLERK_USER::*)
+    try:
+        clerk_users_result = await app.a_run_any(TBEF.DB.GET, query="CLERK_USER::*", get_results=True)
+        if not clerk_users_result.is_error():
+            clerk_users_raw = clerk_users_result.get()
+            if clerk_users_raw:
+                if not isinstance(clerk_users_raw, list):
+                    clerk_users_raw = [clerk_users_raw]
+                for user_bytes in clerk_users_raw:
+                    try:
+                        user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+                        user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
+                        uid = user_dict.get("clerk_user_id", user_dict.get("uid", "N/A"))
+                        if uid not in seen_ids:
+                            seen_ids.add(uid)
+                            users_data.append({
+                                "uid": uid,
+                                "name": user_dict.get("username", user_dict.get("name", "N/A")),
+                                "email": user_dict.get("email"),
+                                "level": user_dict.get("level", 1),
+                                "is_persona": user_dict.get("is_persona", False),
+                                "settings": user_dict.get("settings", {}),
+                                "source": "clerk"
+                            })
+                    except Exception as e:
+                        app.print("Error parsing Clerk user: " + str(e), "WARNING")
+    except Exception as e:
+        app.print("Error fetching Clerk users: " + str(e), "WARNING")
+
+    # 2. Legacy-Benutzer aus Datenbank laden (USER::*)
+    try:
+        legacy_users_result = await app.a_run_any(TBEF.DB.GET, query="USER::*", get_results=True)
+        if not legacy_users_result.is_error():
+            legacy_users_raw = legacy_users_result.get()
+            if legacy_users_raw:
+                if not isinstance(legacy_users_raw, list):
+                    legacy_users_raw = [legacy_users_raw]
+                for user_bytes in legacy_users_raw:
+                    try:
+                        user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+                        user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
+                        uid = user_dict.get("uid", "N/A")
+                        if uid not in seen_ids:
+                            seen_ids.add(uid)
+                            users_data.append({
+                                "uid": uid,
+                                "name": user_dict.get("name", "N/A"),
+                                "email": user_dict.get("email"),
+                                "level": user_dict.get("level", 1),
+                                "is_persona": user_dict.get("is_persona", False),
+                                "settings": user_dict.get("settings", {}),
+                                "source": "legacy"
+                            })
+                    except Exception as e:
+                        app.print("Error parsing legacy user: " + str(e), "WARNING")
+    except Exception as e:
+        app.print("Error fetching legacy users: " + str(e), "WARNING")
+
+    # 3. Versuche auch Clerk API direkt (falls verfügbar)
+    try:
+        from .AuthClerk import list_users as clerk_list_users
+        clerk_api_result = clerk_list_users(app)
+        if not clerk_api_result.is_error():
+            for user in clerk_api_result.get() or []:
+                uid = user.get("id", "N/A")
+                if uid not in seen_ids:
+                    seen_ids.add(uid)
+                    users_data.append({
+                        "uid": uid,
+                        "name": user.get("username", "N/A"),
+                        "email": user.get("email"),
+                        "level": 1,  # Default level für Clerk-API Benutzer
+                        "is_persona": False,
+                        "settings": {},
+                        "source": "clerk_api"
+                    })
+    except Exception as e:
+        app.print("Clerk API not available: " + str(e), "DEBUG")
 
     return Result.json(data=users_data)
 
@@ -1639,68 +1679,149 @@ async def list_modules_admin(app: App, request: RequestData):
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def update_user_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
     uid_to_update = data.get("uid")
     name_to_update = data.get("name")
-    if not uid_to_update or not name_to_update: return Result.default_user_error(info="User UID and Name are required.")
+    if not uid_to_update:
+        return Result.default_user_error(info="User UID is required.")
+
+    # Versuche zuerst Clerk-Benutzer zu aktualisieren
+    try:
+        clerk_user_result = await app.a_run_any(TBEF.DB.GET, query="CLERK_USER::" + str(uid_to_update), get_results=True)
+        if not clerk_user_result.is_error() and clerk_user_result.get():
+            user_bytes = clerk_user_result.get()
+            if isinstance(user_bytes, list):
+                user_bytes = user_bytes[0]
+            user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+            user_dict = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
+
+            # Update fields
+            if "email" in data:
+                user_dict["email"] = data["email"]
+            if "level" in data:
+                try:
+                    user_dict["level"] = int(data["level"])
+                except ValueError:
+                    return Result.default_user_error(info="Invalid level format.")
+            if "settings" in data and isinstance(data["settings"], dict):
+                if "settings" not in user_dict or user_dict["settings"] is None:
+                    user_dict["settings"] = {}
+                user_dict["settings"].update(data["settings"])
+
+            # Save Clerk user
+            save_result = await app.a_run_any(
+                TBEF.DB.SET,
+                query="CLERK_USER::" + str(uid_to_update),
+                data=user_dict,
+                get_results=True
+            )
+            if save_result.is_error():
+                return Result.default_internal_error(info="Failed to save Clerk user: " + str(save_result.info))
+            return Result.ok(info="User updated successfully.")
+    except Exception as e:
+        app.print("Error updating Clerk user, trying legacy: " + str(e), "DEBUG")
+
+    # Fallback: Legacy-Benutzer aktualisieren
+    if not name_to_update:
+        return Result.default_user_error(info="User Name is required for legacy users.")
 
     user_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username=name_to_update,
-                                   uid=uid_to_update, get_results=True)  # Use a_run_any for TBEF
-    if user_res.is_error() or not user_res.get(): return Result.default_user_error(
-        info="User " + str(name_to_update) + " (UID: " + str(uid_to_update) + ") not found.")
+                                   uid=uid_to_update, get_results=True)
+    if user_res.is_error() or not user_res.get():
+        return Result.default_user_error(info="User " + str(name_to_update) + " (UID: " + str(uid_to_update) + ") not found.")
 
     user_to_update = user_res.get()
-    if "email" in data: user_to_update.email = data["email"]
+    if "email" in data:
+        user_to_update.email = data["email"]
     if "level" in data:
         try:
             user_to_update.level = int(data["level"])
         except ValueError:
             return Result.default_user_error(info="Invalid level format.")
     if "settings" in data and isinstance(data["settings"], dict):
-        if user_to_update.settings is None: user_to_update.settings = {}
+        if user_to_update.settings is None:
+            user_to_update.settings = {}
         user_to_update.settings.update(data["settings"])
 
-    save_result =  db_helper_save_user(app, asdict(user_to_update))
-    if save_result.is_error(): return Result.default_internal_error(
-        info="Failed to save user: " + str(save_result.info))
+    save_result = db_helper_save_user(app, asdict(user_to_update))
+    if save_result.is_error():
+        return Result.default_internal_error(info="Failed to save user: " + str(save_result.info))
     return Result.ok(info="User updated successfully.")
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
 async def delete_user_admin(app: App, request: RequestData, data: dict):
     admin_user = await _is_admin(app, request)
-    if not admin_user: return Result.default_user_error(info="Permission denied", exec_code=403)
+    if not admin_user:
+        return Result.default_user_error(info="Permission denied", exec_code=403)
+
     uid_to_delete = data.get("uid")
-    if not uid_to_delete: return Result.default_user_error(info="User UID is required.")
-    if admin_user.uid == uid_to_delete: return Result.default_user_error(info="Admin cannot delete themselves.")
+    if not uid_to_delete:
+        return Result.default_user_error(info="User UID is required.")
 
-    user_to_delete_res = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME, username='*', uid=uid_to_delete, get_results=True)
-    username_to_delete = None
-    if not user_to_delete_res.is_error() and user_to_delete_res.get():
-        username_to_delete = user_to_delete_res.get().name
-    else:
-        all_users_raw_res = await app.a_run_any(TBEF.DB.GET, query="USER::*::" + str(uid_to_delete), get_results=True)
-        if not all_users_raw_res.is_error() and all_users_raw_res.get():
-            try:
-                user_bytes = all_users_raw_res.get()[0]
-                user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
-                user_dict_raw = {}
+    # Check if admin is trying to delete themselves
+    admin_uid = getattr(admin_user, 'clerk_user_id', None) or getattr(admin_user, 'uid', None)
+    if admin_uid == uid_to_delete:
+        return Result.default_user_error(info="Admin cannot delete themselves.")
+
+    deleted = False
+
+    # 1. Versuche Clerk-Benutzer zu löschen
+    try:
+        clerk_delete_result = await app.a_run_any(
+            TBEF.DB.DELETE,
+            query="CLERK_USER::" + str(uid_to_delete),
+            get_results=True
+        )
+        if not clerk_delete_result.is_error():
+            deleted = True
+            app.print("Deleted Clerk user: " + str(uid_to_delete), "INFO")
+    except Exception as e:
+        app.print("Error deleting Clerk user: " + str(e), "DEBUG")
+
+    # 2. Versuche Legacy-Benutzer zu löschen
+    try:
+        user_to_delete_res = await app.a_run_any(
+            TBEF.CLOUDM_AUTHMANAGER.GET_USER_BY_NAME,
+            username='*',
+            uid=uid_to_delete,
+            get_results=True
+        )
+        username_to_delete = None
+        if not user_to_delete_res.is_error() and user_to_delete_res.get():
+            username_to_delete = user_to_delete_res.get().name
+        else:
+            # Try to find by UID pattern
+            all_users_raw_res = await app.a_run_any(
+                TBEF.DB.GET,
+                query="USER::*::" + str(uid_to_delete),
+                get_results=True
+            )
+            if not all_users_raw_res.is_error() and all_users_raw_res.get():
                 try:
-                    user_dict_raw = json.loads(user_str)
-                except json.JSONDecodeError:
-                    user_dict_raw = eval(user_str)
-                username_to_delete = user_dict_raw.get("name")
-            except Exception as e:
-                return Result.default_internal_error(info="Error parsing user data for deletion: " + str(e))
-    if not username_to_delete: return Result.default_user_error(
-        info="User with UID " + str(uid_to_delete) + " not found or name indeterminate.")
+                    user_bytes = all_users_raw_res.get()
+                    if isinstance(user_bytes, list):
+                        user_bytes = user_bytes[0]
+                    user_str = user_bytes.decode() if isinstance(user_bytes, bytes) else str(user_bytes)
+                    user_dict_raw = json.loads(user_str) if user_str.startswith('{') else eval(user_str)
+                    username_to_delete = user_dict_raw.get("name")
+                except Exception:
+                    pass
 
-    delete_result = db_helper_delete_user(app, username_to_delete, uid_to_delete, matching=True)
-    #delete_result = await app.a_run_any(TBEF.CLOUDM_AUTHMANAGER.CREATE_USER, username=username_to_delete,
-    #                                    uid=uid_to_delete, get_results=True)
-    if delete_result.is_error(): return Result.default_internal_error(
-        info="Failed to delete user: " + str(delete_result.info))
-    return Result.ok(info="User " + str(username_to_delete) + " deleted.")
+        if username_to_delete:
+            delete_result = db_helper_delete_user(app, username_to_delete, uid_to_delete, matching=True)
+            if not delete_result.is_error():
+                deleted = True
+                app.print("Deleted legacy user: " + str(username_to_delete), "INFO")
+    except Exception as e:
+        app.print("Error deleting legacy user: " + str(e), "DEBUG")
+
+    if deleted:
+        return Result.ok(info="User deleted successfully.")
+    else:
+        return Result.default_user_error(info="User with UID " + str(uid_to_delete) + " not found.")
 
 
 @export(mod_name=Name, api=True, version=version, request_as_kwarg=True, api_methods=['POST'])
