@@ -25,10 +25,12 @@ PID_DIR = "./.info"  # Standardized PID directory
 
 
 async def _is_admin(app: App, request: RequestData) -> User | None:
+    """Check if user is admin. Admin = level -1 or username 'root'/'loot'"""
     current_user = await get_current_user_from_request(app, request)
-    if not current_user:  # Level 0 is admin
+    if not current_user:
         return None
-    if current_user.username == 'root' or current_user.username == 'loot':
+    # Admin check: level -1 OR special usernames
+    if current_user.level == -1 or current_user.username == 'root' or current_user.username == 'loot':
         return current_user
     return None
 
@@ -733,10 +735,6 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                 <span class="material-symbols-outlined">web_stories</span>
                 <span>SPPs</span>
             </button>
-            <button class="tab-btn" data-section="my-account" role="tab" aria-selected="false">
-                <span class="material-symbols-outlined">manage_accounts</span>
-                <span>Account</span>
-            </button>
         </nav>
 
         <!-- Content Sections -->
@@ -799,19 +797,6 @@ async def get_dashboard_main_page(app: App, request: RequestData):
                     </div>
                 </div>
             </section>
-
-            <!-- My Account -->
-            <section id="my-account-section" class="content-section">
-                <div class="section-header">
-                    <h2><span class="material-symbols-outlined">account_circle</span>My Account</h2>
-                </div>
-                <div id="my-account-content">
-                    <div class="loading-state">
-                        <div class="spinner"></div>
-                        <span>Loading account...</span>
-                    </div>
-                </div>
-            </section>
         </div>
 
         <!-- Footer Link -->
@@ -846,7 +831,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
             if (userRes.error === TB.ToolBoxError.none && userRes.get()) {
                 currentAdminUser = userRes.get();
                 updateHeader();
-                await loadMyAccountSection();
                 await showSection('system-status');
             } else {
                 console.error("Failed to load admin user:", userRes.info.help_text);
@@ -1002,9 +986,9 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
     // ========== Section Loading ==========
     async function showSection(sectionId) {
-        console.log(`Showing section: ${sectionId}`);
+        console.log('Showing section: ' + sectionId);
         document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
-        const section = document.getElementById(`${sectionId}-section`);
+        const section = document.getElementById(sectionId + '-section');
 
         if (section) {
             section.classList.add('active');
@@ -1022,9 +1006,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
                     break;
                 case 'spp-management':
                     await loadSppManagement();
-                    break;
-                case 'my-account':
-                    await loadMyAccountSection();
                     break;
             }
         }
@@ -1120,103 +1101,122 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         }
     }
 
+    // Level Mapping: -1 = Admin, 0 = Nicht eingeloggt, 1 = Eingeloggt, 2 = Spezial Nutzer
+    function getLevelInfo(level) {
+        switch(level) {
+            case -1: return { name: 'Admin', badge: 'admin', color: 'var(--color-warning)' };
+            case 0: return { name: 'Gast', badge: 'guest', color: 'var(--text-muted)' };
+            case 1: return { name: 'User', badge: 'user', color: 'var(--color-success)' };
+            case 2: return { name: 'Spezial', badge: 'special', color: 'var(--color-info)' };
+            default: return { name: 'Level ' + level, badge: '', color: 'var(--text-secondary)' };
+        }
+    }
+
     function renderUserManagement(users, content) {
         if (!users || users.length === 0) {
             content.innerHTML = '<p class="text-muted">No users found.</p>';
             return;
         }
 
-        let html = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">group</span>All Users (${users.length})</h3>
-                <div class="table-wrapper">
-                    <table class="admin-table" data-users='${TB.utils.escapeHtml(JSON.stringify(users))}'>
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Email</th>
-                                <th>Level</th>
-                                <th>UID</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-        `;
+        var html = '<div class="dashboard-card">' +
+            '<h3><span class="material-symbols-outlined">group</span>All Users (' + users.length + ')</h3>' +
+            '<input type="text" id="user-search-admin" class="tb-input mb-4" placeholder="Search users..." oninput="filterAdminUsers(this.value)">' +
+            '<div class="table-wrapper">' +
+            '<table class="admin-table" data-users=\\' + TB.utils.escapeHtml(JSON.stringify(users)) + \\'>' +
+            '<thead><tr>' +
+            '<th>Name</th>' +
+            '<th>Email</th>' +
+            '<th>Level</th>' +
+            '<th>UID</th>' +
+            '<th>Actions</th>' +
+            '</tr></thead><tbody>';
 
-        users.forEach(user => {
-            const isAdmin = user.level === 0;
-            const canDelete = currentAdminUser && currentAdminUser.uid !== user.uid;
+        users.forEach(function(user) {
+            var levelInfo = getLevelInfo(user.level);
+            var canDelete = currentAdminUser && currentAdminUser.uid !== user.uid;
 
-            html += `
-                <tr>
-                    <td><strong>${TB.utils.escapeHtml(user.name)}</strong></td>
-                    <td class="text-muted">${TB.utils.escapeHtml(user.email || 'N/A')}</td>
-                    <td>
-                        ${user.level}
-                        ${isAdmin ? '<span class="level-badge admin">Admin</span>' : ''}
-                    </td>
-                    <td class="text-xs text-muted">${TB.utils.escapeHtml(user.uid)}</td>
-                    <td>
-                        <div class="action-group">
-                            <button class="action-btn btn-edit" data-uid="${user.uid}">
-                                <span class="material-symbols-outlined">edit</span>
-                                Edit
-                            </button>
-                            ${canDelete ? `
-                                <button class="action-btn btn-delete" data-uid="${user.uid}" data-name="${TB.utils.escapeHtml(user.name)}">
-                                    <span class="material-symbols-outlined">delete</span>
-                                    Delete
-                                </button>
-                            ` : ''}
-                        </div>
-                    </td>
-                </tr>
-            `;
+            html += '<tr class="user-row-admin" data-name="' + (user.name || '').toLowerCase() + '" data-email="' + (user.email || '').toLowerCase() + '">' +
+                '<td><strong>' + TB.utils.escapeHtml(user.name) + '</strong></td>' +
+                '<td class="text-muted">' + TB.utils.escapeHtml(user.email || 'N/A') + '</td>' +
+                '<td>' +
+                    '<span class="level-badge ' + levelInfo.badge + '" style="background:oklch(from ' + levelInfo.color + ' l c h / 0.2); color:' + levelInfo.color + ';">' +
+                        levelInfo.name +
+                    '</span>' +
+                '</td>' +
+                '<td class="text-xs text-muted">' + TB.utils.escapeHtml(user.uid) + '</td>' +
+                '<td>' +
+                    '<div class="action-group">' +
+                        '<button class="action-btn btn-edit" data-uid="' + user.uid + '">' +
+                            '<span class="material-symbols-outlined">edit</span>' +
+                            'Edit' +
+                        '</button>' +
+                        (canDelete ? '<button class="action-btn btn-delete" data-uid="' + user.uid + '" data-name="' + TB.utils.escapeHtml(user.name) + '">' +
+                            '<span class="material-symbols-outlined">delete</span>' +
+                            'Delete' +
+                        '</button>' : '') +
+                    '</div>' +
+                '</td>' +
+            '</tr>';
         });
 
         html += '</tbody></table></div></div>';
         content.innerHTML = html;
     }
 
+    window.filterAdminUsers = function(query) {
+        var q = query.toLowerCase();
+        document.querySelectorAll('.user-row-admin').forEach(function(row) {
+            var name = row.dataset.name || '';
+            var email = row.dataset.email || '';
+            row.style.display = (name.includes(q) || email.includes(q)) ? '' : 'none';
+        });
+    };
+
     function showUserEditModal(userId, allUsers) {
-        const user = allUsers.find(u => u.uid === userId);
+        var user = allUsers.find(function(u) { return u.uid === userId; });
         if (!user) { TB.ui.Toast.showError("User not found."); return; }
 
+        var formContent = '<form id="editUserFormAdmin">' +
+            '<input type="hidden" name="uid" value="' + user.uid + '">' +
+            '<div class="form-group">' +
+                '<label class="tb-label">Name</label>' +
+                '<input type="text" name="name" class="tb-input" value="' + TB.utils.escapeHtml(user.name) + '" readonly style="opacity:0.6;">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label class="tb-label">Email</label>' +
+                '<input type="email" name="email" class="tb-input" value="' + TB.utils.escapeHtml(user.email || '') + '">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label class="tb-label">Level</label>' +
+                '<select name="level" class="tb-input">' +
+                    '<option value="-1"' + (user.level === -1 ? ' selected' : '') + '>-1: Admin</option>' +
+                    '<option value="0"' + (user.level === 0 ? ' selected' : '') + '>0: Gast (nicht eingeloggt)</option>' +
+                    '<option value="1"' + (user.level === 1 ? ' selected' : '') + '>1: User (eingeloggt)</option>' +
+                    '<option value="2"' + (user.level === 2 ? ' selected' : '') + '>2: Spezial Nutzer</option>' +
+                '</select>' +
+                '<p class="text-xs text-muted mt-2">-1=Admin, 0=Gast, 1=User, 2=Spezial</p>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label class="flex items-center" style="cursor:pointer;">' +
+                    '<input type="checkbox" name="experimental_features" class="tb-checkbox"' + (user.settings && user.settings.experimental_features ? ' checked' : '') + '>' +
+                    '<span>Experimental Features</span>' +
+                '</label>' +
+            '</div>' +
+        '</form>';
+
         TB.ui.Modal.show({
-            title: `Edit User: ${TB.utils.escapeHtml(user.name)}`,
-            content: `
-                <form id="editUserFormAdmin">
-                    <input type="hidden" name="uid" value="${user.uid}">
-                    <div class="form-group">
-                        <label class="tb-label">Name</label>
-                        <input type="text" name="name" class="tb-input" value="${TB.utils.escapeHtml(user.name)}" readonly style="opacity:0.6;">
-                    </div>
-                    <div class="form-group">
-                        <label class="tb-label">Email</label>
-                        <input type="email" name="email" class="tb-input" value="${TB.utils.escapeHtml(user.email || '')}">
-                    </div>
-                    <div class="form-group">
-                        <label class="tb-label">Level</label>
-                        <input type="number" name="level" class="tb-input" value="${user.level}">
-                    </div>
-                    <div class="form-group">
-                        <label class="flex items-center" style="cursor:pointer;">
-                            <input type="checkbox" name="experimental_features" class="tb-checkbox" ${user.settings?.experimental_features ? 'checked' : ''}>
-                            <span>Experimental Features</span>
-                        </label>
-                    </div>
-                </form>
-            `,
+            title: 'Edit User: ' + TB.utils.escapeHtml(user.name),
+            content: formContent,
             buttons: [
-                { text: 'Cancel', action: m => m.close(), variant: 'secondary' },
+                { text: 'Cancel', action: function(m) { m.close(); }, variant: 'secondary' },
                 {
                     text: 'Save Changes',
                     variant: 'primary',
-                    action: async m => {
-                        const form = document.getElementById('editUserFormAdmin');
+                    action: async function(m) {
+                        var form = document.getElementById('editUserFormAdmin');
                         if (!form) return;
 
-                        const updatedData = {
+                        var updatedData = {
                             uid: form.uid.value,
                             name: form.name.value,
                             email: form.email.value,
@@ -1226,14 +1226,14 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
 
                         TB.ui.Loader.show('Saving...');
                         try {
-                            const res = await TB.api.request('CloudM.AdminDashboard', 'update_user_admin', updatedData, 'POST');
+                            var res = await TB.api.request('CloudM.AdminDashboard', 'update_user_admin', updatedData, 'POST');
                             TB.ui.Loader.hide();
                             if (res.error === TB.ToolBoxError.none) {
                                 TB.ui.Toast.showSuccess('User updated!');
                                 await loadUserManagement();
                                 m.close();
                             } else {
-                                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
+                                TB.ui.Toast.showError('Error: ' + TB.utils.escapeHtml(res.info.help_text));
                             }
                         } catch (e) {
                             TB.ui.Loader.hide();
@@ -1496,177 +1496,6 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api || !TB.user || !TB.utils) {
         html += '</tbody></table></div></div>';
         content.innerHTML = html;
     }
-
-    // ========== My Account ==========
-    async function loadMyAccountSection() {
-        const content = document.getElementById('my-account-content');
-        if (!content || !currentAdminUser) {
-            if (content) content.innerHTML = '<p class="text-error">Account details not available.</p>';
-            return;
-        }
-
-        const user = currentAdminUser;
-        const emailId = `email-section-${Date.now()}`;
-        const personaId = `persona-status-${Date.now()}`;
-
-        content.innerHTML = `
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">mail</span>Email Address</h3>
-                <div id="${emailId}" class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Current Email</div>
-                            <div class="setting-description">${user.email ? TB.utils.escapeHtml(user.email) : 'Not set'}</div>
-                        </div>
-                    </div>
-                    <div class="form-group mt-4">
-                        <label class="tb-label">New Email</label>
-                        <input type="email" name="new_email_admin" class="tb-input" value="${user.email ? TB.utils.escapeHtml(user.email) : ''}" placeholder="Enter new email">
-                    </div>
-                    <button class="tb-btn tb-btn-primary" onclick="updateAdminEmail()">
-                        <span class="material-symbols-outlined">save</span>
-                        Update Email
-                    </button>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">fingerprint</span>Persona Device (WebAuthn)</h3>
-                <div id="${personaId}">
-                    ${!user.is_persona ? `
-                        <p class="text-muted mb-4">Add a security key or biometric authentication for passwordless login.</p>
-                        <button id="registerPersonaBtnAdmin" class="tb-btn tb-btn-success">
-                            <span class="material-symbols-outlined">fingerprint</span>
-                            Add Persona Device
-                        </button>
-                        <div id="persona-result" class="mt-4"></div>
-                    ` : `
-                        <div class="setting-item" style="border-color: var(--color-success);">
-                            <div class="setting-info">
-                                <div class="setting-label text-success flex items-center gap-2">
-                                    <span class="material-symbols-outlined">verified_user</span>
-                                    Persona Configured
-                                </div>
-                                <div class="setting-description">WebAuthn is enabled for this account.</div>
-                            </div>
-                        </div>
-                    `}
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">badge</span>Account Info</h3>
-                <div class="settings-section">
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">Username</div>
-                            <div class="setting-description">${TB.utils.escapeHtml(user.name)}</div>
-                        </div>
-                    </div>
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">User Level</div>
-                            <div class="setting-description">
-                                ${user.level} ${user.level === 0 ? '<span class="level-badge admin">Administrator</span>' : ''}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="setting-item">
-                        <div class="setting-info">
-                            <div class="setting-label">UID</div>
-                            <div class="setting-description text-xs">${TB.utils.escapeHtml(user.uid)}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="dashboard-card">
-                <h3><span class="material-symbols-outlined">labs</span>Settings</h3>
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <div class="setting-label">Experimental Features</div>
-                        <div class="setting-description">Enable beta features</div>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="exp-features-toggle"
-                               ${user.settings?.experimental_features ? 'checked' : ''}
-                               onchange="updateAdminSetting('experimental_features', this.checked)">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-        `;
-
-        // Setup Persona Registration
-        const personaBtn = document.getElementById('registerPersonaBtnAdmin');
-        if (personaBtn) {
-            personaBtn.addEventListener('click', async () => {
-                const resultDiv = document.getElementById('persona-result');
-                if (resultDiv) resultDiv.innerHTML = '<p class="text-muted">Initiating WebAuthn...</p>';
-
-                if (window.TB?.user && user.name) {
-                    const result = await window.TB.user.registerWebAuthnForCurrentUser(user.name);
-                    if (result.success) {
-                        if (resultDiv) resultDiv.innerHTML = `<p class="text-success">${TB.utils.escapeHtml(result.message)}</p>`;
-                        TB.ui.Toast.showSuccess("Persona registered!");
-                        setTimeout(async () => {
-                            const updatedRes = await TB.api.request('CloudM.UserAccountManager', 'get_current_user_from_request_api_wrapper', null, 'GET');
-                            if (updatedRes.error === TB.ToolBoxError.none && updatedRes.get()) {
-                                currentAdminUser = updatedRes.get();
-                                await loadMyAccountSection();
-                            }
-                        }, 1500);
-                    } else {
-                        if (resultDiv) resultDiv.innerHTML = `<p class="text-error">${TB.utils.escapeHtml(result.message)}</p>`;
-                    }
-                } else {
-                    if (resultDiv) resultDiv.innerHTML = '<p class="text-error">WebAuthn not available.</p>';
-                }
-            });
-        }
-    }
-
-    window.updateAdminEmail = async function() {
-        const input = document.querySelector('[name="new_email_admin"]');
-        if (!input || !input.value) {
-            TB.ui.Toast.showWarning("Please enter an email.");
-            return;
-        }
-
-        TB.ui.Loader.show('Updating email...');
-        try {
-            const res = await TB.api.request('CloudM.UserAccountManager', 'update_email',
-                { new_email: input.value }, 'POST');
-            TB.ui.Loader.hide();
-            if (res.error === TB.ToolBoxError.none) {
-                TB.ui.Toast.showSuccess('Email updated!');
-                currentAdminUser.email = input.value;
-            } else {
-                TB.ui.Toast.showError(`Error: ${TB.utils.escapeHtml(res.info.help_text)}`);
-            }
-        } catch (e) {
-            TB.ui.Loader.hide();
-            TB.ui.Toast.showError('Network error.');
-        }
-    };
-
-    window.updateAdminSetting = async function(key, value) {
-        try {
-            const res = await TB.api.request('CloudM.UserAccountManager', 'update_setting', {
-                setting_key: key,
-                setting_value: String(value)
-            }, 'POST');
-            if (res.error === TB.ToolBoxError.none) {
-                if (!currentAdminUser.settings) currentAdminUser.settings = {};
-                currentAdminUser.settings[key] = value;
-                TB.ui.Toast.showSuccess('Setting saved!');
-            } else {
-                TB.ui.Toast.showError('Error saving setting.');
-            }
-        } catch (e) {
-            TB.ui.Toast.showError('Network error.');
-        }
-    };
 
     // Make showSection global
     window.showSection = showSection;

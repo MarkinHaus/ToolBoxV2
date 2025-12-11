@@ -1773,9 +1773,9 @@ if (typeof TB === 'undefined' || !TB.ui || !TB.api) {
                     '<span class="file-tree-name">' + escapedName + '</span>' +
                     '<span class="file-tree-size">' + size + '</span>' +
                     '<div class="file-actions">' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); previewFile(' + escapedPath + ')" title="Vorschau"><span class="material-symbols-outlined">visibility</span></button>' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(' + escapedPath + ')" title="Download"><span class="material-symbols-outlined">download</span></button>' +
-                    '<button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(' + escapedPath + ')" title="Löschen"><span class="material-symbols-outlined">delete</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); previewFile( ${escapedPath}  )" title="Vorschau"><span class="material-symbols-outlined">visibility</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); downloadFile(  ${escapedPath}  )" title="Download"><span class="material-symbols-outlined">download</span></button>' +
+                    '<button class="file-action-btn" onclick="event.stopPropagation(); deleteFile(  ${escapedPath}  )" title="Löschen"><span class="material-symbols-outlined">delete</span></button>' +
                     '</div></div>';
             } else {
                 const childCount = Object.keys(value).filter(k => k !== '_file').length;
