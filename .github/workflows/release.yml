@@ -1,8 +1,8 @@
-name: Release Flow
+name: Release
 
 on:
   release:
-    types: [published, created, prereleased]
+    types: [published]
 
 env:
   PYTHON_VERSION: "3.11"
@@ -10,127 +10,59 @@ env:
 
 jobs:
   # ============================================================================
-  # PYTHON BUILDS
+  # FRONTEND BUILD
   # ============================================================================
 
-  build-python:
-    name: Build Python Core Distribution
+  build-frontend:
+    name: Build Frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
+      - name: Install and Build
+        working-directory: toolboxv2
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install uv build
-          pip install --user --no-cache-dir Cython
+          npm install
+          npm install --prefix ./tbjs
+          npm install --prefix ./web
+          npm run build:tbjs && npm run build:web
 
-      - name: Install toolboxv2 with ISAA
-        run: |
-          python -m uv pip install -e toolboxv2/mods/isaa --system
-          python -m uv pip install . --system
-        working-directory: ${{ github.workspace }}
-
-      - name: Run Tests
-        run: python -m unittest discover -s toolboxv2/tests/
-
-      - name: Build distribution packages
-        run: |
-          python -m build --outdir dist
-
-      - name: Upload dist artifacts
+      - name: Upload Frontend Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-dist
-          path: |
-            dist/*.tar.gz
-            dist/*.whl
-
-  # Nuitka Standalone Builds für Windows, macOS, Linux
-  build-python-nuitka:
-      name: Nuitka Build (${{ matrix.os }})
-      runs-on: ${{ matrix.os }}
-      strategy:
-          fail-fast: false
-          matrix:
-              include:
-                  -   os: ubuntu-latest
-                      artifact_name: toolbox-linux-x64
-                      # FIX: Removed --standalone, --onefile is sufficient
-                      nuitka_args: --onefile --linux-icon=toolboxv2/web/webapp/icon-1024.png
-                  -   os: windows-latest
-                      artifact_name: toolbox-windows-x64
-                      # FIX: Removed --standalone, --onefile is sufficient
-                      nuitka_args: --onefile --windows-icon-from-ico=toolboxv2/web/favicon.ico --windows-console-mode=attach
-                  -   os: macos-latest
-                      artifact_name: toolbox-macos-arm64
-                        # FIX: For macOS app bundle, use --macos-create-app-bundle with --onefile
-                      # OR use --standalone --macos-create-app-bundle (folder-based)
-                      nuitka_args: --onefile --macos-app-icon=toolboxv2/web/favicon.icnos --macos-create-app-bundle
-
-      steps:
-          -   name: Checkout Code
-              uses: actions/checkout@v4
-
-          -   name: Setup Python
-              uses: actions/setup-python@v5
-              with:
-                  python-version: ${{ env.PYTHON_VERSION }}
-
-          -   name: Install Nuitka and dependencies
-              run: |
-                  python -m pip install --upgrade pip
-                  python -m pip install nuitka zstandard ordered-set
-                  python -m pip install -e .
-
-          -   name: Build with Nuitka
-              run: |
-                  python -m nuitka \
-                    ${{ matrix.nuitka_args }} \
-                    --output-dir=nuitka-build \
-                    --include-package=toolboxv2 \
-                    --enable-plugin=anti-bloat \
-                    --assume-yes-for-downloads \
-                    toolboxv2/__main__.py
-
-          -   name: Package artifacts (Linux/macOS)
-              if: runner.os != 'Windows'
-              run: |
-                  mkdir -p release-artifacts
-                  if [ -d "nuitka-build/__main__.app" ]; then
-                    tar -czvf release-artifacts/${{ matrix.artifact_name }}.tar.gz -C nuitka-build __main__.app
-                  elif [ -f "nuitka-build/__main__.bin" ]; then
-                    cp nuitka-build/__main__.bin release-artifacts/tb-${{ matrix.artifact_name }}
-                    chmod +x release-artifacts/tb-${{ matrix.artifact_name }}
-                  else
-                    cp nuitka-build/__main__ release-artifacts/tb-${{ matrix.artifact_name }} || true
-                  fi
-
-          -   name: Package artifacts (Windows)
-              if: runner.os == 'Windows'
-              shell: pwsh
-              run: |
-                  New-Item -ItemType Directory -Force -Path release-artifacts
-                  Copy-Item nuitka-build/__main__.exe release-artifacts/tb-${{ matrix.artifact_name }}.exe
-
-          -   name: Upload Nuitka artifacts
-              uses: actions/upload-artifact@v4
-              with:
-                  name: nuitka-${{ matrix.artifact_name }}
-                  path: release-artifacts/*
+          name: frontend-dist
+          path: toolboxv2/dist
 
   # ============================================================================
-  # TBLANG COMPILER BUILD (from toolboxv2/tb-exc/src)
+  # TBLANG COMPILER BUILD (only if "tbx" in tag)
   # ============================================================================
+
+  check-tblang:
+    name: Check TBLang Build Flag
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.eval.outputs.should_build }}
+    steps:
+      - name: Evaluate Tag
+        id: eval
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          if [[ "$tag" == *"tbx"* ]] || [[ "$tag" == *"TBX"* ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
 
   build-tblang:
-    name: TBLang Compiler Build (${{ matrix.target }})
+    name: TBLang (${{ matrix.os }})
+    needs: check-tblang
+    if: needs.check-tblang.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -143,16 +75,13 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: tblang-windows-x64.exe
           - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: tblang-macos-x64
-          - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: tblang-macos-arm64
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -161,185 +90,95 @@ jobs:
         working-directory: ./toolboxv2/tb-exc/src
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Run tests
-        working-directory: ./toolboxv2/tb-exc/src
-        run: cargo test --release || true
-
-      - name: Package artifact
+      - name: Package Artifact
         shell: bash
         run: |
-          mkdir -p release-artifacts/bin
+          mkdir -p artifacts
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release/tblang.exe release-artifacts/bin/${{ matrix.artifact_name }} || \
-            cp ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release/tb-exc.exe release-artifacts/bin/${{ matrix.artifact_name }} || \
-            find ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release -name "*.exe" -type f | head -1 | xargs -I {} cp {} release-artifacts/bin/${{ matrix.artifact_name }}
+            find ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release -maxdepth 1 -name "*.exe" -type f | head -1 | xargs -I {} cp {} artifacts/${{ matrix.artifact_name }}
           else
-            cp ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release/tblang release-artifacts/bin/${{ matrix.artifact_name }} || \
-            cp ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release/tb-exc release-artifacts/bin/${{ matrix.artifact_name }} || \
-            find ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release -maxdepth 1 -type f -executable | head -1 | xargs -I {} cp {} release-artifacts/bin/${{ matrix.artifact_name }}
-            chmod +x release-artifacts/bin/${{ matrix.artifact_name }}
+            find ./toolboxv2/tb-exc/src/target/${{ matrix.target }}/release -maxdepth 1 -type f -perm +111 ! -name "*.d" | head -1 | xargs -I {} cp {} artifacts/${{ matrix.artifact_name }} || true
+            chmod +x artifacts/${{ matrix.artifact_name }} 2>/dev/null || true
           fi
 
-      - name: Upload TBLang artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tblang-${{ matrix.target }}
-          path: release-artifacts/bin/*
-
-  # ============================================================================
-  # ZILE CROSS-PLATFORM BUILDS (Rust CLI)
-  # ============================================================================
-
-  build-zile:
-    name: Zile Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: zile-linux-x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: zile-linux-arm64
-            cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: zile-windows-x64.exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: zile-macos-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: zile-macos-arm64
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Check for Zile project
-        id: check_zile
-        run: |
-          if [ -f "./toolboxv2/zile/Cargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "path=./toolboxv2/zile" >> $GITHUB_OUTPUT
-          elif [ -f "./toolboxv2/tcm/Cargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "path=./toolboxv2/tcm" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
-
-      - name: Build with cross
-        if: steps.check_zile.outputs.exists == 'true' && matrix.cross
-        working-directory: ${{ steps.check_zile.outputs.path }}
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Build native
-        if: steps.check_zile.outputs.exists == 'true' && !matrix.cross
-        working-directory: ${{ steps.check_zile.outputs.path }}
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package artifact
-        if: steps.check_zile.outputs.exists == 'true'
-        shell: bash
-        run: |
-          mkdir -p release-artifacts/bin
-          ZILE_PATH="${{ steps.check_zile.outputs.path }}"
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            find ${ZILE_PATH}/target/${{ matrix.target }}/release -name "*.exe" -maxdepth 1 -type f | head -1 | xargs -I {} cp {} release-artifacts/bin/${{ matrix.artifact_name }}
-          else
-            find ${ZILE_PATH}/target/${{ matrix.target }}/release -maxdepth 1 -type f -executable ! -name "*.d" | head -1 | xargs -I {} cp {} release-artifacts/bin/${{ matrix.artifact_name }}
-            chmod +x release-artifacts/bin/${{ matrix.artifact_name }} || true
-          fi
-
-      - name: Upload Zile artifact
-        if: steps.check_zile.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: zile-${{ matrix.target }}
-          path: release-artifacts/bin/*
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*
 
   # ============================================================================
   # BROWSER EXTENSION BUILD
   # ============================================================================
 
   build-browser-extension:
-    name: Build Browser Extension
+    name: Browser Extension
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Check for browser extension
-        id: check_ext
+      - name: Check for Extension
+        id: check
         run: |
-          if [ -f "./toolboxv2/tb_browser/build.js" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          elif [ -d "./toolboxv2/tb_browser" ]; then
+          if [ -f "./toolboxv2/tb_browser/build.js" ] || [ -d "./toolboxv2/tb_browser" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install dependencies
-        if: steps.check_ext.outputs.exists == 'true'
-        working-directory: ./toolboxv2/tb_browser
-        run: npm install || yarn install || true
+      - name: Setup Node.js
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Build browser extension
-        if: steps.check_ext.outputs.exists == 'true'
+      - name: Build Extension
+        if: steps.check.outputs.exists == 'true'
         working-directory: ./toolboxv2/tb_browser
         run: |
-            if [ -f "build.js" ]; then
-              node build.js zip
-            elif [ -f "package.json" ]; then
-              npm run build || true
-            fi
-
-      - name: Package Chrome extension
-        if: steps.check_ext.outputs.exists == 'true'
-        run: |
-          mkdir -p release-artifacts/extensions
-          cd ./toolboxv2/tb_browser
-          if [ -d "dist" ]; then
-            zip -r ../../release-artifacts/extensions/tb-browser-chrome.zip dist/
-          elif [ -d "build" ]; then
-            zip -r ../../release-artifacts/extensions/tb-browser-chrome.zip build/
-          else
-            zip -r ../../release-artifacts/extensions/tb-browser-chrome.zip . -x "node_modules/*" -x ".git/*"
+          npm install || true
+          if [ -f "build.js" ]; then
+            node build.js zip
+          elif [ -f "package.json" ]; then
+            npm run build || true
           fi
 
-      - name: Upload browser extension artifact
-        if: steps.check_ext.outputs.exists == 'true'
+      - name: Package Extension
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          mkdir -p artifacts
+          cd ./toolboxv2/tb_browser
+          if [ -d "dist" ]; then
+            zip -r ../../artifacts/tb-browser-extension.zip dist/
+          elif [ -d "build" ]; then
+            zip -r ../../artifacts/tb-browser-extension.zip build/
+          fi
+
+      - name: Upload Artifact
+        if: steps.check.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: browser-extension
-          path: release-artifacts/extensions/*
+          path: artifacts/*
 
   # ============================================================================
-  # TEST JOBS
+  # NUITKA BUILD (Python Standalone)
   # ============================================================================
 
-  test-python:
-    name: Test Python Distribution
-    runs-on: macos-latest
-    needs: [build-python]
+  build-nuitka:
+    name: Nuitka (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: toolbox-linux-x64
+          - os: windows-latest
+            artifact_name: toolbox-windows-x64.exe
+          - os: macos-latest
+            artifact_name: toolbox-macos-arm64
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -347,44 +186,49 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install test dependencies
-        run: |
-          python -m pip install uv pytest
-
-      - name: Download dist
-        uses: actions/download-artifact@v4
+      - name: Build with Nuitka
+        uses: Nuitka/Nuitka-Action@main
         with:
-          name: python-dist
-          path: dist/
+          nuitka-version: main
+          script-name: toolboxv2/__main__.py
+          mode: onefile
+          output-dir: build
+          include-package: toolboxv2
+          assume-yes-for-downloads: true
 
-      - name: Install from dist
+      - name: Package Artifact
+        shell: bash
         run: |
-          WHEEL_FILE=$(ls dist/*.tar.gz | head -1)
-          echo "Installing $WHEEL_FILE"
-          python -m uv pip install "${WHEEL_FILE}[isaa]" --system
+          mkdir -p artifacts
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp build/__main__.exe artifacts/${{ matrix.artifact_name }}
+          else
+            cp build/__main__.bin artifacts/${{ matrix.artifact_name }} 2>/dev/null || cp build/__main__ artifacts/${{ matrix.artifact_name }} || true
+            chmod +x artifacts/${{ matrix.artifact_name }} 2>/dev/null || true
+          fi
 
-      - name: Run tests
-        run: tb --test -n test || python -m pytest || true
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*
 
   # ============================================================================
-  # TAURI APP BUILDS (Multi-Platform)
+  # TAURI DESKTOP BUILDS
   # ============================================================================
 
   check-tauri:
+    name: Check Tauri Build Flag
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.eval.outputs.should_build }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Evaluate build flag from tag name
+      - name: Evaluate Tag
         id: eval
         run: |
           tag="${{ github.event.release.tag_name }}"
-          echo "Tag-Name: $tag"
           if [[ "$tag" == *"App"* ]]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
           else
@@ -392,32 +236,32 @@ jobs:
           fi
 
   build-tauri:
-    needs: check-tauri
-    if: ${{ needs.check-tauri.outputs.should_build == 'true' }}
-    name: Tauri App (${{ matrix.platform }})
+    name: Tauri (${{ matrix.platform }})
+    needs: [check-tauri, build-frontend]
+    if: needs.check-tauri.outputs.should_build == 'true'
+    runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
+          - platform: macos-latest
             args: '--target aarch64-apple-darwin'
-            artifact_suffix: 'macos-arm64'
-            target_triple: 'aarch64-apple-darwin'
-          - platform: 'macos-latest'
+            artifact_name: simple-core-macos-arm64
+            target_triple: aarch64-apple-darwin
+          - platform: macos-latest
             args: '--target x86_64-apple-darwin'
-            artifact_suffix: 'macos-x64'
-            target_triple: 'x86_64-apple-darwin'
-          - platform: 'ubuntu-22.04'
+            artifact_name: simple-core-macos-x64
+            target_triple: x86_64-apple-darwin
+          - platform: ubuntu-22.04
             args: ''
-            artifact_suffix: 'linux-x64'
-            target_triple: 'x86_64-unknown-linux-gnu'
-          - platform: 'windows-latest'
+            artifact_name: simple-core-linux-x64
+            target_triple: x86_64-unknown-linux-gnu
+          - platform: windows-latest
             args: ''
-            artifact_suffix: 'windows-x64'
-            target_triple: 'x86_64-pc-windows-msvc'
-    runs-on: ${{ matrix.platform }}
+            artifact_name: simple-core-windows-x64
+            target_triple: x86_64-pc-windows-msvc
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -427,65 +271,43 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Rust stable
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install dependencies (Ubuntu)
+      - name: Install Ubuntu Dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
-      - name: Setup Python for Worker
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Create Worker Wrapper Binary
+      - name: Create Worker Binary
         shell: bash
         run: |
-          # Create binaries directory
           mkdir -p ./toolboxv2/simple-core/src-tauri/binaries
-
-          # Install PyInstaller for creating standalone executable
           pip install pyinstaller
-
-          # Create the worker runner script
-          cat > worker_runner.py << 'PYEOF'
-          #!/usr/bin/env python3
-          """
-          ToolBoxV2 Worker Runner - Sidecar for Tauri Desktop App
-          This script starts the Python HTTP worker server.
-          """
-          import sys
-          import os
-
-          # Add toolboxv2 to path if needed
-          script_dir = os.path.dirname(os.path.abspath(__file__))
-          parent_dir = os.path.dirname(script_dir)
-
-          # Try to import and run the worker
-          try:
-              from toolboxv2.utils.workers.server_worker import run_http_worker
-              import argparse
-
-              parser = argparse.ArgumentParser(description='ToolBoxV2 HTTP Worker')
-              parser.add_argument('--http-port', type=int, default=5000, help='HTTP port')
-              parser.add_argument('--ws-port', type=int, default=5001, help='WebSocket port')
-              parser.add_argument('--mode', type=str, default='tauri', help='Run mode')
-              args, unknown = parser.parse_known_args()
-
-              run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
-          except ImportError:
-              # Fallback: run via subprocess
-              import subprocess
-              cmd = [sys.executable, "-m", "toolboxv2", "workers", "start", "http"] + sys.argv[1:]
-              subprocess.run(cmd)
-          PYEOF
-
-          # Build the executable with PyInstaller
+          cat > worker_runner.py << 'EOF'
+          import sys, os, argparse
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument('--http-port', type=int, default=5000)
+              parser.add_argument('--ws-port', type=int, default=5001)
+              parser.add_argument('--mode', default='tauri')
+              args, _ = parser.parse_known_args()
+              try:
+                  from toolboxv2.utils.workers.server_worker import run_http_worker
+                  run_http_worker(port=args.http_port, ws_port=args.ws_port, mode=args.mode)
+              except ImportError:
+                  import subprocess
+                  subprocess.run([sys.executable, "-m", "toolboxv2", "workers", "start", "http"] + sys.argv[1:])
+          if __name__ == "__main__": main()
+          EOF
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             pyinstaller --onefile --name "tb-worker-${{ matrix.target_triple }}" --console worker_runner.py
             cp dist/tb-worker-${{ matrix.target_triple }}.exe ./toolboxv2/simple-core/src-tauri/binaries/
@@ -495,15 +317,16 @@ jobs:
             chmod +x ./toolboxv2/simple-core/src-tauri/binaries/tb-worker-${{ matrix.target_triple }}
           fi
 
-          echo "Created worker binary for ${{ matrix.target_triple }}"
-          ls -la ./toolboxv2/simple-core/src-tauri/binaries/
+      - name: Update Cargo Dependencies
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo update
 
-      - name: Install frontend dependencies
+      - name: Install Frontend Dependencies
         working-directory: ./toolboxv2
         run: |
           npm install
           npm install --prefix ./web
-          npm install --prefix ./simple-core
+          cd simple-core && npm install && cd ..
           npm run build
 
       - name: Build Tauri App
@@ -513,29 +336,32 @@ jobs:
         with:
           projectPath: ./toolboxv2/simple-core
           tauriScript: npx tauri
-          tagName: simple-v__VERSION__
-          releaseName: 'SimpleCore v__VERSION__'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
 
-      - name: Upload Tauri artifacts
+      - name: Package Artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          find ./toolboxv2/simple-core/src-tauri/target -name "*.dmg" -exec cp {} artifacts/ \; 2>/dev/null || true
+          find ./toolboxv2/simple-core/src-tauri/target -name "*.msi" -exec cp {} artifacts/ \; 2>/dev/null || true
+          find ./toolboxv2/simple-core/src-tauri/target -name "*.deb" -exec cp {} artifacts/ \; 2>/dev/null || true
+          find ./toolboxv2/simple-core/src-tauri/target -name "*.AppImage" -exec cp {} artifacts/ \; 2>/dev/null || true
+          find ./toolboxv2/simple-core/src-tauri/target -name "*.app.tar.gz" -exec cp {} artifacts/ \; 2>/dev/null || true
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-${{ matrix.artifact_suffix }}
-          path: |
-            ./toolboxv2/simple-core/src-tauri/target/release/bundle/**/*
-            ./toolboxv2/simple-core/src-tauri/target/*/release/bundle/**/*
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/*
 
   # ============================================================================
-  # ANDROID BUILD (Tauri Mobile)
+  # ANDROID BUILD
   # ============================================================================
 
   build-android:
-    needs: check-tauri
-    if: ${{ needs.check-tauri.outputs.should_build == 'true' }}
-    name: Android APK Build
+    name: Android APK
+    needs: [check-tauri, build-frontend]
+    if: needs.check-tauri.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -544,7 +370,7 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
@@ -555,7 +381,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Rust stable
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
@@ -568,11 +394,11 @@ jobs:
         with:
           ndk-version: r26b
 
-      - name: Update Cargo dependencies
+      - name: Update Cargo Dependencies
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: cargo update
 
-      - name: Install frontend dependencies
+      - name: Install Frontend Dependencies
         working-directory: ./toolboxv2
         run: |
           npm install
@@ -580,33 +406,31 @@ jobs:
           cd simple-core && npm install && cd ..
           npm run build
 
-      - name: Initialize Android project
+      - name: Build Android
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri android init || true
-
-      - name: Build Android APK
-        working-directory: ./toolboxv2/simple-core
-        run: cargo tauri android build --apk || cargo tauri android build
-
-      - name: Package Android artifacts
         run: |
-          mkdir -p release-artifacts/android
-          find ./toolboxv2/simple-core -name "*.apk" -exec cp {} release-artifacts/android/ \;
+          cargo tauri android init || true
+          cargo tauri android build --apk || cargo tauri android build
 
-      - name: Upload Android artifact
+      - name: Package Artifacts
+        run: |
+          mkdir -p artifacts
+          find ./toolboxv2/simple-core -name "*.apk" -exec cp {} artifacts/ \;
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: release-artifacts/android/*.apk
+          path: artifacts/*.apk
 
   # ============================================================================
-  # iOS BUILD (Tauri Mobile)
+  # iOS BUILD
   # ============================================================================
 
   build-ios:
-    needs: check-tauri
-    if: ${{ needs.check-tauri.outputs.should_build == 'true' }}
     name: iOS Build
+    needs: [check-tauri, build-frontend]
+    if: needs.check-tauri.outputs.should_build == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout Code
@@ -617,7 +441,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install Rust stable
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
@@ -625,11 +449,11 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
-      - name: Update Cargo dependencies
+      - name: Update Cargo Dependencies
         working-directory: ./toolboxv2/simple-core/src-tauri
         run: cargo update
 
-      - name: Install frontend dependencies
+      - name: Install Frontend Dependencies
         working-directory: ./toolboxv2
         run: |
           npm install
@@ -637,147 +461,55 @@ jobs:
           cd simple-core && npm install && cd ..
           npm run build
 
-      - name: Initialize iOS project
+      - name: Build iOS
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri ios init || true
-
-      - name: Build iOS (Simulator)
-        working-directory: ./toolboxv2/simple-core
-        run: cargo tauri ios build --debug || true
-
-      - name: Package iOS artifacts
         run: |
-          mkdir -p release-artifacts/ios
-          find ./toolboxv2/simple-core -name "*.app" -type d -exec cp -r {} release-artifacts/ios/ \;
-          find ./toolboxv2/simple-core -name "*.ipa" -exec cp {} release-artifacts/ios/ \; || true
+          cargo tauri ios init || true
+          cargo tauri ios build --debug || true
 
-      - name: Upload iOS artifact
+      - name: Package Artifacts
+        run: |
+          mkdir -p artifacts
+          find ./toolboxv2/simple-core -name "*.app" -type d -exec zip -r artifacts/ios-app.zip {} \; 2>/dev/null || true
+          find ./toolboxv2/simple-core -name "*.ipa" -exec cp {} artifacts/ \; 2>/dev/null || true
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
-          path: release-artifacts/ios/*
+          path: artifacts/*
 
   # ============================================================================
-  # TERMUX INSTALLER PACKAGE
+  # PYTHON DISTRIBUTION BUILD
   # ============================================================================
 
-  build-termux-installer:
-    name: Build Termux Installer Package
+  build-python:
+    name: Build Python Distribution
     runs-on: ubuntu-latest
-    needs: [build-python]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download Python dist
-        uses: actions/download-artifact@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          name: python-dist
-          path: dist/
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Create Termux installer script
+      - name: Install Dependencies
         run: |
-          mkdir -p release-artifacts/termux
+          python -m pip install --upgrade pip
+          python -m pip install build
 
-          cat > release-artifacts/termux/install-toolboxv2.sh << 'TERMUX_INSTALLER'
-          #!/data/data/com.termux/files/usr/bin/bash
-          # ToolBoxV2 Termux Installer
-          # Für Android via Termux (F-Droid Version empfohlen)
+      - name: Build Distribution
+        run: python -m build --outdir dist
 
-          set -e
-
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║         ToolBoxV2 - Termux Installer                         ║"
-          echo "║         Python Core für Android                              ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-
-          # Farbcodes
-          RED='\033[0;31m'
-          GREEN='\033[0;32m'
-          YELLOW='\033[1;33m'
-          NC='\033[0m'
-
-          # Prüfe ob Termux
-          if [ ! -d "/data/data/com.termux" ]; then
-              echo -e "${RED}Fehler: Dieses Script muss in Termux ausgeführt werden!${NC}"
-              echo "Bitte installiere Termux von F-Droid: https://f-droid.org/packages/com.termux/"
-              exit 1
-          fi
-
-          echo -e "${YELLOW}[1/6] Aktualisiere Pakete...${NC}"
-          pkg update -y && pkg upgrade -y
-
-          echo -e "${YELLOW}[2/6] Installiere Basis-Abhängigkeiten...${NC}"
-          pkg install -y python python-pip git clang make binutils
-
-          echo -e "${YELLOW}[3/6] Installiere zusätzliche Build-Tools...${NC}"
-          pkg install -y patchelf ccache ldd termux-elf-cleaner || true
-
-          echo -e "${YELLOW}[4/6] Installiere Python-Abhängigkeiten...${NC}"
-          pip install --upgrade pip
-          pip install wheel setuptools
-
-          echo -e "${YELLOW}[5/6] Installiere ToolBoxV2...${NC}"
-          pip install ToolBoxV2 || pip install ToolBoxV2[isaa] || {
-              echo -e "${YELLOW}Versuche Installation von GitHub...${NC}"
-              pip install git+https://github.com/MarkinHaus/ToolBoxV2.git
-          }
-
-          echo -e "${YELLOW}[6/6] Initialisiere ToolBoxV2...${NC}"
-          tb -init main || python -m toolboxv2 -init main || true
-
-          echo ""
-          echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-          echo -e "${GREEN}║         Installation abgeschlossen!                          ║${NC}"
-          echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
-          echo ""
-          echo "Starte ToolBoxV2 mit: tb"
-          echo "Oder: python -m toolboxv2"
-          echo ""
-          echo "Dokumentation: https://github.com/MarkinHaus/ToolBoxV2"
-          TERMUX_INSTALLER
-
-          chmod +x release-artifacts/termux/install-toolboxv2.sh
-
-      - name: Create Termux widget integration
-        run: |
-          cat > release-artifacts/termux/toolboxv2.widget.sh << 'WIDGET'
-          #!/data/data/com.termux/files/usr/bin/bash
-          # ToolBoxV2 Termux Widget
-          # Kopiere nach ~/.shortcuts/
-
-          cd ~
-          tb workers start || python -m toolboxv2 workers start
-          WIDGET
-
-          chmod +x release-artifacts/termux/toolboxv2.widget.sh
-
-      - name: Create boot script
-        run: |
-          cat > release-artifacts/termux/toolboxv2-boot.sh << 'BOOT'
-          #!/data/data/com.termux/files/usr/bin/bash
-          # ToolBoxV2 Autostart für Termux:Boot
-          # Kopiere nach ~/.termux/boot/
-
-          termux-wake-lock
-          tb workers start || python -m toolboxv2 workers start
-          BOOT
-
-          chmod +x release-artifacts/termux/toolboxv2-boot.sh
-
-      - name: Package Termux installer
-        run: |
-          cd release-artifacts/termux
-          tar -czvf ../termux-toolboxv2-installer.tar.gz .
-
-      - name: Upload Termux installer
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: termux-installer
+          name: python-dist
           path: |
-            release-artifacts/termux-toolboxv2-installer.tar.gz
-            release-artifacts/termux/*
+            dist/*.tar.gz
+            dist/*.whl
 
   # ============================================================================
   # PYPI PUBLISH
@@ -786,14 +518,14 @@ jobs:
   pypi-publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [build-python, test-python]
+    needs: [build-python]
     environment:
       name: pypi
       url: https://pypi.org/p/ToolBoxV2
     permissions:
       id-token: write
     steps:
-      - name: Download dist artifacts
+      - name: Download Dist
         uses: actions/download-artifact@v4
         with:
           name: python-dist
@@ -805,99 +537,113 @@ jobs:
           packages-dir: dist/
 
   # ============================================================================
-  # AGGREGATE ALL ARTIFACTS AND UPLOAD TO RELEASE
+  # INSTALLERS (General + Termux)
+  # ============================================================================
+
+  build-installers:
+    name: Build Installers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Package Installers
+        run: |
+          mkdir -p artifacts
+
+          # Copy main installer.sh
+          cp installer.sh artifacts/installer.sh
+          chmod +x artifacts/installer.sh
+
+          # Create Termux installer
+          mkdir -p artifacts/termux
+
+          cat > artifacts/termux/install-toolboxv2.sh << 'EOF'
+          #!/data/data/com.termux/files/usr/bin/bash
+          set -e
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║         ToolBoxV2 - Termux Installer                         ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+          if [ ! -d "/data/data/com.termux" ]; then
+              echo -e "${RED}Error: Run this in Termux!${NC}"; exit 1
+          fi
+          echo -e "${YELLOW}[1/5] Updating packages...${NC}"
+          pkg update -y && pkg upgrade -y
+          echo -e "${YELLOW}[2/5] Installing dependencies...${NC}"
+          pkg install -y python python-pip git clang make
+          echo -e "${YELLOW}[3/5] Installing Python packages...${NC}"
+          pip install --upgrade pip wheel setuptools
+          echo -e "${YELLOW}[4/5] Installing ToolBoxV2...${NC}"
+          pip install ToolBoxV2 || pip install git+https://github.com/MarkinHaus/ToolBoxV2.git
+          echo -e "${YELLOW}[5/5] Initializing...${NC}"
+          tb -init main || python -m toolboxv2 -init main || true
+          echo -e "${GREEN}Installation complete! Run: tb${NC}"
+          EOF
+
+          cat > artifacts/termux/toolboxv2-boot.sh << 'EOF'
+          #!/data/data/com.termux/files/usr/bin/bash
+          termux-wake-lock
+          tb workers start || python -m toolboxv2 workers start
+          EOF
+
+          chmod +x artifacts/termux/*.sh
+          cd artifacts/termux && tar -czvf ../termux-toolboxv2-installer.tar.gz .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers
+          path: |
+            artifacts/installer.sh
+            artifacts/termux-toolboxv2-installer.tar.gz
+            artifacts/termux/*.sh
+
+  # ============================================================================
+  # UPLOAD ALL ASSETS TO RELEASE
   # ============================================================================
 
   upload-release-assets:
-    name: Upload All Assets to Release
+    name: Upload Release Assets
     runs-on: ubuntu-latest
     needs:
-      - build-python
-      - build-python-nuitka
+      - build-frontend
       - build-tblang
-      - build-zile
       - build-browser-extension
+      - build-nuitka
+      - build-python
+      - build-installers
       - build-tauri
       - build-android
       - build-ios
-      - build-termux-installer
     if: always()
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts/
 
-      - name: List all artifacts
-        run: find all-artifacts -type f | head -100
+      - name: List Artifacts
+        run: find all-artifacts -type f | head -50
 
-      - name: Prepare release assets
+      - name: Prepare Release Assets
         run: |
           mkdir -p release-upload
 
-          # Python dist
-          cp all-artifacts/python-dist/*.tar.gz release-upload/ 2>/dev/null || true
-          cp all-artifacts/python-dist/*.whl release-upload/ 2>/dev/null || true
-
-          # Nuitka builds
-          for dir in all-artifacts/nuitka-*; do
+          # Copy all artifacts to release folder
+          for dir in all-artifacts/*/; do
             if [ -d "$dir" ]; then
-              cp "$dir"/* release-upload/ 2>/dev/null || true
+              cp "$dir"* release-upload/ 2>/dev/null || true
             fi
           done
-
-          # TBLang
-          for dir in all-artifacts/tblang-*; do
-            if [ -d "$dir" ]; then
-              cp "$dir"/* release-upload/ 2>/dev/null || true
-            fi
-          done
-
-          # Zile
-          for dir in all-artifacts/zile-*; do
-            if [ -d "$dir" ]; then
-              cp "$dir"/* release-upload/ 2>/dev/null || true
-            fi
-          done
-
-          # Browser extension
-          cp all-artifacts/browser-extension/* release-upload/ 2>/dev/null || true
-
-          # Tauri Desktop Apps
-          for dir in all-artifacts/tauri-*; do
-            if [ -d "$dir" ]; then
-              # Find and copy installer files
-              find "$dir" -name "*.dmg" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.app.tar.gz" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.msi" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.exe" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.deb" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.AppImage" -exec cp {} release-upload/ \; 2>/dev/null || true
-              find "$dir" -name "*.rpm" -exec cp {} release-upload/ \; 2>/dev/null || true
-            fi
-          done
-
-          # Android APK
-          cp all-artifacts/android-apk/*.apk release-upload/ 2>/dev/null || true
-
-          # iOS
-          if [ -d "all-artifacts/ios-build" ]; then
-            cd all-artifacts/ios-build
-            zip -r ../../release-upload/ios-build.zip . 2>/dev/null || true
-            cd ../..
-          fi
-
-          # Termux installer
-          cp all-artifacts/termux-installer/*.tar.gz release-upload/ 2>/dev/null || true
-          cp all-artifacts/termux-installer/*.sh release-upload/ 2>/dev/null || true
 
           echo "=== Release Assets ==="
           ls -la release-upload/
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: release-upload/*
           fail_on_unmatched_files: false

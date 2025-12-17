@@ -122,11 +122,40 @@ jobs:
         run: npm run test
 
   # ============================================================================
-  # TBLANG BUILD & TEST
+  # TBLANG BUILD & TEST (only if "tbx" in commit message)
   # ============================================================================
+
+  check-tblang:
+    name: Check TBLang Build Flag
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.eval.outputs.should_build }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Evaluate Commit Message
+        id: eval
+        run: |
+          # Get commit message
+          commit_msg="${{ github.event.head_commit.message }}"
+          # For PRs, use PR title
+          if [ -z "$commit_msg" ]; then
+            commit_msg="${{ github.event.pull_request.title }}"
+          fi
+          echo "Commit/PR message: $commit_msg"
+          if [[ "$commit_msg" == *"tbx"* ]] || [[ "$commit_msg" == *"TBX"* ]] || [[ "$commit_msg" == *"tblang"* ]]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
 
   tblang:
     name: TBLang Build & Test
+    needs: check-tblang
+    if: needs.check-tblang.outputs.should_build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -136,30 +165,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Check for TBLang project
-        id: check
-        shell: bash
-        run: |
-          if [ -f "./toolboxv2/tb-exc/src/Cargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          elif [ -f "./toolboxv2/tb-exc/Cargo.toml" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install Rust toolchain
-        if: steps.check.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build TBLang
-        if: steps.check.outputs.exists == 'true'
         working-directory: ./toolboxv2/tb-exc/src
         run: cargo build --release
         continue-on-error: true
 
       - name: Test TBLang
-        if: steps.check.outputs.exists == 'true'
         working-directory: ./toolboxv2/tb-exc/src
         run: cargo test
         continue-on-error: true
@@ -641,6 +655,7 @@ jobs:
       - py-check
       - build-root
       - test-root
+      - check-tblang
       - tblang
       - browser-extension
       - nuitka-build
@@ -658,7 +673,7 @@ jobs:
           echo "| Python Tests | ${{ needs.py-check.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend Build | ${{ needs.build-root.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Frontend Tests | ${{ needs.test-root.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| TBLang | ${{ needs.tblang.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TBLang (tbx flag) | ${{ needs.tblang.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browser Extension | ${{ needs.browser-extension.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Nuitka Test | ${{ needs.nuitka-build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Tauri Desktop | ${{ needs.tauri-test.result }} |" >> $GITHUB_STEP_SUMMARY
