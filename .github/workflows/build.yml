@@ -442,12 +442,16 @@ jobs:
         with:
           ndk-version: r26b
 
+      - name: Update Cargo dependencies
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo update
+
       - name: Install frontend dependencies
         working-directory: ./toolboxv2
         run: |
           npm install
           npm install --prefix ./web
-          npm install --prefix ./simple-core
+          cd simple-core && npm install && cd ..
           npm run build
 
       - name: Initialize Android project
@@ -456,7 +460,7 @@ jobs:
 
       - name: Build Android APK (Debug)
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri android build --debug || true
+        run: cargo tauri android build --debug
         continue-on-error: true
 
   # ============================================================================
@@ -483,12 +487,16 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2"
 
+      - name: Update Cargo dependencies
+        working-directory: ./toolboxv2/simple-core/src-tauri
+        run: cargo update
+
       - name: Install frontend dependencies
         working-directory: ./toolboxv2
         run: |
           npm install
           npm install --prefix ./web
-          npm install --prefix ./simple-core
+          cd simple-core && npm install && cd ..
           npm run build
 
       - name: Initialize iOS project
@@ -497,7 +505,7 @@ jobs:
 
       - name: Build iOS (Simulator Debug)
         working-directory: ./toolboxv2/simple-core
-        run: cargo tauri ios build --debug || true
+        run: cargo tauri ios build --debug
         continue-on-error: true
 
   # ============================================================================
