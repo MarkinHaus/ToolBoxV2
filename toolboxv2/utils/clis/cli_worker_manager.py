@@ -388,7 +388,7 @@ class NginxManager:
         else:
             mime_include = "include /etc/nginx/mime.types;"
             log_path = "/var/log/nginx"
-            pid_directive = "" #"pid /run/nginx.pid;"
+            pid_directive = "pid /run/nginx.pid;"
 
         # Rate limiting configuration
         rate_limit_enabled = getattr(cfg, "rate_limit_enabled", True)
