@@ -251,7 +251,10 @@ class App(AppType, metaclass=Singleton):
 
     def set_logger(self, debug=False, logger_prefix=None):
         # remove existing logger
-        logging.getLogger(loggerNameOfToolboxv2).handlers.clear()
+        try:
+            logging.getLogger(loggerNameOfToolboxv2).handlers.clear()
+        except Exception as e:
+            print("No logger to clear or potetial doubel logging")
         if debug is None and os.getenv("TOOLBOX_LOGGING_LEVEL") is not None:
             debug = True
         if logger_prefix is None:
@@ -273,7 +276,10 @@ class App(AppType, metaclass=Singleton):
             logger_info_str = "in debug Mode"
             self.debug = True
         elif debug:
-            level = logging.getLevelNamesMapping().get(os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING"))
+            if hasattr(logging, "getLevelNamesMapping"):
+                level = logging.getLevelNamesMapping().get(os.getenv("TOOLBOX_LOGGING_LEVEL", "WARNING"))
+            else:
+                level = logging.WARNING
             logger, logging_filename = setup_logging(
                 level=level, name=f"toolbox-{self.logger_prefix}-debug",
                 interminal=True,

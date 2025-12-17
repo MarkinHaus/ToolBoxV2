@@ -156,12 +156,12 @@ __email__ = 'Markinhausmanns@gmail.com'
 
 
 from pathlib import Path
-from platform import node, system
 
 __init_cwd__ = init_cwd = Path.cwd()
 
 __tb_root_dir__ = tb_root_dir = Path(__file__).parent
 os.chdir(__tb_root_dir__)
+os.makedirs(__tb_root_dir__/'dist', exist_ok=True)
 __version__ = get_version_from_pyproject() if get_version_from_pyproject is not None else "0.1.25"
 
 ToolBox_over: str = "root"

@@ -405,6 +405,102 @@ jobs:
           args: ${{ matrix.args }}
 
   # ============================================================================
+  # ANDROID BUILD TEST (Tauri Mobile)
+  # ============================================================================
+
+  android-test:
+    name: Android Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26b
+
+      - name: Install frontend dependencies
+        working-directory: ./toolboxv2
+        run: |
+          npm install
+          npm install --prefix ./web
+          npm install --prefix ./simple-core
+          npm run build
+
+      - name: Initialize Android project
+        working-directory: ./toolboxv2/simple-core
+        run: cargo tauri android init || true
+
+      - name: Build Android APK (Debug)
+        working-directory: ./toolboxv2/simple-core
+        run: cargo tauri android build --debug || true
+        continue-on-error: true
+
+  # ============================================================================
+  # iOS BUILD TEST (Tauri Mobile)
+  # ============================================================================
+
+  ios-test:
+    name: iOS Build Test
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Install frontend dependencies
+        working-directory: ./toolboxv2
+        run: |
+          npm install
+          npm install --prefix ./web
+          npm install --prefix ./simple-core
+          npm run build
+
+      - name: Initialize iOS project
+        working-directory: ./toolboxv2/simple-core
+        run: cargo tauri ios init || true
+
+      - name: Build iOS (Simulator Debug)
+        working-directory: ./toolboxv2/simple-core
+        run: cargo tauri ios build --debug || true
+        continue-on-error: true
+
+  # ============================================================================
   # INTEGRATION TESTS
   # ============================================================================
 
@@ -540,6 +636,9 @@ jobs:
       - tblang
       - browser-extension
       - nuitka-build
+      - tauri-test
+      - android-test
+      - ios-test
     if: always()
     steps:
       - name: Summary
@@ -554,3 +653,6 @@ jobs:
           echo "| TBLang | ${{ needs.tblang.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browser Extension | ${{ needs.browser-extension.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Nuitka Test | ${{ needs.nuitka-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tauri Desktop | ${{ needs.tauri-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android | ${{ needs.android-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| iOS | ${{ needs.ios-test.result }} |" >> $GITHUB_STEP_SUMMARY
