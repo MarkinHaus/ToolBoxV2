@@ -251,7 +251,7 @@ chmod +x "$HOME/.shortcuts/ToolBoxV2"
 cat > "$HOME/.shortcuts/TB-Server" << 'SHORTCUT'
 #!/data/data/com.termux/files/usr/bin/bash
 cd ~
-tb api start
+tb workers start
 SHORTCUT
 chmod +x "$HOME/.shortcuts/TB-Server"
 
@@ -261,7 +261,7 @@ cat > "$HOME/.termux/boot/toolboxv2" << 'BOOT'
 #!/data/data/com.termux/files/usr/bin/bash
 # Uncomment to enable autostart:
 # termux-wake-lock
-# tb api start --background
+# tb workers start
 BOOT
 chmod +x "$HOME/.termux/boot/toolboxv2"
 
@@ -286,7 +286,7 @@ echo ""
 echo -e "${CYAN}Verwendung:${NC}"
 echo "  tb              - Startet ToolBoxV2"
 echo "  tb -h           - Zeigt Hilfe"
-echo "  tb api start    - Startet den API Server"
+echo "  tb workers start - Startet das Worker System"
 echo "  tb --test       - Führt Tests aus"
 echo ""
 echo -e "${CYAN}Termux Widgets:${NC}"

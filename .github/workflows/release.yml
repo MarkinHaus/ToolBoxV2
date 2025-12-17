@@ -434,6 +434,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 
+      - name: Build Worker Server
+        working-directory: ./toolboxv2/src-core
+        shell: bash
+        run: |
+          # Determine target based on platform
+          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            # Extract target from args (e.g., --target aarch64-apple-darwin)
+            TARGET="${{ matrix.args }}"
+            TARGET="${TARGET#*--target }"
+            TARGET="${TARGET%% *}"
+            if [[ -z "$TARGET" || "$TARGET" == "${{ matrix.args }}" ]]; then
+              # No target specified, use default
+              TARGET="$(rustc -vV | sed -n 's|host: ||p')"
+            fi
+          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            TARGET="x86_64-pc-windows-msvc"
+          else
+            TARGET="x86_64-unknown-linux-gnu"
+          fi
+
+          echo "Building worker server for target: $TARGET"
+          cargo build --release --target "$TARGET"
+
+          # Create binaries directory
+          mkdir -p ../simple-core/src-tauri/binaries
+
+          # Copy binary to Tauri binaries folder with correct name
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/$TARGET/release/simple-core-server.exe" "../simple-core/src-tauri/binaries/tb-worker-x86_64-pc-windows-msvc.exe"
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-$TARGET"
+          else
+            cp "target/$TARGET/release/simple-core-server" "../simple-core/src-tauri/binaries/tb-worker-x86_64-unknown-linux-gnu"
+          fi
+
       - name: Install frontend dependencies
         working-directory: ./toolboxv2/web
         run: |
@@ -674,7 +709,7 @@ jobs:
           # Kopiere nach ~/.shortcuts/
 
           cd ~
-          tb api start || python -m toolboxv2 api start
+          tb workers start || python -m toolboxv2 workers start
           WIDGET
 
           chmod +x release-artifacts/termux/toolboxv2.widget.sh
@@ -687,7 +722,7 @@ jobs:
           # Kopiere nach ~/.termux/boot/
 
           termux-wake-lock
-          tb api start --background || python -m toolboxv2 api start --background
+          tb workers start || python -m toolboxv2 workers start
           BOOT
 
           chmod +x release-artifacts/termux/toolboxv2-boot.sh

@@ -32,7 +32,6 @@ from toolboxv2.utils.daemon import DaemonApp
 from toolboxv2.utils.extras.Style import Spinner, Style
 from toolboxv2.utils.proxy import ProxyApp
 from toolboxv2.utils.system import CallingObject, get_state_from_app
-from toolboxv2.utils.clis.api import cli_api_runner
 from toolboxv2.utils.clis.db_cli_manager import cli_db_runner
 from toolboxv2.utils.system.exe_bg import run_executable_in_background
 from toolboxv2.utils.system.getting_and_closing_app import a_get_proxy_app
@@ -319,7 +318,7 @@ def setup_service_linux():
 # =================== Constants ===================
 
 RUNNER_KEYS = [
-    "venv", "api", "ipy", "db", "gui", "p2p",
+    "venv", "ipy", "db", "gui", "p2p",
     "status", "browser", "mcp", "login", "logout",
     "run", "mods", "flow", "user", "workers",
     "config","session","broker","http_worker","ws_worker",
@@ -389,7 +388,7 @@ def show_interactive_guide():
     │    $ tb                           # Start in CLI mode                      │
     │    $ tb x                         # Toolbox - Lan                          │
     │    $ tb gui                       # Start with GUI                         │
-    │    $ tb api                       # Start API server                       │
+    │    $ tb workers                   # Start API server                       │
     │                                                                            │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -408,10 +407,10 @@ def show_interactive_guide():
     │                                                                            │
     │  🌐 Services:                                                              │
     │    $ tb {tp args} 'Service' {Service args}                                 │
-    │    $ tb api [start|stop|status]   # Manage API server                      │
-    │    $ tb gui                       # Launch GUI interface                   │
-    │    $ tb p2p [start|stop]          # Manage P2P client                      │
-    │    $ tb mcp                       # Start MCP server (for agents)          │
+    │    $ tb workers [start|stop|status]   # Manage API server                  │
+    │    $ tb gui                           # Launch GUI interface               │
+    │    $ tb p2p [start|stop]              # Manage P2P client                  │
+    │    $ tb mcp                           # Start MCP server (for agents)      │
     │                                                                            │
     │  🗄️  Database:                                                             │
     │    $ tb db [command]              # Manage r_blob_db                       │
@@ -484,10 +483,6 @@ def show_interactive_guide():
     │    $ tb --docker -m [test|live|dev] -p 8000                                │
     │    $ tb --build                   # Build Docker image                     │
     │                                                                            │
-    │  Background/Foreground:                                                    │
-    │    $ tb api -bg -p 8080           # Run in background                      │
-    │    $ tb gui -fg                   # Run in foreground                      │
-    │                                                                            │
     │  Remote Mode:                                                              │
     │    $ tb --remote -w 0.0.0.0 -p 5000                                        │
     │                                                                            │
@@ -532,9 +527,6 @@ def show_interactive_guide():
 
     ┌─ PRACTICAL EXAMPLES ───────────────────────────────────────────────────────┐
     │                                                                            │
-    │  Start API server on custom port:                                          │
-    │    $ tb api start -p 8080                                                  │
-    │                                                                            │
     │  Install and run module:                                                   │
     │    $ tb -i MyModule                                                        │
     │    $ tb -c MyModule my_function                                            │
@@ -559,7 +551,7 @@ def show_interactive_guide():
     │  • Use `tb [command] -h` for detailed help on any command                  │
     │  • Most commands support tab completion in modern shells                   │
     │  • Use `--sysPrint` for verbose output when debugging                      │
-    │  • Runner commands can be combined: `tb api start -bg`                     │
+    │  • Runner commands can be combined: `tb workers start -bg`                 │
     │  • Use `-n` to run multiple instances with different names                 │
     │  • Module functions are auto-discovered when using `-l`                    │
     │                                                                            │
@@ -572,8 +564,8 @@ def show_interactive_guide():
     │    $ tb --guide                   # Show this guide                        │
     │                                                                            │
     │  Command-Specific Help:                                                    │
-    │    $ tb api -h                    # API command help                       │
-    │    $ tb venv -h                  # Conda command help                      │
+    │    $ tb workers -h                # API command help                       │
+    │    $ tb venv -h                   # Conda command help                     │
     │    $ tb db -h                     # Database command help                  │
     │                                                                            │
     │  Module Information:                                                       │
@@ -626,7 +618,7 @@ def parse_args():
         │                                                                        │
         │  Basic Usage:                                                          │
         │    $ tb gui                              # Start GUI                   │
-        │    $ tb api start                        # Start API server            │
+        │    $ tb workkers start                   # Start API server            │
         │    $ tb status                           # Check status                │
         │    $ tb --ipy                            # IPython shell               │
         │                                                                        │
@@ -637,7 +629,6 @@ def parse_args():
         │                                                                        │
         │  Advanced:                                                             │
         │    $ tb --docker -m dev -p 8000          # Docker mode                 │
-        │    $ tb api start -bg -p 8080            # Background API              │
         │    $ tb -c helper create-user bob bob@mail.com                         │
         │    $ tb -c MyMod func --kwargs key=val   # With kwargs                 │
         │                                                                        │
@@ -976,8 +967,7 @@ def _parse_args():
     import argparse
     import textwrap
 
-    runner_keys = ["venv", "api", "ipy", "db", "gui", "p2p", "status", "browser", "mcp", "login", "logout", "run", "mods"]
-    main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], runner_keys)
+    main_args, runner_name, runner_args = split_args_by_runner(sys.argv[1:], RUNNER_KEYS)
 
     # Wenn Runner gefunden, temporär sys.argv anpassen für main parsing
     if runner_name:
@@ -1002,10 +992,10 @@ def _parse_args():
           run             ▶ Run flow from file or load all flows and mods from dir
           status          ▶ Get status of ToolBoxV2
           mods            ▶ Run mod manager
-          api             ▶ Run Rust API manager
+          workers         ▶ Run Api workers manager
           gui             ▶ Launch graphical interface
           p2p             ▶ Launch p2p client
-          venv           ▶ Run venv commands
+          venv            ▶ Run venv commands
           db              ▶ Run r_blob_db commands
           mcp             ▶ Run MCP server (for agent)
           browser         ▶ Run browser extension installer
@@ -1073,12 +1063,11 @@ def _parse_args():
                             ▶ Pass arbitrary kwargs to functions
 
         Examples:
-          $ tb api -m live --port 8080
           $ tb venv install numpy
           $ tb --docker -m dev -p 8000 -w 0.0.0.0
-          $ tb api start
+          $ tb workers start
           $ tb gui
-          $ tb status -> get db api and p2p status
+          $ tb status -> get db workers and p2p status
           $ tb --ipy
           $ tb -c CloudM Version -c CloudM get_mod_snapshot CloudM
           $ tb -c CloudM get_mod_snapshot --kwargs mod_name:CloudM
@@ -1109,9 +1098,6 @@ def _parse_args():
                         action='store_true')
 
     parser.add_argument("p2p", help="run rust p2p for mor infos run tb p2p -h", default=False,
-                        action='store_true')
-
-    parser.add_argument("api", help="run rust api for mor infos run tb api -h", default=False,
                         action='store_true')
 
     parser.add_argument("venv", help="run venv commands for mor infos run tb venv -h", default=False,
@@ -1647,17 +1633,20 @@ async def main(App=TbApp, do_exit=True):
             except Exception as e:
                 print(Style.YELLOW(f"Error stopping cluster manager: {e}"))
             try:
-                from toolboxv2.utils.clis.api import manage_server
-                manage_server("stop")
+                from toolboxv2.utils.clis.cli_worker_manager import WorkerManager
+                from toolboxv2.utils.workers.config import load_config
+
+                config = load_config(None)
+                WorkerManager(config).stop_all()
             except Exception as e:
-                print(Style.YELLOW(f"Error stopping api manager: {e}"))
+                print(Style.YELLOW(f"Error stopping workers manager: {e}"))
             try:
                 from toolboxv2.utils.clis.tcm_p2p_cli import handle_stop
                 _ = lambda :None
                 _.names = None
                 handle_stop(_)
             except Exception as e:
-                print(Style.YELLOW(f"Error stopping api manager: {e}"))
+                print(Style.YELLOW(f"Error stopping workers manager: {e}"))
 
             with open(pid_file, encoding="utf8") as f:
                 app_pid = f.read()
@@ -1885,8 +1874,8 @@ def runner_setup():
         await cli_db_runner()
         print()
         print(Style.GREY("─" * 25))
-        sys.argv = ["api", "status"]
-        cli_api_runner()
+        sys.argv = ["workers", "status"]
+        cli_worker_manager()
         sys.argv = ["p2p", "status"]
         cli_tcm_runner()
 
@@ -1972,7 +1961,6 @@ def runner_setup():
 
     runner = {
         "venv": lambda: __import__('toolboxv2.utils.system.venv_runner', fromlist=['main']).main(),
-        "api": cli_api_runner,
         "ipy": start_ipython_session,
         "db": cli_db_runner,
         "gui": helper_gui,
@@ -1985,6 +1973,7 @@ def runner_setup():
         "logout": logout,
         "flow": run_c,
         "mods": mods_manager,
+
         "run": cli_tbx_main,
         "user": minio_user_manager_main,
         "default": interactive_user_dashboard,

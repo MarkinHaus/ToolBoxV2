@@ -17,7 +17,7 @@
     "build:web": "webpack --mode production",
     "build:tbjs": "npm run build --prefix ./tbjs",
     "build": "npm run build:web && npm run build:tbjs",
-    "dev": "concurrently -k -r \"tb api start --debug\" \"npm run watch\"",
+    "dev": "concurrently -k -r \"tb workers start\" \"npm run watch\"",
     "test": "npm run test --prefix ./tbjs"
   },
   "dependencies": {

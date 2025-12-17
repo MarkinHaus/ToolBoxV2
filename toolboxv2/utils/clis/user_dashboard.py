@@ -5,7 +5,7 @@ from platform import system, node
 
 from ..system.getting_and_closing_app import get_app
 from ..system.main_tool import get_version_from_pyproject
-from .api import cli_api_runner
+from .cli_worker_manager import main as cli_worker_runner
 from .db_cli_manager import cli_db_runner
 from .tcm_p2p_cli import cli_tcm_runner
 from ... import Style
@@ -771,22 +771,22 @@ async def interactive_user_dashboard():
 
             print_box_content(f"Database: {db_status}", db_style)
 
-            # Check API
-            api_status = "Stopped"
-            api_style = "error"
-            api_info = ""
+            # Check Workers
+            workers_status = "Stopped"
+            workers_style = "error"
+            workers_info = ""
             try:
                 from toolboxv2.utils.system.state_system import read_server_state
                 pid, _, _ = read_server_state()
                 from toolboxv2.utils.system.state_system import is_process_running
                 if is_process_running(pid):
-                    api_status = "Running"
-                    api_style = "success"
-                    api_info = f" (PID: {pid})"
+                    workers_status = "Running"
+                    workers_style = "success"
+                    workers_info = f" (PID: {pid})"
             except:
                 pass
 
-            print_box_content(f"API Server: {api_status}{api_info}", api_style)
+            print_box_content(f"Worker System: {workers_status}{workers_info}", workers_style)
 
             print_box_footer()
 
@@ -798,7 +798,7 @@ async def interactive_user_dashboard():
         async def show_services(self):
             """Show services management"""
             services = [
-                ("🖥️", "API Server", "api"),
+                ("🖥️", "Worker System", "workers"),
                 ("🗄️", "Database", "db"),
                 ("🌐", "P2P Client", "p2p"),
                 ("📦", "Module Manager", "mods"),
@@ -856,14 +856,13 @@ async def interactive_user_dashboard():
                 ("📊", "Status", "status"),
             ]
 
-            if service_name == "api":
-                # build, debug, clean, remove-exe, update
+            if service_name == "workers":
+                # restart, update, nginx-config, nginx-reload
                 actions.extend([
-                    ("🔨", "Build", "build"),
-                    ("🔥", "Debug", "debug"),
-                    ("🧹", "Clean", "clean"),
-                    ("🗑️", "Remove Executable", "remove-exe"),
-                    ("🔄", "Update", "update"),
+                    ("🔄", "Restart", "restart"),
+                    ("⬆️", "Update", "update"),
+                    ("⚙️", "Nginx Config", "nginx-config"),
+                    ("🔃", "Nginx Reload", "nginx-reload"),
                 ])
             if service_name == "db":
                 # health, update , build, clean, discover
@@ -926,9 +925,9 @@ async def interactive_user_dashboard():
 
                     # Execute action
                     try:
-                        if service_name == "api":
-                            sys.argv = ["api", action]
-                            cli_api_runner()
+                        if service_name == "workers":
+                            sys.argv = ["workers", action]
+                            cli_worker_runner()
                         elif service_name == "db":
                             sys.argv = ["db", action]
                             cli_db_runner()
